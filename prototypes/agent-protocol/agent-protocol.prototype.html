@@ -1,0 +1,790 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>原型（用完即弃）· Agent 访问协议</title>
+<style>
+  :root { --accent:#2f6fde; --bg:#f7f7f8; --card:#fff; --fg:#1d1d1f; --mute:#6b6b70; --line:#e3e3e6; --bad:#c4372c; --ok:#1f8a4c; --new:#fff6d6; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif; }
+  .wrap { max-width:1440px; margin:0 auto; padding:28px 24px 60px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  h2 { font-size:15px; margin:0 0 12px; }
+  h3 { font-size:14px; margin:16px 0 8px; }
+  .tag { display:inline-block; font-size:12px; padding:1px 8px; border-radius:10px; background:#eef2fb; color:var(--accent); margin:0 4px 4px 0; }
+  .tag.gray { background:#f0f0f2; color:var(--mute); }
+  .tag.bad { background:#fbeceb; color:var(--bad); }
+  .tag.ok { background:#e8f5ee; color:var(--ok); }
+  .mute { color:var(--mute); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:16px; }
+  .intro p { margin:6px 0; }
+  .grid { display:grid; grid-template-columns: 480px 1fr; gap:16px; align-items:start; }
+  button { font:inherit; border:1px solid var(--line); background:#fff; border-radius:6px; padding:5px 10px; cursor:pointer; margin:0 6px 6px 0; }
+  button:hover { border-color:var(--accent); color:var(--accent); }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.primary:hover { color:#fff; opacity:.9; }
+  button.done { background:#e8f5ee; border-color:#bfe3cd; color:var(--ok); }
+  button.next { border-color:var(--accent); box-shadow:0 0 0 2px #dfe8fa; }
+  select, input, textarea { font:inherit; border:1px solid var(--line); border-radius:6px; padding:5px 8px; width:100%; background:#fff; }
+  textarea { font-family:Consolas,"Cascadia Mono",monospace; font-size:12.5px; min-height:120px; }
+  .row { display:flex; gap:8px; margin-bottom:8px; align-items:center; }
+  .row > .method { width:96px; flex:none; }
+  label.small { font-size:12px; color:var(--mute); display:block; margin:6px 0 2px; }
+  pre { background:#f4f4f6; border-radius:6px; padding:10px 12px; overflow:auto; font:12.5px/1.5 Consolas,"Cascadia Mono",monospace; margin:6px 0; white-space:pre-wrap; word-break:break-all; }
+  .status { font-weight:600; }
+  .status.ok { color:var(--ok); } .status.bad { color:var(--bad); }
+  .tabs { display:flex; flex-wrap:wrap; gap:4px; border-bottom:1px solid var(--line); margin-bottom:10px; }
+  .tabs button { border:none; border-bottom:2px solid transparent; border-radius:0; margin:0; padding:6px 10px; }
+  .tabs button.active { border-bottom-color:var(--accent); color:var(--accent); }
+  .step { display:flex; gap:8px; align-items:flex-start; margin-bottom:4px; }
+  .step .who { font-size:12px; color:var(--mute); padding-top:6px; min-width:110px; }
+  .tickets { display:grid; grid-template-columns:repeat(auto-fill,minmax(440px,1fr)); gap:16px; }
+  .kv { display:grid; grid-template-columns:80px 1fr; gap:2px 10px; font-size:13px; }
+  .kv div:nth-child(odd) { color:var(--mute); }
+  .tl { font-size:13px; border-left:2px solid var(--line); padding-left:10px; margin-top:8px; }
+  .tl .ev { margin-bottom:6px; padding:2px 6px; border-radius:4px; }
+  .tl .ev.new { background:var(--new); }
+  .tl .hidden { color:var(--mute); font-style:italic; }
+  .changed { background:var(--new); border-radius:6px; padding:6px 10px; font-size:13px; margin:6px 0; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  td, th { border-bottom:1px solid var(--line); padding:4px 6px; text-align:left; vertical-align:top; }
+  ol.qs li { margin-bottom:6px; }
+  @media (max-width: 900px) {
+    .wrap { padding:12px 10px 40px; }
+    .grid { grid-template-columns:1fr; }
+    .tickets { grid-template-columns:1fr; }
+    .step { flex-direction:column; gap:0; }
+    .step .who { padding-top:0; }
+    table { display:block; overflow-x:auto; }
+  }
+  code { font-family:Consolas,"Cascadia Mono",monospace; font-size:12.5px; background:#f0f0f2; padding:0 4px; border-radius:3px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="card intro">
+  <span class="tag bad">原型 · 用完即弃，不是正式代码</span>
+  <h1>Agent 访问协议原型</h1>
+  <p><b>要回答的问题</b>（工单「Agent 访问协议原型」）：Agent 拿到工单地址或访客链接后，<b>怎么读</b>工单（JSON 和 Markdown 各长什么样）、<b>怎么回复</b>、<b>怎么上传附件</b>或写外部文件引用、<b>怎么打标签</b>？</p>
+  <p>页面里的平台是<b>浏览器内存中的模拟服务</b>，刷新即重置。成员和访客调用的是同一套 HTTP API，区别只在于凭证：成员用账号 token，访客直接把访客链接里的密钥当 token 用。每个请求旁边都列出它将来对应的 CLI 子命令和 MCP tool。</p>
+  <p class="mute">用法：先看下方「引导场景」，逐个点按钮；也可以在「自由操作」里任选身份，修改请求后发送。最底部是平台的完整内部状态（成员视角），刚发生的变化会以黄色标出。</p>
+</div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h2>引导场景</h2>
+      <div class="tabs" id="tabs"></div>
+      <div id="scenario"></div>
+    </div>
+
+    <div class="card">
+      <h2>自由操作</h2>
+      <label class="small">以谁的身份（凭证）</label>
+      <select id="actor"></select>
+      <div id="actorHint" class="mute" style="font-size:12px;margin:4px 0 8px"></div>
+      <label class="small">目标工单</label>
+      <select id="target"></select>
+      <label class="small">选一个操作，填入下方请求</label>
+      <div id="ops"></div>
+      <div class="row" style="margin-top:6px">
+        <select id="method" class="method"><option>GET</option><option>POST</option><option>PATCH</option></select>
+        <input id="path">
+      </div>
+      <textarea id="body" placeholder="请求体（JSON）；GET 请求留空"></textarea>
+      <div style="margin-top:8px"><button class="primary" id="send">发送</button><button id="reset">重置平台</button></div>
+    </div>
+
+    <div class="card">
+      <h2>贴一个链接就能干活</h2>
+      <p class="mute" style="margin-top:0">CLI 和 MCP 的 <code>&lt;工单&gt;</code> 参数接受以下任意写法，客户端从中解析出工单和凭证：</p>
+      <input id="paste" value="http://taskboard.lan/g/tbg_zhang3">
+      <pre id="parsed"></pre>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>最近一次请求与响应</h2>
+      <div id="exchange" class="mute">还没有发送任何请求。</div>
+    </div>
+    <div class="card">
+      <h2>拿来讨论的设计选择</h2>
+      <ol class="qs">
+        <li><b>访客链接即凭证</b>：链接格式为 <code>/g/&lt;密钥&gt;</code>，密钥直接作为 <code>Authorization: Bearer</code> 使用，不再另外“换”一个 token。撤销和过期即时生效。链接里不出现工单编号，访客先调 <code>/api/session</code> 查出它指向哪张工单。</li>
+        <li><b>一次读全</b>：<code>GET /api/tickets/{编号或序号}</code> 一次返回说明、附件和完整时间线；加 <code>?format=markdown</code> 返回一份适合 Agent 直接阅读的 Markdown；轮询时用 <code>/timeline?after=N</code> 增量拉取。</li>
+        <li><b>能力表 <code>viewer.can</code></b>：每次读取都会告诉 Agent 当前能做什么（回复、上传、编辑说明、打标签、关闭……），Agent 不需要自己推断权限。</li>
+        <li><b>附件分两步</b>：先上传，拿到 <code>att:</code> 引用；再在回复或说明中引用（正文里的 <code>![](att:…)</code> 或 <code>attachment_ids</code>）。待用附件也计入 200MB 配额，24 小时未被引用即清除。CLI 的 <code>tb reply --file</code> 会把这两步合成一步。</li>
+        <li><b>超限的处理</b>：单个文件超过 50MB 或整张工单超过 200MB 时返回 413，<code>hint</code> 提示改用 NAS 路径。外部文件引用只是正文里的文本，不需要专门的接口。</li>
+        <li><b>标签字典</b>：维度下不存在的值默认拒绝，并给出近似写法的建议；传 <code>allow_new: true</code> 才会新建。新维度只能由管理员添加。不带维度的标签可以随手打。</li>
+        <li><b>说明的并发编辑</b>：用 <code>base_revision</code> 做乐观锁，版本不一致时返回 409，Agent 需要重新读取、合并后再提交。</li>
+        <li><b>统一的错误格式</b> <code>{error:{code,message,hint}}</code>：<code>hint</code> 告诉 Agent 下一步可以怎么做。访客访问其他工单时返回 404 而不是 403，避免泄露其他工单是否存在。</li>
+        <li><b>访客视角的时间线有空号</b>：标签事件对访客隐藏，所以访客看到的事件序号会跳号。可以接受，还是要给访客单独编号？</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>平台内部状态（成员视角，含访客看不到的内容）</h2>
+  <div id="changed"></div>
+  <div class="tickets" id="state"></div>
+  <h3>访客链接</h3>
+  <div id="links"></div>
+  <h3>标签字典</h3>
+  <div id="dict"></div>
+</div>
+
+</div>
+
+<!-- ===================== 可移植的协议逻辑（纯函数，不碰 DOM） ===================== -->
+<script>
+const Taskboard = (() => {
+  const BASE = 'http://taskboard.lan';
+  const TODAY = '2026-10-15';
+  const FILE_LIMIT_MB = 50, TICKET_LIMIT_MB = 200;
+  const REASONS = { done: '完成', wontfix: '不处理', duplicate: '重复' };
+
+  function initialState() {
+    const ev = (seq, at, actor, type, extra = {}) => ({ seq, at, actor, type, ...extra });
+    const wang = { kind: 'member', id: 'wang', name: '王工' };
+    const li = { kind: 'member', id: 'li', name: '李工' };
+    const zhang = { kind: 'guest', link_note: '检验科-张三', author_name: '张三' };
+    return {
+      clock: 0, attSeq: 4, linkSeq: 0, nextSeq: 1235, todayCount: 7,
+      members: { tbm_wang: { id: 'wang', name: '王工' }, tbm_li: { id: 'li', name: '李工' } },
+      links: {
+        tbg_zhang3: { ticket: 1234, note: '检验科-张三', expires_at: '2026-11-14', revoked: false, can_edit_brief: false },
+        tbg_qa: { ticket: 1234, note: '质量部 Agent', expires_at: '2026-10-22', revoked: false, can_edit_brief: true },
+        tbg_old: { ticket: 1234, note: '设备科-旧链接', expires_at: '2026-10-01', revoked: false, can_edit_brief: false },
+        tbg_rev: { ticket: 1234, note: '外包-赵', expires_at: '2026-11-10', revoked: true, can_edit_brief: false },
+      },
+      intakes: {
+        bug: { name: 'Bug 反馈', active: true, kind: 'report',
+               template: { title_hint: '一句话描述现象', brief_skeleton_md: '## 现象\n\n## 复现步骤\n\n## 期望结果\n' },
+               pick_dimensions: ['机型', '系统'], default_labels: ['待初筛'] },
+      },
+      dictionary: {
+        '产品线': ['生化', '免疫', '血球'], '系统': ['LIS接口', '仪器控制'], '机型': ['BH-7600CS', 'BH-5100', 'BH-3000'],
+        '部门': ['检验科', '质量部', '设备科'], '算法': ['质控规则', '结果审核'], '立项': ['2026-生化升级'], '子项目': ['质控模块'],
+      },
+      tickets: [
+        {
+          seq: 1233, number: '20261014-003', kind: 'task', title: '整理 Q3 质控规则说明',
+          brief_md: '请质量部整理 Q3 新增的质控规则，输出一份对照表。', brief_revision: 1,
+          creator: { kind: 'member', id: 'li' }, assignee: 'li', status: 'open', close_reason: null,
+          labels: ['算法:质控规则', '部门:质量部'], attachments: [], replyCount: 0,
+          timeline: [ev(1, '2026-10-14 15:02', li, 'created')],
+        },
+        {
+          seq: 1234, number: '20261015-007', kind: 'report', title: 'BH-7600CS 质控结果偏高',
+          brief_md: '检验科反馈：BH-7600CS 从 10-14 起，ALT 质控连续 3 次偏高 2SD 以上。\n\n![质控图.png](att:att_1)',
+          brief_revision: 1, creator: { kind: 'member', id: 'wang' }, assignee: 'wang', status: 'open', close_reason: null,
+          labels: ['产品线:生化', '机型:BH-7600CS', '待初筛'],
+          attachments: [
+            { id: 'att_1', filename: '质控图.png', size_mb: 1.2, state: 'attached', on: '说明', uploader: 'tbm_wang' },
+            { id: 'att_2', filename: '历史质控数据.zip', size_mb: 48, state: 'attached', on: '回复 1', uploader: 'tbg_zhang3' },
+            { id: 'att_3', filename: '仪器日志.zip', size_mb: 46, state: 'attached', on: '回复 1', uploader: 'tbg_zhang3' },
+            { id: 'att_4', filename: '校准记录.zip', size_mb: 26, state: 'attached', on: '回复 1', uploader: 'tbg_zhang3' },
+          ],
+          replyCount: 2,
+          timeline: [
+            ev(1, '2026-10-15 09:00', wang, 'created'),
+            ev(2, '2026-10-15 09:00', wang, 'label_added', { label: '产品线:生化' }),
+            ev(3, '2026-10-15 09:00', wang, 'label_added', { label: '机型:BH-7600CS' }),
+            ev(4, '2026-10-15 09:00', wang, 'label_added', { label: '待初筛' }),
+            ev(5, '2026-10-15 09:01', wang, 'guest_link_created', { note: '检验科-张三' }),
+            ev(6, '2026-10-15 09:01', wang, 'guest_link_created', { note: '质量部 Agent' }),
+            ev(7, '2026-10-15 09:40', zhang, 'reply', { reply_no: 1, body_md: '附上近一个月的质控数据、仪器日志和校准记录。', attachment_ids: ['att_2', 'att_3', 'att_4'] }),
+            ev(8, '2026-10-15 09:55', wang, 'reply', { reply_no: 2, body_md: '收到。请补充当前使用的试剂批号。', attachment_ids: [] }),
+          ],
+        },
+      ],
+    };
+  }
+
+  // ---- 把用户/Agent 手里的任意写法解析成「工单 + 凭证」 ----
+  function parseTarget(input) {
+    const s = String(input || '').trim();
+    let m;
+    if ((m = s.match(/\/g\/(tbg_[A-Za-z0-9_]+)/))) return { kind: 'guest_link', token: m[1], ticket: '（调用 /api/session 获知）' };
+    if ((m = s.match(/\/i\/([a-z0-9-]+)/))) return { kind: 'intake', intake: m[1], token: null };
+    if ((m = s.match(/\/t\/(\d{8}-\d{3,}|\d+)/))) return { kind: 'ticket_url', ticket: m[1], token: '（用本机配置的成员 token）' };
+    if ((m = s.match(/^#?(\d{8}-\d{3,}|\d+)$/))) return { kind: 'ticket_ref', ticket: m[1], token: '（用本机配置的成员 token）' };
+    return { kind: 'unknown' };
+  }
+
+  // ---- 内部工具 ----
+  class ApiError extends Error { constructor(status, code, message, hint, extra) { super(message); Object.assign(this, { status, code, hint, extra }); } }
+  const fail = (...a) => { throw new ApiError(...a); };
+  const now = s => { s.clock += 1; const t = 10 * 60 + s.clock * 3; return `${TODAY} ${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; };
+  const addDays = (d, n) => { const x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+  const usedMb = t => Math.round(t.attachments.reduce((a, x) => a + x.size_mb, 0) * 10) / 10;
+  const norm = v => v.toLowerCase().replace(/[\s\-_]/g, '');
+  const isImage = f => /\.(png|jpe?g|gif|webp)$/i.test(f);
+  const memberName = (s, id) => Object.values(s.members).find(m => m.id === id)?.name ?? id;
+
+  function auth(s, token) {
+    if (!token) return { kind: 'anonymous' };
+    if (s.members[token]) return { kind: 'member', token, ...s.members[token] };
+    const link = s.links[token];
+    if (!link) fail(401, 'invalid_token', '凭证无效', '检查 token 是否完整；访客可以把整条访客链接传进来');
+    if (link.revoked) fail(401, 'link_revoked', `访客链接「${link.note}」已被撤销`, '请联系发链接的成员重新获取');
+    if (link.expires_at < TODAY) fail(401, 'link_expired', `访客链接「${link.note}」已于 ${link.expires_at} 过期`, '请联系发链接的成员延期');
+    return { kind: 'guest', token, link };
+  }
+
+  function loadTicket(s, v, ref) {
+    if (v.kind === 'anonymous') fail(401, 'unauthenticated', '需要凭证', '成员使用账号 token；访客把访客链接整条传进来即可');
+    const r = decodeURIComponent(ref).replace(/^#/, '');
+    const t = s.tickets.find(x => x.number === r || String(x.seq) === r);
+    if (!t || (v.kind === 'guest' && v.link.ticket !== t.seq))
+      fail(404, 'ticket_not_found', `找不到工单 ${r}`, v.kind === 'guest' ? '访客链接只能访问它所指向的那一张工单' : undefined);
+    return t;
+  }
+
+  function caps(v, t) {
+    const open = t.status === 'open';
+    if (v.kind === 'member') return {
+      reply: true, upload: true, edit_brief: t.creator.kind === 'member' && t.creator.id === v.id,
+      label: true, close: open, reopen: !open, manage_guest_links: true,
+    };
+    return { reply: open, upload: open, edit_brief: open && v.link.can_edit_brief, label: false, close: false, reopen: false, manage_guest_links: false };
+  }
+
+  function requireCap(v, t, cap) {
+    if (caps(v, t)[cap]) return;
+    if (v.kind === 'guest' && t.status === 'closed' && ['reply', 'upload', 'edit_brief'].includes(cap))
+      fail(409, 'ticket_closed', '工单已关闭，访客链接只读', '如需继续，请联系成员重新开启工单');
+    const msgs = {
+      edit_brief: v.kind === 'member' ? ['not_brief_owner', '只有工单创建者能编辑说明', '用回复补充内容']
+                                      : ['link_cannot_edit_brief', '这条访客链接没有「可填写说明」权限', '用回复补充内容'],
+      label: ['labels_member_only', '访客不能查看或修改标签', undefined],
+    };
+    const [code, msg, hint] = msgs[cap] || ['forbidden', `当前凭证不能执行 ${cap}`, undefined];
+    fail(403, code, msg, hint);
+  }
+
+  function actorOf(v, author_name) {
+    if (v.kind === 'member') return { kind: 'member', id: v.id, name: v.name };
+    return { kind: 'guest', link_note: v.link.note, author_name: author_name || null };
+  }
+  const actorDisplay = a => a.kind === 'member' ? a.name : `${a.author_name || '访客'}（经「${a.link_note}」链接）`;
+
+  function waitingOn(t) {
+    const last = [...t.timeline].reverse().find(e => e.type === 'reply');
+    return !last || last.actor.kind === 'guest' ? 'department' : 'counterpart';
+  }
+
+  function pubAtt(a) {
+    return { id: a.id, filename: a.filename, size_mb: a.size_mb, url: `${BASE}/a/${a.id}/${encodeURIComponent(a.filename)}`, attached_to: a.on };
+  }
+
+  function project(s, v, t) {
+    const member = v.kind === 'member';
+    const view = {
+      number: t.number, seq: t.seq, url: `${BASE}/t/${t.number}`, kind: t.kind, title: t.title,
+      status: t.status, close_reason: t.close_reason, assignee: t.assignee ? memberName(s, t.assignee) : null,
+      waiting_on: waitingOn(t),
+    };
+    if (member) view.labels = [...t.labels];
+    Object.assign(view, {
+      brief: { markdown: t.brief_md, revision: t.brief_revision },
+      attachments: t.attachments.filter(a => a.state === 'attached').map(pubAtt),
+      attachment_usage: { used_mb: usedMb(t), ticket_limit_mb: TICKET_LIMIT_MB, file_limit_mb: FILE_LIMIT_MB },
+      viewer: v.kind === 'member'
+        ? { kind: 'member', name: v.name, can: caps(v, t) }
+        : { kind: 'guest', link_note: v.link.note, link_expires_at: v.link.expires_at, can: caps(v, t) },
+      timeline: t.timeline.filter(e => member || !e.type.startsWith('label_')).map(e => ({ ...e, actor: { ...e.actor, display: actorDisplay(e.actor) } })),
+    });
+    return view;
+  }
+
+  const eventText = e => ({
+    created: '创建工单', label_added: `添加标签 ${e.label}`, label_removed: `移除标签 ${e.label}`,
+    guest_link_created: `创建访客链接「${e.note}」`, guest_link_revoked: `撤销访客链接「${e.note}」`,
+    brief_revised: `修订说明（第 ${e.revision} 版）`, closed: `关闭工单（${REASONS[e.reason]}）`, reopened: '重新开启工单',
+  })[e.type] || e.type;
+
+  function renderMarkdown(view) {
+    const can = Object.entries(view.viewer.can).filter(([, ok]) => ok).map(([k]) => ({
+      reply: '回复', upload: '上传附件', edit_brief: '编辑说明', label: '打标签', close: '关闭', reopen: '重新开启', manage_guest_links: '管理访客链接',
+    })[k]);
+    const who = view.viewer.kind === 'member' ? `成员 ${view.viewer.name}` : `访客（经「${view.viewer.link_note}」链接，有效至 ${view.viewer.link_expires_at}）`;
+    const L = [
+      `# 工单 ${view.number}：${view.title}`, '',
+      `- 序号：#${view.seq}`,
+      `- 类型：${view.kind === 'task' ? '任务' : '反馈'}`,
+      `- 状态：${view.status === 'open' ? '开启' : `已关闭（${REASONS[view.close_reason]}）`}`,
+      `- 等待方：${view.waiting_on === 'department' ? '本部门' : '对方'}`,
+      `- 指派人：${view.assignee ?? '未指派'}`,
+    ];
+    if (view.labels) L.push(`- 标签：${view.labels.join('、') || '无'}`);
+    L.push(`- 附件用量：${view.attachment_usage.used_mb} / ${view.attachment_usage.ticket_limit_mb} MB`,
+           `- 你的身份：${who}`, `- 你可以：${can.join('、') || '只读'}`, '',
+           `## 说明（第 ${view.brief.revision} 版）`, '', view.brief.markdown, '', '## 附件', '');
+    view.attachments.forEach(a => L.push(`- [${a.filename}](${a.url})（${a.size_mb} MB，附于${a.attached_to}）`));
+    if (!view.attachments.length) L.push('（无）');
+    L.push('', '## 时间线', '');
+    view.timeline.forEach(e => {
+      if (e.type === 'reply') {
+        L.push(`### [${e.seq}] ${e.at} · ${e.actor.display} 回复`, '', e.body_md);
+        if (e.attachment_ids.length) L.push('', `附件：${e.attachment_ids.join('、')}`);
+        L.push('');
+      } else L.push(`- [${e.seq}] ${e.at} · ${e.actor.display} ${eventText(e)}`);
+    });
+    return L.join('\n');
+  }
+
+  function pushEvent(s, t, actor, type, extra = {}) {
+    const e = { seq: t.timeline.length + 1, at: now(s), actor, type, ...extra };
+    t.timeline.push(e);
+    return e;
+  }
+
+  function claimAttachments(t, v, ids, on) {
+    for (const id of ids) {
+      const a = t.attachments.find(x => x.id === id);
+      if (!a || a.state !== 'pending' || a.uploader !== v.token)
+        fail(422, 'attachment_not_usable', `附件 ${id} 不存在、已被引用，或不是你上传的`, '先调用上传接口，再用返回的 att: 引用');
+    }
+    ids.forEach(id => Object.assign(t.attachments.find(x => x.id === id), { state: 'attached', on }));
+  }
+  const attRefs = md => [...String(md || '').matchAll(/att:(att_\d+)/g)].map(m => m[1]);
+
+  // ---- 路由 ----
+  const routes = [
+    ['GET', /^\/api\/session$/, (s, v) => {
+      if (v.kind === 'anonymous') fail(401, 'unauthenticated', '需要凭证', '成员使用账号 token；访客把访客链接整条传进来即可');
+      if (v.kind === 'member') return { viewer: { kind: 'member', id: v.id, name: v.name } };
+      const t = s.tickets.find(x => x.seq === v.link.ticket);
+      return { viewer: { kind: 'guest', link_note: v.link.note, link_expires_at: v.link.expires_at, can_edit_brief: v.link.can_edit_brief },
+               ticket: { number: t.number, seq: t.seq, title: t.title, api: `/api/tickets/${t.number}` } };
+    }],
+    ['GET', /^\/api\/tickets\/([^/]+)$/, (s, v, m, q) => {
+      const view = project(s, v, loadTicket(s, v, m[1]));
+      return q.get('format') === 'markdown' ? { __markdown: renderMarkdown(view) } : view;
+    }],
+    ['GET', /^\/api\/tickets\/([^/]+)\/timeline$/, (s, v, m, q) => {
+      const view = project(s, v, loadTicket(s, v, m[1]));
+      const after = +(q.get('after') || 0);
+      const events = view.timeline.filter(e => e.seq > after);
+      return { events, cursor: view.timeline.length ? view.timeline[view.timeline.length - 1].seq : 0, waiting_on: view.waiting_on, status: view.status };
+    }],
+    ['POST', /^\/api\/tickets\/([^/]+)\/attachments$/, (s, v, m, q, b) => {
+      const t = loadTicket(s, v, m[1]);
+      requireCap(v, t, 'upload');
+      if (!b.filename || !(b.size_mb > 0)) fail(422, 'invalid_request', '需要 filename 和 size_mb（原型中用 size_mb 模拟真实文件）');
+      if (b.size_mb > FILE_LIMIT_MB) fail(413, 'attachment_too_large', `单个文件不能超过 ${FILE_LIMIT_MB} MB（本次 ${b.size_mb} MB）`,
+        '把文件放到 NAS，在说明或回复正文中写路径，例如 \\\\nas01\\共享\\工单\\' + t.number + '\\' + b.filename);
+      if (usedMb(t) + b.size_mb > TICKET_LIMIT_MB) fail(413, 'ticket_quota_exceeded',
+        `这张工单的附件合计不能超过 ${TICKET_LIMIT_MB} MB（已用 ${usedMb(t)} MB，含待用附件）`, '把文件放到 NAS，在回复正文中写路径',
+        { used_mb: usedMb(t), ticket_limit_mb: TICKET_LIMIT_MB });
+      const id = `att_${++s.attSeq}`;
+      t.attachments.push({ id, filename: b.filename, size_mb: b.size_mb, state: 'pending', on: null, uploader: v.token });
+      return { __status: 201, id, filename: b.filename, size_mb: b.size_mb, state: 'pending',
+               markdown: isImage(b.filename) ? `![${b.filename}](att:${id})` : `[${b.filename}](att:${id})`,
+               note: '附件处于待用状态：请在回复或说明中引用它；24 小时内未引用会被清除' };
+    }],
+    ['POST', /^\/api\/tickets\/([^/]+)\/replies$/, (s, v, m, q, b) => {
+      const t = loadTicket(s, v, m[1]);
+      requireCap(v, t, 'reply');
+      const ids = [...new Set([...(b.attachment_ids || []), ...attRefs(b.body_md)])];
+      if (!String(b.body_md || '').trim() && !ids.length) fail(422, 'empty_reply', '回复需要正文或至少一个附件');
+      const no = t.replyCount + 1;
+      claimAttachments(t, v, ids, `回复 ${no}`);
+      t.replyCount = no;
+      const e = pushEvent(s, t, actorOf(v, b.author_name), 'reply', { reply_no: no, body_md: b.body_md || '', attachment_ids: ids });
+      return { __status: 201, reply_no: no, timeline_seq: e.seq, author: actorDisplay(e.actor), waiting_on: waitingOn(t) };
+    }],
+    ['PATCH', /^\/api\/tickets\/([^/]+)$/, (s, v, m, q, b) => {
+      const t = loadTicket(s, v, m[1]);
+      requireCap(v, t, 'edit_brief');
+      if (b.base_revision == null) fail(422, 'base_revision_required', '编辑说明需要带上 base_revision', '先读取工单，取 brief.revision');
+      if (b.base_revision !== t.brief_revision) fail(409, 'revision_conflict',
+        `说明已被他人改到第 ${t.brief_revision} 版，你基于的是第 ${b.base_revision} 版`, '重新读取工单，合并修改后再提交', { current_revision: t.brief_revision });
+      if (b.title !== undefined && !String(b.title).trim()) fail(422, 'title_required', '标题不能为空');
+      const ids = attRefs(b.brief_md).filter(id => t.attachments.find(a => a.id === id)?.state === 'pending');
+      claimAttachments(t, v, ids, '说明');
+      if (b.title !== undefined) t.title = b.title;
+      if (b.brief_md !== undefined) t.brief_md = b.brief_md;
+      t.brief_revision += 1;
+      pushEvent(s, t, actorOf(v, b.author_name), 'brief_revised', { revision: t.brief_revision });
+      return { revision: t.brief_revision };
+    }],
+    ['POST', /^\/api\/tickets\/([^/]+)\/labels$/, (s, v, m, q, b) => {
+      const t = loadTicket(s, v, m[1]);
+      requireCap(v, t, 'label');
+      const add = b.add || [], remove = b.remove || [];
+      const newly = [];
+      for (const l of add) {
+        const i = l.indexOf(':');
+        if (i < 0) continue;
+        const dim = l.slice(0, i), val = l.slice(i + 1);
+        const vals = s.dictionary[dim];
+        if (!vals) fail(422, 'unknown_dimension', `没有「${dim}」这个维度`, `已有维度：${Object.keys(s.dictionary).join('、')}；新增维度请找管理员`);
+        if (!vals.includes(val) && !b.allow_new) {
+          const suggestions = vals.filter(x => norm(x) === norm(val) || norm(x).includes(norm(val)) || norm(val).includes(norm(x))).map(x => `${dim}:${x}`);
+          fail(422, 'unknown_label_value', `维度「${dim}」下没有「${val}」这个值`,
+            suggestions.length ? `是不是想用 ${suggestions.join('、')}？确实是新值时，传 allow_new: true` : '确实是新值时，传 allow_new: true',
+            { suggestions });
+        }
+        if (!vals.includes(val)) newly.push(l);
+      }
+      for (const l of remove) if (!t.labels.includes(l)) fail(422, 'label_not_on_ticket', `工单上没有标签 ${l}`);
+      const actor = actorOf(v);
+      newly.forEach(l => { const [d, ...r] = l.split(':'); s.dictionary[d].push(r.join(':')); });
+      add.filter(l => !t.labels.includes(l)).forEach(l => { t.labels.push(l); pushEvent(s, t, actor, 'label_added', { label: l }); });
+      remove.forEach(l => { t.labels = t.labels.filter(x => x !== l); pushEvent(s, t, actor, 'label_removed', { label: l }); });
+      return { labels: t.labels, created_dictionary_values: newly };
+    }],
+    ['GET', /^\/api\/labels$/, (s, v, m, q) => {
+      if (v.kind !== 'member') fail(403, 'labels_member_only', '访客不能查看标签');
+      const dim = q.get('dimension');
+      if (dim) return { dimension: dim, values: s.dictionary[dim] || [] };
+      return { dimensions: s.dictionary };
+    }],
+    ['POST', /^\/api\/tickets\/([^/]+)\/close$/, (s, v, m, q, b) => {
+      const t = loadTicket(s, v, m[1]);
+      requireCap(v, t, 'close');
+      if (!REASONS[b.reason]) fail(422, 'invalid_close_reason', '关闭原因必须是 done、wontfix 或 duplicate 之一');
+      if (b.reason === 'duplicate' && !b.duplicate_of) fail(422, 'duplicate_of_required', '原因为重复时，需要提供 duplicate_of');
+      Object.assign(t, { status: 'closed', close_reason: b.reason });
+      pushEvent(s, t, actorOf(v), 'closed', { reason: b.reason, duplicate_of: b.duplicate_of });
+      return { status: t.status, close_reason: t.close_reason };
+    }],
+    ['POST', /^\/api\/tickets\/([^/]+)\/reopen$/, (s, v, m) => {
+      const t = loadTicket(s, v, m[1]);
+      requireCap(v, t, 'reopen');
+      Object.assign(t, { status: 'open', close_reason: null });
+      pushEvent(s, t, actorOf(v), 'reopened');
+      return { status: t.status };
+    }],
+    ['POST', /^\/api\/tickets\/([^/]+)\/guest-links$/, (s, v, m, q, b) => {
+      const t = loadTicket(s, v, m[1]);
+      requireCap(v, t, 'manage_guest_links');
+      if (!String(b.note || '').trim()) fail(422, 'note_required', '访客链接需要备注，例如「检验科-张三」');
+      const days = b.valid_days ?? 30;
+      if (![7, 30, 90].includes(days)) fail(422, 'invalid_valid_days', '有效期只能选 7、30 或 90 天');
+      const token = `tbg_new${++s.linkSeq}`;
+      s.links[token] = { ticket: t.seq, note: b.note, expires_at: addDays(TODAY, days), revoked: false, can_edit_brief: !!b.can_edit_brief };
+      pushEvent(s, t, actorOf(v), 'guest_link_created', { note: b.note });
+      return { __status: 201, url: `${BASE}/g/${token}`, note: b.note, expires_at: s.links[token].expires_at, can_edit_brief: !!b.can_edit_brief };
+    }],
+    ['GET', /^\/api\/intakes\/([^/]+)$/, (s, v, m) => {
+      const it = s.intakes[m[1]];
+      if (!it || !it.active) fail(404, 'intake_not_found', `反馈入口 ${m[1]} 不存在或已停用`);
+      return { slug: m[1], name: it.name, kind: it.kind, template: it.template,
+               pick_dimensions: Object.fromEntries(it.pick_dimensions.map(d => [d, s.dictionary[d]])) };
+    }],
+    ['POST', /^\/api\/intakes\/([^/]+)\/tickets$/, (s, v, m, q, b) => {
+      const it = s.intakes[m[1]];
+      if (!it || !it.active) fail(404, 'intake_not_found', `反馈入口 ${m[1]} 不存在或已停用`);
+      if (!String(b.title || '').trim()) fail(422, 'title_required', '标题必填', it.template.title_hint);
+      const picks = Object.entries(b.picks || {});
+      for (const [d, val] of picks) {
+        if (!it.pick_dimensions.includes(d)) fail(422, 'dimension_not_pickable', `这个入口不允许选择「${d}」`, `可选维度：${it.pick_dimensions.join('、')}`);
+        if (!s.dictionary[d].includes(val)) fail(422, 'unknown_label_value', `「${d}」下没有「${val}」`, `可选值：${s.dictionary[d].join('、')}`);
+      }
+      const token = `tbg_new${++s.linkSeq}`;
+      const seq = s.nextSeq++;
+      const number = `20261015-${String(++s.todayCount).padStart(3, '0')}`;
+      s.links[token] = { ticket: seq, note: `反馈入口「${it.name}」提交人`, expires_at: addDays(TODAY, 30), revoked: false, can_edit_brief: true };
+      const guest = { kind: 'guest', token, link: s.links[token] };
+      const t = { seq, number, kind: it.kind, title: b.title, brief_md: b.brief_md || it.template.brief_skeleton_md, brief_revision: 1,
+                  creator: { kind: 'guest', link: token }, assignee: null, status: 'open', close_reason: null,
+                  labels: [], attachments: [], replyCount: 0, timeline: [] };
+      s.tickets.push(t);
+      const actor = actorOf(guest, b.author_name);
+      pushEvent(s, t, actor, 'created');
+      [...picks.map(([d, val]) => `${d}:${val}`), ...it.default_labels].forEach(l => { t.labels.push(l); pushEvent(s, t, actor, 'label_added', { label: l }); });
+      pushEvent(s, t, actor, 'guest_link_created', { note: s.links[token].note });
+      return { __status: 201, ticket: { number, seq, title: t.title }, guest_link: { url: `${BASE}/g/${token}`, expires_at: s.links[token].expires_at, can_edit_brief: true },
+               next: '之后用这条访客链接查看、补充说明和回复这张反馈' };
+    }],
+  ];
+
+  // (state, request) => { state, response }；失败时状态不变
+  function handle(state, req) {
+    const s = structuredClone(state);
+    const [p, qs] = req.path.split('?');
+    const q = new URLSearchParams(qs || '');
+    try {
+      const v = auth(s, req.token);
+      for (const [method, re, fn] of routes) {
+        const m = p.match(re);
+        if (m && method === req.method) {
+          const out = fn(s, v, m, q, req.body || {});
+          if (out.__markdown) return { state: s, response: { status: 200, contentType: 'text/markdown', body: out.__markdown } };
+          const { __status = 200, ...body } = out;
+          return { state: s, response: { status: __status, contentType: 'application/json', body } };
+        }
+      }
+      fail(404, 'no_such_endpoint', `没有 ${req.method} ${p} 这个接口`);
+    } catch (e) {
+      if (!(e instanceof ApiError)) throw e;
+      return { state, response: { status: e.status, contentType: 'application/json',
+        body: { error: { code: e.code, message: e.message, ...(e.hint ? { hint: e.hint } : {}), ...(e.extra || {}) } } } };
+    }
+  }
+
+  return { BASE, TODAY, initialState, handle, parseTarget, eventText, actorDisplay, usedMb };
+})();
+</script>
+
+<!-- ===================== 演示页面（用完即弃） ===================== -->
+<script>
+const T = Taskboard;
+let state = T.initialState();
+let prevState = null;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const j = o => JSON.stringify(o, null, 2);
+
+function actorLabel(token, s = state) {
+  if (!token) return '无凭证（匿名，经反馈入口）';
+  const m = s.members[token];
+  if (m) return `成员 · ${m.name}`;
+  const l = s.links[token];
+  if (!l) return token;
+  const st = l.revoked ? '已撤销' : l.expires_at < T.TODAY ? '已过期' : `有效至 ${l.expires_at}`;
+  const t = s.tickets.find(x => x.seq === l.ticket);
+  return `访客链接「${l.note}」→ ${t.number}（${st}${l.can_edit_brief ? '，可填写说明' : ''}）`;
+}
+
+// ---- CLI / MCP 对照 ----
+function mapping(req) {
+  const [p, qs] = req.path.split('?');
+  const q = new URLSearchParams(qs || '');
+  const guest = req.token && req.token.startsWith('tbg_');
+  const tk = p.match(/^\/api\/tickets\/([^/]+)/);
+  const ref = guest ? `${T.BASE}/g/${req.token}` : (tk ? decodeURIComponent(tk[1]) : '');
+  const b = req.body || {};
+  const rules = [
+    [/^GET \/api\/session$/, () => [`tb whoami${guest ? ' ' + ref : ''}`, 'whoami']],
+    [/^GET \/api\/tickets\/[^/]+$/, () => [`tb view ${ref}${q.get('format') === 'markdown' ? ' --markdown' : ' --json'}`, 'ticket_read']],
+    [/^GET \/api\/tickets\/[^/]+\/timeline$/, () => [`tb timeline ${ref} --after ${q.get('after') || 0}`, 'ticket_timeline']],
+    [/^POST \/api\/tickets\/[^/]+\/attachments$/, () => [`tb attach ${ref} ./${b.filename || '文件'}`, 'attachment_upload']],
+    [/^POST \/api\/tickets\/[^/]+\/replies$/, () => [`tb reply ${ref} -m "…"${b.author_name ? ` --as ${b.author_name}` : ''}   # 带 --file 时自动先上传`, 'ticket_reply']],
+    [/^PATCH \/api\/tickets\/[^/]+$/, () => [`tb edit ${ref} --brief-file brief.md --base-rev ${b.base_revision ?? '?'}`, 'ticket_edit']],
+    [/^POST \/api\/tickets\/[^/]+\/labels$/, () => [`tb label ${ref} ${(b.add || []).map(x => '+' + x).concat((b.remove || []).map(x => '-' + x)).join(' ')}${b.allow_new ? ' --allow-new' : ''}`, 'ticket_label']],
+    [/^GET \/api\/labels$/, () => [`tb labels${q.get('dimension') ? ' --dimension ' + q.get('dimension') : ''}`, 'labels_list']],
+    [/^POST \/api\/tickets\/[^/]+\/close$/, () => [`tb close ${ref} --reason ${b.reason || '?'}`, 'ticket_close']],
+    [/^POST \/api\/tickets\/[^/]+\/reopen$/, () => [`tb reopen ${ref}`, 'ticket_reopen']],
+    [/^POST \/api\/tickets\/[^/]+\/guest-links$/, () => [`tb link create ${ref} --note "${b.note || ''}" --days ${b.valid_days ?? 30}${b.can_edit_brief ? ' --can-edit-brief' : ''}`, 'guest_link_create']],
+    [/^GET \/api\/intakes\/[^/]+$/, () => [`tb intake show ${T.BASE}/i/${p.split('/')[3]}`, 'intake_read']],
+    [/^POST \/api\/intakes\/[^/]+\/tickets$/, () => [`tb submit ${T.BASE}/i/${p.split('/')[3]} --title "…" --pick 机型=…`, 'intake_submit']],
+  ];
+  const key = `${req.method} ${p}`;
+  for (const [re, f] of rules) if (re.test(key)) return f();
+  return ['（无对应）', '（无对应）'];
+}
+
+// ---- 发送 ----
+function send(req) {
+  const before = state;
+  const { state: next, response } = T.handle(state, req);
+  prevState = before;
+  state = next;
+  renderExchange(req, response);
+  renderState();
+  renderActors();
+  return response;
+}
+
+function renderExchange(req, res) {
+  const [cli, mcp] = mapping(req);
+  const ok = res.status < 400;
+  const head = `${req.method} ${req.path}\n${req.token ? `Authorization: Bearer ${req.token}` : '（无 Authorization 头）'}`;
+  $('exchange').classList.remove('mute');
+  $('exchange').innerHTML = `
+    <div class="mute" style="font-size:12px">身份：${esc(actorLabel(req.token, prevState))}</div>
+    <pre>${esc(head)}${req.body ? '\n\n' + esc(j(req.body)) : ''}</pre>
+    <table><tr><th style="width:60px">CLI</th><td><code>${esc(cli)}</code></td></tr><tr><th>MCP</th><td><code>${esc(mcp)}</code></td></tr></table>
+    <h3>响应 <span class="status ${ok ? 'ok' : 'bad'}">${res.status}</span> <span class="mute" style="font-weight:normal">${res.contentType}</span></h3>
+    <pre>${esc(typeof res.body === 'string' ? res.body : j(res.body))}</pre>`;
+}
+
+// ---- 状态面板 ----
+function renderState() {
+  const prevMax = {};
+  (prevState?.tickets || []).forEach(t => prevMax[t.seq] = t.timeline.length);
+  const changes = [];
+  $('state').innerHTML = state.tickets.map(t => {
+    const isNewTicket = prevState && prevMax[t.seq] === undefined;
+    const fresh = e => prevState && (isNewTicket || e.seq > prevMax[t.seq]);
+    t.timeline.filter(fresh).forEach(e => changes.push(`${t.number}：${T.actorDisplay(e.actor)} ${e.type === 'reply' ? `回复 ${e.reply_no}` : T.eventText(e)}`));
+    const wait = (() => { const r = [...t.timeline].reverse().find(e => e.type === 'reply'); return !r || r.actor.kind === 'guest' ? '本部门' : '对方'; })();
+    const atts = t.attachments.map(a => `<span class="tag ${a.state === 'pending' ? 'gray' : ''}">${esc(a.id)} ${esc(a.filename)} ${a.size_mb}MB${a.state === 'pending' ? ' · 待用' : ' · ' + esc(a.on)}</span>`).join('') || '<span class="mute">无</span>';
+    const tl = t.timeline.map(e => `<div class="ev ${fresh(e) ? 'new' : ''}">
+        <span class="mute">[${e.seq}] ${esc(e.at.slice(5))}</span> ${esc(T.actorDisplay(e.actor))}
+        ${e.type === 'reply' ? `回复 ${e.reply_no}：${esc(e.body_md)}${e.attachment_ids.length ? ` <span class="mute">（附件 ${esc(e.attachment_ids.join('、'))}）</span>` : ''}`
+                             : esc(T.eventText(e))}
+        ${e.type.startsWith('label_') ? '<span class="hidden">· 访客不可见</span>' : ''}</div>`).join('');
+    return `<div class="card" style="margin:0">
+      <div><b>${esc(t.number)}</b> <span class="mute">#${t.seq}</span> ${esc(t.title)}</div>
+      <div class="kv" style="margin-top:8px">
+        <div>类型</div><div>${t.kind === 'task' ? '任务' : '反馈'}</div>
+        <div>状态</div><div>${t.status === 'open' ? '<span class="tag ok">开启</span>' : `<span class="tag bad">已关闭 · ${{ done: '完成', wontfix: '不处理', duplicate: '重复' }[t.close_reason]}</span>`}</div>
+        <div>等待方</div><div>${wait}</div>
+        <div>指派人</div><div>${t.assignee ? esc(Object.values(state.members).find(m => m.id === t.assignee)?.name) : '未指派'}</div>
+        <div>创建者</div><div>${t.creator.kind === 'member' ? esc(Object.values(state.members).find(m => m.id === t.creator.id)?.name) : '访客（经反馈入口）'}</div>
+        <div>标签</div><div>${t.labels.map(l => `<span class="tag">${esc(l)}</span>`).join('') || '<span class="mute">无</span>'}</div>
+        <div>说明</div><div>第 ${t.brief_revision} 版<pre>${esc(t.brief_md)}</pre></div>
+        <div>附件</div><div>${atts}<div class="mute" style="font-size:12px">已用 ${T.usedMb(t)} / 200 MB（含待用）</div></div>
+      </div>
+      <div class="tl">${tl}</div>
+    </div>`;
+  }).join('');
+  $('changed').innerHTML = changes.length ? `<div class="changed"><b>刚才发生：</b>${changes.map(esc).join('；')}</div>` : '';
+  $('links').innerHTML = `<table><tr><th>备注</th><th>工单</th><th>凭证</th><th>状态</th><th>可填写说明</th></tr>${
+    Object.entries(state.links).map(([tok, l]) => `<tr><td>${esc(l.note)}</td><td>${state.tickets.find(x => x.seq === l.ticket).number}</td><td><code>${tok}</code></td>
+      <td>${l.revoked ? '<span class="tag bad">已撤销</span>' : l.expires_at < T.TODAY ? '<span class="tag bad">已过期</span>' : `<span class="tag ok">有效至 ${l.expires_at}</span>`}</td>
+      <td>${l.can_edit_brief ? '是' : '否'}</td></tr>`).join('')}</table>`;
+  const prevDict = prevState?.dictionary || state.dictionary;
+  $('dict').innerHTML = Object.entries(state.dictionary).map(([d, vs]) =>
+    `<div><b>${esc(d)}</b>：${vs.map(x => `<span class="tag" ${!prevDict[d]?.includes(x) ? 'style="background:var(--new)"' : ''}>${esc(x)}</span>`).join('')}</div>`).join('');
+}
+
+// ---- 自由操作 ----
+function renderActors() {
+  const cur = $('actor').value;
+  const tokens = [...Object.keys(state.members), ...Object.keys(state.links), ''];
+  $('actor').innerHTML = tokens.map(t => `<option value="${t}">${esc(actorLabel(t))}</option>`).join('');
+  $('actor').value = tokens.includes(cur) ? cur : 'tbm_wang';
+  const tcur = $('target').value;
+  $('target').innerHTML = state.tickets.map(t => `<option value="${t.number}">${t.number} ${esc(t.title)}</option>`).join('');
+  $('target').value = state.tickets.some(t => t.number === tcur) ? tcur : '20261015-007';
+  actorHint();
+}
+function actorHint() {
+  const t = $('actor').value;
+  $('actorHint').textContent = !t ? '不带凭证，只能使用反馈入口。'
+    : t.startsWith('tbg_') ? `Agent 手里只有这条链接：${T.BASE}/g/${t}` : `成员 token：${t}（在 CLI 中配置一次即可）`;
+}
+
+const OPS = [
+  ['我是谁', r => ['GET', '/api/session']],
+  ['读取（JSON）', r => ['GET', `/api/tickets/${r}`]],
+  ['读取（Markdown）', r => ['GET', `/api/tickets/${r}?format=markdown`]],
+  ['增量时间线', r => ['GET', `/api/tickets/${r}/timeline?after=6`]],
+  ['上传附件', r => ['POST', `/api/tickets/${r}/attachments`, { filename: '现场照片.jpg', size_mb: 3.5 }]],
+  ['回复', r => ['POST', `/api/tickets/${r}/replies`, { body_md: '试剂批号 R20260930，更换后复测结果见附图。\n\n![现场照片.jpg](att:att_5)', author_name: '张三' }]],
+  ['编辑说明', r => ['PATCH', `/api/tickets/${r}`, { brief_md: '（补充后的说明）', base_revision: 1 }]],
+  ['打标签', r => ['POST', `/api/tickets/${r}/labels`, { add: ['机型:BH7600CS'], remove: ['待初筛'] }]],
+  ['查标签字典', r => ['GET', '/api/labels?dimension=机型']],
+  ['关闭', r => ['POST', `/api/tickets/${r}/close`, { reason: 'done' }]],
+  ['重新开启', r => ['POST', `/api/tickets/${r}/reopen`]],
+  ['创建访客链接', r => ['POST', `/api/tickets/${r}/guest-links`, { note: '设备科-王五', valid_days: 30, can_edit_brief: false }]],
+  ['查看反馈入口', r => ['GET', '/api/intakes/bug']],
+  ['经入口提交', r => ['POST', '/api/intakes/bug/tickets', { title: 'BH-5100 打印报告乱码', brief_md: '## 现象\n打印出的报告中文乱码\n\n## 复现步骤\n任意报告点打印\n\n## 期望结果\n正常显示', picks: { 机型: 'BH-5100' }, author_name: '赵六' }]],
+];
+$('ops').innerHTML = OPS.map(([label], i) => `<button data-op="${i}">${label}</button>`).join('');
+$('ops').onclick = e => {
+  const i = e.target.dataset.op; if (i == null) return;
+  const [method, path, body] = OPS[i][1]($('target').value);
+  $('method').value = method; $('path').value = path; $('body').value = body ? j(body) : '';
+};
+$('actor').onchange = actorHint;
+$('send').onclick = () => {
+  let body;
+  try { body = $('body').value.trim() ? JSON.parse($('body').value) : undefined; }
+  catch { alert('请求体不是合法的 JSON'); return; }
+  send({ method: $('method').value, path: $('path').value.trim(), token: $('actor').value || null, body });
+};
+$('reset').onclick = () => { state = T.initialState(); prevState = null; renderState(); renderActors(); $('exchange').innerHTML = '平台已重置。'; };
+
+// ---- 粘贴链接 ----
+const showParsed = () => $('parsed').textContent = j(T.parseTarget($('paste').value)) +
+  '\n\n也可以试：http://taskboard.lan/t/20261015-007、#1234、20261015-007、http://taskboard.lan/i/bug';
+$('paste').oninput = showParsed;
+
+// ---- 引导场景 ----
+const W = 'tbm_wang', LI = 'tbm_li', Z = 'tbg_zhang3', QA = 'tbg_qa', OLD = 'tbg_old', REV = 'tbg_rev';
+const N = '20261015-007';
+const SCENARIOS = [
+  { title: '访客 Agent 回复', desc: '检验科张三的 Agent 手里<b>只有一条访客链接</b>。注意观察：它先通过 <code>/api/session</code> 查出链接指向哪张工单；读取结果里<b>没有标签</b>；<code>viewer.can</code> 列出它能做的事；回复之后，<b>等待方</b>从“对方”变成“本部门”。',
+    steps: [
+      ['用链接确认身份和工单', Z, 'GET', '/api/session'],
+      ['以 Markdown 读取工单', Z, 'GET', `/api/tickets/${N}?format=markdown`],
+      ['上传一张现场照片', Z, 'POST', `/api/tickets/${N}/attachments`, { filename: '现场照片.jpg', size_mb: 3.5 }],
+      ['回复并在正文中引用照片', Z, 'POST', `/api/tickets/${N}/replies`, { body_md: '试剂批号 R20260930，更换后复测结果见附图。\n\n![现场照片.jpg](att:att_5)', author_name: '张三' }],
+      ['以 JSON 再次读取，查看等待方', Z, 'GET', `/api/tickets/${N}`],
+    ] },
+  { title: '大文件与配额', desc: '单个文件不能超过 50MB，整张工单的附件合计不能超过 200MB（这张工单已用 121.2MB）。注意观察：被拒时 <code>hint</code> 会直接给出 NAS 路径的写法；<b>待用附件也计入配额</b>，这一点是否合理？',
+    steps: [
+      ['上传 80MB 原始数据 → 超出单个文件上限', Z, 'POST', `/api/tickets/${N}/attachments`, { filename: '原始数据.zip', size_mb: 80 }],
+      ['改为在回复中写 NAS 路径', Z, 'POST', `/api/tickets/${N}/replies`, { body_md: '原始数据较大，已放在 \\\\nas01\\检验科\\BH-7600CS\\2026-10-14\\原始数据.zip', author_name: '张三' }],
+      ['成员上传 48MB 文件（尚未引用）', W, 'POST', `/api/tickets/${N}/attachments`, { filename: '对比数据.zip', size_mb: 48 }],
+      ['再上传 40MB → 超出工单合计上限', Z, 'POST', `/api/tickets/${N}/attachments`, { filename: '补充日志.zip', size_mb: 40 }],
+    ] },
+  { title: '打标签', desc: '王工的 Agent 做初筛。注意观察：<code>BH7600CS</code> 这种写法会被拒，并给出近似的已有值；确实是新值时要显式传 <code>allow_new</code>；访客读取时，标签事件<b>整条消失</b>，时间线序号因此跳号。',
+    steps: [
+      ['打「机型:bh5100」→ 被拒，并给出建议', W, 'POST', `/api/tickets/${N}/labels`, { add: ['机型:bh5100'] }],
+      ['查询机型字典', W, 'GET', '/api/labels?dimension=机型'],
+      ['按建议打标签，同时移除「待初筛」', W, 'POST', `/api/tickets/${N}/labels`, { add: ['机型:BH-5100', '部门:检验科'], remove: ['待初筛'] }],
+      ['新建「系统:中间件」（allow_new）', W, 'POST', `/api/tickets/${N}/labels`, { add: ['系统:中间件'], allow_new: true }],
+      ['访客增量读取时间线（标签事件不可见）', Z, 'GET', `/api/tickets/${N}/timeline?after=6`],
+      ['访客尝试打标签 → 403', Z, 'POST', `/api/tickets/${N}/labels`, { add: ['待复测'] }],
+    ] },
+  { title: '编辑说明', desc: '只有创建者，或持有“可填写说明”链接的访客，才能编辑说明。两个人同时编辑时，靠 <code>base_revision</code> 发现冲突。',
+    steps: [
+      ['李工（成员，但不是创建者）编辑 → 403', LI, 'PATCH', `/api/tickets/${N}`, { brief_md: '李工的修改', base_revision: 1 }],
+      ['张三（链接无此权限）编辑 → 403', Z, 'PATCH', `/api/tickets/${N}`, { brief_md: '张三的修改', base_revision: 1 }],
+      ['质量部 Agent（可填写说明）基于第 1 版编辑', QA, 'PATCH', `/api/tickets/${N}`, { brief_md: '检验科反馈：BH-7600CS 从 10-14 起，ALT 质控连续 3 次偏高 2SD 以上。\n\n质量部补充：同批试剂在 BH-5100 上表现正常。\n\n![质控图.png](att:att_1)', base_revision: 1 }],
+      ['王工同样基于第 1 版编辑 → 409 冲突', W, 'PATCH', `/api/tickets/${N}`, { brief_md: '王工的修改', base_revision: 1 }],
+      ['王工重新读取工单', W, 'GET', `/api/tickets/${N}?format=markdown`],
+      ['王工基于第 2 版再次编辑', W, 'PATCH', `/api/tickets/${N}`, { title: 'BH-7600CS ALT 质控偏高', base_revision: 2 }],
+    ] },
+  { title: '关闭与链接失效', desc: '工单关闭后，访客链接变为只读；重新开启后恢复可回复。已过期或已撤销的链接直接返回 401；有效的访客链接访问<b>其他工单</b>时返回 404。',
+    steps: [
+      ['王工关闭工单（完成）', W, 'POST', `/api/tickets/${N}/close`, { reason: 'done' }],
+      ['张三读取 → 正常，但 can.reply 为 false', Z, 'GET', `/api/tickets/${N}`],
+      ['张三回复 → 409 只读', Z, 'POST', `/api/tickets/${N}/replies`, { body_md: '还有个问题……', author_name: '张三' }],
+      ['王工重新开启工单', W, 'POST', `/api/tickets/${N}/reopen`],
+      ['张三再次回复 → 成功', Z, 'POST', `/api/tickets/${N}/replies`, { body_md: '还有个问题：复测时需要重新校准吗？', author_name: '张三' }],
+      ['使用过期链接', OLD, 'GET', '/api/session'],
+      ['使用已撤销链接', REV, 'GET', `/api/tickets/${N}`],
+      ['张三的链接访问其他工单 → 404', Z, 'GET', '/api/tickets/20261014-003'],
+    ] },
+  { title: '反馈入口', desc: '其他部门的人或 Agent 没有账号，也没有访客链接，只知道部门的反馈入口地址。注意观察：提交后直接拿到一条访客链接，之后完全按访客的方式操作；提交人可以填写说明；访客选的机型自动成为标签。',
+    steps: [
+      ['匿名读取入口：模板与可选维度', null, 'GET', '/api/intakes/bug'],
+      ['匿名提交一张反馈', null, 'POST', '/api/intakes/bug/tickets', { title: 'BH-5100 打印报告乱码', brief_md: '## 现象\n打印出的报告中文乱码\n\n## 复现步骤\n任意报告点打印\n\n## 期望结果\n正常显示', picks: { 机型: 'BH-5100' }, author_name: '赵六' }],
+      ['用拿到的链接确认身份', 'tbg_new1', 'GET', '/api/session'],
+      ['用该链接补充说明（第 1 版 → 第 2 版）', 'tbg_new1', 'PATCH', '/api/tickets/20261015-008', { brief_md: '## 现象\n打印出的报告中文乱码，仅限 A4 纸型\n\n## 复现步骤\n选 A4，任意报告点打印\n\n## 期望结果\n正常显示', base_revision: 1, author_name: '赵六' }],
+      ['用该链接读取 20261015-007 → 404', 'tbg_new1', 'GET', `/api/tickets/${N}`],
+      ['成员读取新反馈（能看到标签）', W, 'GET', '/api/tickets/20261015-008?format=markdown'],
+    ] },
+];
+
+let active = 0, progress = 0;
+function renderTabs() {
+  $('tabs').innerHTML = SCENARIOS.map((s, i) => `<button class="${i === active ? 'active' : ''}" data-tab="${i}">${i + 1}. ${s.title}</button>`).join('');
+  const sc = SCENARIOS[active];
+  $('scenario').innerHTML = `<p style="margin-top:0">${sc.desc}</p>` + sc.steps.map(([label, who], i) =>
+    `<div class="step"><div class="who">${esc(who ? actorLabel(who).replace(/（.*$/, '') : '匿名')}</div>
+     <button data-step="${i}" class="${i < progress ? 'done' : i === progress ? 'next' : ''}">${i + 1}. ${esc(label)}</button></div>`).join('');
+}
+$('tabs').onclick = e => {
+  const i = e.target.dataset.tab; if (i == null) return;
+  active = +i; progress = 0;
+  state = T.initialState(); prevState = null;
+  renderState(); renderActors(); renderTabs();
+  $('exchange').innerHTML = '已重置平台，开始场景：' + esc(SCENARIOS[active].title);
+};
+$('scenario').onclick = e => {
+  const i = e.target.dataset.step; if (i == null) return;
+  const [, token, method, path, body] = SCENARIOS[active].steps[i];
+  $('method').value = method; $('path').value = path; $('body').value = body ? j(body) : '';
+  send({ method, path, token, body });
+  progress = Math.max(progress, +i + 1);
+  renderTabs();
+};
+
+renderTabs(); renderActors(); renderState(); showParsed();
+</script>
+</body>
+</html>
