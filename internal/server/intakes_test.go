@@ -312,10 +312,10 @@ func Test入口提交缺必填被拦下且逐项提示(t *testing.T) {
 	res := s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/intakes/bug/tickets", map[string]any{
 		"title": "UD-2300 报警",
 		"fields": map[string]string{
-			"什么时候发生的？":  "今天上午",
+			"什么时候发生的？": "今天上午",
 			"实际看到了什么？": "弹出“E-203”",
 			"你期望看到什么？": "正常开始",
-			"出现得频繁吗？":   "每次",
+			"出现得频繁吗？":  "每次",
 		},
 		"author_name": "赵六",
 	}, nil)
@@ -439,4 +439,337 @@ type intakeErrorBody struct {
 		} `json:"fields"`
 		Suggestions []string `json:"suggestions"`
 	} `json:"error"`
+}
+
+// 停用的入口和轮换前的旧 slug 都不能再提交（也不能再匿名读取）；
+// 轮换后的新 slug 立即可用，已提交的工单不受影响。
+func Test停用的入口与旧slug不能再提交(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+	submitted := submitToIntake(t, s, "bug", map[string]any{
+		"title": "第一张反馈", "fields": bugFields(),
+	})
+
+	// 停用：匿名读与提交都按不存在处理；列表里带 active: false。
+	res := s.Do(t, web, http.MethodPost, "/api/v1/intakes/bug/deactivate", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("停用状态码 = %d, 想 200", res.StatusCode)
+	}
+	for _, tc := range []struct {
+		method, path string
+	}{
+		{http.MethodGet, "/api/v1/intakes/bug"},
+		{http.MethodPost, "/api/v1/intakes/bug/tickets"},
+	} {
+		res := s.Do(t, s.NewClient(), tc.method, tc.path, map[string]any{"title": "x", "fields": bugFields()}, nil)
+		var e intakeErrorBody
+		tbtest.DecodeJSON(t, res, &e)
+		if res.StatusCode != http.StatusNotFound || e.Error.Code != "intake_not_found" {
+			t.Errorf("%s 停用后 = %d/%s, 想 404/intake_not_found", tc.method, res.StatusCode, e.Error.Code)
+		}
+	}
+	// 再次停用幂等。
+	res = s.Do(t, web, http.MethodPost, "/api/v1/intakes/bug/deactivate", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("重复停用 = %d, 想 200（幂等）", res.StatusCode)
+	}
+
+	// 轮换：先再建一个入口验证轮换路径（上面的已停用，轮换一个活跃的）。
+	createIntake(t, s, web, map[string]any{"slug": "check", "name": "检验科反馈", "template": "bug-report"})
+	rotated := submitToIntake(t, s, "check", map[string]any{
+		"title": "轮换前提交", "fields": bugFields(),
+	})
+	res = s.Do(t, web, http.MethodPost, "/api/v1/intakes/check/rotate", map[string]any{"slug": "check-2027"}, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("轮换状态码 = %d, 想 200", res.StatusCode)
+	}
+	// 旧 slug 立即失效，新 slug 可用。
+	res = s.Do(t, s.NewClient(), http.MethodGet, "/api/v1/intakes/check", nil, nil)
+	var e intakeErrorBody
+	tbtest.DecodeJSON(t, res, &e)
+	if res.StatusCode != http.StatusNotFound || e.Error.Code != "intake_not_found" {
+		t.Errorf("旧 slug 读取 = %d/%s, 想 404/intake_not_found", res.StatusCode, e.Error.Code)
+	}
+	res = s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/intakes/check/tickets",
+		map[string]any{"title": "x", "fields": bugFields()}, nil)
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("旧 slug 提交 = %d, 想 404", res.StatusCode)
+	}
+	res = s.Do(t, s.NewClient(), http.MethodGet, "/api/v1/intakes/check-2027", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("新 slug 读取 = %d, 想 200", res.StatusCode)
+	}
+	submitToIntake(t, s, "check-2027", map[string]any{"title": "新 slug 提交", "fields": bugFields()})
+
+	// 轮换到已占用的 slug → 409 slug_taken；非法 slug → 422 invalid_slug。
+	res = s.Do(t, web, http.MethodPost, "/api/v1/intakes/check-2027/rotate", map[string]any{"slug": "bug"}, nil)
+	var e2 intakeErrorBody
+	tbtest.DecodeJSON(t, res, &e2)
+	if res.StatusCode != http.StatusConflict || e2.Error.Code != "slug_taken" {
+		t.Errorf("占用 slug = %d/%s, 想 409/slug_taken", res.StatusCode, e2.Error.Code)
+	}
+	res = s.Do(t, web, http.MethodPost, "/api/v1/intakes/check-2027/rotate", map[string]any{"slug": "检验科 反馈"}, nil)
+	tbtest.DecodeJSON(t, res, &e2)
+	if res.StatusCode != http.StatusUnprocessableEntity || e2.Error.Code != "invalid_slug" {
+		t.Errorf("非法 slug = %d/%s, 想 422/invalid_slug", res.StatusCode, e2.Error.Code)
+	}
+
+	// 停用与轮换不影响已经提交的工单和提交者手里的访客链接。
+	var got ticketResponseBody
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+rotated.Ticket.Number, nil, &got)
+	if got.Title != "轮换前提交" {
+		t.Errorf("已提交的工单不受停用/轮换影响：%q", got.Title)
+	}
+	res = s.Do(t, s.GuestClient(rotated.GuestLink.URL[len("/g/"):]),
+		http.MethodGet, "/api/v1/tickets/"+rotated.Ticket.Number, nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("提交者的访客链接在停用/轮换后应继续可用：%d", res.StatusCode)
+	}
+	// 第一张反馈的链接同样可用。
+	res = s.Do(t, s.GuestClient(submitted.GuestLink.URL[len("/g/"):]),
+		http.MethodGet, "/api/v1/tickets/"+submitted.Ticket.Number, nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("提交者的访客链接在入口停用后应继续可用：%d", res.StatusCode)
+	}
+}
+
+// 用非反馈类型的模板绑定入口时被拒绝；不存在的模板与已停用的模板同样被拒；
+// 入口创建本身的参数校验（slug）与占用冲突。
+func Test绑定非反馈类型的模板被拒绝(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+
+	cases := []struct {
+		name   string
+		body   map[string]any
+		status int
+		code   string
+	}{
+		{"任务模板", map[string]any{"slug": "task", "name": "派活", "template": "assign-task"},
+			http.StatusUnprocessableEntity, "template_not_report"},
+		{"问题咨询模板（也是任务）", map[string]any{"slug": "ask", "name": "咨询", "template": "question"},
+			http.StatusUnprocessableEntity, "template_not_report"},
+		{"不存在的模板", map[string]any{"slug": "x", "name": "x", "template": "no-such"},
+			http.StatusNotFound, "template_not_found"},
+		{"没写名称", map[string]any{"slug": "y", "template": "bug-report"},
+			http.StatusUnprocessableEntity, "name_required"},
+		{"没写 slug", map[string]any{"name": "n", "template": "bug-report"},
+			http.StatusUnprocessableEntity, "slug_required"},
+		{"非法 slug", map[string]any{"slug": "Bug 反馈", "name": "n", "template": "bug-report"},
+			http.StatusUnprocessableEntity, "invalid_slug"},
+	}
+	for _, tc := range cases {
+		res := createIntake(t, s, web, tc.body)
+		var e intakeErrorBody
+		tbtest.DecodeJSON(t, res, &e)
+		if res.StatusCode != tc.status || e.Error.Code != tc.code {
+			t.Errorf("%s = %d/%s, 想 %d/%s", tc.name, res.StatusCode, e.Error.Code, tc.status, tc.code)
+		}
+	}
+
+	// 正常创建后，slug 不能复用（409 slug_taken）。
+	res := createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("创建反馈入口 = %d, 想 201", res.StatusCode)
+	}
+	res = createIntake(t, s, web, map[string]any{"slug": "bug", "name": "另一个", "template": "bug-report"})
+	var e intakeErrorBody
+	tbtest.DecodeJSON(t, res, &e)
+	if res.StatusCode != http.StatusConflict || e.Error.Code != "slug_taken" {
+		t.Errorf("重复 slug = %d/%s, 想 409/slug_taken", res.StatusCode, e.Error.Code)
+	}
+
+	// 停用模板后不能再新建入口，已有入口也不能再提交（始终用最新版，且要在用）。
+	res = s.Do(t, web, http.MethodPost, "/api/v1/templates/bug-report/deactivate", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("停用模板状态码 = %d", res.StatusCode)
+	}
+	res = createIntake(t, s, web, map[string]any{"slug": "bug2", "name": "再一个", "template": "bug-report"})
+	tbtest.DecodeJSON(t, res, &e)
+	if res.StatusCode != http.StatusUnprocessableEntity || e.Error.Code != "template_inactive" {
+		t.Errorf("停用模板绑定 = %d/%s, 想 422/template_inactive", res.StatusCode, e.Error.Code)
+	}
+	res = s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/intakes/bug/tickets",
+		map[string]any{"title": "x", "fields": bugFields()}, nil)
+	tbtest.DecodeJSON(t, res, &e)
+	if res.StatusCode != http.StatusUnprocessableEntity || e.Error.Code != "template_inactive" {
+		t.Errorf("停用模板后入口提交 = %d/%s, 想 422/template_inactive", res.StatusCode, e.Error.Code)
+	}
+}
+
+// 入口始终使用绑定模板的最新版本：模板修改出新版本后，匿名读取回显新版本，
+// 提交按新版本的字段校验；已提交的工单仍保存创建时版本的快照。
+func Test入口始终使用模板的最新版本(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+
+	// 新版本把「你的猜测或补充？」改成必填（其余字段保持不变）。
+	markdown := "---\n名称: Bug 反馈\n类型: 反馈\n预设标签: [待初筛]\n---\n" +
+		"## 哪台仪器？ {维度:机型 必填}\n铭牌上有型号。\n" +
+		"## 序列号和软件版本是多少？\n设置里可以看到。\n" +
+		"## 什么时候发生的？ {必填}\n大概时间。\n" +
+		"## 你做了哪些操作？ {必填}\n按顺序写。\n" +
+		"## 实际看到了什么？ {必填}\n原样照抄。\n" +
+		"## 你期望看到什么？ {必填}\n本来应该发生什么。\n" +
+		"## 出现得频繁吗？ {单选: 每次 | 经常 | 偶尔 | 仅一次 必填}\n" +
+		"## 对工作有影响吗？ {单选: 无法出报告 | 能绕过 | 不影响}\n" +
+		"## 你的猜测或补充？ {必填}\n猜错也没关系。\n"
+	res := s.Do(t, web, http.MethodPatch, "/api/v1/templates/bug-report", map[string]any{"markdown": markdown}, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("修改模板状态码 = %d, 想 200", res.StatusCode)
+	}
+
+	var view intakeView
+	s.Do(t, s.NewClient(), http.MethodGet, "/api/v1/intakes/bug", nil, &view)
+	if view.Template.Version != 2 {
+		t.Errorf("入口应回显模板最新版本：version = %d, 想 2", view.Template.Version)
+	}
+	found := false
+	for _, f := range view.Template.Fields {
+		if f.Key == "你的猜测或补充？" {
+			found = true
+			if !f.Required {
+				t.Error("新版本里「你的猜测或补充？」应是必填")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("新版本的字段没出现在入口里：%v", view.Template.Fields)
+	}
+
+	// 按新版本校验：没填新的必填项 → missing_fields 提到这一项。
+	res = s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/intakes/bug/tickets", map[string]any{
+		"title": "新版本下提交", "fields": bugFields(), // bugFields 没填「你的猜测或补充？」
+	}, nil)
+	var e intakeErrorBody
+	tbtest.DecodeJSON(t, res, &e)
+	if res.StatusCode != http.StatusUnprocessableEntity || e.Error.Code != "missing_fields" {
+		t.Fatalf("新版本校验 = %d/%s, 想 422/missing_fields", res.StatusCode, e.Error.Code)
+	}
+	if len(e.Error.Fields) != 1 || e.Error.Fields[0].Field != "你的猜测或补充？" {
+		t.Errorf("缺的应是新必填项：%+v", e.Error.Fields)
+	}
+	fields := withExtra(bugFields(), "你的猜测或补充？", "可能是传感器")
+	submitted := submitToIntake(t, s, "bug", map[string]any{"title": "新版本下提交", "fields": fields})
+
+	// 匿名读取也提供 ?format=markdown 的填写指南（给访客的 Agent 自查，用户故事 86）。
+	res = s.Do(t, s.NewClient(), http.MethodGet, "/api/v1/intakes/bug?format=markdown", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("填写指南状态码 = %d", res.StatusCode)
+	}
+	body := string(readAll(t, res))
+	for _, want := range []string{"你的猜测或补充？", "不确定", "模板"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("填写指南里应包含 %q：\n%s", want, body)
+		}
+	}
+
+	// 提交后的工单保留第 2 版的快照：修订时按第 2 版字段校验。
+	var got ticketResponseBody
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+submitted.Ticket.Number, nil, &got)
+	if got.Brief.Template == nil || *got.Brief.Template != "bug-report" {
+		t.Fatalf("工单的模板 = %v", got.Brief.Template)
+	}
+}
+
+// 入口提交支持 Idempotency-Key：同一个 key 的重放返回首次结果，不重复建单。
+func Test入口提交的幂等重放(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+
+	headers := map[string]string{"Idempotency-Key": "submit-once"}
+	body := map[string]any{"title": "网络抖动重试", "fields": bugFields(), "author_name": "赵六"}
+	first := s.DoWithHeaders(t, s.NewClient(), http.MethodPost, "/api/v1/intakes/bug/tickets", headers, body, nil)
+	if first.StatusCode != http.StatusCreated {
+		t.Fatalf("首次提交 = %d, 想 201", first.StatusCode)
+	}
+	firstBody := readAll(t, first)
+	replay := s.DoWithHeaders(t, s.NewClient(), http.MethodPost, "/api/v1/intakes/bug/tickets", headers, body, nil)
+	if replay.StatusCode != http.StatusCreated {
+		t.Fatalf("重放状态码 = %d, 想 201", replay.StatusCode)
+	}
+	if got := readAll(t, replay); string(got) != string(firstBody) {
+		t.Errorf("重放应逐字节返回首次结果：\n%s\n%s", firstBody, got)
+	}
+	// 只建了一张工单（#2 不存在）。
+	res := s.Do(t, web, http.MethodGet, "/api/v1/tickets/2", nil, nil)
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("重放不应再建单（/tickets/2 = %d, 想 404）", res.StatusCode)
+	}
+}
+
+// 对外主线：入口提交 → 初筛（成员回复追问）轮到访客 → 访客回复后轮回本部门。
+// 提交者（角色 creator，视同创建者）的 Markdown「下一步」按访客给指引。
+func Test入口提交的反馈在初筛与访客之间轮转(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+	submitted := submitToIntake(t, s, "bug", map[string]any{
+		"title": "UD-2300 报警", "fields": bugFields(), "author_name": "赵六",
+	})
+	guest := s.GuestClient(submitted.GuestLink.URL[len("/g/"):])
+
+	// 尚无回复：反馈轮到本部门（未指派，原因「尚未指派」）。
+	var asMember ticketResponseBody
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+submitted.Ticket.Number, nil, &asMember)
+	if asMember.WaitingOn.Party != "department" {
+		t.Errorf("刚提交的反馈应轮到本部门：%+v", asMember.WaitingOn)
+	}
+
+	// 初筛 Agent 用普通回复逐项追问（不改写说明），之后轮到访客。
+	var reply struct {
+		WaitingOn struct {
+			Party string `json:"party"`
+		} `json:"waiting_on"`
+	}
+	res := s.Do(t, web, http.MethodPost, "/api/v1/tickets/"+submitted.Ticket.Number+"/replies",
+		map[string]any{"body_md": "请补充试剂批号。"}, &reply)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("成员回复状态码 = %d", res.StatusCode)
+	}
+	if reply.WaitingOn.Party != "guest" {
+		t.Errorf("成员回复后应轮到访客：%+v", reply.WaitingOn)
+	}
+	var asGuest ticketResponseBody
+	s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+submitted.Ticket.Number, nil, &asGuest)
+	if !asGuest.Viewer.YourTurn {
+		t.Error("成员追问后应轮到提交者（your_turn = true）")
+	}
+	if asGuest.Viewer.Role != "creator" {
+		t.Errorf("提交者角色 = %q, 想 creator", asGuest.Viewer.Role)
+	}
+	// Markdown 视角：发起人记为访客（经入口链接），「下一步」按访客给回复指引。
+	res = s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+submitted.Ticket.Number+"?format=markdown", nil, nil)
+	md := string(readAll(t, res))
+	for _, want := range []string{
+		"赵六（经「反馈入口「部门 Bug 反馈」提交人」链接）",
+		"现在轮到你（访客）回复",
+		"author_name",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("提交者的 Markdown 里应包含 %q：\n%s", want, md)
+		}
+	}
+
+	// 访客补充（回复自报署名），之后轮回本部门（待初筛队列又能查到它）。
+	res = s.Do(t, guest, http.MethodPost, "/api/v1/tickets/"+submitted.Ticket.Number+"/replies",
+		map[string]any{"body_md": "批号 20260901。", "author_name": "赵六"}, &reply)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("访客回复状态码 = %d", res.StatusCode)
+	}
+	if reply.WaitingOn.Party != "department" {
+		t.Errorf("访客回复后应轮回本部门：%+v", reply.WaitingOn)
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+submitted.Ticket.Number, nil, &asMember)
+	if asMember.WaitingOn.Reason != "访客回复了" {
+		t.Errorf("轮回本部门的原因 = %q, 想 访客回复了", asMember.WaitingOn.Reason)
+	}
 }
