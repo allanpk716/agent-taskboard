@@ -356,6 +356,7 @@ type ticketResponseBody struct {
 		At     string     `json:"at"`
 		Actor  authorBody `json:"actor"`
 		Type   string     `json:"type"`
+		Label  string     `json:"label"`
 	} `json:"timeline"`
 }
 

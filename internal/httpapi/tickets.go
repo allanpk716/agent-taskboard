@@ -36,15 +36,29 @@ func (a *API) handleTicketsRoot(w http.ResponseWriter, r *http.Request) {
 
 // handleTicketRef 处理单张工单：
 //
-//	GET /api/v1/tickets/{编号或序号}[?format=markdown]
+//	GET  /api/v1/tickets/{编号或序号}[?format=markdown]
+//	POST /api/v1/tickets/{编号或序号}/labels  打标签 / 摘标签（#31）
 //
-// 工单引用接受 YYYYMMDD-NNN 工单编号或全局序号（可带 # 前缀）。
+// 工单引用接受 YYYYMMDD-NNN 工单编号或全局序号（可带 # 前缀）；
+// 其余子资源（replies、timeline 等）由后续工单实现。
 func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		a.readTicket(w, r)
+	ref, sub, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/v1/tickets/"), "/")
+	switch sub {
+	case "":
+		switch r.Method {
+		case http.MethodGet:
+			a.readTicket(w, r, ref)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
+		}
+	case "labels":
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "打标签用 POST")
+			return
+		}
+		a.setTicketLabels(w, r, ref)
 	default:
-		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
+		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "读工单用 /api/v1/tickets/{编号或序号}")
 	}
 }
 
@@ -92,14 +106,9 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (a *API) readTicket(w http.ResponseWriter, r *http.Request) {
+func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	viewer, ok := a.viewerFromRequest(w, r)
 	if !ok {
-		return
-	}
-	ref := strings.TrimPrefix(r.URL.Path, "/api/v1/tickets/")
-	if strings.Contains(ref, "/") { // /timeline 等子资源由后续工单实现
-		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "读工单用 /api/v1/tickets/{编号或序号}")
 		return
 	}
 	full, err := a.tickets.ByRef(r.Context(), ref)
@@ -137,7 +146,11 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, err error
 		e := err.(*labels.UnknownValueError)
 		extra := map[string]any{"suggestions": e.Suggestions}
 		WriteErrorExtra(w, http.StatusUnprocessableEntity, CodeUnknownLabelValue,
-			e.Error(), "改用字典中已有的值；完整字典见 GET /api/v1/labels（#31 提供）", extra)
+			e.Error(), "改用字典中已有的值，或带 allow_new: true 新建；完整字典见 GET /api/v1/labels", extra)
+	case isLabelDeactivated(err):
+		e := err.(*labels.LabelDeactivatedError)
+		WriteError(w, http.StatusUnprocessableEntity, CodeLabelDeactivated, e.Error(),
+			"这个值已停用，不能再新打；历史工单上仍保留")
 	case errors.Is(err, tickets.ErrNotFound):
 		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
 			"用工单编号（YYYYMMDD-NNN）或全局序号引用；编号按北京时间分配")
@@ -148,6 +161,11 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, err error
 
 func isUnknownLabelValue(err error) bool {
 	var e *labels.UnknownValueError
+	return errors.As(err, &e)
+}
+
+func isLabelDeactivated(err error) bool {
+	var e *labels.LabelDeactivatedError
 	return errors.As(err, &e)
 }
 
@@ -218,6 +236,7 @@ type eventView struct {
 	At     time.Time  `json:"at"`
 	Actor  authorView `json:"actor"`
 	Type   string     `json:"type"`
+	Label  string     `json:"label,omitempty"` // label_added / label_removed 事件带
 }
 
 type ticketView struct {
@@ -276,7 +295,7 @@ func newTicketView(full tickets.Full, viewer identity.Viewer) ticketView {
 	v.Viewer = tv
 	for _, e := range full.Timeline {
 		v.Timeline = append(v.Timeline, eventView{
-			Seq: e.Seq, Change: e.Change, At: e.At, Actor: newAuthorView(e.Actor), Type: e.Type,
+			Seq: e.Seq, Change: e.Change, At: e.At, Actor: newAuthorView(e.Actor), Type: e.Type, Label: e.Label,
 		})
 	}
 	return v
@@ -310,7 +329,7 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer) markdownview
 	}
 	for _, e := range full.Timeline {
 		in.Timeline = append(in.Timeline, markdownview.Event{
-			Seq: e.Seq, At: e.At, AuthorName: e.Actor.DisplayName(), Type: e.Type,
+			Seq: e.Seq, At: e.At, AuthorName: e.Actor.DisplayName(), Type: e.Type, Label: e.Label,
 		})
 	}
 	return in

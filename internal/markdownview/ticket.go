@@ -14,6 +14,7 @@ type Event struct {
 	At         time.Time
 	AuthorName string // 已按 ADR 0003 拼好的署名
 	Type       string
+	Label      string // label_added / label_removed 的标签
 }
 
 // Input 是单张工单 Markdown 视图的输入（纯数据，由 HTTP 层从投影填充）。
@@ -112,8 +113,13 @@ func roleText(role string) string {
 }
 
 func eventText(e Event) string {
-	if e.Type == "created" {
+	switch e.Type {
+	case "created":
 		return "创建工单"
+	case "label_added":
+		return "打上标签 " + e.Label
+	case "label_removed":
+		return "摘掉标签 " + e.Label
 	}
 	return e.Type
 }

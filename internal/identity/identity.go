@@ -53,6 +53,11 @@ func (m *Manager) CreateAdmin(ctx context.Context, username, name, password stri
 	return m.createMember(ctx, username, name, password, true)
 }
 
+// CreateMember 创建一位普通成员（并非常理员）；成员账号管理接口（#42）走这里。
+func (m *Manager) CreateMember(ctx context.Context, username, name, password string) (Member, error) {
+	return m.createMember(ctx, username, name, password, false)
+}
+
 func (m *Manager) createMember(ctx context.Context, username, name, password string, isAdmin bool) (Member, error) {
 	if username == "" || password == "" {
 		return Member{}, fmt.Errorf("登录名和密码都不能为空")

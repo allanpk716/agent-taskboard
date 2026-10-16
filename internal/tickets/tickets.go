@@ -6,6 +6,7 @@ package tickets
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -68,7 +69,7 @@ type Event struct {
 	At     time.Time
 	Actor  Author
 	Type   string // created | reply | assigned | label_added | …（后续工单扩展）
-	// 附加字段（reply 的正文等）由后续工单扩展。
+	Label  string // label_added / label_removed 的标签（附加字段，其余类型为空）
 }
 
 // Full 是读取一张工单时的完整投影：核心字段 + 标签 + 完整时间线。
@@ -302,7 +303,7 @@ func (m *Manager) ticketLabels(ctx context.Context, seq int64) ([]string, error)
 
 func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT e.seq, e.change_seq, e.at, e.type, e.actor_member_id, mm.name, e.actor_agent_id, aa.name
+		SELECT e.seq, e.change_seq, e.at, e.type, e.actor_member_id, mm.name, e.actor_agent_id, aa.name, e.payload
 		FROM timeline_events e
 		LEFT JOIN members mm ON mm.id = e.actor_member_id
 		LEFT JOIN agent_tokens aa ON aa.id = e.actor_agent_id
@@ -320,9 +321,10 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 			actorMemberName sql.NullString
 			actorAgentID    sql.NullInt64
 			actorAgentName  sql.NullString
+			payload         sql.NullString
 		)
 		if err := rows.Scan(&e.Seq, &e.Change, &at, &e.Type,
-			&actorMemberID, &actorMemberName, &actorAgentID, &actorAgentName); err != nil {
+			&actorMemberID, &actorMemberName, &actorAgentID, &actorAgentName, &payload); err != nil {
 			return nil, err
 		}
 		e.Actor = Author{
@@ -333,6 +335,16 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 		}
 		if e.At, err = time.ParseInLocation(time.RFC3339Nano, at, clock.Beijing); err != nil {
 			return nil, fmt.Errorf("解析事件时间 %q 失败：%w", at, err)
+		}
+		switch e.Type {
+		case "label_added", "label_removed":
+			var p struct {
+				Label string `json:"label"`
+			}
+			if payload.Valid {
+				_ = json.Unmarshal([]byte(payload.String), &p)
+			}
+			e.Label = p.Label
 		}
 		events = append(events, e)
 	}
