@@ -30,10 +30,11 @@ type createTicketResponse struct {
 // errorBodyWithExtra 是可能带附加字段（如 suggestions）的错误结构。
 type errorBodyWithExtra struct {
 	Error struct {
-		Code        string   `json:"code"`
-		Message     string   `json:"message"`
-		Hint        string   `json:"hint"`
-		Suggestions []string `json:"suggestions"`
+		Code            string   `json:"code"`
+		Message         string   `json:"message"`
+		Hint            string   `json:"hint"`
+		Suggestions     []string `json:"suggestions"`
+		CurrentRevision int64    `json:"current_revision"`
 	} `json:"error"`
 }
 
@@ -307,9 +308,7 @@ type ticketResponseBody struct {
 	Kind        string `json:"kind"`
 	Title       string `json:"title"`
 	Status      string `json:"status"`
-	CloseReason *struct {
-		Reason string `json:"reason"`
-	} `json:"close_reason"`
+	CloseReason *string `json:"close_reason"`
 	Template  *string     `json:"template"`
 	Creator   authorBody  `json:"creator"`
 	Assignee  *authorBody `json:"assignee"`
@@ -350,13 +349,7 @@ type ticketResponseBody struct {
 			Assign           bool `json:"assign"`
 		} `json:"can"`
 	} `json:"viewer"`
-	Timeline []struct {
-		Seq    int64      `json:"seq"`
-		Change int64      `json:"change"`
-		At     string     `json:"at"`
-		Actor  authorBody `json:"actor"`
-		Type   string     `json:"type"`
-	} `json:"timeline"`
+	Timeline []timelineEventBody `json:"timeline"`
 }
 
 // 用工单编号和用序号读到的是同一张工单；响应里标题、类型、状态、创建者、标签、

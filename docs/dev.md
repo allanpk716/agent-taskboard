@@ -49,7 +49,7 @@ npm run e2e
 
 ## 测试底座（后续每张工单都要用）
 
-- **Go 黑盒测试**：`tbtest.Start(t)` 在临时 `data_dir` 上启动真实服务（随机回环端口），从外部发 HTTP 请求；`s.Clock()` 拿可注入的假时钟（北京时间）；`s.CreateAdmin` / `s.Login` 是造数据辅助，`s.IssueAgentToken` / `s.AgentClient` 造成员 Agent 的凭证；`s.Store()` 暴露数据库，供「第 1000 张编号」这类测试直连造数（断言外部行为仍走 HTTP）。见 `internal/tbtest/harness.go` 和 `internal/server/*_test.go` 里的用例。
+- **Go 黑盒测试**：`tbtest.Start(t)` 在临时 `data_dir` 上启动真实服务（随机回环端口），从外部发 HTTP 请求；`s.Clock()` 拿可注入的假时钟（北京时间）；`s.CreateAdmin` / `s.Login` 是造数据辅助，`s.IssueAgentToken` / `s.AgentClient` 造成员 Agent 的凭证，`s.DoWithHeaders` 发带自定义请求头的请求（如 `Idempotency-Key`，此时不预读响应体，可自己逐字节比较）；`s.Store()` 暴露数据库，供「第 1000 张编号」这类测试直连造数（断言外部行为仍走 HTTP）。见 `internal/tbtest/harness.go` 和 `internal/server/*_test.go` 里的用例。
 - **CLI 测试**：`cmd/taskboard/main_test.go` 编译真实二进制后走 `create-admin` → `serve` → HTTP 登录。
 - **Playwright**：对“真实服务 + 构建好的前端”跑用例，见 `web-src/e2e/`。
 

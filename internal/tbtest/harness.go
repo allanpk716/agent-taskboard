@@ -213,6 +213,13 @@ func sessionCookieFrom(res *http.Response) string {
 // Do 发一个 JSON 请求并把响应体解码进 out（为 nil 时跳过）。返回原始响应。
 func (s *Server) Do(t testing.TB, c *http.Client, method, path string, in, out any) *http.Response {
 	t.Helper()
+	return s.DoWithHeaders(t, c, method, path, nil, in, out)
+}
+
+// DoWithHeaders 同 Do，但可附加请求头（如 Idempotency-Key）；
+// out 为 nil 时不读响应体，调用方可以自己 io.ReadAll 后比较字节。
+func (s *Server) DoWithHeaders(t testing.TB, c *http.Client, method, path string, headers map[string]string, in, out any) *http.Response {
+	t.Helper()
 	var body io.Reader
 	if in != nil {
 		buf, err := json.Marshal(in)
@@ -227,6 +234,9 @@ func (s *Server) Do(t testing.TB, c *http.Client, method, path string, in, out a
 	}
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	res, err := c.Do(req)
 	if err != nil {

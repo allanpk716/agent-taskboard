@@ -24,6 +24,19 @@ const (
 	CodeDimensionRequired  = "dimension_label_required" // 一个维度标签都没打
 	CodeUnknownLabelValue  = "unknown_label_value"      // 标签值不在字典中
 	CodeTicketNotFound     = "ticket_not_found"         // 引用的工单不存在
+
+	// #30：回复、说明修订、关闭与时间线。
+	CodeEmptyReply           = "empty_reply"            // 回复既无正文也无附件
+	CodeNotBriefOwner        = "not_brief_owner"        // 只有创建者能修订说明
+	CodeBaseRevisionRequired = "base_revision_required" // 修订说明没带 base_revision
+	CodeRevisionConflict     = "revision_conflict"      // base_revision 乐观锁冲突
+	CodeInvalidCloseReason   = "invalid_close_reason"   // 关闭原因非法
+	CodeInvalidDuplicateOf   = "invalid_duplicate_of"   // duplicate_of 不是工单引用
+	CodeDuplicateOfRequired  = "duplicate_of_required"  // 重复关闭时缺 duplicate_of
+	CodeAlreadyClosed        = "already_closed"         // 工单已关闭，不能再关
+	CodeNotClosed            = "not_closed"             // 工单没关闭，谈不上重开
+	CodeDeliverAssigneeOnly  = "deliver_assignee_only"  // 交付标记只限指派人（#36）
+	CodeInvalidCursor        = "invalid_cursor"         // after 等游标参数不是整数
 )
 
 // ErrorBody 是统一错误格式 {error:{code, message, hint?}} 的内层；
