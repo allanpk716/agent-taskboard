@@ -95,8 +95,10 @@ spec 用户故事 84），没有 `inbox`：
 | `POST /api/v1/tickets/{id}/close` | 关闭（任何成员；访客 403 `members_only`）。 |
 | `POST /api/v1/tickets/{id}/reopen` | 重新开启（任何成员；访客 403 `members_only`）。 |
 | `GET /api/v1/tickets/{id}/timeline?after=N` | 时间线增量读取。 |
+| `POST /api/v1/tickets/{id}/attachments` | 上传一个待用附件（multipart；见「附件（#33）」）。 |
+| `GET /api/v1/attachments/{att_N}/{filename}` | 附件下载（与工单相同的凭证，或访客链接的签名地址）。 |
 
-（labels 在 #31、attachments 在 #33、assign 在 #36 加入；guest-links 见下。）
+（labels 在 #31、assign 在 #36 加入；guest-links 见下。）
 
 - 建单请求体 `{"kind", "title", "brief_md", "labels"}`：
   - `kind` 可省（默认 `task`），只能是 `task`（任务）或 `report`（反馈）；用模板创建时由模板决定（#34）。
@@ -137,8 +139,15 @@ spec 用户故事 84），没有 `inbox`：
 
 ### 回复（#30）
 
-- 请求体 `{"body_md": "…", "author_name?": "…", "via_agent?": false}`；空白正文且无附件
-  返回 `422 empty_reply`（附件引用在 #33 加入后，有附件即可通过）。
+- 请求体 `{"body_md": "…", "attachment_ids?": ["att_N", …], "author_name?": "…", "via_agent?": false}`；
+  空白正文且无附件引用返回 `422 empty_reply`（有附件即可通过）。
+- `attachment_ids` 与正文里的 `att:` 引用（`![插图](att:att_N)` 或 `[文件](att:att_N)`）
+  合并去重后在同一事务里认领（两步上传的第二步）：每个必须存在、待用（pending）、
+  且是**本次凭证上传**的——同一成员（本人或其任意 Agent）算同一方，访客按链接算——
+  否则 `422 attachment_not_usable`。认领后附件挂到「回复 N」上，回复事件带
+  `attachment_ids`。插图（正文插图语法引用的图片文件，按扩展名判定）与附件
+  （`attachment_ids` 与其余引用）分开计数，超过每帖上限返回
+  `413 attachment_count_exceeded`（见「附件（#33）」）。
 - `author_name` 与 `via_agent` 是访客的自报信息（#32，仅访客凭证采纳）：平台原样存下、
   不经核实，回复的作者结构带 `link_note`（链接备注）与这两项；成员的自报不生效
   （署名由凭证决定，ADR 0003）。
@@ -163,6 +172,8 @@ spec 用户故事 84），没有 `inbox`：
   但标题改成空白返回 `422 title_required`。访客修订可自报 `author_name`/`via_agent`
   （记在修订事件的作者上）。
 - 成功 `200`：`{"revision": N}`；每次修订记一条 `brief_revised` 事件（带 `revision`）。
+  正文里的 `att:` 引用同样认领（挂到「说明」上）：只认领其中待用的，已挂在别处的
+  可以重复引用；待用的必须是本次凭证上传的（`422 attachment_not_usable`）。
 
 ### 关闭与重新开启（#30）
 
@@ -311,8 +322,8 @@ spec 用户故事 84），没有 `inbox`：
 
 - 凭证：`Authorization: Bearer tbg_…`。`GET /api/v1/session` 返回链接指向的工单
   （见上文「会话与身份」的访客形状）。
-- 可见：标题、说明、全部回复、附件（#33）、指派人、状态变更和关闭原因、访客链接
-  事件。不可见：`labels` 字段和标签事件（事件序号会跳号，已接受）。
+- 可见：标题、说明、全部回复、附件（下载地址是与该链接绑定的签名地址，见「附件（#33）」）、
+  指派人、状态变更和关闭原因、访客链接事件。不可见：`labels` 字段和标签事件（事件序号会跳号，已接受）。
 - 访问其他工单一律 404 `ticket_not_found`（读、时间线、回复、修订都一样，防枚举）。
 - 回复：自报 `author_name` / `via_agent`；工单关闭后 409 `ticket_closed`，重开后恢复。
   作者结构：`member`/`agent` 为 `null`，带 `link_note`、`author_name`、`via_agent`
@@ -323,3 +334,53 @@ spec 用户故事 84），没有 `inbox`：
   乐观锁同样生效；无权限 403 `link_cannot_edit_brief`，工单关闭后 409 `ticket_closed`。
 - 仅成员的接口（建单、标签全套、关闭、重开、访客链接管理）对访客统一
   403 `members_only`（决议 4）。
+
+## 附件（#33）
+
+两步上传（spec 用户故事 52）：先上传拿到 `att:` 引用与现成的 Markdown 片段，
+再在回复或说明中引用（正文 `att:` 引用或 `attachment_ids`）。未被引用的附件也
+计入配额，上传满 24 小时后由服务的周期任务清除（行与文件一并删除；备份镜像
+只增不删，残留可接受）。文件本体放在 `data_dirttachments\<id>`，数据库只存
+元数据；服务端只检查上限，不压缩图片（压缩在前端做）。
+
+### 上传（POST /api/v1/tickets/{id}/attachments）
+
+- `multipart/form-data`，文件字段名 `file`；支持 `Idempotency-Key`（重试返回首次结果）。
+- 成功 `201`：`{id: "att_N", filename, size(字节), state: "pending", markdown, note}`；
+  `markdown` 是现成片段——图片（png/jpg/jpeg/gif/webp）用插图语法
+  `![名字](att:att_N)`，其余用普通链接 `[名字](att:att_N)`。
+- 权限：与回复相同（成员恒可，含工单已关闭时——不重开工单；访客链接需工单开启，
+  关闭后 `409 ticket_closed`）。
+- 文件名缺失/空白/超 255 字符 → `422 invalid_filename`；缺文件字段 → `422 file_required`。
+  multipart 层会把带路径的文件名截成基本名。
+- 上限（`config.toml [attachments]` 可调，默认即下表）：
+
+  | 规则 | 默认值 | 超限时 |
+  |---|---|---|
+  | 单个文件 | 5MB | 413 `attachment_too_large` |
+  | 每条说明或回复的附件 | 5 个 | 413 `attachment_count_exceeded` |
+  | 每条说明或回复的插图 | 10 张 | 413 `attachment_count_exceeded` |
+  | 整张工单合计（含待用） | 50MB | 413 `ticket_quota_exceeded`（附 `used_mb`、`ticket_limit_mb`） |
+
+  三种 413 的 `hint` 都提示改用 NAS 路径（外部文件引用），如
+  `\nas01\共享\工单61016-001\文件名`。
+- 单工单 GET 的 `attachments` 只列已挂上的（`{id, filename, size, url, attached_to}`，
+  `attached_to` 为「说明」或「回复 N」）；`attachment_usage`
+  `{used_bytes, used_mb, ticket_limit_mb, file_limit_mb, max_files_per_post, max_images_per_post}`
+  把待用的也计入。`?format=markdown` 附「## 附件」小节（链接 + 用量）。
+
+### 下载（GET /api/v1/attachments/{att_N}/{filename}）
+
+- 附件地址使用与工单相同的凭证：成员会话 cookie、成员 Agent token、访客链接密钥
+  （Bearer），权限判定与读工单一致（访客取他单附件 404 `ticket_not_found`，防枚举）。
+  只有待用（pending）状态不提供下载（404）。
+- **访客的签名地址**（orchestrator 决议 9）：浏览器 `<img src>` 带不了 Bearer 头，
+  所以访客读工单时（JSON 与 Markdown）拿到的 `url` 是与该链接绑定的短时效签名地址
+  （`?link=<链接id>&exp=<unix>&sig=<HMAC>`，有效期 1 小时且不超过链接到期时刻）。
+  签名绑（链接、附件、到期时刻），但链接的撤销与过期仍实时查库：链接失效后
+  同一地址 401（`link_revoked` / `link_expired`）；地址本身过期（链接仍有效）401
+  `attachment_url_expired`，重新读工单拿新地址；篡改签名 401 `invalid_token`；
+  签名挪用到别的附件 401。没有不鉴权的永久地址。
+- 响应头：图片、PDF、`.txt`、`.log` 以 `inline` 返回，其余（含 HTML、SVG）一律
+  `Content-Disposition: attachment`（RFC 5987 编码文件名）；所有附件响应都带
+  `X-Content-Type-Options: nosniff`。
