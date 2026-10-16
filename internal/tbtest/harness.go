@@ -96,12 +96,12 @@ func Start(t testing.TB, opts ...Option) *Server {
 	})
 
 	return &Server{
-		TB:     t,
-		url:    "http://" + ln.Addr().String(),
-		clk:    clk,
+		TB:      t,
+		url:     "http://" + ln.Addr().String(),
+		clk:     clk,
 		dataDir: dataDir,
-		webDir: webDir,
-		srv:    srv,
+		webDir:  webDir,
+		srv:     srv,
 	}
 }
 
@@ -119,7 +119,6 @@ func (s *Server) WebDir() string { return s.webDir }
 
 // Identity 暴露身份模块（后续工单造数据用，如建成员、发 Agent token）。
 func (s *Server) Identity() *identity.Manager { return s.srv.Ident }
-
 
 // CreateAdmin 造一位管理员（等价于 taskboard create-admin 子命令做的事）。
 func (s *Server) CreateAdmin(username, password string) {
@@ -153,6 +152,29 @@ func (s *Server) cookieClient(cookie string) *http.Client {
 	return &http.Client{Transport: cookieTransport{cookie: cookie}}
 }
 
+// AgentClient 返回带 Bearer Agent token 的 HTTP 客户端（模拟成员 Agent 调 API）。
+func (s *Server) AgentClient(token string) *http.Client {
+	return &http.Client{Transport: bearerTransport{token: token}}
+}
+
+// IssueAgentToken 用网页会话为当前成员签发一个具名 Agent token，返回 (id, 明文 token)。
+// 明文只在签发响应里出现一次。
+func (s *Server) IssueAgentToken(t testing.TB, c *http.Client, name string) (int64, string) {
+	s.TB.Helper()
+	var issued struct {
+		ID    int64  `json:"id"`
+		Token string `json:"token"`
+	}
+	res := s.Do(t, c, http.MethodPost, "/api/v1/me/agent-tokens", map[string]string{"name": name}, &issued)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("签发 Agent token %q 失败：状态码 %d", name, res.StatusCode)
+	}
+	if issued.Token == "" {
+		t.Fatalf("签发 Agent token %q 成功但没有返回 token", name)
+	}
+	return issued.ID, issued.Token
+}
+
 type cookieTransport struct {
 	cookie string
 }
@@ -164,6 +186,16 @@ func (t cookieTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 const httpapiSessionCookie = "tb_session"
+
+type bearerTransport struct {
+	token string
+}
+
+func (t bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.Header.Set("Authorization", "Bearer "+t.token)
+	return http.DefaultTransport.RoundTrip(clone)
+}
 
 func sessionCookieFrom(res *http.Response) string {
 	for _, c := range res.Cookies() {

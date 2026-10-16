@@ -24,6 +24,8 @@ func NewAPI(ident *identity.Manager) *API {
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/session", a.handleSession)
+	mux.HandleFunc("/api/v1/me/agent-tokens", a.handleAgentTokens)
+	mux.HandleFunc("/api/v1/me/agent-tokens/", a.handleAgentToken)
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "接口都在 /api/v1 之下，检查路径拼写")
 	})
@@ -68,16 +70,17 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		panic(err) // 由 recoverMiddleware 统一转成 500
 	}
 	http.SetCookie(w, sessionCookie(sess, sess.ExpiresAt))
-	writeJSON(w, http.StatusOK, memberView{Kind: "member", Member: sess.Member})
+	writeJSON(w, http.StatusOK, sessionView{Viewer: viewerView{Kind: "member", Member: sess.Member}})
 }
 
-// current 返回当前会话的身份；未登录或会话过期时 401。
+// current 返回当前凭证的身份；未登录、会话过期或 token 失效时 401。
+// 凭证是 Agent token 时，viewer.agent 指向那个具名 Agent。
 func (a *API) current(w http.ResponseWriter, r *http.Request) {
-	sess, ok := a.sessionFromRequest(w, r)
+	viewer, ok := a.viewerFromRequest(w, r)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, memberView{Kind: "member", Member: sess.Member})
+	writeJSON(w, http.StatusOK, newSessionView(viewer))
 }
 
 func (a *API) logout(w http.ResponseWriter, r *http.Request) {
@@ -108,9 +111,31 @@ func (a *API) sessionFromRequest(w http.ResponseWriter, r *http.Request) (identi
 	return sess, true
 }
 
-type memberView struct {
-	Kind   string           `json:"kind"`
+// agentView 是 viewer.agent 的结构：具名 Agent 的 id 和名字（本人为 null）。
+type agentView struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// viewerView 是 viewer 的对外结构。
+type viewerView struct {
+	Kind   string          `json:"kind"`
 	Member identity.Member `json:"member"`
+	Agent  *agentView      `json:"agent"`
+}
+
+// sessionView 是 GET /api/v1/session 和登录响应的结构。
+type sessionView struct {
+	Viewer viewerView `json:"viewer"`
+	Inbox  string     `json:"inbox"`
+}
+
+func newSessionView(v identity.Viewer) sessionView {
+	vv := viewerView{Kind: string(v.Kind), Member: v.Member}
+	if v.Agent != nil {
+		vv.Agent = &agentView{ID: v.Agent.ID, Name: v.Agent.Name}
+	}
+	return sessionView{Viewer: vv, Inbox: "/api/v1/inbox"}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

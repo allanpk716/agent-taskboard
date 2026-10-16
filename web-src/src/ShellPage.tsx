@@ -14,7 +14,7 @@ export function ShellPage() {
 
   useEffect(() => {
     api('/api/v1/session')
-      .then((body) => setMe(body.member))
+      .then((body) => setMe(body.viewer.member))
       .catch(() => {
         window.location.href = '/login'
       })
