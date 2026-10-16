@@ -45,7 +45,8 @@ func (a *API) handleTicketsRoot(w http.ResponseWriter, r *http.Request) {
 //	POST   …/close  …/reopen               关闭与重开（#30，仅成员）
 //	POST   …/labels                        打标签 / 摘标签（#31，仅成员）
 //	POST/GET …/guest-links[/… ]            访客链接的创建/列表/撤销/延期（#32，仅成员）
-//	（attachments 在 #33、assign 在 #36）
+//	POST   …/attachments                     上传待用附件（#33）
+//	（assign 在 #36）
 //
 // 工单引用接受 YYYYMMDD-NNN 工单编号或全局序号（可带 # 前缀）。
 func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {

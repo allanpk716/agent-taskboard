@@ -106,14 +106,15 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 
-	name := mime.FormatMediaType("filename", map[string]string{"value": att.Filename})
 	disposition := "inline"
 	if !attachments.IsInline(att.Filename) {
 		disposition = "attachment"
 	}
+	// FormatMediaType 会按 RFC 2231/5987 编码非 ASCII 文件名（filename*=utf-8''…）。
 	w.Header().Set("Content-Type", contentTypeOf(att.Filename))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Disposition", disposition+"; "+name)
+	w.Header().Set("Content-Disposition",
+		mime.FormatMediaType(disposition, map[string]string{"filename": att.Filename}))
 	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
 	if r.Method == http.MethodHead {
 		w.WriteHeader(http.StatusOK)

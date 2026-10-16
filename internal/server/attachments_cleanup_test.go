@@ -97,7 +97,21 @@ func Test未被引用的附件二十四小时后被清除(t *testing.T) {
 	if n, err := s.Attachments().CleanupUnreferenced(context.Background()); err != nil || n != 0 {
 		t.Errorf("重复清除删了 %d 个（err=%v），想 0", n, err)
 	}
-	_ = pending.ID
+
+	// 说明修订里引用已不存在的附件（如清除后残留的正文 att: 引用）：跳过而不报错
+	//（原型的语义：说明只认领其中待用的，查不到的不算错误）。
+	if res := revise(t, s, web, number, map[string]any{
+		"title":         "改标题，正文里还留着已清除的引用",
+		"brief_md":      "整理要点：\n\n![已引用](att:" + claimed.ID + ") ![没了](att:" + pending.ID + ")",
+		"base_revision": 1,
+	}); res.StatusCode != http.StatusOK {
+		t.Errorf("引用已清除附件的修订状态码 = %d, 想 200（跳过即可）", res.StatusCode)
+	}
+
+	// 回复里引用已不存在的附件则仍然报错（每个引用都必须可用）。
+	if res := claimByReply(t, s, web, number, map[string]any{"attachment_ids": []string{pending.ID}}); res.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("回复引用已清除附件状态码 = %d, 想 422", res.StatusCode)
+	}
 }
 
 // 上传支持 Idempotency-Key：重试拿到首次结果（同一个附件 id），不占双份配额。

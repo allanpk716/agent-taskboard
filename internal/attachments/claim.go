@@ -31,7 +31,9 @@ func (m *Manager) ClaimTx(ctx context.Context, tx *sql.Tx, ticketSeq int64,
 	if len(refs) == 0 {
 		return nil
 	}
-	// 取回全部引用的元数据（计数需要按扩展名判定插图）。
+	// 取回全部引用的元数据（计数需要按扩展名判定插图）。说明修订
+	//（ClaimOnlyPending）沿用原型的语义：查不到、不在本单、已挂到别处的引用
+	// 一律跳过（只认领其中待用的）；回复（ClaimAllPending）则每个引用都必须可用。
 	rows := make(map[string]AttachmentInfo, len(refs))
 	for _, ref := range refs {
 		if _, ok := rows[ref.ID]; ok {
@@ -39,6 +41,9 @@ func (m *Manager) ClaimTx(ctx context.Context, tx *sql.Tx, ticketSeq int64,
 		}
 		id, err := ParseRef(ref.ID)
 		if err != nil {
+			if mode == ClaimOnlyPending {
+				continue
+			}
 			return notUsable(ref.ID)
 		}
 		var (
@@ -56,20 +61,30 @@ func (m *Manager) ClaimTx(ctx context.Context, tx *sql.Tx, ticketSeq int64,
 			Scan(&a.ID, &a.TicketSeq, &a.Filename, &a.Size, &a.State, &attachedTo,
 				&memberID, &agentID, &linkID, &uploadedAt)
 		if err != nil {
+			if mode == ClaimOnlyPending {
+				continue
+			}
 			return notUsable(ref.ID)
 		}
 		a.AttachedTo = attachedTo.String
 		if a.TicketSeq != ticketSeq {
-			return notUsable(ref.ID) // 别的工单上的附件引用不到
+			if mode == ClaimOnlyPending {
+				continue // 别的工单上的附件引用不到：说明修订里跳过
+			}
+			return notUsable(ref.ID)
 		}
 		a.Uploader = Principal{MemberID: memberID.Int64, AgentID: agentID.Int64, LinkID: linkID.Int64}
 		rows[ref.ID] = a
 	}
 
-	// 计数：插图与附件分开（同一 id 只计一次）。
+	// 计数：插图与附件分开（同一 id 只计一次；跳过取不到元数据的引用）。
 	files, images := 0, 0
 	for _, ref := range refs {
-		if ref.ImageSyntax && IsImage(rows[ref.ID].Filename) {
+		row, ok := rows[ref.ID]
+		if !ok {
+			continue
+		}
+		if ref.ImageSyntax && IsImage(row.Filename) {
 			images++
 		} else {
 			files++
@@ -153,9 +168,18 @@ func (m *Manager) CleanupUnreferenced(ctx context.Context) (int, error) {
 	}
 	defer tx.Rollback()
 	for _, p := range stale {
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM attachments WHERE id = ? AND state = 'pending'`, p.id); err != nil {
+		res, err := tx.ExecContext(ctx,
+			`DELETE FROM attachments WHERE id = ? AND state = 'pending'`, p.id)
+		if err != nil {
 			return 0, err
+		}
+		// 并发窗口里被认领（state 已变 attached）的行删不掉，文件也绝不能删。
+		n, err := res.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		if n == 0 {
+			continue
 		}
 		// 行删掉之后再删文件；删失败只留下孤儿文件，不影响配额（下次清除会再试）。
 		if err := os.Remove(m.Path(p.id)); err != nil && !os.IsNotExist(err) {
