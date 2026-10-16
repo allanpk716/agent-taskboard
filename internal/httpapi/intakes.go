@@ -307,7 +307,7 @@ func (a *API) writeIntakesError(w http.ResponseWriter, r *http.Request, err erro
 			"换一个 slug；已占用的 slug 不能复用（历史工单和成员还引用着旧地址），可换用轮换保留旧入口")
 	case errors.Is(err, tickets.ErrNameRequired):
 		WriteError(w, http.StatusUnprocessableEntity, CodeNameRequired, err.Error(),
-			"名称会显示在提交页上，如「部门 Bug 反馈」")
+			"名称会显示在反馈入口上，如「部门 Bug 反馈」")
 	case errors.Is(err, tickets.ErrTemplateNotReport):
 		WriteError(w, http.StatusUnprocessableEntity, CodeTemplateNotReport, err.Error(),
 			"入口提交的是反馈，换一份类型为「反馈」的模板（如 bug-report），或先修改模板类型")
