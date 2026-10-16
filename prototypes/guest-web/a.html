@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>A · 对话流</title>
+<style>
+body{margin:0;font:15px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#eef1f5;color:#222}
+#app{max-width:720px;margin:0 auto;padding-bottom:170px}
+.head{background:#fff;padding:14px 16px 10px;border-bottom:1px solid #ddd}
+.head .meta{font-size:12px;color:#888}
+.head h1{font-size:18px;margin:4px 0 8px;line-height:1.4}
+.turn{display:inline-block;font-size:13px;padding:3px 10px;border-radius:12px}
+.turn.you{background:#fff1d6;color:#a35f00}.turn.them{background:#e7f0ff;color:#2a5db0}.turn.done{background:#e8e8e8;color:#555}
+.bubble{margin:12px;display:flex;gap:8px}
+.av{width:34px;height:34px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px}
+.av.g{background:#3aa676}.av.a{background:#7c6cd8}.av.m{background:#3b7ddd}
+.card{background:#fff;border-radius:10px;padding:10px 12px;flex:1;min-width:0;box-shadow:0 1px 2px #0001}
+.who{font-size:12px;color:#888;margin-bottom:4px}
+.who b{color:#333}
+.card p{margin:4px 0}.card ol{margin:4px 0;padding-left:20px}
+.f{margin:8px 0}.f .q{font-size:13px;color:#666}.f .v{white-space:pre-wrap}
+.f .v.empty{color:#bbb}
+.atts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.att{background:#f3f5f8;border-radius:6px;padding:4px 8px;font-size:13px}
+.event{text-align:center;font-size:12px;color:#999;margin:10px}
+.composer{position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid #ddd;padding:8px 10px 10px;max-width:720px;margin:0 auto}
+.composer textarea{width:100%;box-sizing:border-box;border:1px solid #ccc;border-radius:8px;padding:8px;font:inherit;height:64px;resize:vertical}
+.row{display:flex;gap:8px;align-items:center;margin-top:6px;font-size:13px}
+.row input{border:1px solid #ccc;border-radius:6px;padding:5px 8px;width:110px;font:inherit;font-size:13px}
+.btn{background:#2f7cf6;color:#fff;border:0;border-radius:8px;padding:7px 16px;font-size:14px}
+.btn.ghost{background:#eef3ff;color:#2f7cf6}
+.sp{flex:1}
+.ro{position:fixed;left:0;right:0;bottom:0;background:#f7f7f7;border-top:1px solid #ddd;padding:14px;text-align:center;color:#666;font-size:14px}
+.full{background:#fff;margin:40px 16px;border-radius:12px;padding:28px 20px;text-align:center}
+.full h2{margin:8px 0}
+/* 表单 */
+.form{background:#fff;margin:12px;border-radius:10px;padding:4px 14px 14px}
+.fld{padding:12px 0;border-bottom:1px solid #f0f0f0}
+.fld label{font-weight:600;display:block}
+.fld .req{color:#d33;font-size:12px;margin-left:4px;font-weight:400}
+.fld .guide{font-size:13px;color:#888;margin:2px 0 6px}
+.fld textarea,.fld select,.fld input[type=text]{width:100%;box-sizing:border-box;border:1px solid #ccc;border-radius:6px;padding:8px;font:inherit}
+.fld textarea{height:70px}
+.fld .tools{font-size:12px;color:#2f7cf6;margin-top:4px}
+.fld.miss textarea,.fld.miss select{border-color:#e55;background:#fff6f6}
+.fld .err{color:#d33;font-size:13px;margin-top:4px}
+.radios label{display:inline-block;font-weight:400;margin-right:12px}
+.drop{border:2px dashed #ccc;border-radius:8px;padding:14px;text-align:center;color:#888;font-size:13px;margin-top:8px}
+.missbox{background:#fff6f6;border:1px solid #f3b4b4;border-radius:8px;margin:12px;padding:10px 14px;font-size:14px}
+.missbox ul{margin:4px 0;padding-left:20px}
+.saved{font-size:12px;color:#3aa676}
+.linkbox{background:#f3f5f8;border-radius:8px;padding:10px;word-break:break-all;font-size:13px;margin:10px 0}
+</style></head><body><div id="app"></div>
+<script>/*SHARED*/</script>
+<script>
+const turnBadge = s => s === 'closed' ? '<span class="turn done">已关闭 · 完成</span>'
+  : '<span class="turn you">● 现在轮到你回复</span>';
+
+function header(s) {
+  return `<div class="head"><div class="meta">${T.dept} · ${T.kind} · ${T.no}</div><h1>${esc(T.title)}</h1>${turnBadge(s)}
+  <span class="meta" style="margin-left:6px">你的链接：${T.linkNote} · ${s === 'closed' ? '只读' : T.expires + '到期'}</span></div>`;
+}
+function briefCard() {
+  const fs = T.fields.map(f => `<div class="f"><div class="q">${f.q}</div><div class="v ${f.val ? '' : 'empty'}">${f.val ? esc(f.val) : '（未填写）'}</div>${f.img ? img(f.img) : ''}</div>`).join('');
+  return `<div class="bubble"><div class="av g">张</div><div class="card"><div class="who"><b>张三</b> · 检验科 · 10-15 09:32 · 说明</div>${fs}
+  <div class="atts">${T.attachments.map(a => `<span class="att">📎 ${a.name} · ${a.size}</span>`).join('')}</div></div></div>`;
+}
+function thread() {
+  return T.replies.map(r => r.event ? `<div class="event">${r.name}（${r.via}）${r.event} · ${r.time}</div>`
+    : `<div class="bubble"><div class="av a">AI</div><div class="card"><div class="who"><b>${r.name}</b> · ${r.time}</div>${md(r.body)}</div></div>`).join('');
+}
+function composer() {
+  return `<div class="composer"><textarea placeholder="写回复，可以直接粘贴截图…"></textarea>
+  <div id="up"></div>
+  <div class="row"><button class="btn ghost" onclick="fakeBigFile(document.getElementById('up'))">📎 附件</button>
+  <button class="btn ghost" onclick="document.querySelector('#app').innerHTML=render('fill')">✏ 补全说明</button>
+  <span class="sp"></span>署名 <input value="检验科 张三"><button class="btn" onclick="fakeSend()">发送</button></div>
+  <div class="saved">已自动保存在本机</div></div>`;
+}
+function field(f, miss) {
+  let input;
+  if (f.type === 'dim') input = `<select><option value="">请选择</option>${f.options.map(o => `<option ${o === f.val ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
+  else if (f.type === 'radio') input = `<div class="radios">${f.options.map(o => `<label><input type="radio" name="${f.key}" ${o === f.val ? 'checked' : ''}> ${o}</label>`).join('')}</div>`;
+  else input = `<textarea placeholder="示例：${esc(f.ex || '')}">${esc(f.val)}</textarea>${f.img ? img(f.img) : ''}<div class="tools">🖼 粘贴或上传图片</div>`;
+  return `<div class="fld ${miss ? 'miss' : ''}"><label>${f.q}${f.req ? '<span class="req">必填</span>' : ''}</label>
+  ${f.guide ? `<div class="guide">${f.guide}</div>` : ''}${input}${miss ? `<div class="err">请填写这一项。${f.guide}</div>` : ''}</div>`;
+}
+function form(blank, missKeys = []) {
+  return `<div class="form">${T.fields.map(f => field(blank ? { ...f, val: '', img: null } : f, missKeys.includes(f.key))).join('')}
+  <div class="fld"><label>附件</label><div class="guide">照片、日志等文件；单个不超过 50 MB。</div><div class="drop">拖到这里，或点击选择文件</div></div>
+  ${blank ? '<div class="fld"><label>你的署名<span class="req">必填</span></label><input type="text" placeholder="例如：检验科 张三"></div>' : ''}</div>`;
+}
+
+function render(s) {
+  if (s === 'read') return header(s) + briefCard() + thread() + composer();
+  if (s === 'closed') return header(s) + briefCard() + thread()
+    + `<div class="bubble"><div class="av m">李</div><div class="card"><div class="who"><b>李四</b> · 研发部 · 10-17 15:02</div><p>已确认是液位传感器固件问题，V3.2.2 已修复，明天上门升级。</p></div></div>
+    <div class="event">李四 关闭了工单（完成）· 10-18 10:20</div><div class="ro">工单已关闭，只能查看。如还有问题，请联系 ${T.dept} ${T.creatorMember}。</div>`;
+  if (s === 'fill') return `<div class="head"><div class="meta">${T.no} · 补全说明</div><h1>${esc(T.title)}</h1><span class="saved">输入内容实时保存在本机</span></div>`
+    + form(false) + `<div class="composer"><div class="row"><button class="btn ghost" onclick="document.querySelector('#app').innerHTML=render('read')">返回</button><span class="sp"></span><button class="btn" onclick="fakeSend()">保存说明</button></div></div>`;
+  if (s === 'expired') return `<div class="full"><div style="font-size:42px">⏳</div><h2>这条链接已失效</h2><p style="color:#666">链接已于 11月14日 到期（或已被发链接的人撤销）。<br>如需继续跟进，请联系 ${T.dept} ${T.creatorMember}，请对方重新发一条链接。</p><p class="meta" style="color:#aaa;font-size:12px">工单 ${T.no}</p></div>`;
+  if (s === 'intake') return `<div class="head"><div class="meta">${T.dept} · 反馈入口</div><h1>仪器问题反馈</h1><div class="meta">填好后提交，研发部会在这里回复你。会得到一条专属链接，用来查看进展。</div></div>`
+    + `<div class="form"><div class="fld"><label>一句话标题<span class="req">必填</span></label><div class="guide">哪台仪器、哪个功能、什么现象。</div><input type="text" placeholder="示例：BH-7600CS 质控时报警 E-203"></div></div>`
+    + `<div class="missbox"><b>还差 2 项必填：</b><ul><li>你做了哪些操作？</li><li>出现得频繁吗？</li></ul></div>`
+    + form(true, ['steps', 'freq']) + `<div class="composer"><div class="row"><span class="saved">已自动保存在本机</span><span class="sp"></span><button class="btn" onclick="fakeSend()">提交反馈</button></div></div>`;
+  if (s === 'intakeDone') return `<div class="full"><div style="font-size:42px">✅</div><h2>已提交，编号 ${T.no}</h2><p>这是你的专属链接，<b>请收藏或保存</b>，之后在这里查看回复、补充信息：</p>
+    <div class="linkbox">https://taskboard.lan/g/kX9f2Qa7Lm…</div><button class="btn">复制链接</button><p style="color:#888;font-size:13px">研发部回复后，轮到你时页面顶部会显示“现在轮到你回复”。</p></div>`;
+}
+mountSwitcher(render);
+</script></body></html>

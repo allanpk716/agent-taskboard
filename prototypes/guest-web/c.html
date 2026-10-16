@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>C · 文档式</title>
+<style>
+body{margin:0;font:15px/1.7 Georgia,"Songti SC","SimSun",serif;background:#fff;color:#1d1d1d}
+#app{max-width:680px;margin:0 auto;padding:10px 18px 60px}
+.sans{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}
+.crumb{font-size:12px;color:#888;margin-top:10px}
+h1{font-size:22px;line-height:1.35;margin:6px 0 10px}
+.strip{display:flex;gap:10px;flex-wrap:wrap;font-size:13px;padding:8px 0;border-top:1px solid #e5e5e5;border-bottom:1px solid #e5e5e5}
+.strip .you{color:#b05a00;font-weight:600}
+.strip .done{color:#666;font-weight:600}
+h3{font-size:13px;letter-spacing:.1em;color:#999;margin:26px 0 6px;font-weight:600}
+.sec{margin:14px 0}
+.sec .q{font-weight:700}
+.sec .v{white-space:pre-wrap}
+.sec.empty .v{color:#b05a00}
+.inline{border:1px dashed #d8a25a;background:#fffaf2;border-radius:6px;padding:8px 10px;margin-top:4px}
+.inline textarea{width:100%;box-sizing:border-box;border:1px solid #ddd;border-radius:4px;padding:6px;font:inherit;height:60px;background:#fff}
+.inline .g{font-size:13px;color:#8a6a3a}
+.atts a{display:block;color:#245fb3;text-decoration:none;font-size:14px;padding:3px 0}
+.msg{border-left:3px solid #ddd;padding:2px 0 2px 12px;margin:16px 0}
+.msg.agent{border-color:#9a8ae0}
+.msg .who{font-size:13px;color:#888}.msg .who b{color:#333}
+.msg p{margin:4px 0}.msg ol{margin:4px 0;padding-left:20px}
+.ev{font-size:13px;color:#999;margin:10px 0}
+.reply textarea{width:100%;box-sizing:border-box;border:1px solid #ccc;border-radius:6px;padding:10px;font:inherit;height:110px}
+.row{display:flex;gap:10px;align-items:center;margin-top:8px;font-size:13px;flex-wrap:wrap}
+.row input{border:1px solid #ccc;border-radius:4px;padding:5px 8px;font-size:13px;width:120px}
+.sp{flex:1}
+.btn{background:#1d1d1d;color:#fff;border:0;border-radius:6px;padding:8px 18px;font-size:14px}
+.btn.ghost{background:#f2f2f2;color:#333}
+.saved{font-size:12px;color:#3a8a5a}
+.closed{background:#f4f4f4;border-radius:6px;padding:12px 14px;font-size:14px;color:#555}
+.full{text-align:center;padding:60px 10px}
+.fld{margin:18px 0}
+.fld .q{font-weight:700}.fld .req{color:#c33;font-size:12px;margin-left:6px;font-weight:400}
+.fld .g{font-size:13px;color:#888}
+.fld textarea,.fld select,.fld input[type=text]{width:100%;box-sizing:border-box;border:none;border-bottom:1px solid #bbb;padding:6px 2px;font:inherit;background:transparent}
+.fld textarea{height:56px}
+.fld.miss textarea,.fld.miss .radios{border-bottom:2px solid #d33}
+.fld .err{color:#c33;font-size:13px}
+.radios label{margin-right:14px;font-size:15px}
+.toc{position:sticky;top:34px;background:#fff8f8;border:1px solid #f0c4c4;border-radius:6px;padding:8px 12px;font-size:13px;z-index:5}
+.toc a{color:#c33;margin-right:10px}
+.linkbox{background:#f4f4f4;border-radius:6px;padding:10px;word-break:break-all;font-size:13px;margin:10px 0}
+</style></head><body><div id="app"></div>
+<script>/*SHARED*/</script>
+<script>
+function head(s) {
+  return `<div class="crumb sans">${T.dept} · ${T.kind} ${T.no}</div><h1>${esc(T.title)}</h1>
+  <div class="strip sans">${s === 'closed' ? '<span class="done">■ 已关闭（完成）</span>' : '<span class="you">● 轮到你：研发部在等你的回复</span>'}
+  <span>链接：${T.linkNote}</span><span>${s === 'closed' ? '只读' : T.expires + '到期'}</span></div>`;
+}
+function brief(editable) {
+  return `<h3 class="sans">说明</h3>` + T.fields.map(f => {
+    if (!f.val && editable) return `<div class="sec empty"><div class="q">${f.q}</div><div class="inline sans"><div class="g">还没填 · ${f.guide}</div><textarea placeholder="示例：${esc(f.ex || '')}"></textarea><div class="row"><span class="saved">自动保存在本机</span><span class="sp"></span><button class="btn" onclick="fakeSend()">保存这一项</button></div></div></div>`;
+    return `<div class="sec ${f.val ? '' : 'empty'}"><div class="q">${f.q}</div><div class="v">${f.val ? esc(f.val) : '（未填写）'}</div>${f.img ? img(f.img) : ''}</div>`;
+  }).join('') + `<h3 class="sans">附件</h3><div class="atts sans">${T.attachments.map(a => `<a href="#">📎 ${a.name}（${a.size}）</a>`).join('')}</div>`;
+}
+function thread() {
+  return `<h3 class="sans">往来</h3>` + T.replies.map(r => r.event ? `<div class="ev sans">${r.time} — ${r.name}（${r.via}）${r.event}</div>`
+    : `<div class="msg agent"><div class="who sans"><b>${r.name}</b> · ${r.time}</div>${md(r.body)}</div>`).join('');
+}
+function reply() {
+  return `<h3 class="sans">你的回复</h3><div class="reply sans"><textarea placeholder="写回复。可以粘贴截图；超过 50 MB 的文件请放 NAS 后粘贴路径。"></textarea><div id="up"></div>
+  <div class="row"><button class="btn ghost" onclick="fakeBigFile(document.getElementById('up'))">📎 添加文件</button><span class="saved">已自动保存在本机</span><span class="sp"></span>署名 <input value="检验科 张三"><button class="btn" onclick="fakeSend()">发送回复</button></div></div>`;
+}
+function field(f, miss) {
+  let input;
+  if (f.type === 'dim') input = `<select><option value="">请选择</option>${f.options.map(o => `<option>${o}</option>`).join('')}</select>`;
+  else if (f.type === 'radio') input = `<div class="radios">${f.options.map(o => `<label><input type="radio" name="${f.key}"> ${o}</label>`).join('')}</div>`;
+  else input = `<textarea placeholder="示例：${esc(f.ex || '')}"></textarea><div class="g">🖼 可粘贴或上传图片</div>`;
+  return `<div class="fld sans ${miss ? 'miss' : ''}" id="f-${f.key}"><div class="q">${f.q}${f.req ? '<span class="req">必填</span>' : ''}</div><div class="g">${f.guide || ''}</div>${input}${miss ? '<div class="err">这一项必填，请补上。</div>' : ''}</div>`;
+}
+function render(s) {
+  if (s === 'read') return head(s) + brief(false) + thread() + reply();
+  if (s === 'fill') return head(s) + `<p class="sans saved">你的链接可以补全说明：空着的栏目直接在原处填写；已填的栏目点击即可修改。</p>` + brief(true) + thread() + reply();
+  if (s === 'closed') return head(s) + brief(false) + thread()
+    + `<div class="msg"><div class="who sans"><b>李四</b> · 研发部 · 10-17 15:02</div><p>已确认是液位传感器固件问题，V3.2.2 已修复，明天上门升级。</p></div><div class="ev sans">10-18 10:20 — 李四 关闭了工单（完成）</div>
+    <div class="closed sans">工单已关闭，只能查看。如还有问题，请联系 ${T.dept} ${T.creatorMember}。</div>`;
+  if (s === 'expired') return `<div class="full"><h1>这条链接已失效</h1><p class="sans" style="color:#666">链接已于 11月14日 到期，或已被发链接的人撤销。<br>需要继续跟进，请联系 ${T.dept} ${T.creatorMember}，请对方重新发一条链接。</p></div>`;
+  if (s === 'intake') return `<div class="crumb sans">${T.dept} · 反馈入口</div><h1>仪器问题反馈</h1><p class="sans" style="font-size:14px;color:#666">像写一封说明信一样逐项填写。提交后你会拿到一条专属链接，用来查看研发部的回复。</p>
+    <div class="toc sans">还差 2 项：<a href="#f-steps">你做了哪些操作？</a><a href="#f-freq">出现得频繁吗？</a></div>
+    <div class="fld sans"><div class="q">一句话标题<span class="req">必填</span></div><div class="g">哪台仪器、哪个功能、什么现象。</div><input type="text" placeholder="示例：BH-7600CS 质控时报警 E-203"></div>`
+    + T.fields.map(f => field(f, ['steps', 'freq'].includes(f.key))).join('')
+    + `<div class="fld sans"><div class="q">附件</div><div class="g">照片、日志等，单个不超过 50 MB。</div><button class="btn ghost">选择文件</button></div>
+    <div class="fld sans"><div class="q">你的署名<span class="req">必填</span></div><input type="text" placeholder="示例：检验科 张三"></div>
+    <div class="row sans"><span class="saved">已自动保存在本机</span><span class="sp"></span><button class="btn" onclick="fakeSend()">提交反馈</button></div>`;
+  if (s === 'intakeDone') return `<div class="full"><h1>已提交 · ${T.no}</h1><p class="sans">请<b>收藏这条专属链接</b>，之后在这里查看回复、补充信息：</p><div class="linkbox sans">https://taskboard.lan/g/kX9f2Qa7Lm…</div><button class="btn sans">复制链接</button></div>`;
+}
+mountSwitcher(render);
+</script></body></html>

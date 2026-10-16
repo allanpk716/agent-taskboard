@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>B · 行动优先</title>
+<style>
+body{margin:0;font:15px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f6f6f3;color:#222}
+#app{max-width:720px;margin:0 auto;padding-bottom:40px}
+.top{padding:14px 16px 6px}
+.top .meta{font-size:12px;color:#888}
+.top h1{font-size:18px;margin:2px 0;line-height:1.4}
+.action{margin:10px 12px;border-radius:14px;padding:14px 16px;background:#1f6f5c;color:#fff}
+.action.done{background:#666}
+.action .lbl{font-size:13px;opacity:.85}
+.action .big{font-size:19px;font-weight:600;margin:2px 0 8px}
+.action .quote{background:#ffffff1f;border-radius:8px;padding:8px 10px;font-size:14px}
+.action .quote p{margin:3px 0}.action .quote ol{margin:3px 0;padding-left:20px}
+.action code{background:#ffffff30;color:#fff}
+.action .btns{display:flex;gap:8px;margin-top:10px}
+.action button{flex:1;border:0;border-radius:10px;padding:10px;font-size:15px;font-weight:600}
+.b1{background:#fff;color:#1f6f5c}.b2{background:#ffffff26;color:#fff}
+.tabs{display:flex;margin:14px 12px 0;border-bottom:1px solid #ddd}
+.tabs div{padding:8px 14px;font-size:14px;color:#777}
+.tabs div.on{color:#1f6f5c;border-bottom:2px solid #1f6f5c;font-weight:600}
+.pane{margin:0 12px;background:#fff;border-radius:0 0 10px 10px;padding:6px 14px}
+.it{padding:10px 0;border-bottom:1px solid #f0f0f0}
+.it:last-child{border:0}
+.it .who{font-size:12px;color:#888}.it .who b{color:#333}
+.it p{margin:4px 0}.it ol{margin:4px 0;padding-left:20px}
+.ev{font-size:12px;color:#999}
+.f .q{font-size:13px;color:#888}.f .v{white-space:pre-wrap}.f .v.empty{color:#c60}
+.sheet{position:fixed;inset:0;background:#0006;display:flex;align-items:flex-end;z-index:50}
+.sheet .in{background:#fff;width:100%;max-width:720px;margin:0 auto;border-radius:16px 16px 0 0;padding:14px 16px 18px}
+.sheet textarea{width:100%;box-sizing:border-box;border:1px solid #ccc;border-radius:10px;padding:10px;font:inherit;height:120px}
+.row{display:flex;gap:8px;align-items:center;margin-top:8px;font-size:13px}
+.row input{border:1px solid #ccc;border-radius:6px;padding:6px 8px;font:inherit;font-size:13px;width:120px}
+.sp{flex:1}
+.btn{background:#1f6f5c;color:#fff;border:0;border-radius:10px;padding:9px 18px;font-size:15px}
+.btn.ghost{background:#eef5f2;color:#1f6f5c}
+.saved{font-size:12px;color:#1f6f5c}
+/* 向导 */
+.wiz{margin:12px;background:#fff;border-radius:14px;padding:16px}
+.prog{height:6px;background:#eee;border-radius:3px;margin:6px 0 14px}.prog i{display:block;height:100%;background:#1f6f5c;border-radius:3px}
+.wiz h2{font-size:20px;margin:4px 0}
+.wiz .guide{color:#777;font-size:14px;margin-bottom:10px}
+.wiz textarea{width:100%;box-sizing:border-box;border:1px solid #ccc;border-radius:10px;padding:10px;font:inherit;height:110px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chips span{border:1px solid #ccc;border-radius:18px;padding:7px 14px}
+.chips span.on{background:#1f6f5c;color:#fff;border-color:#1f6f5c}
+.err{color:#c33;font-size:14px;margin-top:8px}
+.nav{display:flex;gap:8px;margin-top:16px}.nav button{flex:1}
+.full{background:#fff;margin:40px 16px;border-radius:14px;padding:28px 20px;text-align:center}
+.linkbox{background:#f3f5f3;border-radius:8px;padding:10px;word-break:break-all;font-size:13px;margin:10px 0}
+.review .f{padding:6px 0;border-bottom:1px solid #f2f2f2}
+.review .miss .q{color:#c33}
+</style></head><body><div id="app"></div>
+<script>/*SHARED*/</script>
+<script>
+let tab = 'thread';
+function topBar() { return `<div class="top"><div class="meta">${T.dept} · ${T.kind} · ${T.no} · 链接 ${T.expires}到期</div><h1>${esc(T.title)}</h1></div>`; }
+function action(closed) {
+  if (closed) return `<div class="action done"><div class="lbl">状态</div><div class="big">已关闭 · 完成</div><div class="quote"><p>李四：已确认是液位传感器固件问题，V3.2.2 已修复，明天上门升级。</p></div><div class="lbl" style="margin-top:8px">工单关闭后只能查看。如还有问题，请联系 ${T.dept} ${T.creatorMember}。</div></div>`;
+  const last = T.replies[T.replies.length - 1];
+  return `<div class="action"><div class="lbl">需要你做的事</div><div class="big">研发部在等你补充信息</div>
+  <div class="quote"><div style="font-size:12px;opacity:.8">${last.name} · ${last.time}</div>${md(last.body)}</div>
+  <div class="btns"><button class="b1" onclick="openSheet()">回复</button><button class="b2" onclick="go('fill')">补全说明</button></div></div>`;
+}
+function tabs() {
+  const t = [['thread', `往来 ${T.replies.length}`], ['brief', '说明'], ['att', `附件 ${T.attachments.length}`]];
+  return `<div class="tabs">${t.map(([k, n]) => `<div class="${k === tab ? 'on' : ''}" onclick="tab='${k}';rerender()">${n}</div>`).join('')}</div><div class="pane">${pane()}</div>`;
+}
+function pane() {
+  if (tab === 'thread') return T.replies.map(r => r.event ? `<div class="it ev">${r.time} · ${r.name}（${r.via}）${r.event}</div>`
+    : `<div class="it"><div class="who"><b>${r.name}</b> · ${r.time}</div>${md(r.body)}</div>`).join('');
+  if (tab === 'brief') return T.fields.map(f => `<div class="it f"><div class="q">${f.q}</div><div class="v ${f.val ? '' : 'empty'}">${f.val ? esc(f.val) : '还没填 · 点上方“补全说明”'}</div>${f.img ? img(f.img) : ''}</div>`).join('');
+  return T.attachments.map(a => `<div class="it">📎 ${a.name} <span class="ev">${a.size}</span></div>`).join('');
+}
+function openSheet() {
+  document.body.insertAdjacentHTML('beforeend', `<div class="sheet" onclick="if(event.target===this)this.remove()"><div class="in">
+  <b>回复研发部</b><textarea placeholder="直接写就行，可以粘贴截图"></textarea><div id="up"></div>
+  <div class="row"><button class="btn ghost" onclick="fakeBigFile(document.getElementById('up'))">📎 加文件</button><span class="saved">已自动保存</span><span class="sp"></span></div>
+  <div class="row">署名 <input value="检验科 张三"><span class="sp"></span><button class="btn" onclick="fakeSend()">发送</button></div></div></div>`);
+}
+const steps = [{ q: '一句话标题', type: 'text', req: true, guide: '哪台仪器、哪个功能、什么现象。', ex: 'BH-7600CS 质控时报警 E-203' }, ...T.fields, { q: '你的署名', type: 'text', req: true, guide: '方便研发部联系你。', ex: '检验科 张三' }];
+let step = 0;
+function wizard() {
+  const f = steps[step], n = steps.length;
+  let input;
+  if (f.type === 'dim' || f.type === 'radio') input = `<div class="chips">${f.options.map(o => `<span onclick="this.parentNode.querySelectorAll('span').forEach(x=>x.classList.remove('on'));this.classList.add('on')">${o}</span>`).join('')}</div>`;
+  else input = `<textarea placeholder="示例：${esc(f.ex || '')}"></textarea><div class="saved" style="margin-top:4px">🖼 可以粘贴或拍照上传</div>`;
+  return `<div class="top"><div class="meta">${T.dept} · 仪器问题反馈</div></div><div class="wiz"><div class="meta" style="font-size:12px;color:#888">第 ${step + 1} / ${n} 项 ${f.req ? '· 必填' : '· 选填，可跳过'}</div>
+  <div class="prog"><i style="width:${(step + 1) / n * 100}%"></i></div><h2>${f.q}</h2><div class="guide">${f.guide || ''}</div>${input}
+  ${step === 4 ? '<div class="err">这一项必填，请按顺序写下你的操作。</div>' : ''}
+  <div class="nav"><button class="btn ghost" onclick="step=Math.max(0,step-1);rerender()">上一项</button><button class="btn" onclick="step<${n - 1}?(step++,rerender()):go('intakeReview')">下一项</button></div></div>
+  <p class="saved" style="text-align:center">每一项都自动保存在本机，关掉页面也不会丢</p>`;
+}
+function review() {
+  return `<div class="top"><div class="meta">${T.dept} · 仪器问题反馈 · 最后确认</div><h1>检查一下再提交</h1></div><div class="wiz review">
+  ${steps.map((f, i) => `<div class="f ${i === 4 || i === 7 ? 'miss' : ''}"><div class="q">${f.q}${i === 4 || i === 7 ? ' · 必填，还没填' : ''}</div><div class="v">${i === 4 || i === 7 ? '<a href="#" onclick="step=' + i + ';go(\'intake\');return false">去填写 ›</a>' : esc(f.val || (f.req ? '（已填）' : '—'))}</div></div>`).join('')}
+  <div class="nav"><button class="btn" onclick="fakeSend()">提交反馈</button></div></div>`;
+}
+let cur = 'read';
+function render(s) {
+  cur = s;
+  if (s === 'read') return topBar() + action(false) + tabs();
+  if (s === 'closed') return topBar() + action(true) + tabs();
+  if (s === 'fill') return topBar() + `<div class="wiz"><b>补全说明</b><div class="guide">只显示还没填的项，填完点保存；已填的项在下方可以修改。</div>
+    ${T.fields.filter(f => !f.val).map(f => `<div style="margin:10px 0"><div style="font-weight:600">${f.q}</div><div class="guide">${f.guide}</div><textarea placeholder="示例：${esc(f.ex || '')}"></textarea></div>`).join('')}
+    <details><summary style="color:#1f6f5c">修改已填的 ${T.fields.filter(f => f.val).length} 项</summary>${T.fields.filter(f => f.val).map(f => `<div style="margin:8px 0"><div style="font-weight:600">${f.q}</div><textarea>${esc(f.val)}</textarea></div>`).join('')}</details>
+    <div class="nav"><button class="btn ghost" onclick="go('read')">返回</button><button class="btn" onclick="fakeSend()">保存</button></div></div>`;
+  if (s === 'expired') return `<div class="full"><div style="font-size:42px">⏳</div><h2>这条链接已失效</h2><p style="color:#666">链接已于 11月14日 到期（或已被撤销）。<br>需要继续跟进，请联系 ${T.dept} ${T.creatorMember} 重新发一条链接。</p></div>`;
+  if (s === 'intake') return wizard();
+  if (s === 'intakeReview') return review();
+  if (s === 'intakeDone') return `<div class="full"><div style="font-size:42px">✅</div><h2>已提交，编号 ${T.no}</h2><p>请<b>收藏这条专属链接</b>，之后在这里看回复、补信息：</p><div class="linkbox">https://taskboard.lan/g/kX9f2Qa7Lm…</div><button class="btn">复制链接</button></div>`;
+}
+let go, rerender = () => go(cur);
+mountSwitcher(render);
+go = k => { document.getElementById('app').innerHTML = render(k); window.scrollTo(0, 0); };
+</script></body></html>
