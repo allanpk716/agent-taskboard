@@ -152,9 +152,18 @@ func Apply(ctx context.Context, opt Options) (*Result, error) {
 	if !needServer && !needWeb {
 		return res, nil
 	}
-	if needWeb && !needServer && latest.Web.Manifest.MinServer != "" &&
-		version.Less(serverCur, latest.Web.Manifest.MinServer) {
-		return nil, fmt.Errorf("前端 %s 需要后端 ≥ %s，当前后端 %s 已是最新：先发布满足要求的后端版本", latest.Web.Manifest.Version, latest.Web.Manifest.MinServer, serverCur)
+	// 前端的 min_server 不满足时先升级后端（步骤里后端在前）；最新的后端也
+	// 不够时干脆拒绝这次前端更新，等发布满足要求的后端。
+	if needWeb && latest.Web.Manifest.MinServer != "" {
+		serverAfter := serverCur
+		note := "当前后端 " + serverCur + " 已是最新"
+		if needServer {
+			serverAfter = latest.Server.Manifest.Version
+			note = "最新的后端只有 " + serverAfter
+		}
+		if version.Less(serverAfter, latest.Web.Manifest.MinServer) {
+			return nil, fmt.Errorf("前端 %s 需要后端 ≥ %s，%s：先发布满足要求的后端版本", latest.Web.Manifest.Version, latest.Web.Manifest.MinServer, note)
+		}
 	}
 
 	// 先下载并校验，全部通过后才动磁盘上的东西。

@@ -109,6 +109,7 @@ func Test命令行创建管理员后可以启动服务并登录(t *testing.T) {
 func waitReady(t *testing.T, base string) {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
+	var last string
 	for time.Now().Before(deadline) {
 		res, err := http.Get(base + "/")
 		if err == nil {
@@ -116,10 +117,13 @@ func waitReady(t *testing.T, base string) {
 			if res.StatusCode == http.StatusOK {
 				return
 			}
+			last = fmt.Sprintf("状态码 %d", res.StatusCode)
+		} else {
+			last = err.Error()
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("服务在 15 秒内没有就绪：%s", base)
+	t.Fatalf("服务在 15 秒内没有就绪：%s（最后：%v）", base, last)
 }
 
 func freePort(t *testing.T) int {
