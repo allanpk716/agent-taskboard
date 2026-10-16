@@ -172,7 +172,7 @@ func cmdBackup(args []string) error {
 	}
 	// 手动备份按当天的日期定时备份算（每月 1 日是 monthly），参与同类轮换。
 	now := clock.Real{}.Now()
-	rec, err := b.Now(context.Background(), ops.KindForDate(now))
+	rec, err := b.BackupNow(context.Background(), ops.KindForDate(now))
 	if err != nil {
 		return fmt.Errorf("备份失败：%w", err)
 	}

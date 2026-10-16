@@ -22,7 +22,7 @@ func Test多天备份后按策略轮换(t *testing.T) {
 	// 五个普通日的每日备份（时钟逐天推进，文件名不重复）。
 	for day := 10; day <= 14; day++ {
 		clk.Set(beijing(2026, 10, day, 3, 0, 0))
-		if _, err := b.Now(context.Background(), ops.KindDaily); err != nil {
+		if _, err := b.BackupNow(context.Background(), ops.KindDaily); err != nil {
 			t.Fatalf("10 月 %d 日备份失败：%v", day, err)
 		}
 	}
@@ -44,7 +44,7 @@ func Test多天备份后按策略轮换(t *testing.T) {
 	// 两个月里的每月 1 日各一份，再补第三个月，只留最新 2 份。
 	for _, first := range []time.Month{time.September, time.October, time.November} {
 		clk.Set(beijing(2026, first, 1, 3, 0, 0))
-		if _, err := b.Now(context.Background(), ops.KindMonthly); err != nil {
+		if _, err := b.BackupNow(context.Background(), ops.KindMonthly); err != nil {
 			t.Fatalf("%d 月 1 日备份失败：%v", first, err)
 		}
 	}
@@ -79,7 +79,7 @@ func Test损坏的副本改名bad且好副本不被淘汰(t *testing.T) {
 	// 先备 3 份（正好保留上限），第 2 份被人为损坏。
 	for day := 10; day <= 12; day++ {
 		clk.Set(beijing(2026, 10, day, 3, 0, 0))
-		if _, err := b.Now(context.Background(), ops.KindDaily); err != nil {
+		if _, err := b.BackupNow(context.Background(), ops.KindDaily); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -91,7 +91,7 @@ func Test损坏的副本改名bad且好副本不被淘汰(t *testing.T) {
 	// 再备一份：损坏副本应被改名 .bad，不占保留名额；保留的 3 份都是好副本
 	// （10、12、13 日。若损坏的 11 日仍占名额，10 日那份好副本会被淘汰）。
 	clk.Set(beijing(2026, 10, 13, 3, 0, 0))
-	if _, err := b.Now(context.Background(), ops.KindDaily); err != nil {
+	if _, err := b.BackupNow(context.Background(), ops.KindDaily); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(target, corrupt+".bad")); err != nil {
@@ -121,7 +121,7 @@ func Test新副本校验不通过改名bad记失败(t *testing.T) {
 	if err := os.WriteFile(name, []byte("占位"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	rec, err := b.Now(context.Background(), ops.KindDaily)
+	rec, err := b.BackupNow(context.Background(), ops.KindDaily)
 	if err == nil {
 		t.Fatal("同名文件存在时备份应失败")
 	}

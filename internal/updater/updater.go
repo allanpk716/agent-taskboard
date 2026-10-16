@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -233,7 +234,7 @@ func (o *Options) preupdate(ctx context.Context) (string, error) {
 // serverExeFile 返回当前平台应下载的后端产物名（发布产物里 Windows 主部署，
 // 另附 linux/amd64 版本）。
 func serverExeFile() string {
-	if os.IsPathSeparator('\\') && os.PathSeparator == '\\' {
+	if runtime.GOOS == "windows" {
 		return "taskboard.exe"
 	}
 	return "taskboard-linux-amd64"
