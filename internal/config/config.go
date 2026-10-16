@@ -22,6 +22,8 @@ type Config struct {
 	// Backup 是备份配置（#43；默认每天 03:00，保留 30 份每日、12 份每月、
 	// 5 份更新前备份；target 用 UNC 路径，空则存 data_dir\backups\）。
 	Backup Backup `toml:"backup"`
+	// Update 是更新源配置（#45；sources 为空时不检查更新）。
+	Update Update `toml:"update"`
 }
 
 // Attachments 是 [attachments] 小节：服务端只检查上限，不压缩图片
@@ -51,6 +53,37 @@ type Backup struct {
 	KeepMonthly int `toml:"keep_monthly"`
 	// KeepPreupdate 是更新前备份的保留份数。
 	KeepPreupdate int `toml:"keep_preupdate"`
+}
+
+// Update 是 [update] 小节（#45，docs/deploy-and-release.md「更新」）：
+// sources 按顺序回退，默认（留空）不检查更新——避免开发/测试环境意外
+// 连真实源。GitHub 源只用 releases/download/ 下的固定地址，支持镜像前缀
+// 和代理（按顺序尝试镜像，最后直连）。
+type Update struct {
+	// Sources 是更新源名列表，如 ["updatehub", "github"]，按顺序回退。
+	Sources []string `toml:"sources"`
+	// UpdateHub 是内网 UpdateHub 源（走 SHA1 → nupkg → SHA256 双校验）。
+	UpdateHub UpdateHub `toml:"updatehub"`
+	// GitHub 是 GitHub Release 固定地址源。
+	GitHub UpdateGitHub `toml:"github"`
+}
+
+// UpdateHub 是 [update.updatehub] 小节。
+type UpdateHub struct {
+	// BaseURL 形如 https://updatehub.example.com，不带结尾斜杠。
+	BaseURL string `toml:"base_url"`
+	// Channel 是通道名，默认 stable。
+	Channel string `toml:"channel"`
+}
+
+// UpdateGitHub 是 [update.github] 小节。
+type UpdateGitHub struct {
+	// Repo 是 OWNER/REPO。
+	Repo string `toml:"repo"`
+	// Mirror 是镜像前缀列表（形如 https://<镜像>/），按顺序尝试，最后直连。
+	Mirror []string `toml:"mirror"`
+	// Proxy 是 http:// 或 socks5:// 代理；为空时读 HTTPS_PROXY 环境变量。
+	Proxy string `toml:"proxy"`
 }
 
 // Load 从 path 读取配置并补默认值。
@@ -101,5 +134,8 @@ func ApplyDefaults(cfg *Config) {
 	}
 	if cfg.Backup.KeepPreupdate == 0 {
 		cfg.Backup.KeepPreupdate = 5
+	}
+	if cfg.Update.UpdateHub.Channel == "" {
+		cfg.Update.UpdateHub.Channel = "stable"
 	}
 }

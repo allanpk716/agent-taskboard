@@ -6,6 +6,9 @@
 //	taskboard create-admin 创建首位管理员账号
 //	taskboard backup       手动备份（定时备份在 serve 内置）
 //	taskboard restore <备份文件> 恢复（需先停止服务）
+//	taskboard update       检查并安装更新（前后端；-check 只检查）
+//	taskboard rollback     换回上一版 exe 和更新前的备份
+//	taskboard version      显示当前前后端版本
 package main
 
 import (
@@ -24,6 +27,8 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/ops"
 	"github.com/allanpk716/agent-taskboard/internal/server"
 	"github.com/allanpk716/agent-taskboard/internal/store"
+	"github.com/allanpk716/agent-taskboard/internal/updater"
+	"github.com/allanpk716/agent-taskboard/internal/version"
 )
 
 func main() {
@@ -48,6 +53,12 @@ func run(args []string) error {
 		return cmdBackup(args)
 	case "restore":
 		return cmdRestore(args)
+	case "update":
+		return cmdUpdate(args)
+	case "rollback":
+		return cmdRollback(args)
+	case "version":
+		return cmdVersion(args)
 	case "help":
 		usage(os.Stdout)
 		return nil
@@ -63,6 +74,9 @@ func usage(w *os.File) {
   taskboard create-admin [flags]       创建管理员账号
   taskboard backup [flags]             手动备份一次（与定时备份同一段代码）
   taskboard restore <备份文件> [flags] 恢复（先停止服务，见 docs/deploy-and-release.md）
+  taskboard update [flags]             检查并安装更新（-check 只检查不安装）
+  taskboard rollback [flags]           换回上一版 exe 和更新前的备份（先停止服务）
+  taskboard version [flags]            显示当前前后端版本
   taskboard help                       显示本帮助
 
 通用 flags：
@@ -212,5 +226,110 @@ func cmdRestore(args []string) error {
 	}
 	fmt.Println()
 	fmt.Println("恢复完成：请启动服务（NSSM 下执行 nssm start <服务名>，或直接 taskboard serve）")
+	return nil
+}
+
+// updateOptions 从配置构造更新选项（三个更新入口共用 internal/updater）。
+func updateOptions(cfg config.Config, exePath string, logf func(string, ...any)) updater.Options {
+	return updater.Options{
+		Update: cfg.Update, DataDir: cfg.DataDir, Backup: cfg.Backup, WebDir: cfg.WebDir,
+		ExePath: exePath, Port: cfg.Port, Log: logf,
+	}
+}
+
+// cmdUpdate 检查并安装更新（docs/deploy-and-release.md「更新」）：按
+// [update].sources 顺序回退，前端 min_server 不满足时先升级后端；后端更新
+// 后提示重启（NSSM 拉起新版本，启动时自动迁移并做健康检查）。
+func cmdUpdate(args []string) error {
+	fs := flag.NewFlagSet("update", flag.ContinueOnError)
+	configPath := fs.String("config", "config.toml", "配置文件路径")
+	check := fs.Bool("check", false, "只检查更新，不安装")
+	exePath := fs.String("exe", "", "要替换的后端 exe 路径（默认当前进程自己的 exe）")
+	fs.Usage = func() { usage(os.Stderr) }
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	opt := updateOptions(cfg, *exePath, func(format string, args ...any) {
+		fmt.Printf(format+"\n", args...)
+	})
+	if *check {
+		status, err := updater.Check(context.Background(), opt)
+		if err != nil {
+			return err
+		}
+		fmt.Println(status.Describe())
+		return nil
+	}
+	res, err := updater.Apply(context.Background(), opt)
+	if err != nil {
+		return err
+	}
+	if len(res.Steps) == 0 {
+		fmt.Println("已是最新，无需更新。")
+		return nil
+	}
+	fmt.Printf("更新完成（源 %s）：\n", res.SourceUsed)
+	for _, step := range res.Steps {
+		fmt.Printf("  %s\n", step)
+	}
+	if res.RestartNeeded {
+		fmt.Println("后端已更新：请重启服务（NSSM 下执行 nssm restart <服务名>），新版本启动时会自动迁移并做健康检查。")
+	}
+	return nil
+}
+
+// cmdRollback 换回上一版 exe 和最近一次更新前的备份（新版本起不来时用；
+// 网页上的按钮那时不可用，只能在服务器上执行本命令）。
+func cmdRollback(args []string) error {
+	fs := flag.NewFlagSet("rollback", flag.ContinueOnError)
+	configPath := fs.String("config", "config.toml", "配置文件路径")
+	exePath := fs.String("exe", "", "要换回的 exe 路径（默认当前进程自己的 exe）")
+	fs.Usage = func() { usage(os.Stderr) }
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	opt := updateOptions(cfg, *exePath, nil)
+	res, err := updater.Rollback(opt)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("已换回上一版 exe（%s）\n", filepath.Base(res.RestoredExeFrom))
+	fmt.Printf("已恢复更新前备份：%s\n", filepath.Base(res.RestoredBackup))
+	if res.Restore.SavedCurrentAs != "" {
+		fmt.Printf("更新后的库另存为：%s\n", filepath.Base(res.Restore.SavedCurrentAs))
+	}
+	if len(res.Restore.MissingAttachments) > 0 {
+		fmt.Printf("提醒：镜像里也缺 %d 个附件：%s\n", len(res.Restore.MissingAttachments), strings.Join(res.Restore.MissingAttachments, "、"))
+	}
+	fmt.Println("回滚完成：请启动服务（NSSM 下执行 nssm start <服务名>，或直接 taskboard serve）")
+	return nil
+}
+
+// cmdVersion 显示当前前后端版本（后端是编译时注入的，前端读 web 目录的
+// version.json）。
+func cmdVersion(args []string) error {
+	fs := flag.NewFlagSet("version", flag.ContinueOnError)
+	configPath := fs.String("config", "config.toml", "配置文件路径")
+	fs.Usage = func() { usage(os.Stderr) }
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	web := updater.WebVersion(cfg.WebDir)
+	if web == "" {
+		web = "未知（手动部署，无 version.json）"
+	}
+	fmt.Printf("后端 %s，前端 %s\n", version.Server, web)
 	return nil
 }
