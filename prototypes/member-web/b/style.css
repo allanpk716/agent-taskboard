@@ -1,0 +1,62 @@
+/* ============ 原型 B · 外观：移动优先，App 式顶栏 + 底部标签栏 + 卡片 ============ */
+body { background: #eef1f6; }
+
+.b-app { max-width: 640px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
+.b-top { position: sticky; top: 0; z-index: 30; background: #fff; border-bottom: 1px solid #e2e6ee; padding: 12px 16px; display: flex; align-items: center; gap: 10px; }
+.b-title { font-size: 17px; font-weight: 700; flex: 1; }
+.b-me { font-size: 13px; color: #55607a; text-align: right; }
+.b-me i { font-style: normal; display: block; font-size: 11.5px; color: #98a1b3; }
+.b-body { flex: 1; padding-bottom: 86px; }
+.bpage { padding: 12px 12px 20px; }
+.b-note { font-size: 12.5px; color: #8a94a6; padding: 2px 4px 10px; }
+
+/* 底部标签栏 */
+.b-tabs { position: fixed; bottom: 0; left: 0; right: 0; z-index: 40; background: #fff; border-top: 1px solid #e2e6ee; display: flex; max-width: 640px; margin: 0 auto; padding-bottom: env(safe-area-inset-bottom); }
+.tabbtn { flex: 1; text-align: center; padding: 7px 0 6px; color: #8a94a6; font-size: 11px; text-decoration: none; position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.tabbtn > *:first-child { font-size: 20px; }
+.tabbtn.on { color: #2a6fdb; font-weight: 700; }
+.tabbtn .dot { position: absolute; top: 2px; right: calc(50% - 20px); background: #e5554f; color: #fff; border-radius: 9px; font-size: 10.5px; padding: 0 6px; }
+.tabbtn.plus b { background: #2a6fdb; color: #fff; width: 44px; height: 44px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 26px; margin-top: -22px; box-shadow: 0 4px 10px rgba(42,111,219,.4); font-weight: 400; }
+
+/* 卡片 */
+.tcard { background: #fff; border-radius: 14px; padding: 13px 15px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(20,30,50,.06); cursor: pointer; }
+.tcard:active { background: #f6f9ff; }
+.tc-top { display: flex; align-items: center; gap: 8px; }
+.tc-title { font-size: 15.5px; font-weight: 700; line-height: 1.45; margin: 5px 0 3px; }
+.tc-meta { font-size: 12.5px; color: #8a94a6; }
+.tc-foot { display: flex; align-items: center; gap: 6px; margin-top: 7px; }
+.tc-foot .hint { margin-left: auto; }
+.ecard { background: #fff; border-radius: 14px; padding: 26px; text-align: center; color: #8a94a6; }
+
+/* 列表筛选：横向滚动 chips */
+.sticky-fb { position: sticky; top: 53px; z-index: 20; background: #eef1f6; padding: 8px 0 4px; }
+.sticky-fb .frow { flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; scrollbar-width: none; padding-bottom: 2px; }
+.sticky-fb .frow::-webkit-scrollbar { display: none; }
+.sticky-fb .fgroup { display: inline-flex; align-items: center; gap: 5px; }
+.sticky-fb .hint { display: none; }
+.sticky-fb .searchrow input { border-radius: 10px; }
+.filterbar { background: #eef1f6; }
+.filterbar .inrow input { background: #fff; }
+
+/* 详情：整页对话流 */
+.detail .dhead { background: #fff; padding: 12px 4px 8px; border-bottom: 1px solid #e6e9f0; }
+.detail .dhead h1 { font-size: 18px; margin: 4px 0 8px; line-height: 1.4; }
+.dmeta { font-size: 12.5px; color: #8a94a6; }
+.back { font-size: 13px; color: #2a6fdb; }
+.mmeta { margin-top: 8px; border-top: 1px dashed #e2e6ee; padding-top: 6px; }
+.mmeta summary { font-size: 13px; color: #2a6fdb; cursor: pointer; padding: 2px 0; }
+.mmeta .kv { padding: 4px 0; }
+.actrow { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.conv { background: #eef1f6; border-radius: 14px; margin-top: 10px; padding-bottom: 4px; }
+.composer { margin: 0 8px 10px; border-radius: 14px; border: 1px solid #e2e6ee; box-shadow: 0 -2px 8px rgba(20,30,50,.04); }
+.composer.ro { color: #66707f; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+
+/* 弹窗在底部（已是 shared 默认），工具页行 */
+.toolrow { display: flex; flex-direction: column; padding: 12px 4px; border-bottom: 1px solid #f0f2f6; color: #222; font-weight: 700; text-decoration: none; }
+.toolrow:last-child { border-bottom: 0; }
+.toolrow .hint { font-weight: 400; font-size: 12.5px; }
+
+/* 桌面：居中一列即可（本来就是手机优先的设计） */
+@media (min-width: 700px) {
+  .b-body .bpage { max-width: 640px; }
+}
