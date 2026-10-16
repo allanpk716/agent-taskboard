@@ -1,0 +1,100 @@
+// GET /api/v1/tickets/{id}（访客视角）的响应结构（docs/api.md）。
+// 只声明访客页面用到的字段；访客响应里没有 labels、没有标签事件。
+
+export interface MemberRef {
+  id: number
+  name: string
+}
+
+export interface AgentRef {
+  id: number
+  name: string
+}
+
+export interface Author {
+  member?: MemberRef | null
+  agent?: AgentRef | null
+  link_note?: string | null
+  author_name?: string | null
+  via_agent?: boolean | null
+}
+
+export interface TemplateField {
+  key: string
+  title: string
+  guide: string
+  example: string
+  required: boolean
+  type: 'text' | 'radio' | 'dimension'
+  options?: string[]
+  dimension?: string
+}
+
+export interface Attachment {
+  id: string
+  filename: string
+  size: number // 字节
+  url: string // 访客拿到的是与链接绑定的短时效签名地址
+  attached_to: string // 「说明」或「回复 N」
+}
+
+export interface TimelineEvent {
+  seq: number
+  change: number
+  at: string
+  actor: Author
+  type: string
+  note?: string
+  reply_no?: number
+  body_md?: string
+  deliver?: boolean
+  revision?: number
+  reason?: string
+  duplicate_of?: string
+  expires_at?: string
+  attachment_ids?: string[]
+  from?: string
+  to?: string
+}
+
+export interface Brief {
+  fields?: Record<string, string> | null
+  markdown: string
+  revision: number
+  template?: string | null
+  template_fields?: TemplateField[]
+}
+
+export interface TicketView {
+  number: string
+  seq: number
+  kind: 'task' | 'report'
+  title: string
+  status: 'open' | 'closed'
+  close_reason?: 'done' | 'wontfix' | 'duplicate' | null
+  template?: string | null
+  creator: Author
+  assignee?: Author | null
+  waiting_on: { party: string; member?: string | null; text: string; reason: string }
+  brief: Brief
+  attachments: Attachment[]
+  viewer: {
+    kind: string
+    role: string
+    your_turn: boolean
+    link_note?: string
+    link_expires_at?: string
+    can: Record<string, boolean>
+  }
+  timeline: TimelineEvent[]
+}
+
+export interface GuestSession {
+  viewer: {
+    kind: 'guest'
+    link_note: string
+    link_expires_at: string
+    can_edit_brief: boolean
+  }
+  ticket: { number: string; seq: number; title: string; api: string }
+}

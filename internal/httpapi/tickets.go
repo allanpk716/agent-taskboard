@@ -12,6 +12,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/labels"
 	"github.com/allanpk716/agent-taskboard/internal/markdownview"
+	"github.com/allanpk716/agent-taskboard/internal/template"
 	"github.com/allanpk716/agent-taskboard/internal/templates"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
@@ -477,10 +478,24 @@ type waitingOnView struct {
 }
 
 type briefView struct {
-	Fields   *map[string]string `json:"fields"`
-	Markdown string             `json:"markdown"`
-	Revision int64              `json:"revision"`
-	Template *string            `json:"template"`
+	Fields        *map[string]string  `json:"fields"`
+	Markdown      string              `json:"markdown"`
+	Revision      int64               `json:"revision"`
+	Template      *string             `json:"template"`
+	TemplateFields []templateFieldView `json:"template_fields,omitempty"` // 创建时版本的字段定义（访客网页按问句渲染说明气泡，#38）
+}
+
+// fieldViewsOf 把工单保存的模板快照字段定义转成对外结构（与模板接口同形；
+// 维度字段不现取字典候选值——说明气泡只需要问句与顺序）。
+func fieldViewsOf(defs []template.Field) []templateFieldView {
+	out := make([]templateFieldView, 0, len(defs))
+	for _, f := range defs {
+		out = append(out, templateFieldView{
+			Key: f.Key, Title: f.Title, Guide: f.Guide, Example: f.Example,
+			Required: f.Required, Type: f.Type, Options: f.Options, Dimension: f.Dimension,
+		})
+	}
+	return out
 }
 
 type canView struct {
@@ -611,9 +626,13 @@ func newTicketView(full tickets.Full, viewer identity.Viewer) ticketView {
 		key := full.TemplateKey
 		v.Template = &key
 		v.Brief.Template = &key
-		// 读取同时返回 fields 和拼好的 brief_md（说明由创建时版本的字段定义拼出）。
+		// 读取同时返回 fields 和拼好的 brief_md（说明由创建时版本的字段定义拼出），
+		// 字段定义一并返回：访客网页按问句渲染说明气泡、未填字段显示（未填写）。
 		fields := full.Fields
 		v.Brief.Fields = &fields
+		if full.TemplateDef != nil {
+			v.Brief.TemplateFields = fieldViewsOf(full.TemplateDef.Fields)
+		}
 	}
 	if !isGuest {
 		labels := full.Labels
