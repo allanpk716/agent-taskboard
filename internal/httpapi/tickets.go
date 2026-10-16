@@ -25,11 +25,14 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, out any, want string) bo
 
 // handleTicketsRoot 处理工单集合：
 //
-//	POST /api/v1/tickets  建单（不用模板版；列表在 #37、模板建单在 #34）
+//	POST /api/v1/tickets  建单（不用模板版；模板建单在 #34）
+//	GET  /api/v1/tickets  条件列表（#37，仅成员）
 func (a *API) handleTicketsRoot(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		a.createTicket(w, r)
+	case http.MethodGet:
+		a.handleTicketList(w, r)
 	default:
 		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
 	}
@@ -51,6 +54,14 @@ func (a *API) handleTicketsRoot(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 	segs := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/tickets/"), "/")
 	ref := segs[0]
+	if ref == "counts" && len(segs) == 1 {
+		if r.Method != http.MethodGet {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
+			return
+		}
+		a.handleTicketCounts(w, r)
+		return
+	}
 	if len(segs) == 1 {
 		switch r.Method {
 		case http.MethodGet:
