@@ -11,6 +11,9 @@ const repoRoot = resolve(import.meta.dirname, '..', '..')
 const bin = process.env.E2E_BIN || join(repoRoot, 'bin', process.platform === 'win32' ? 'taskboard.exe' : 'taskboard')
 const webDir = process.env.E2E_WEB_DIR || join(repoRoot, 'web')
 const admin = { username: 'admin', password: 'admin-pass-123', name: '管理员' }
+// 成员网页 e2e 需要第二位成员（指派、收件箱流转）。账号创建接口在 #42，
+// 这里用 create-admin 造（多一位管理员不影响被测的成员功能）。
+const worker = { username: 'wang', password: 'wang-pass-123', name: '王工' }
 
 const dir = mkdtempSync(join(tmpdir(), 'tb-e2e-'))
 const tomlPath = (p) => p.replaceAll('\\', '/')
@@ -20,21 +23,23 @@ writeFileSync(
   `data_dir = '${tomlPath(join(dir, 'data'))}'\nport = ${port}\nweb_dir = '${tomlPath(webDir)}'\n`,
 )
 
-// 创建管理员。复用已有服务时登录名可能已存在，忽略失败。
-try {
-  execFileSync(bin, [
-    'create-admin',
-    '-config',
-    configPath,
-    '-username',
-    admin.username,
-    '-password',
-    admin.password,
-    '-name',
-    admin.name,
-  ], { stdio: 'inherit' })
-} catch {
-  console.log('[e2e] 管理员已存在（复用服务），跳过创建')
+// 创建管理员（复用已有服务时登录名可能已存在，忽略失败）。
+for (const who of [admin, worker]) {
+  try {
+    execFileSync(bin, [
+      'create-admin',
+      '-config',
+      configPath,
+      '-username',
+      who.username,
+      '-password',
+      who.password,
+      '-name',
+      who.name,
+    ], { stdio: 'inherit' })
+  } catch {
+    console.log(`[e2e] ${who.username} 已存在（复用服务），跳过创建`)
+  }
 }
 
 const child = spawn(bin, ['serve', '-config', configPath], { stdio: 'inherit' })

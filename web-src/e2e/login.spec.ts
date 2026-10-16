@@ -9,11 +9,14 @@ async function login(page: Page) {
   await page.getByRole('button', { name: '登录' }).click()
 }
 
-// 冒烟：登录后看到空壳页面。
-test('登录后看到空壳页面', async ({ page }) => {
+// 冒烟：登录后进入成员网页（#41：收件箱是首页）。
+test('登录后进入成员网页的收件箱', async ({ page }) => {
   await login(page)
-  await expect(page.getByText('这里是空壳页面：收件箱、工单列表等将在后续版本加入。')).toBeVisible()
-  await expect(page.getByText('管理员（admin）')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '收件箱' })).toBeVisible()
+  await expect(page.locator('.b-me')).toContainText('管理员')
+  for (const tab of ['收件箱', '工单', '建单', '工具', '我的']) {
+    await expect(page.locator('.b-tabs').getByRole('link', { name: tab })).toBeVisible()
+  }
 })
 
 test('账号或密码错误时显示统一错误', async ({ page }) => {
@@ -28,7 +31,10 @@ test('账号或密码错误时显示统一错误', async ({ page }) => {
 
 test('登出后回到登录页，再访问首页被送回登录', async ({ page }) => {
   await login(page)
-  await expect(page.getByText('这里是空壳页面：收件箱、工单列表等将在后续版本加入。')).toBeVisible()
+  await expect(page.getByRole('heading', { name: '收件箱' })).toBeVisible()
+  // 登出在「我的」页
+  await page.locator('.b-tabs').getByRole('link', { name: '我的' }).click()
+  await expect(page.getByRole('heading', { name: '我的 · 设置' })).toBeVisible()
   await page.getByRole('button', { name: '登出' }).click()
   await expect(page).toHaveURL(/\/login$/)
 

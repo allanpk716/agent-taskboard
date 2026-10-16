@@ -1,9 +1,9 @@
 import { LoginPage } from './LoginPage'
-import { ShellPage } from './ShellPage'
+import { MemberApp } from './member/MemberApp'
 import { GuestPage } from './guest/GuestPage'
 
 // 网页路由：/login 登录页；/g/<密钥> 访客链接（#38）；其余是登录后的成员页面
-//（后续工单加 /t/<编号> 等）。
+//（#41：/ 收件箱、/tickets 列表、/t/<编号> 详情、/new 建单、/tools、/me）。
 export function App() {
   const { pathname } = window.location
   if (pathname === '/login') {
@@ -12,5 +12,5 @@ export function App() {
   if (pathname.startsWith('/g/')) {
     return <GuestPage linkKey={decodeURIComponent(pathname.slice(3))} />
   }
-  return <ShellPage />
+  return <MemberApp />
 }
