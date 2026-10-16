@@ -13,6 +13,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/httpapi"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
+	"github.com/allanpk716/agent-taskboard/internal/idempotency"
 	"github.com/allanpk716/agent-taskboard/internal/labels"
 	"github.com/allanpk716/agent-taskboard/internal/store"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
@@ -39,7 +40,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	if err := labelDict.SeedIfEmpty(context.Background()); err != nil {
 		return nil, fmt.Errorf("导入标签字典种子失败：%w", err)
 	}
-	api := httpapi.NewAPI(ident, tickets.NewManager(st.DB, c, labelDict))
+	api := httpapi.NewAPI(ident, tickets.NewManager(st.DB, c, labelDict), idempotency.NewManager(st.DB))
 	web, err := webapp.New(cfg.WebDir)
 	if err != nil {
 		return nil, err

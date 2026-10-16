@@ -63,7 +63,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
   - `409 agent_name_taken`：该成员名下已有同名、未撤销的 Agent。
   - `404 agent_token_not_found`：id 不存在、不属于当前成员，或路径不是数字（`/me/` 下只看自己的资源，防枚举）。
 
-## 工单（#29：建单与读取，不用模板）
+## 工单（#29：建单与读取；#30：回复、修订、关闭与时间线）
 
 工单引用 `{id}` 接受两种写法：工单编号 `YYYYMMDD-NNN`（北京时间每天从 001 起，
 超 999 自动变 4 位）或全局序号（可带 `#` 前缀，URL 里需写成 `%23`）。网页和 Agent
@@ -73,6 +73,13 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 |---|---|
 | `POST /api/v1/tickets` | 建单（成员/成员 Agent）。 |
 | `GET /api/v1/tickets/{id}` | 读一张工单；`?format=markdown` 返回给 Agent 读的 Markdown。 |
+| `PATCH /api/v1/tickets/{id}` | 修订标题/说明（创建者一方；乐观锁）。 |
+| `POST /api/v1/tickets/{id}/replies` | 回复（成员、成员 Agent）。 |
+| `POST /api/v1/tickets/{id}/close` | 关闭（任何成员）。 |
+| `POST /api/v1/tickets/{id}/reopen` | 重新开启（任何成员）。 |
+| `GET /api/v1/tickets/{id}/timeline?after=N` | 时间线增量读取。 |
+
+（labels 在 #31、attachments 在 #33、guest-links 在 #32、assign 在 #36 加入。）
 
 - 建单请求体 `{"kind", "title", "brief_md", "labels"}`：
   - `kind` 可省（默认 `task`），只能是 `task`（任务）或 `report`（反馈）；用模板创建时由模板决定（#34）。
@@ -94,7 +101,74 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
     时间线事件带 `seq`（单内递增）、`change`、`at`、`actor`、`type`。
   - `viewer`：`{kind, member, agent, role(assignee|creator|member|guest), your_turn, can}`；
     `can` 是完整能力表 `reply/upload/edit_brief/label/close/reopen/manage_guest_links/deliver/assign`。
-  - `waiting_on` 由时间线推导（尚无回复且未指派 → `department`/尚未指派；回复参与推导在 #30，指派在 #36）。
+  - `waiting_on` 由时间线推导（规则见下「时间线增量读取」；指派在 #36 加入）。
   - 访客视角的可见性过滤（无 `labels`、跳过标签事件）在 #32 加入。
 - `?format=markdown` 返回 `text/markdown`：头部信息、说明、附件（占位）、时间线和
   「下一步」；署名按 ADR 0003：成员 `陈某`，成员 Agent `陈某 的 Agent · 名字`。
+  时间线里回复单独成节（`### [seq] 时间 · 作者 回复` + 正文），
+  说明修订/关闭/重开等事件写成 `- [seq] 时间 · 作者 事件文案`（如
+  `修订说明（第 2 版）`、`关闭工单（重复：与 20261016-001 重复）`）。
+
+### 回复（#30）
+
+- 请求体 `{"body_md": "…"}`；空白正文且无附件返回 `422 empty_reply`
+  （附件引用在 #33 加入后，有附件即可通过）。
+- 成员（含成员 Agent）在已关闭的工单上仍可回复——那不会重开工单；
+  重新开启是显式的 reopen 动作。`deliver: true` 目前一律返回
+  `403 deliver_assignee_only`（指派与交付在 #36 加入）。
+- 成功 `201`：`{reply_no, timeline_seq, deliver, author, waiting_on}`；
+  `author` 是展示名（`陈工` / `陈工 的 Agent · 笔记本`），
+  `waiting_on` 结构同 GET（由时间线推导，见下）。
+- 时间线记一条 `reply` 事件（`reply_no`、`body_md`）。
+
+### 修订标题/说明（#30）
+
+- 请求体 `{"title?": "…", "brief_md?": "…", "base_revision": N}`，只需传改动的部分；
+  模板工单按字段修订（`fields`）在 #34 加入。
+- `base_revision` 必填（`422 base_revision_required`），不等于当前版本时返回
+  `409 revision_conflict`（附 `current_revision`，重读合并后再提交）。
+  只有 title 或什么都没改的修订同样推进版本号。
+- 权限：创建者本人及其任意 Agent（其他成员 `403 not_brief_owner`，用回复补充内容）；
+  反馈入口提交者与「可填写说明」访客链接在 #32/#35 加入。修订不再做必填校验，
+  但标题改成空白返回 `422 title_required`。
+- 成功 `200`：`{"revision": N}`；每次修订记一条 `brief_revised` 事件（带 `revision`）。
+
+### 关闭与重新开启（#30）
+
+- 关闭请求体 `{"reason": "done|wontfix|duplicate", "duplicate_of?": "编号或序号"}`；
+  任何成员（含成员 Agent）都可关闭。缺失/非法 reason → `422 invalid_close_reason`；
+  `duplicate` 必须带 `duplicate_of`（`422 duplicate_of_required`；写成其他类型 →
+  `422 invalid_duplicate_of`），且必须指向存在的工单（否则 `404 ticket_not_found`）；
+  重复关闭 → `409 already_closed`。
+- 成功 `200`：`{status: "closed", close_reason, duplicate_of?}`；记一条 `closed` 事件
+  （`reason`，重复时 `duplicate_of` 为原工单编号）。
+- 重开 `POST …/reopen` 任何成员可用；未关闭时 `409 not_closed`。成功 `200`：
+  `{status: "open", waiting_on}`，记一条 `reopened` 事件；重开后可继续回复，
+  轮次按最后一条相关回复推导。
+
+### 时间线增量读取（#30）
+
+- `GET /api/v1/tickets/{id}/timeline?after=N` 返回
+  `{events, cursor, waiting_on, your_turn, status}`：`events` 只含 `seq > N` 的事件
+  （省略 after 即全量），`cursor` 是该单最后一条事件的 `seq`，客户端存下来
+  下次作 `after`。追平后再取：空列表、cursor 不变。
+- `after` 不是非负整数 → `422 invalid_cursor`。
+- 事件结构：`{seq, change, at, actor, type}` + 按类型出现的附加字段
+  （`reply` 带 `reply_no`/`body_md`/`deliver`，`brief_revised` 带 `revision`，
+  `closed` 带 `reason`/`duplicate_of`）。时间线只追加：每条都记录作者与时间，
+  旧事件永不改动。访客可见性过滤（跳过标签事件）在 #32 加入。
+- `waiting_on` 的推导（#36 指派加入前的规则）：已关闭 → `none`；任务单创建者一方
+  回复或尚无回复 → `department`（原因「尚未指派」；访客回复后是「访客回复了」，
+  访客在 #32 起）；反馈单成员回复 → `guest`。指派后按 prototype/member-handoff 的
+  turnOf 规则推导（对手、交付、退回），收件箱在 #36。
+
+## 幂等（#30）
+
+对所有会产生新内容的请求（建单、回复、说明修订；反馈提交与附件上传随后续工单
+接入）支持 `Idempotency-Key` 请求头：
+
+- 记录按（key、凭证、端点）隔离：同一 key 换了凭证（另一成员、另一个 Agent）
+  或换了端点，都是新请求。
+- 首次成功响应（2xx）存快照（含状态码与响应体）；重放返回首次结果，逐字节
+  相同，不产生新内容。失败的请求不存快照，修正后重试照常执行。
+- 同名请求头留空视为没带；幂等表在数据库里（迁移 `0004`）。

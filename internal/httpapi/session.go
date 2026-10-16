@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/allanpk716/agent-taskboard/internal/identity"
+	"github.com/allanpk716/agent-taskboard/internal/idempotency"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
 
@@ -16,10 +17,11 @@ const SessionCookieName = "tb_session"
 type API struct {
 	ident   *identity.Manager
 	tickets *tickets.Manager
+	idem    *idempotency.Manager
 }
 
-func NewAPI(ident *identity.Manager, tk *tickets.Manager) *API {
-	return &API{ident: ident, tickets: tk}
+func NewAPI(ident *identity.Manager, tk *tickets.Manager, idem *idempotency.Manager) *API {
+	return &API{ident: ident, tickets: tk, idem: idem}
 }
 
 // Handler 返回 /api/v1 前缀的 http.Handler（带 panic 恢复，统一错误格式）。
