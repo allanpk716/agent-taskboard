@@ -319,12 +319,18 @@ type setLabelsResponse struct {
 
 // memberFromRequest 要求凭证是成员（本人网页会话或成员 Agent）；访客 403 members_only。
 func (a *API) memberFromRequest(w http.ResponseWriter, r *http.Request) (identity.Viewer, bool) {
+	return a.memberFromRequestFor(w, r, "访客不能查看或维护标签")
+}
+
+// memberFromRequestFor 同 memberFromRequest，但用传入的 hint 提示访客该模块的
+// 正确用法（反馈入口 #35 等：同一错误码、不同的指引）。
+func (a *API) memberFromRequestFor(w http.ResponseWriter, r *http.Request, guestHint string) (identity.Viewer, bool) {
 	viewer, ok := a.viewerFromRequest(w, r)
 	if !ok {
 		return identity.Viewer{}, false
 	}
 	if viewer.Kind != identity.ViewerMember {
-		WriteError(w, http.StatusForbidden, CodeMembersOnly, "这个接口只对成员开放", "访客不能查看或维护标签")
+		WriteError(w, http.StatusForbidden, CodeMembersOnly, "这个接口只对成员开放", guestHint)
 		return identity.Viewer{}, false
 	}
 	return viewer, true

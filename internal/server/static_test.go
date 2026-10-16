@@ -71,6 +71,11 @@ func Test未知路径回退到index(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("状态码 = %d, 想 200", res.StatusCode)
 	}
+	// 反馈入口的网页路由 /i/<slug> 同样回退（提交页在 #39）。
+	res = s.Do(t, s.NewClient(), http.MethodGet, "/i/bug", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("/i/bug 状态码 = %d, 想 200（SPA 回退）", res.StatusCode)
+	}
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		t.Fatal(err)

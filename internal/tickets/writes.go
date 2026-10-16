@@ -14,6 +14,7 @@ import (
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
+	"github.com/allanpk716/agent-taskboard/internal/template"
 )
 
 // 写操作的校验与冲突错误；HTTP 层把它们映射成 4xx 错误码。
@@ -34,10 +35,25 @@ var (
 	ErrAlreadyClosed = errors.New("工单已经关闭")
 	// ErrNotClosed 表示工单没有关闭，谈不上重新开启。
 	ErrNotClosed = errors.New("工单没有关闭")
-	// ErrDeliverAssigneeOnly 表示只有指派人一方能用交付标记（指派在 #36 加入，
-	// 在那之前任何凭证都不能带 deliver）。
-	ErrDeliverAssigneeOnly = errors.New("只有指派人一方的回复能带交付标记")
 )
+
+// DeliverAssigneeOnlyError 是回复带了交付标记但当前凭证不是指派人一方
+// （403 deliver_assignee_only；工单已关闭时同样不能交付）。
+type DeliverAssigneeOnlyError struct {
+	Closed   bool
+	Assignee string // 当前指派人姓名；空 = 未指派
+}
+
+func (e *DeliverAssigneeOnlyError) Error() string {
+	if e.Closed {
+		return "工单已关闭，不能交付"
+	}
+	who := e.Assignee
+	if who == "" {
+		who = "未指派"
+	}
+	return "只有指派人（" + who + "）一方能交付"
+}
 
 // RevisionConflictError 是 base_revision 乐观锁冲突（409），带当前版本号。
 type RevisionConflictError struct {
@@ -49,9 +65,9 @@ func (e *RevisionConflictError) Error() string {
 	return fmt.Sprintf("说明已被改到第 %d 版，你基于的是第 %d 版", e.CurrentRevision, e.BaseRevision)
 }
 
-// ReplyInput 是回复的输入。附件引用（attachment_ids 与正文里的 att:）在 #33 加入：
+// ReplyInput 是回复的输入。附件引用（attachment_ids 与正文里的 att:）在 #33：
 // 两步上传的第二步，在写回复的同一事务里认领；AuthorName / ViaAgent 是访客的
-// 自报信息（#32，仅访客凭证采纳）。
+// 自报信息（#32，仅访客凭证采纳）；Deliver 是交付标记，仅指派人一方可用（#36）。
 type ReplyInput struct {
 	BodyMD        string
 	AttachmentIDs []string // 显式挂的附件（与正文 att: 引用合并去重）
@@ -86,8 +102,13 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 		}
 	}
 	if in.Deliver {
-		// #30 没有指派人；指派与交付在 #36 加入后这里才有例外。
-		return ReplyResult{}, ErrDeliverAssigneeOnly
+		// 交付标记只限指派人一方（本人或其 Agent）；交付不改变工单状态，
+		// 由发起人验收后关闭。
+		if full.Status != "open" || full.AssigneeID == 0 || viewer.Member.ID != full.AssigneeID {
+			return ReplyResult{}, &DeliverAssigneeOnlyError{
+				Closed: full.Status != "open", Assignee: full.AssigneeName,
+			}
+		}
 	}
 	// 附件引用：attachment_ids 与正文 att: 合并去重（插图语法单独标记）。
 	refs := attachments.ParsePostRefs(in.BodyMD, in.AttachmentIDs)
@@ -146,15 +167,17 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 	}, nil
 }
 
-// ReviseInput 是修订说明的输入。只需传改动的部分；title 与 brief_md 都可省（空修订
-// 也推进版本，行为与 title-only 修订一致）。模板工单按字段修订（fields）在 #34 加入；
-// AuthorName / ViaAgent 是访客的自报署名（#32）。
+// ReviseInput 是修订说明的输入。只需传改动的部分：title、brief_md（非模板工单）
+// 与 fields（模板工单，只传改动的字段）都可省（空修订也推进版本，行为与
+// title-only 修订一致）。修订不做必填校验；AuthorName / ViaAgent 是访客的
+// 自报署名（#32，仅访客凭证采纳）。
 type ReviseInput struct {
 	Title        *string
 	BriefMD      *string
-	BaseRevision int64  // 缺省时为 0，视为没带
-	AuthorName   string // 访客自报的署名（仅访客凭证采纳）
-	ViaAgent     bool   // 访客自报「由其 Agent 写成」
+	Fields       map[string]string // 模板工单：只需传改动的字段
+	BaseRevision int64             // 缺省时为 0，视为没带
+	AuthorName   string            // 访客自报的署名（仅访客凭证采纳）
+	ViaAgent     bool              // 访客自报「由其 Agent 写成」
 }
 
 // Revise 以 viewer 的身份修订标题/说明：校验 base_revision 乐观锁、推进版本号、
@@ -196,7 +219,43 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 	}
 	brief := full.BriefMD
 	if in.BriefMD != nil {
+		// 模板工单的说明由字段拼成，不接受整块 brief_md（反过来非模板工单
+		// 不接受 fields），两类修订按工单类型互斥。
+		if full.TemplateDef != nil {
+			return Ticket{}, ErrBriefMDWithTemplate
+		}
 		brief = *in.BriefMD
+	}
+	fields := full.Fields
+	if in.Fields != nil {
+		if full.TemplateDef == nil {
+			return Ticket{}, ErrFieldsWithoutTemplate
+		}
+		// 按创建时版本的字段定义校验（模板改版不影响已有工单）；
+		// 维度字段的值仍须是字典里在用的值（「不确定」除外）。
+		if err := validateFieldsAgainst(full.TemplateDef.Fields, in.Fields); err != nil {
+			return Ticket{}, err
+		}
+		for _, f := range full.TemplateDef.Fields {
+			if f.Type != template.TypeDimension {
+				continue
+			}
+			v := strings.TrimSpace(in.Fields[f.Key])
+			if v == "" || v == template.UnsureOption {
+				continue
+			}
+			if err := m.labels.Validate(ctx, []string{f.Dimension + ":" + v}); err != nil {
+				return Ticket{}, err
+			}
+		}
+		fields = make(map[string]string, len(full.Fields)+len(in.Fields))
+		for k, v := range full.Fields {
+			fields[k] = v
+		}
+		for k, v := range in.Fields {
+			fields[k] = v
+		}
+		brief = template.RenderBrief(fields, full.TemplateDef.Fields)
 	}
 	// 说明修订同样认领正文里的 att: 引用（挂到「说明」上）：只认领其中待用的，
 	// 已挂在别处的可以重复引用；计数对全部引用做（插图与附件分开）。
@@ -210,7 +269,19 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 	defer tx.Rollback()
 
 	revision := full.BriefRevision + 1
-	if _, err := tx.ExecContext(ctx,
+	var fieldsJSON any
+	if in.Fields != nil {
+		if buf, err := json.Marshal(fields); err != nil {
+			return Ticket{}, fmt.Errorf("序列化字段值失败：%w", err)
+		} else {
+			fieldsJSON = string(buf)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE tickets SET title = ?, brief_md = ?, fields_json = ?, brief_revision = ? WHERE seq = ?`,
+			title, brief, fieldsJSON, revision, full.Seq); err != nil {
+			return Ticket{}, fmt.Errorf("写入修订失败：%w", err)
+		}
+	} else if _, err := tx.ExecContext(ctx,
 		`UPDATE tickets SET title = ?, brief_md = ?, brief_revision = ? WHERE seq = ?`,
 		title, brief, revision, full.Seq); err != nil {
 		return Ticket{}, fmt.Errorf("写入修订失败：%w", err)
@@ -237,6 +308,7 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 
 	full.Title = title
 	full.BriefMD = brief
+	full.Fields = fields
 	full.BriefRevision = revision
 	full.LastChange = change
 	return full.Ticket, nil

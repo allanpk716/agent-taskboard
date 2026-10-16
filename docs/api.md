@@ -39,7 +39,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 
 - 网页会话（本人）：`viewer.agent` 为 `null`。
 - Agent token：`viewer.agent` 为该具名 Agent `{id, name}`，`viewer.member` 是其所属成员。
-- `inbox` 是成员收件箱地址（端点在后续工单实现）。
+- `inbox` 是成员收件箱地址 `GET /api/v1/inbox`（#36 起已实现，见「等待方与收件箱」）。
 
 凭证是访客链接密钥时（#32），`GET /api/v1/session` 返回链接指向的工单（贴一条链接就能干活，
 spec 用户故事 84），没有 `inbox`：
@@ -91,23 +91,36 @@ spec 用户故事 84），没有 `inbox`：
 | `POST /api/v1/tickets` | 建单（成员/成员 Agent；访客 403 `members_only`，访客建单走反馈入口 #35）。 |
 | `GET /api/v1/tickets/{id}` | 读一张工单；`?format=markdown` 返回给 Agent 读的 Markdown。 |
 | `PATCH /api/v1/tickets/{id}` | 修订标题/说明（创建者一方；持「可填写说明」链接的访客；乐观锁）。 |
-| `POST /api/v1/tickets/{id}/replies` | 回复（成员、成员 Agent、访客）。 |
+| `POST /api/v1/tickets/{id}/replies` | 回复（成员、成员 Agent、访客）；`deliver: true` 仅指派人一方（#36）。 |
 | `POST /api/v1/tickets/{id}/close` | 关闭（任何成员；访客 403 `members_only`）。 |
 | `POST /api/v1/tickets/{id}/reopen` | 重新开启（任何成员；访客 403 `members_only`）。 |
+| `POST /api/v1/tickets/{id}/assign` | 改派（#36，仅成员；记 `assigned` 事件，附改派版 `share_text`）。 |
 | `GET /api/v1/tickets/{id}/timeline?after=N` | 时间线增量读取。 |
 | `POST /api/v1/tickets/{id}/attachments` | 上传一个待用附件（multipart；见「附件（#33）」）。 |
 | `GET /api/v1/attachments/{att_N}/{filename}` | 附件下载（与工单相同的凭证，或访客链接的签名地址）。 |
+| `GET /api/v1/inbox` | 收件箱（#36，仅成员）：轮到我的开启工单 + 原因 + `read_new`。 |
 
-（labels 在 #31、assign 在 #36 加入；guest-links 见下。）
+（labels 在 #31；guest-links 见下。）
 
-- 建单请求体 `{"kind", "title", "brief_md", "labels"}`：
-  - `kind` 可省（默认 `task`），只能是 `task`（任务）或 `report`（反馈）；用模板创建时由模板决定（#34）。
-  - `title` 必填；`brief_md` 是不用模板时的一整块说明（可空）。
+- 建单请求体 `{"kind", "title", "brief_md", "labels", "assignee?"}`（不用模板）或
+  `{"template", "title", "fields", "labels", "assignee?"}`（用模板，见下面的「模板（#34）」）：
+  - `kind` 可省（默认 `task`），只能是 `task`（任务）或 `report`（反馈）；用模板创建时由模板决定（请求里的 `kind` 被忽略）。
+  - `title` 必填；`brief_md` 是不用模板时的一整块说明（可空）；模板工单的说明由 `fields` 按字段拼成。
   - `labels` 至少要有一个 `维度:值` 形式的维度标签；且每个标签（含不带维度的）
     必须是字典中在用的标准值（种子维度：产品线、系统、机型、部门、算法、立项、子项目；
     初始值见 `internal/labels/seeds.go`）。别名与 allow_new 见下面的「标签、字典与别名（#31）」。
-  - `assignee`（建单时指派与 `share_text`）预留给 #36，本版忽略。
-- 建单响应 `201`：`{number, seq, url}`（`url` 即 `/t/<编号>`）。
+    用模板创建时，模板的预设标签与维度字段选中的值会自动并进来（预设标签、维度字段值
+    都要满足同样的字典校验；「不确定」不打标签）。
+  - `assignee`（#36）可写成员 id 或姓名；写成成员 Agent（署名写法或 Agent 名字）
+    返回 `422 assignee_must_be_member`（成员 Agent 不能被指派，hint 列出可选成员）；
+    查无此人返回 `422 unknown_member`。建单时指派会在 `created` 事件后记一条
+    `assigned{from: null, to}` 事件。
+- 建单响应 `201`：`{number, seq, url, warnings, assignee, waiting_on, share_text}`
+  （`url` 即 `/t/<编号>`）。`warnings` 是用模板建单时「缺必填」的逐项提醒
+  `{field, message}[]`——工单照常创建，只在响应里提醒（spec 用户故事 6）；不用模板或
+  必填全填时为空数组。`assignee` 为成员或 null；`share_text` 只在指派给**他人**时非空，
+  可直接转发：`李工：给你派了一张工单「整理对照表」，让你的 Agent 读一下
+  /t/20261016-001（它也会出现在你的收件箱里）`。
 - 建单错误码：`422 title_required`、`422 invalid_kind`、
   `422 dimension_label_required`（hint 给出字典里的维度标签示例）、
   `422 unknown_label_value`（附 `suggestions`：同维度里规范化后相等或互相包含的值，
@@ -120,22 +133,28 @@ spec 用户故事 84），没有 `inbox`：
     时间线事件带 `seq`（单内递增）、`change`、`at`、`actor`、`type`。
   - `viewer`：`{kind, member, agent, role(assignee|creator|member|guest), your_turn, can}`；
     `can` 是完整能力表 `reply/upload/edit_brief/label/close/reopen/manage_guest_links/deliver/assign`。
-    访客：`member`/`agent` 为 `null`，另带 `link_note`/`link_expires_at`；`your_turn` 看
-    等待方是不是访客；能力表：`reply`/`upload` 需工单开启，`edit_brief` 需开启且链接带
-    「可填写说明」，其余恒 false。
-  - `waiting_on` 由时间线推导（规则见下「时间线增量读取」；指派在 #36 加入）。
+    `role`：本人是指派人 → `assignee`（自派自时优先算指派人），否则创建者一方 → `creator`，
+    其他成员 → `member`，访客 → `guest`（#36）。`your_turn` = 等待方轮到的成员是不是本人
+    （成员按成员 id，访客看等待方是不是访客）。
+    访客：`member`/`agent` 为 `null`，另带 `link_note`/`link_expires_at`；能力表：`reply`/`upload` 需工单开启，
+    `edit_brief` 需开启且链接带「可填写说明」，其余恒 false。
+  - `waiting_on` 由时间线推导（规则见下「等待方与收件箱（#36）」），不单独存储。
   - 访客视角的可见性过滤（#32）：响应里没有 `labels` 字段，时间线跳过标签事件
    （事件序号会跳号，这是已接受的）；访客访问其他工单一律 404 `ticket_not_found`
    （防枚举）。`?format=markdown` 同样过滤（无标签行、无标签事件）。
-- `?format=markdown` 返回 `text/markdown`：头部信息、说明、附件（占位）、时间线和
-  「下一步」；署名按 ADR 0003：成员 `陈某`，成员 Agent `陈某 的 Agent · 名字`。
-  时间线里回复单独成节（`### [seq] 时间 · 作者 回复` + 正文），
+- `?format=markdown` 返回 `text/markdown`：头部信息（含指派人，#36）、说明、附件（占位）、
+  时间线和「下一步」；署名按 ADR 0003：成员 `陈某`，成员 Agent `陈某 的 Agent · 名字`。
+  时间线里回复单独成节（`### [seq] 时间 · 作者 回复|**交付**` + 正文），
   说明修订/关闭/重开等事件写成 `- [seq] 时间 · 作者 事件文案`（如
-  `修订说明（第 2 版）`、`关闭工单（重复：与 20261016-001 重复）`）；
-  标签事件写成「打上标签 X」「摘掉标签 Y」。
-  时间线里回复单独成节（`### [seq] 时间 · 作者 回复` + 正文），
-  说明修订/关闭/重开等事件写成 `- [seq] 时间 · 作者 事件文案`（如
-  `修订说明（第 2 版）`、`关闭工单（重复：与 20261016-001 重复）`）。
+  `修订说明（第 2 版）`、`关闭工单（重复：与 20261016-001 重复）`、
+  `指派给 李工` / `改派：李工 → 赵工`）；标签事件写成「打上标签 X」「摘掉标签 Y」。
+- 末尾「下一步（给 Agent 的操作指引）」（#36，照原型 `guidance()`）按
+  角色×轮次生成，代码块可直接复制执行：已关闭（可重开时给 reopen 请求）；
+  指派人且轮到我（退回/提问/访客回复时先读 [seq]；提问、交文件、
+  `deliver: true` 交付三种请求，交付后不关闭工单）；发起人且轮到我
+  （已交付 → 验收通过 `close{done}` / 不通过普通回复两种；否则答复）；
+  访客且轮到我（回复 + `author_name`）；其余成员查 `GET /api/v1/inbox`
+  或增量时间线。
 
 ### 回复（#30）
 
@@ -153,25 +172,35 @@ spec 用户故事 84），没有 `inbox`：
   （署名由凭证决定，ADR 0003）。
 - 成员（含成员 Agent）在已关闭的工单上仍可回复——那不会重开工单；重新开启是显式
   动作。访客链接在关闭的工单上只读：回复返回 `409 ticket_closed`，重新开启后恢复。
-  `deliver: true` 目前一律返回 `403 deliver_assignee_only`（指派与交付在 #36 加入）。
+  `deliver: true`（#36）是「做完了，请验收」的标记，只限指派人一方（本人或其
+  Agent，且工单需开启），其他人用返回 `403 deliver_assignee_only`（hint：去掉
+  deliver 作为普通回复；该你做就请发起人改派）。**交付不改变工单状态**，由
+  发起人验收：通过就 `close{done}`，不通过就普通回复写明问题，工单自动退回
+  指派人（等待方推导）。
 - 成功 `201`：`{reply_no, timeline_seq, deliver, author, waiting_on}`；
   `author` 是展示名（`陈工` / `陈工 的 Agent · 笔记本`），
   `waiting_on` 结构同 GET（由时间线推导，见下）。
 - 时间线记一条 `reply` 事件（`reply_no`、`body_md`）。
 
-### 修订标题/说明（#30）
+### 修订标题/说明（#30；#34 起支持按字段修订）
 
-- 请求体 `{"title?": "…", "brief_md?": "…", "base_revision": N}`，只需传改动的部分；
-  模板工单按字段修订（`fields`）在 #34 加入。
+- 请求体 `{"title?": "…", "brief_md?": "…", "fields?": {…}, "base_revision": N}`，
+  只需传改动的部分。`brief_md` 只用于非模板工单；模板工单用 `fields` 传**改动的字段**
+  （键是小节标题（问句）原文，未传的字段保持不变），两类修订按工单类型互斥：
+  用错时分别返回 `422 fields_without_template` / `422 brief_md_with_template`。
 - `base_revision` 必填（`422 base_revision_required`），不等于当前版本时返回
   `409 revision_conflict`（附 `current_revision`，重读合并后再提交）。
   只有 title 或什么都没改的修订同样推进版本号。
 - 权限：创建者本人及其任意 Agent（其他成员 `403 not_brief_owner`，用回复补充内容）；
   持「可填写说明」链接的访客（工单需开启；无权限的链接 `403 link_cannot_edit_brief`，
-  关闭后 `409 ticket_closed`）。反馈入口提交者在 #35 加入。修订不再做必填校验，
+  关闭后 `409 ticket_closed`）；反馈入口的提交者视同创建者，靠提交响应里那条带
+  「可填写说明」的访客链接行使这项权限（入口在 #35 落地）。修订不再做必填校验，
   但标题改成空白返回 `422 title_required`。访客修订可自报 `author_name`/`via_agent`
   （记在修订事件的作者上）。
 - 成功 `200`：`{"revision": N}`；每次修订记一条 `brief_revised` 事件（带 `revision`）。
+  字段修订的取值仍做结构校验：键必须是模板（创建时版本）里的字段（`422 unknown_field`）、
+  单选值必须在选项里（`422 invalid_field_option`）、维度值必须是字典里在用的值
+  （`422 unknown_label_value`；「不确定」除外）；但**不做必填校验**，可以把字段清空。
   正文里的 `att:` 引用同样认领（挂到「说明」上）：只认领其中待用的，已挂在别处的
   可以重复引用；待用的必须是本次凭证上传的（`422 attachment_not_usable`）。
 
@@ -197,25 +226,145 @@ spec 用户故事 84），没有 `inbox`：
 - `after` 不是非负整数 → `422 invalid_cursor`。
 - 事件结构：`{seq, change, at, actor, type}` + 按类型出现的附加字段
   （`reply` 带 `reply_no`/`body_md`/`deliver`，`brief_revised` 带 `revision`，
-  `closed` 带 `reason`/`duplicate_of`，`guest_link_created`/`guest_link_revoked` 带
+  `closed` 带 `reason`/`duplicate_of`，`assigned` 带 `from`/`to`（from 为 null 表示
+  创建时指派，否则是改派），`guest_link_created`/`guest_link_revoked` 带
   `note`，`guest_link_extended` 带 `note` 与 `expires_at`）。时间线只追加：每条都记录
   作者与时间，旧事件永不改动。访客可见性过滤（跳过标签事件）在 #32 已生效；
   访客的 `cursor` 是它可见的最后一条事件 `seq`（跳过的序号不会当作增量重发）。
-- `waiting_on` 的推导（#36 指派加入前的规则）：已关闭 → `none`；任务单创建者一方
-  回复或尚无回复 → `department`（原因「尚未指派」；访客回复后是「访客回复了」，
-  访客在 #32 起）；反馈单成员回复 → `guest`。指派后按 prototype/member-handoff 的
-  turnOf 规则推导（对手、交付、退回），收件箱在 #36。
+- `waiting_on` 的推导见下「等待方与收件箱（#36）」。
+
+## 指派与改派（#36）
+
+- `POST /api/v1/tickets/{id}/assign {"assignee": "成员 id 或姓名"}`（仅成员；
+  访客 403 `members_only`）。改派给当前指派人 → `422 already_assigned`；
+  写成成员 Agent → `422 assignee_must_be_member`；查无此人 → `422 unknown_member`
+  （hint 列出可选成员）。
+- 成功 `200`：`{assignee, waiting_on, share_text}`；`share_text` 只在改派给**他人**时
+  非空：`赵工：工单「整理对照表」转给你了，让你的 Agent 读一下 /t/20261016-001`。
+- 记一条 `assigned{from, to}` 事件（文案「指派给 X」/「改派：X → Y」）并推进变更序号。
+  改派后，原指派人的回复不再参与等待方推导，工单随推导从原指派人的收件箱移到
+  新指派人的收件箱。
+
+## 等待方与收件箱（#36）
+
+等待方与收件箱原因都从时间线推导，不存会漂移的状态；唯一真相在时间线
+（实现：`tickets.WaitingOnOf`，#37 的查询同样复用）。规则照 prototype/member-handoff
+的 `turnOf`：
+
+```
+已关闭                        → 无等待方（party=none）
+尚无回复 或 最后是访客回复     → 指派人（未指派 → department）
+任务 且 创建者是成员 且 创建者≠指派人（“有对手”）：
+    指派人一方回复             → 创建者（原因：已交付待验收 若带 deliver，否则 指派人回复了）
+    创建者一方回复             → 指派人（原因：此前有交付则 发起人退回修改，否则 发起人回复了）
+    第三位成员回复             → 不改变轮次（不参与相关回复集）
+其余情况（反馈、自派自）成员回复 → 访客
+成员 Agent 的回复算其所属成员一方；改派后按当前指派人重算，原指派人的回复不再参与
+```
+
+- `waiting_on = {party, member, text, reason}`；`text` 示例：`李工（指派人）`、
+  `王工（发起人）`、`访客`、`本部门（未指派）`、`无（已关闭）`。未指派时原因只写
+  「尚未指派」或「访客回复了」（ticket-query 原型的修正：不能写「新指派给你」）。
+- 已接受边界：任务同时发了访客链接时，指派人的回复一律算作交给创建者；
+  重新开启后按最后一条相关回复推导，Markdown「下一步」提示重开者回复说明原因。
+
+### GET /api/v1/inbox（仅成员）
+
+- 访客 403 `members_only`（决议 4），匿名 401。
+- 列出「现在轮到我」的**开启**工单，按工单序号；同一成员名下所有 Agent 共用一份
+  （Agent 定时轮询它即可，不靠人口头转告）；未指派的工单不出现在任何人的收件箱里
+  （要用查询接口找，#37）。响应：`{member, count, items}`，每项：
+  - `{number, title, role(assignee|creator), reason, since_seq, read_new, read_full}`。
+  - `reason` 文案：新指派给你 / 已交付，待你验收 / 指派人回复了，待你答复 /
+    发起人退回修改 / 发起人回复了 / 访客回复了。
+  - `since_seq` 是推导所依据的那条回复的事件 seq（无相关回复时为 null，即新指派）。
+  - `read_new` = `/api/v1/tickets/<编号>/timeline?after=<我在该单最后一条任意事件的 seq>`
+    （不只回复——要读的是「上次我看过之后别人做了什么」）；`read_full` =
+    `/api/v1/tickets/<编号>?format=markdown`。
 
 ## 幂等（#30）
 
 对所有会产生新内容的请求（建单、回复、说明修订——成员与访客凭证都一样；
-反馈提交与附件上传随后续工单接入）支持 `Idempotency-Key` 请求头：
+反馈入口提交在 #35 起支持；附件上传随后续工单接入）支持 `Idempotency-Key` 请求头：
 
 - 记录按（key、凭证、端点）隔离：同一 key 换了凭证（另一成员、另一个 Agent）
   或换了端点，都是新请求。
 - 首次成功响应（2xx）存快照（含状态码与响应体）；重放返回首次结果，逐字节
   相同，不产生新内容。失败的请求不存快照，修正后重试照常执行。
 - 同名请求头留空视为没带；幂等表在数据库里（迁移 `0004`）。
+
+
+## 模板（#34）
+
+成员用 Markdown 维护模板；成员和 Agent 都按模板的字段建单、填写。任何成员
+（含成员 Agent）都能新建和修改模板；每次修改产生一个新版本并记录修改人；
+模板只能停用、不能删除；用模板建的工单保存创建时那个版本的字段定义，
+模板以后修改不影响已有工单。
+
+### 模板语法（来自 #9，格式错误保存失败并报出行号）
+
+```markdown
+---
+名称: Bug 反馈
+类型: 反馈
+预设标签: [待初筛]
+---
+## 哪台仪器？ {维度:机型 必填}
+在仪器背面铭牌上可以看到型号；不确定可以选“不确定”。
+## 你做了哪些操作？ {必填}
+按顺序写，一步一行。
+> 示例：1. 开机自检完成 2. 进入质控界面 3. 点击“开始”
+```
+
+- YAML 头（首尾 `---`）：键只认 `名称`、`类型`（任务/反馈）、`预设标签`（`[a, b]`），其余键报错。
+- 每个 `##` 小节是一个字段：标题写成问句（**问句原文就是 `fields` 的键**），小节正文是
+  引导说明，`> 示例：` 起的引用行是占位示例。
+- 花括号标记写在标题行末尾：`{必填}`、`{选填}`、`{单选: A | B}`、`{维度:X 必填}`
+  （可与 `必填`/`选填` 组合）；不写时默认多行文本、选填。
+- 小节标题为「给 Agent 的说明」的一段不是字段，是一段说明；会出现在模板的填写指南里，
+  也会出现在按该模板建的工单 Markdown 的「下一步」里（spec 用户故事 35）。
+- 字段标题重复、标记无法识别、YAML 头缺键等格式错误：保存失败（422
+  `template_format_error`），message 里带行号（如「第 3 行：类型只能是 任务 或 反馈」）。
+
+### 端点
+
+| 方法与路径 | 说明 |
+|---|---|
+| `GET /api/v1/templates` | 模板列表（含已停用，各项带 `active`），成员与成员 Agent 可读。 |
+| `POST /api/v1/templates` | 新建：`{"key": "check", "markdown": "模板原文"}`，成功 201。 |
+| `GET /api/v1/templates/{key}` | 读当前版本：字段定义、`agent_note`、模板原文 `markdown`、`version`、`updated_by`。 |
+| `GET /api/v1/templates/{key}?format=markdown` | 给 Agent 的填写指南（`text/markdown`）：建单请求示例、逐字段问句/引导/示例/候选值、「给 Agent 的说明」。 |
+| `PATCH /api/v1/templates/{key}` | 修改：`{"markdown": "新原文"}`，产生新版本（版本号 +1，记录修改人）。 |
+| `POST /api/v1/templates/{key}/deactivate` | 停用（幂等 200；模板不能删除，停用后不能再用它建单，读取仍可见）。 |
+
+- 新建/修改请求带 `Idempotency-Key` 时同样去重。
+- `key` 是模板的稳定标识（出现在工单的 `template` 字段里），不能含空格或 `/`，
+  且不能复用已存在的 key（409 `template_key_taken`）。
+- 字段定义结构：`{key, title, guide, example, required, type, options[], dimension?}`；
+  `type` 为 `text | radio | dimension`。**维度字段的 `options` 是读取时从标签字典现取的
+  候选值 + 「不确定」**（字典会变，不缓存在模板里）。
+- 错误码：`422 template_format_error`（带行号）、`422 template_key_required`、
+  `422 invalid_template_key`、`422 markdown_required`、`409 template_key_taken`、
+  `404 template_not_found`。
+
+### 按模板建单与修订
+
+- `POST /api/v1/tickets {"template", "title", "fields", "labels"}`：
+  - `fields` 的键是模板小节标题（问句）原文；值是填写的文字。
+  - 缺必填项**不拦截**：工单照常创建，响应 `warnings` 逐项列出；维度字段选「不确定」
+    算已填、且不打该维度的标签。
+  - 结构错误会拦：未知字段键 `422 unknown_field`、单选值不在选项里
+    `422 invalid_field_option`、维度值不在字典里 `422 unknown_label_value`（附 suggestions）。
+  - 模板的预设标签自动打上；维度字段选中的值同时成为标签并以文字写进说明
+    （访客看不到标签）；类型由模板决定。
+  - 未知模板 404 `template_not_found`；已停用模板 422 `template_inactive`。
+- `GET /api/v1/tickets/{id}` 的模板工单：`template` 为模板 key；`brief.fields` 为字段值
+  map，`brief.markdown` 为按字段拼好的说明（`### 问句` + 内容，只拼已填字段）；
+  `brief.template` 同 `template`。
+- `PATCH /api/v1/tickets/{id} {"fields": {改动的字段}, "base_revision": N}`：
+  只改动传入的字段，其余保持不变；每次修订记一条 `brief_revised` 事件（见上）。
+- 预置三份模板（spec「初始数据」）：`bug-report`（Bug 反馈，预设 `待初筛`）、
+  `assign-task`（分配任务）、`question`（问题咨询）；模板是运行时数据，上线后可随时修改。
 
 
 ## 标签、字典与别名（#31）
@@ -332,6 +481,7 @@ spec 用户故事 84），没有 `inbox`：
   不自报时 `访客（经「检验科-张三」链接）`。
 - 修订标题/说明：只有持「可填写说明」权限链接的访客可以（`can.edit_brief`），
   乐观锁同样生效；无权限 403 `link_cannot_edit_brief`，工单关闭后 409 `ticket_closed`。
+
 - 仅成员的接口（建单、标签全套、关闭、重开、访客链接管理）对访客统一
   403 `members_only`（决议 4）。
 
@@ -340,7 +490,7 @@ spec 用户故事 84），没有 `inbox`：
 两步上传（spec 用户故事 52）：先上传拿到 `att:` 引用与现成的 Markdown 片段，
 再在回复或说明中引用（正文 `att:` 引用或 `attachment_ids`）。未被引用的附件也
 计入配额，上传满 24 小时后由服务的周期任务清除（行与文件一并删除；备份镜像
-只增不删，残留可接受）。文件本体放在 `data_dirttachments\<id>`，数据库只存
+只增不删，残留可接受）。文件本体放在 `data_dir\attachments\<id>`，数据库只存
 元数据；服务端只检查上限，不压缩图片（压缩在前端做）。
 
 ### 上传（POST /api/v1/tickets/{id}/attachments）
@@ -384,3 +534,59 @@ spec 用户故事 84），没有 `inbox`：
 - 响应头：图片、PDF、`.txt`、`.log` 以 `inline` 返回，其余（含 HTML、SVG）一律
   `Content-Disposition: attachment`（RFC 5987 编码文件名）；所有附件响应都带
   `X-Content-Type-Options: nosniff`。
+
+- 仅成员的接口（建单、标签全套、关闭、重开、访客链接管理，以及 #35 起的反馈入口
+  管理）对访客统一 403 `members_only`（决议 4）。
+
+## 反馈入口（#35）
+
+反馈入口是部门级的长期地址 `/i/<slug>`：内网任何人（或其 Agent）不用账号、不用
+访客链接，凭入口地址就能自助提交一张反馈，提交成功当场拿到这张反馈的专属访客
+链接（30 天、「可填写说明」权限）——之后完全按访客的方式参与（读、修订说明、
+回复，密钥直接作 Bearer）。每个入口绑定一个**反馈类型**的模板，始终使用该模板的
+**最新版本**；入口不能查看其他工单（匿名端点只读入口本身）。
+
+### 端点
+
+| 方法与路径 | 说明 |
+|---|---|
+| `POST /api/v1/intakes` | 创建（任何成员）：`{"slug", "name", "template"}`。 |
+| `GET /api/v1/intakes` | 列表（任何成员，含已停用，各项带 `active`）。 |
+| `GET /api/v1/intakes/{slug}` | **匿名**读取：入口信息 + 绑定模板的当前版本（维度字段带字典候选值和「不确定」）。 |
+| `GET /api/v1/intakes/{slug}?format=markdown` | **匿名**读取给 Agent 的填写指南（`text/markdown`，与 `GET /api/v1/templates/{key}?format=markdown` 同一份）。 |
+| `POST /api/v1/intakes/{slug}/tickets` | **匿名**提交：`{"title", "fields", "author_name?"}`。 |
+| `POST /api/v1/intakes/{slug}/deactivate` | 停用（任何成员；幂等 200）。 |
+| `POST /api/v1/intakes/{slug}/rotate` | 轮换 slug（任何成员）：`{"slug": "新 slug"}`；旧 slug 立即失效。 |
+
+- 创建：`slug` 只用小写字母、数字和连字符（`422 slug_required` / `invalid_slug`），
+  且不能与已有入口重复（`409 slug_taken`）；`name` 会显示在提交页上（`422 name_required`）；
+  `template` 必须存在（`404 template_not_found`）、在用（`422 template_inactive`）且
+  类型为反馈（`422 template_not_report`）。响应 `201` 是入口的管理视图
+  `{slug, name, template, active, url: "/i/<slug>", created_by, created_at}`。
+- 匿名读取：不存在或已停用的入口一律 `404 intake_not_found`（轮换后的旧 slug 同样，
+  与「不存在」不可区分，防枚举）。响应 `{slug, name, url, kind, template}`，其中
+  `template` 是当前版本 `{key, name, version, kind, preset_labels, agent_note, fields}`
+  （字段结构与 `GET /api/v1/templates/{key}` 相同）。
+- 提交（严格校验，与成员建单的 warnings 相反）：
+  - 缺必填项直接拦下：`422 missing_fields`，`fields` 附加数组逐项给出
+    `{field, hint, example?}`（引导说明、维度字段的「不确定」、单选字段的选项），
+    `hint` 汇总逐项说明缺什么、怎么填。**「不确定」算已填**（不打该维度的标签）。
+  - 结构错误与成员建单同码：空标题 `422 title_required`、未知字段键
+    `422 unknown_field`、单选值不在选项里 `422 invalid_field_option`、维度值不在
+    字典里 `422 unknown_label_value`（附 `suggestions`）。
+  - 提交**不要求**维度标签（GLOSSARY：入口提交是「至少一个维度标签」的唯一例外）；
+    模板预设标签与维度字段选中的值自动打上。
+  - 成功 `201`：`{ticket: {number, seq, title, url}, guest_link: {url: "/g/<密钥>",
+    note, expires_at, can_edit_brief: true}, next}`。密钥只在提交响应里出现一次。
+    工单类型由模板决定（恒为 `report`）；编号与序号的分配同建单。
+- 提交者**视同说明的创建者**：工单的创建者记录为访客（带链接备注
+  `反馈入口「<名称>」提交人` 与自报的 `author_name`）；`viewer.role` 为 `creator`，
+    用返回的链接即可读工单、修订说明（带「可填写说明」权限）和回复。时间线记
+    `created`（访客作者）与 `guest_link_created` 两条事件；等待方推导照常
+    （反馈：成员回复轮到访客，访客回复轮回本部门）。
+- 停用与轮换：停用后匿名读写都按不存在处理；轮换把入口换到新 slug，旧 slug 立即
+  失效（`404 intake_not_found`）。两者都不影响已提交的工单和提交者手里的访客链接
+  （链接独立于入口存在，见「访客链接（#32）」）。
+- 入口提交同样支持 `Idempotency-Key`（匿名凭证按同一 key 去重，重放返回首次结果）。
+- 管理端点仅限成员；访客 403 `members_only`（hint 指向入口地址），匿名 401。
+

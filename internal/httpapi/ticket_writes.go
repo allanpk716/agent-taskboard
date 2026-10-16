@@ -61,14 +61,16 @@ func (a *API) replyTicket(w http.ResponseWriter, r *http.Request, ref string) {
 }
 
 // reviseTicketRequest 是 PATCH /api/v1/tickets/{id} 的请求体。
-// 只需传改动的字段；模板工单按字段修订（fields）在 #34 加入；
-// author_name / via_agent 是访客的自报署名（#32，仅访客凭证采纳）。
+// 只需传改动的部分：title、brief_md（非模板工单）或 fields（模板工单，
+// 只传改动的字段）；base_revision 必带（乐观锁）；author_name / via_agent
+// 是访客的自报署名（#32，仅访客凭证采纳）。
 type reviseTicketRequest struct {
-	Title        *string `json:"title"`
-	BriefMD      *string `json:"brief_md"`
-	BaseRevision int64   `json:"base_revision"`
-	AuthorName   string  `json:"author_name"`
-	ViaAgent     bool    `json:"via_agent"`
+	Title        *string           `json:"title"`
+	BriefMD      *string           `json:"brief_md"`
+	Fields       map[string]string `json:"fields"`
+	BaseRevision int64             `json:"base_revision"`
+	AuthorName   string            `json:"author_name"`
+	ViaAgent     bool              `json:"via_agent"`
 }
 
 func (a *API) reviseTicket(w http.ResponseWriter, r *http.Request, ref string) {
@@ -84,6 +86,7 @@ func (a *API) reviseTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		t, err := a.tickets.Revise(r.Context(), viewer, ref, tickets.ReviseInput{
 			Title:        req.Title,
 			BriefMD:      req.BriefMD,
+			Fields:       req.Fields,
 			BaseRevision: req.BaseRevision,
 			AuthorName:   req.AuthorName,
 			ViaAgent:     req.ViaAgent,
@@ -256,4 +259,51 @@ func newWaitingOnView(waitingOn tickets.WaitingOn) waitingOnView {
 		v.Member = &m
 	}
 	return v
+}
+
+// assignTicketRequest 是 POST …/assign 的请求体：assignee 可写成员 id 或姓名。
+type assignTicketRequest struct {
+	Assignee string `json:"assignee"`
+}
+
+// assignTicketView 是改派成功（200）的响应；改派给他人时带一句可转发的
+// share_text。
+type assignTicketView struct {
+	Assignee  *memberRef    `json:"assignee"`
+	WaitingOn waitingOnView `json:"waiting_on"`
+	ShareText *string       `json:"share_text"`
+}
+
+// assignTicket 处理 POST /api/v1/tickets/{id}/assign（改派，仅成员；访客 403
+// members_only）。记一条 assigned{from,to} 事件；改派后原指派人的回复不再
+// 参与等待方推导，工单随推导从原指派人的收件箱移到新指派人的收件箱。
+func (a *API) assignTicket(w http.ResponseWriter, r *http.Request, ref string) {
+	viewer, ok := a.viewerFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if viewer.Kind != identity.ViewerMember {
+		WriteError(w, http.StatusForbidden, CodeMembersOnly, "改派只对成员开放",
+			"访客不能改派工单；如需转办请联系成员")
+		return
+	}
+	var req assignTicketRequest
+	if !decodeJSON(w, r, &req, `{"assignee": "成员 id 或姓名"}`) {
+		return
+	}
+	result, err := a.tickets.Assign(r.Context(), viewer, ref, req.Assignee)
+	if err != nil {
+		a.writeTicketError(w, r, ref, err)
+		return
+	}
+	view := assignTicketView{
+		Assignee:  &memberRef{ID: result.AssigneeID, Name: result.AssigneeName},
+		WaitingOn: newWaitingOnView(result.WaitingOn),
+	}
+	// 改派给自己不需要通知，share_text 为空。
+	if result.AssigneeID != viewer.Member.ID {
+		share := reassignShareText(result.AssigneeName, result.Title, result.Number)
+		view.ShareText = &share
+	}
+	writeJSON(w, http.StatusOK, view)
 }

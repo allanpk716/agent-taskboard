@@ -146,8 +146,8 @@ func Test空回复返回422(t *testing.T) {
 	}
 }
 
-// 交付标记只有指派人一方能用；指派在 #36 才有，在那之前带 deliver 一律 403
-// deliver_assignee_only（结构先定好，避免悄悄丢掉交付意图）。
+// 未指派的工单没有指派人，带 deliver 一律 403 deliver_assignee_only
+// （#36：交付标记只限指派人一方；结构先定好，避免悄悄丢掉交付意图）。
 func Test回复带交付标记返回403(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")
@@ -283,6 +283,8 @@ type timelineEventBody struct {
 	Note          string     `json:"note"`           // guest_link_created / guest_link_revoked（#32）
 	ExpiresAt     string     `json:"expires_at"`     // guest_link_extended 的新到期时刻（#32）
 	AttachmentIDs []string   `json:"attachment_ids"` // reply 引用的附件（#33）
+	From          string     `json:"from"`           // assigned 事件的改派前指派人（空 = 创建时指派，#36）
+	To            string     `json:"to"`             // assigned 事件的指派对象（#36）
 }
 
 // timelineBody 是 GET …/timeline?after=N 的响应结构。
