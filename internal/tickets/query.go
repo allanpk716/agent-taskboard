@@ -22,7 +22,6 @@ type ListQuery struct {
 
 	Labels    []string // 必须全部带有（可含 维度:*）
 	NoLabels  []string // 必须一个都不带
-	HasLabels bool     // 是否给了 label / no_label（回显用）
 
 	AssigneeSet  bool
 	AssigneeID   int64  // AssigneeNone 为 false 时的成员 id
