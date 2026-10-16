@@ -115,25 +115,27 @@ func (m *Manager) RevokeAgentToken(ctx context.Context, member Member, id int64)
 
 // ViewerFromAgentToken 把 Agent token 解析成 Viewer；token 未知或已撤销时
 // 返回 ErrInvalidCredentials（撤销即时生效，所以每次都实时查库）。
+// 成员账号被停用（#42）后，其名下 Agent token 也一并失效。
 func (m *Manager) ViewerFromAgentToken(ctx context.Context, token string) (Viewer, error) {
 	var (
-		agent     Agent
-		member    Member
-		isAdmin   int
-		revokedAt sql.NullString
+		agent       Agent
+		member      Member
+		isAdmin     int
+		revokedAt   sql.NullString
+		deactivated sql.NullString
 	)
 	err := m.db.QueryRowContext(ctx, `
-		SELECT t.id, t.name, t.revoked_at, m.id, m.username, m.name, m.is_admin
+		SELECT t.id, t.name, t.revoked_at, m.id, m.username, m.name, m.is_admin, m.deactivated_at
 		FROM agent_tokens t JOIN members m ON m.id = t.member_id
 		WHERE t.token_hash = ?`, hashToken(token)).
-		Scan(&agent.ID, &agent.Name, &revokedAt, &member.ID, &member.Username, &member.Name, &isAdmin)
+		Scan(&agent.ID, &agent.Name, &revokedAt, &member.ID, &member.Username, &member.Name, &isAdmin, &deactivated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Viewer{}, ErrInvalidCredentials
 	}
 	if err != nil {
 		return Viewer{}, err
 	}
-	if revokedAt.Valid {
+	if revokedAt.Valid || deactivated.Valid {
 		return Viewer{}, ErrInvalidCredentials
 	}
 	member.IsAdmin = isAdmin == 1
