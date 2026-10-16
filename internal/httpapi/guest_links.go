@@ -15,7 +15,7 @@ import (
 // guestLinkRequest 是 POST …/guest-links 与 …/guest-links/{id}/extend 的请求体：
 // valid_days 与 expires_at 二选一（都不填时创建默认 30 天，延期必填其一）。
 // ValidDays 用指针区分「没写」与「写了 0」——写了 0 或其他非法值都是 422
-//（没有永久有效的选项）。
+// （没有永久有效的选项）。
 type guestLinkRequest struct {
 	Note         string `json:"note"`
 	ValidDays    *int   `json:"valid_days"`
@@ -92,7 +92,7 @@ func (a *API) createGuestLink(w http.ResponseWriter, r *http.Request, ref string
 	}
 	link, err := a.tickets.CreateGuestLink(r.Context(), viewer, ref, spec)
 	if err != nil {
-		a.writeTicketError(w, r, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, guestLinkView{
@@ -107,7 +107,7 @@ func (a *API) listGuestLinks(w http.ResponseWriter, r *http.Request, ref string)
 	}
 	links, err := a.tickets.GuestLinks(r.Context(), ref)
 	if err != nil {
-		a.writeTicketError(w, r, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	out := []guestLinkView{}
@@ -123,7 +123,7 @@ func (a *API) revokeGuestLink(w http.ResponseWriter, r *http.Request, ref string
 		return
 	}
 	if err := a.tickets.RevokeGuestLink(r.Context(), viewer, ref, id); err != nil {
-		a.writeTicketError(w, r, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -149,7 +149,7 @@ func (a *API) extendGuestLink(w http.ResponseWriter, r *http.Request, ref string
 	}
 	link, err := a.tickets.ExtendGuestLink(r.Context(), viewer, ref, id, spec)
 	if err != nil {
-		a.writeTicketError(w, r, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, newGuestLinkView(link))

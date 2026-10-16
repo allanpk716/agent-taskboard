@@ -84,6 +84,16 @@ const (
 	CodeLinkCannotEditBrief = "link_cannot_edit_brief" // 链接没有「可填写说明」权限
 	CodeTicketClosed        = "ticket_closed"          // 工单已关闭，访客链接只读
 
+	// #33：附件。
+	CodeAttachmentTooLarge      = "attachment_too_large"      // 单个文件超限（413）
+	CodeAttachmentCountExceeded = "attachment_count_exceeded" // 每帖附件/插图个数超限（413）
+	CodeTicketQuotaExceeded     = "ticket_quota_exceeded"     // 整张工单合计超限（413）
+	CodeAttachmentNotUsable     = "attachment_not_usable"     // 引用的附件不可用（422）
+	CodeAttachmentNotFound      = "attachment_not_found"      // 附件不存在（404）
+	CodeFileRequired            = "file_required"             // multipart 缺文件字段
+	CodeInvalidFilename         = "invalid_filename"          // 文件名缺失或非法
+	CodeAttachmentURLExpired    = "attachment_url_expired"    // 附件签名地址过期（401）
+
 	// #35：反馈入口。
 	CodeIntakeNotFound    = "intake_not_found"    // 入口不存在或已停用（含轮换后的旧 slug）
 	CodeSlugRequired      = "slug_required"       // 创建/轮换入口时没写 slug

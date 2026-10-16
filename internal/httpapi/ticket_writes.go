@@ -9,14 +9,15 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
 
-// replyRequest 是 POST …/replies 的请求体。attachment_ids 在 #33 加入；
-// author_name / via_agent 是访客的自报信息（#32）：只有访客凭证会采纳，
-// 成员的署名由凭证决定，不能自报（ADR 0003）。
+// replyRequest 是 POST …/replies 的请求体。attachment_ids 与正文 att: 引用在
+// 同一事务里认领（#33）；author_name / via_agent 是访客的自报信息（#32）：只有
+// 访客凭证会采纳，成员的署名由凭证决定，不能自报（ADR 0003）。
 type replyRequest struct {
-	BodyMD     string `json:"body_md"`
-	Deliver    bool   `json:"deliver"`
-	AuthorName string `json:"author_name"`
-	ViaAgent   bool   `json:"via_agent"`
+	BodyMD        string   `json:"body_md"`
+	AttachmentIDs []string `json:"attachment_ids"`
+	Deliver       bool     `json:"deliver"`
+	AuthorName    string   `json:"author_name"`
+	ViaAgent      bool     `json:"via_agent"`
 }
 
 // replyTicketView 是回复成功（201）的响应。
@@ -39,13 +40,14 @@ func (a *API) replyTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	}
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
 		result, err := a.tickets.Reply(r.Context(), viewer, ref, tickets.ReplyInput{
-			BodyMD:     req.BodyMD,
-			Deliver:    req.Deliver,
-			AuthorName: req.AuthorName,
-			ViaAgent:   req.ViaAgent,
+			BodyMD:        req.BodyMD,
+			AttachmentIDs: req.AttachmentIDs,
+			Deliver:       req.Deliver,
+			AuthorName:    req.AuthorName,
+			ViaAgent:      req.ViaAgent,
 		})
 		if err != nil {
-			a.writeTicketError(w, r, err)
+			a.writeTicketError(w, r, ref, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, replyTicketView{
@@ -90,7 +92,7 @@ func (a *API) reviseTicket(w http.ResponseWriter, r *http.Request, ref string) {
 			ViaAgent:     req.ViaAgent,
 		})
 		if err != nil {
-			a.writeTicketError(w, r, err)
+			a.writeTicketError(w, r, ref, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, reviseTicketView{Revision: t.BriefRevision})
@@ -135,7 +137,7 @@ func (a *API) closeTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		DuplicateOf: duplicateOf,
 	})
 	if err != nil {
-		a.writeTicketError(w, r, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	view := closeTicketView{Status: t.Status, CloseReason: t.CloseReason}
@@ -145,7 +147,7 @@ func (a *API) closeTicket(w http.ResponseWriter, r *http.Request, ref string) {
 			d := dup.Number
 			view.DuplicateOf = &d
 		} else {
-			a.writeTicketError(w, r, err)
+			a.writeTicketError(w, r, ref, err)
 			return
 		}
 	}
@@ -166,7 +168,7 @@ func (a *API) reopenTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	}
 	full, err := a.tickets.Reopen(r.Context(), viewer, ref)
 	if err != nil {
-		a.writeTicketError(w, r, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, reopenTicketView{
@@ -291,7 +293,7 @@ func (a *API) assignTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	}
 	result, err := a.tickets.Assign(r.Context(), viewer, ref, req.Assignee)
 	if err != nil {
-		a.writeTicketError(w, r, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	view := assignTicketView{

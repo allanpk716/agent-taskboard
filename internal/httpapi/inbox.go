@@ -49,7 +49,7 @@ type inboxItemView struct {
 	Reason   string `json:"reason"`
 	SinceSeq *int64 `json:"since_seq"` // 推导依据的回复事件 seq；无相关回复时为 null
 	ReadNew  string `json:"read_new"`  // 增量读取地址（after = 我在该单最后一条事件）
-	ReadFull string `json:"read_full"`  // 全文 Markdown 地址
+	ReadFull string `json:"read_full"` // 全文 Markdown 地址
 }
 
 func newInboxItemView(it tickets.InboxItem) inboxItemView {
