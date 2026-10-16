@@ -515,6 +515,129 @@ func appendUnique(list []string, s string) []string {
 	return append(list, s)
 }
 
+// FilterResolution 是列表/计数筛选参数 label / no_label 的解析结果：解析成
+// 标准值；通配写法 维度:* 在筛选里合法（Via 为 wildcard）；别名换算后回显在
+// 响应的 resolved_aliases 里。
+type FilterResolution struct {
+	Label string // 标准值或 维度:* 通配写法
+	Via   string // exact | alias | wildcard
+	Alias string // via == alias 时命中的别名原文
+}
+
+// ResolveFilter 把筛选里的一个标签写法解析成标准值。与打标签不同：通配
+//（维度:*）在这里合法；解析范围包含已停用的值（历史工单上可能还带着，
+// 统计仍应能按它们分组）。解析不到返回 UnknownValueError（附近似值），
+// 维度不存在返回 ErrUnknownDimension。
+func (m *Manager) ResolveFilter(ctx context.Context, q string) (FilterResolution, error) {
+	d, err := m.loadDictionary(ctx)
+	if err != nil {
+		return FilterResolution{}, err
+	}
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return FilterResolution{}, &UnknownValueError{Label: q}
+	}
+	if q == "*" {
+		return FilterResolution{}, &UnknownValueError{Label: q}
+	}
+	dim, val, hasDim := SplitLabel(q)
+	if hasDim {
+		if !d.hasDimension(dim) {
+			return FilterResolution{}, ErrUnknownDimension
+		}
+		if val == "*" {
+			return FilterResolution{Label: dim + ":*", Via: "wildcard"}, nil
+		}
+		// exact：含停用值（历史工单上可能还带着）。
+		var exact []string
+		for _, v := range d.allDimension(dim) {
+			if norm(v.value) == norm(val) {
+				exact = append(exact, v.value)
+			}
+		}
+		if len(exact) == 1 {
+			return FilterResolution{Label: dim + ":" + exact[0], Via: "exact"}, nil
+		}
+		if len(exact) > 1 {
+			return FilterResolution{}, &UnknownValueError{Label: q, Suggestions: withDim(dim, exact)}
+		}
+		// alias：同维度里恰有一个值认领（含停用值的别名）。
+		switch target, values := d.aliasTargetAll(dim, val); target {
+		case 1:
+			return FilterResolution{Label: dim + ":" + values[0], Via: "alias", Alias: val}, nil
+		case -1:
+			return FilterResolution{}, &UnknownValueError{Label: q, Suggestions: withDim(dim, values)}
+		}
+		// 近似值建议按裸值比较（原型 resolveCandidates），再补回 维度: 前缀。
+		bare := make([]string, 0, len(d.values[dim]))
+		for _, v := range d.values[dim] {
+			bare = append(bare, v.value)
+		}
+		return FilterResolution{}, &UnknownValueError{Label: q, Suggestions: withDim(dim, suggest(val, bare))}
+	}
+	// 不带维度：先对上不带维度的标签，再换算跨维度唯一的别名。
+	for _, p := range d.plain {
+		if norm(p.label) == norm(q) {
+			return FilterResolution{Label: p.label, Via: "exact"}, nil
+		}
+	}
+	switch target, labels := d.crossDimensionAliasTargetAll(q); target {
+	case 1:
+		return FilterResolution{Label: labels[0], Via: "alias", Alias: q}, nil
+	case -1:
+		return FilterResolution{}, &UnknownValueError{Label: q, Suggestions: labels}
+	}
+	var all []string
+	for _, p := range d.plain {
+		all = append(all, p.label)
+	}
+	return FilterResolution{}, &UnknownValueError{Label: q, Suggestions: suggest(q, all)}
+}
+
+// aliasTargetAll 同 aliasTarget，但含停用值（筛选可按历史值统计）。
+func (d *dictionaryData) aliasTargetAll(dim, q string) (int, []string) {
+	nq := norm(q)
+	var hits []string
+	for _, v := range d.allDimension(dim) {
+		for _, a := range v.aliases {
+			if norm(a) == nq {
+				hits = appendUnique(hits, v.value)
+			}
+		}
+	}
+	switch len(hits) {
+	case 0:
+		return 0, nil
+	case 1:
+		return 1, hits
+	default:
+		return -1, hits
+	}
+}
+
+// crossDimensionAliasTargetAll 同 crossDimensionAliasTarget，但含停用值。
+func (d *dictionaryData) crossDimensionAliasTargetAll(q string) (int, []string) {
+	nq := norm(q)
+	var hits []string
+	for _, dim := range d.dimensionOrder {
+		for _, v := range d.allDimension(dim) {
+			for _, a := range v.aliases {
+				if norm(a) == nq {
+					hits = appendUnique(hits, dim+":"+v.value)
+				}
+			}
+		}
+	}
+	switch len(hits) {
+	case 0:
+		return 0, nil
+	case 1:
+		return 1, hits
+	default:
+		return -1, hits
+	}
+}
+
 // ResolveRemove 把要摘掉的写法解析成标准值。工单上可能还带着停用值
 // （管理员停用或合并后），所以解析时包含停用值。解析不到返回 UnknownValueError。
 func (m *Manager) ResolveRemove(ctx context.Context, q string) (string, error) {

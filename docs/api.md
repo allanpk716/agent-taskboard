@@ -89,6 +89,8 @@ spec 用户故事 84），没有 `inbox`：
 | 方法与路径 | 说明 |
 |---|---|
 | `POST /api/v1/tickets` | 建单（成员/成员 Agent；访客 403 `members_only`，访客建单走反馈入口 #35）。 |
+| `GET /api/v1/tickets` | 条件列表（#37，仅成员；见「查询与计数（#37）」）。 |
+| `GET /api/v1/tickets/counts` | 按一个维度计数（#37，仅成员；筛选与列表相同）。 |
 | `GET /api/v1/tickets/{id}` | 读一张工单；`?format=markdown` 返回给 Agent 读的 Markdown。 |
 | `PATCH /api/v1/tickets/{id}` | 修订标题/说明（创建者一方；持「可填写说明」链接的访客；乐观锁）。 |
 | `POST /api/v1/tickets/{id}/replies` | 回复（成员、成员 Agent、访客）；`deliver: true` 仅指派人一方（#36）。 |
@@ -281,6 +283,68 @@ spec 用户故事 84），没有 `inbox`：
   - `read_new` = `/api/v1/tickets/<编号>/timeline?after=<我在该单最后一条任意事件的 seq>`
     （不只回复——要读的是「上次我看过之后别人做了什么」）；`read_full` =
     `/api/v1/tickets/<编号>?format=markdown`。
+
+## 查询与计数（#37）
+
+初筛、统计、查重 Agent 按条件列出工单、计数并做增量拉取。两个接口都仅限成员
+（访客 403 `members_only`，匿名 401）；筛选条件完全相同。
+
+### GET /api/v1/tickets（条件列表）
+
+- 条件之间是「并且」，写错的参数返回 422 `unknown_parameter`（附可用参数列表）：
+  - `status=open|closed|all`（默认 `open`）、`kind=task|report`、`template=<key>`
+    （未知模板 422 `template_not_found`）。
+  - `label` / `no_label`（可重复）：`label` 要求全部带有、`no_label` 要求一个都不带；
+    值可以写 `维度:值`、不带维度的标签、`维度:*`（这个维度有/没有任何值）或别名
+    （自动换成标准值，解析结果在 `resolved_aliases` 里回显，如 `"7600 → 机型:UD-2300"`；
+    解析不到 422 `unknown_label_value` + `suggestions`，未知维度 422 `unknown_dimension`；
+    筛选解析含已停用值，便于统计历史工单）。
+  - `assignee=<名|id>|me|none`、`creator=<名|id>|me|guest`（经反馈入口提交）、
+    `waiting_on=assignee|creator|guest|department|me`（不存在的成员 422 `unknown_member`）。
+  - `actor_kind=member|agent`（orchestrator 决议 5，「本人 / Agent」筛选）：按**创建者**
+    的署名区分——`member` 是非 Agent 署名（成员本人或访客），`agent` 是成员 Agent。
+    时间线接口 `GET /api/v1/tickets/{id}/timeline` 也接受同一参数（按事件的作者筛，
+    `cursor` 只数筛后仍可见的事件）；非法取值 422 `invalid_actor_kind`。
+  - `created_/updated_/closed_` + `after/before`：写日期（默认当天 00:00）或日期时分
+    （`2026-10-01T09:30`），北京时间；**`_after` 包含该时刻，`_before` 不包含**；
+    `closed_*` 只作用于已关闭的工单。
+  - `q`：关键词，在标题、说明（含字段拼接）和回复正文里查找；规范化 = 忽略大小写、
+    空格、连字符和下划线（`E203` 能找到 `E-203`）；命中项带 `matched_in`
+    （标题/说明/回复 N）和 `snippet`（首个命中的前后片段）。
+  - `changed_after=<cursor>`：只返回变更序号大于它的工单（见下）。
+- 排序 `sort=-updated(默认；带 changed_after 时默认 change)|updated|-created|created|-closed|change`，
+  同键时按工单序号倒序；`limit` 默认 50、最大 200（422 `invalid_limit`）；
+  翻页用偏移量 `page_token=p<offset>`（已接受的取舍：翻页可能漏项/重复，
+  需要完整拉取时用 `sort=created` 或 `changed_after`），跟着响应里的 `next` 走。
+- 响应：`{total, count, items, next(下一页完整地址，没有时为 null), cursor,
+  filters(解析后的标准条件 + 实际 sort), resolved_aliases?}`。每项是**摘要**：
+  `number, seq, url, kind, title, status, close_reason, template, creator, assignee,
+  labels, waiting_on, created_at, updated_at, closed_at, reply_count, last_change,
+  read_full`（时间线不在列表里给）；`include=brief` 附带 `brief`（拼好的 Markdown、
+  模板工单的 `fields`）；`q` 命中附 `matched_in/snippet`。
+- `format=markdown` 返回 `text/markdown`：一张表格（编号/标题/状态/指派人/轮到/标签/更新，
+  命中信息内联在标题行）+ 末尾「下一步」（读全文、跟 `next` 翻页、`changed_after` 增量）。
+
+### 变更序号与增量拉取
+
+- 变更序号是全局递增整数：工单上的**任何**事件（回复、标签、指派、关闭、
+  说明修订、访客链接……）都会推进它，且与事件写入在同一个事务里（#29 起）。
+- 列表/计数响应的 `cursor` 返回当前全局值；Agent 存下来，下次加
+  `changed_after=<cursor>` 就只拿这之后变化过的工单（可以和其他条件组合，
+  此时默认按变更顺序排）；没有变化时空列表、`cursor` 不变。列表项的
+  `last_change` 是该单最后一条事件的变更序号。
+
+### GET /api/v1/tickets/counts?group_by=…
+
+- `group_by` = 一个标签维度 | `status|kind|assignee|close_reason|waiting_on`
+  （缺 `group_by` 422 `group_by_required`；非法 422 `invalid_group_by`）。
+- 筛选条件与列表相同；不接受 `sort/limit/page_token/include/format`
+  （422 `unknown_parameter`）。
+- 一张工单在该维度有多个值时每个值各算一次（附 `note` 说明各组之和可大于
+  `total`）；没有该维度计入 `(无)`；`assignee` 无 → `(未指派)`、`close_reason`
+  无 → `(未关闭)`、`waiting_on` 用中文描述分组。
+- 响应：`{group_by, total, groups: [{value, count}]（按 count 降序，同数按首现
+  顺序）, filters, cursor, resolved_aliases?, note?}`。
 
 ## 幂等（#30）
 
