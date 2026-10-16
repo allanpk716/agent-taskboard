@@ -4,7 +4,7 @@
 // Markdown 说明。维度标签先经 resolve 换成标准值（建单接口只收标准值）；
 // 缺必填只弹确认、不拦截（spec 用户故事 6）；创建后显示编号与可转发的
 // share_text。
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ApiError, api } from '../api'
 import type { TemplateField } from '../shared/types'
 import { fetchMembers, uploadMemberAttachment, type MemberRef } from './memberApi'
@@ -279,6 +279,20 @@ function NewTicketForm({
   const [submitErr, setSubmitErr] = useState<string | null>(null)
   const [missing, setMissing] = useState<string[] | null>(null)
   const [busy, setBusy] = useState(false)
+  // 建单动作的幂等键与自动重试（评审 P2-13，照访客 Composer 的做法）。
+  const idemKeyRef = useRef<string | undefined>(undefined)
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  function scheduleCreateRetry() {
+    if (retryTimer.current) clearTimeout(retryTimer.current)
+    retryTimer.current = setTimeout(() => void create(), 3000)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (retryTimer.current) clearTimeout(retryTimer.current)
+    }
+  }, [])
 
   useEffect(() => {
     fetchMembers()
@@ -362,6 +376,7 @@ function NewTicketForm({
 
   async function create() {
     setBusy(true)
+    let willRetry = false
     try {
       const body: Record<string, unknown> = {
         title: title.trim(),
@@ -380,11 +395,15 @@ function NewTicketForm({
         body.kind = kind
         body.brief_md = brief
       }
+      // 同一次建单动作复用同一个 Idempotency-Key（ADR 0002「放心自动重试」，
+      // 评审 P2-13）：网络失败/5xx 自动重试不会建出第二张单。
+      if (!idemKeyRef.current) idemKeyRef.current = crypto.randomUUID()
       const created: Created = await api('/api/v1/tickets', {
         method: 'POST',
         body: JSON.stringify(body),
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: idemKeyRef.current,
       })
+      idemKeyRef.current = undefined // 成功：下一次建单是新动作
       // 暂存的附件此刻上传（建单本身不认领 att: 引用），再把引用写进说明。
       const warnings = await attachStagedFiles(created.number, template, brief, files)
       created.warnings = [...created.warnings, ...warnings]
@@ -392,12 +411,20 @@ function NewTicketForm({
       onDone(created, title.trim())
       window.scrollTo(0, 0)
     } catch (e) {
-      setSubmitErr(
-        e instanceof ApiError ? `${e.code}：${e.message}${e.hint ? `（${e.hint}）` : ''}` : '创建失败，请重试',
-      )
+      if (!(e instanceof ApiError) || e.status >= 500 || e.status === 429) {
+        // 服务暂时不可用/网络错误：自动重试（同一个 key），表单保持锁定。
+        willRetry = true
+        setSubmitErr('服务更新中，正在自动重试…')
+        window.scrollTo(0, 0)
+        scheduleCreateRetry()
+        return
+      }
+      // 4xx：内容被拒，改完再提交是新动作。
+      idemKeyRef.current = undefined
+      setSubmitErr(`${e.code}：${e.message}${e.hint ? `（${e.hint}）` : ''}`)
       window.scrollTo(0, 0)
     } finally {
-      setBusy(false)
+      if (!willRetry) setBusy(false)
     }
   }
 

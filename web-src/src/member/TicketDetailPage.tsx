@@ -3,7 +3,7 @@
 // 等待方、访客链接）、一排小按钮（打标签/改派/访客链接/关闭/重开）、验收面板、
 // 带「交付」标记的回复输入区、时间线按「本人 / Agent」筛选（客户端筛，与
 // 服务端 actor_kind 同一语义：成员 Agent 的回复算 Agent 一方）。
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api'
 import type { MemberTicket } from './memberApi'
 import {
@@ -789,28 +789,77 @@ function Composer({
   const [body, setBody] = useState('')
   const [deliver, setDeliver] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const [down, setDown] = useState<string | null>(null)
   const [uploading, setUploading] = useState(0)
   const [bigWarn, setBigWarn] = useState<string | null>(null)
+  // 同一次发送动作复用同一个 Idempotency-Key（ADR 0002「放心自动重试」，评审
+  // P2-13）：网络失败/5xx 自动重试不会产生重复回复（照访客 Composer 的做法）。
+  const idemKeyRef = useRef<string | undefined>(undefined)
+  const sendingRef = useRef(false)
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const stateRef = useRef({ body, deliver })
+  stateRef.current = { body, deliver }
+
+  useEffect(() => {
+    return () => {
+      if (retryTimer.current) clearTimeout(retryTimer.current)
+    }
+  }, [])
+
+  function scheduleRetry() {
+    if (retryTimer.current) clearTimeout(retryTimer.current)
+    retryTimer.current = setTimeout(() => void trySend(), 3000)
+  }
 
   async function send() {
-    if (!body.trim() && !/att:[A-Za-z0-9_]+/.test(body)) {
-      setNotice('422 empty_reply：空回复会被拒绝，请写内容或添加附件。')
+    // 新的用户动作：清掉上一条的服务中断提示再进入发送。
+    setDown(null)
+    await trySend()
+  }
+
+  async function trySend() {
+    if (sendingRef.current) {
+      scheduleRetry() // 上一轮还没结束，稍后再看
       return
     }
+    const { body: text, deliver: mark } = stateRef.current
+    if (!text.trim() && !/att:[A-Za-z0-9_]+/.test(text)) {
+      setNotice('422 empty_reply：空回复会被拒绝，请写内容或添加附件。')
+      idemKeyRef.current = undefined
+      return
+    }
+    sendingRef.current = true
     try {
-      await replyTicket(ticket.number, { body_md: body, ...(deliver ? { deliver: true } : {}) })
+      if (!idemKeyRef.current) idemKeyRef.current = crypto.randomUUID()
+      await replyTicket(ticket.number, { body_md: text, ...(mark ? { deliver: true } : {}) }, idemKeyRef.current)
+      // 成功：这次动作结束，下一次发送是新动作（新 key）。
+      idemKeyRef.current = undefined
       setBody('')
       setDeliver(false)
       setNotice(null)
+      setDown(null)
       onSent()
-      toast(deliver ? '✓ 已交付，轮到创建者验收' : '✓ 已发送')
+      toast(mark ? '✓ 已交付，轮到创建者验收' : '✓ 已发送')
     } catch (e) {
       if (e instanceof ApiError) {
+        if (e.status >= 500 || e.status === 429) {
+          serviceDown()
+          return
+        }
+        // 4xx：内容被拒，改完再发是新动作。
+        idemKeyRef.current = undefined
         setNotice(e.hint ? `${e.code}：${e.message}（${e.hint}）` : `${e.code}：${e.message}`)
       } else {
-        setNotice('发送失败，请重试')
+        serviceDown() // 网络错误（TypeError: Failed to fetch）等
       }
+    } finally {
+      sendingRef.current = false
     }
+  }
+
+  function serviceDown() {
+    setDown('服务更新中，回复没有丢失，正在自动重试…')
+    scheduleRetry()
   }
 
   async function handleFiles(files: File[]) {
@@ -835,6 +884,11 @@ function Composer({
   return (
     <div className="composer mcard">
       {bigWarn && <div className="toobig">{bigWarn}</div>}
+      {down && (
+        <div className="notice down" role="status">
+          {down}
+        </div>
+      )}
       {notice && (
         <div className="notice err" role="alert">
           {notice}

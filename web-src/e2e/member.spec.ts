@@ -434,3 +434,51 @@ test('工单列表更多筛选：标签（别名）与时间范围', async ({ pa
   await expect(page.locator('.tcard', { hasText: a })).toBeVisible()
   await expect(page.locator('.tcard', { hasText: b })).toHaveCount(0)
 })
+
+// 11. 成员网页的幂等重试（评审 P2-13，ADR 0002）：服务中断时发送回复，
+// 自动重试复用同一个 Idempotency-Key，恢复后只产生一条回复。
+test('成员回复在服务中断时自动重试且只产生一条', async ({ page, request }) => {
+  const number = await createTicket(request, { title: '自动重试的成员回复' })
+  await login(page, ADMIN)
+  await page.goto(`/t/${number}`)
+
+  // 模拟服务不可用：拦下回复请求
+  await page.route('**/api/v1/tickets/*/replies', (route) => route.abort('connectionfailed'))
+  await page.getByPlaceholder(/写回复/).fill('网络抖动时发的回复。')
+  await page.getByRole('button', { name: /发送/ }).click()
+  await expect(page.getByText('服务更新中，回复没有丢失，正在自动重试')).toBeVisible()
+
+  // 恢复服务：自动重试成功，回复出现；库里只有这一条。
+  await page.unroute('**/api/v1/tickets/*/replies')
+  await expect(page.locator('[data-bubble="reply"]').getByText('网络抖动时发的回复。')).toBeVisible({ timeout: 20000 })
+  const res = await request.get(`/api/v1/tickets/${number}`)
+  expect(res.ok()).toBeTruthy()
+  const ticket = await res.json()
+  const same = ticket.timeline.filter((e: any) => e.type === 'reply' && e.body_md === '网络抖动时发的回复。')
+  expect(same).toHaveLength(1)
+})
+
+// 12. 建单同样复用幂等键：中断后自动重试只建一张单。
+test('建单在服务中断时自动重试且只建一张', async ({ page, request }) => {
+  await login(page, ADMIN)
+  await page.goto('/new')
+  await page.locator('.tplpick', { hasText: '自由格式' }).click()
+  await page.getByLabel('标题').fill('网络抖动时建的单')
+  await page.getByLabel('说明', { exact: true }).fill('内容。')
+  await page.getByLabel('标签输入').fill('机型:UD-2300')
+  await page.getByLabel('标签输入').press('Enter')
+
+  // 模拟服务不可用：拦下建单请求
+  await page.route('**/api/v1/tickets', (route) => route.abort('connectionfailed'))
+  await page.getByRole('button', { name: /创建/ }).click()
+  await expect(page.getByText('服务更新中，正在自动重试')).toBeVisible()
+
+  // 恢复服务：自动重试成功；工单列表里只有这一张。
+  await page.unroute('**/api/v1/tickets')
+  await expect(page.getByText(/已创建/)).toBeVisible({ timeout: 20000 })
+  await loginAdmin(request)
+  const res = await request.get('/api/v1/tickets?q=' + encodeURIComponent('网络抖动时建的单') + '&status=all')
+  expect(res.ok()).toBeTruthy()
+  const body = await res.json()
+  expect(body.items).toHaveLength(1)
+})
