@@ -92,7 +92,8 @@ spec 用户故事 84），没有 `inbox`：
 | `POST /api/v1/members/{id}/deactivate` | 停用成员账号（**仅管理员网页会话**，幂等；#42）。 |
 
 - `GET` 响应 `{members: [{id, username, name, active}]}`；仅成员可读（匿名 401，访客 403 `members_only`）。
-  停用的成员仍列出（历史署名与事件保留），`active: false`。
+  停用的成员仍列出（历史署名与事件保留），`active: false`；指派下拉等「选人」的场合
+  应按 `active` 过滤（已停用成员不能再接新活）。
 - 创建请求体 `{"username": "zhao", "name": "赵工"}`（密码不收：服务器生成初始密码）。成功 `201`：
 
   ```json

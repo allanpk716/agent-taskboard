@@ -98,8 +98,8 @@ func (m *Manager) createMember(ctx context.Context, username, name, password str
 	return member, nil
 }
 
-// ListMembers 列出全部成员（按 id）。成员网页（#41）的指派下拉用它；
-// 账号的创建与停用（写接口）在 #42。
+// ListMembers 列出全部成员（按 id）。成员网页的指派下拉用它（不带启用状态，
+// 管理页用 ListMembersDetailed）。
 func (m *Manager) ListMembers(ctx context.Context) ([]Member, error) {
 	rows, err := m.db.QueryContext(ctx, `SELECT id, username, name, is_admin FROM members ORDER BY id`)
 	if err != nil {

@@ -29,6 +29,8 @@ export interface InboxResponse {
 export interface MemberRef {
   id: number
   name: string
+  /** #42 起名单带启用状态；已停用成员不再出现在指派下拉里。 */
+  active?: boolean
 }
 
 /** 成员视角的工单（比访客多 labels；viewer.can 决定按钮是否出现）。 */

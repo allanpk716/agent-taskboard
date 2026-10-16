@@ -1,4 +1,4 @@
-// 成员账号接口（#42）：GET /api/v1/members 列出成员（#41 指派下拉用，只读），
+// 成员账号接口（#42）：GET /api/v1/members 列出成员（#41 指派下拉用），
 // POST /api/v1/members 创建成员账号、POST /api/v1/members/{id}/deactivate 停用
 // （都仅限管理员的网页会话：创建成员账号只接受网页会话发起，ADR 0003；
 // 访客 403 members_only，决议 4）。

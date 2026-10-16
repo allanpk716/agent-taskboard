@@ -168,7 +168,7 @@ func (s *Server) CreateAdmin(username, password string) {
 }
 
 // CreateMember 造一位普通成员（标签治理等需要非管理员账号的测试用；
-// 成员账号管理界面在 #42）。
+// 网页上的账号管理走 POST /api/v1/members（#42），测试里可直接用这个快路径）。
 func (s *Server) CreateMember(username, password string) {
 	s.TB.Helper()
 	if _, err := s.srv.Ident.CreateMember(context.Background(), username, username, password); err != nil {
