@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/allanpk716/agent-taskboard/internal/identity"
+	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
 
 // SessionCookieName 是网页会话 cookie 的名字。
@@ -13,11 +14,12 @@ const SessionCookieName = "tb_session"
 
 // API 挂载 /api/v1 下的接口。
 type API struct {
-	ident *identity.Manager
+	ident   *identity.Manager
+	tickets *tickets.Manager
 }
 
-func NewAPI(ident *identity.Manager) *API {
-	return &API{ident: ident}
+func NewAPI(ident *identity.Manager, tk *tickets.Manager) *API {
+	return &API{ident: ident, tickets: tk}
 }
 
 // Handler 返回 /api/v1 前缀的 http.Handler（带 panic 恢复，统一错误格式）。
@@ -26,6 +28,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/session", a.handleSession)
 	mux.HandleFunc("/api/v1/me/agent-tokens", a.handleAgentTokens)
 	mux.HandleFunc("/api/v1/me/agent-tokens/", a.handleAgentToken)
+	mux.HandleFunc("/api/v1/tickets", a.handleTicketsRoot)
+	mux.HandleFunc("/api/v1/tickets/", a.handleTicketRef)
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "接口都在 /api/v1 之下，检查路径拼写")
 	})

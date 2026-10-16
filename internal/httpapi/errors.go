@@ -19,14 +19,16 @@ const (
 	CodeNotFound           = "not_found"
 	CodeMethodNotAllowed   = "method_not_allowed"
 	CodeInternal           = "internal_error"
+	CodeTitleRequired      = "title_required"           // 建单时标题为空
+	CodeInvalidKind        = "invalid_kind"             // kind 不是 task 或 report
+	CodeDimensionRequired  = "dimension_label_required" // 一个维度标签都没打
+	CodeUnknownLabelValue  = "unknown_label_value"      // 标签值不在字典中
+	CodeTicketNotFound     = "ticket_not_found"         // 引用的工单不存在
 )
 
-// ErrorBody 是统一错误格式 {error:{code, message, hint?}} 的内层。
-type ErrorBody struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	Hint    string `json:"hint,omitempty"`
-}
+// ErrorBody 是统一错误格式 {error:{code, message, hint?}} 的内层；
+// 附加字段（suggestions 等）经由 map 形式平铺进来。
+type ErrorBody map[string]any
 
 type errorEnvelope struct {
 	Error ErrorBody `json:"error"`
@@ -49,9 +51,25 @@ func NewError(status int, code, message, hint string) *Error {
 
 // WriteError 按统一格式写出一个错误响应。
 func WriteError(w http.ResponseWriter, status int, code, message, hint string) {
+	WriteErrorExtra(w, status, code, message, hint, nil)
+}
+
+// WriteErrorExtra 在统一错误格式上附加 extra 字段（如 unknown_label_value 的
+// suggestions），它们与 code/message/hint 平铺在 error 对象里。
+func WriteErrorExtra(w http.ResponseWriter, status int, code, message, hint string, extra map[string]any) {
+	body := map[string]any{
+		"code":    code,
+		"message": message,
+	}
+	if hint != "" {
+		body["hint"] = hint
+	}
+	for k, v := range extra {
+		body[k] = v
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(errorEnvelope{Error: ErrorBody{Code: code, Message: message, Hint: hint}})
+	_ = json.NewEncoder(w).Encode(errorEnvelope{Error: body})
 }
 
 func writeAPIError(w http.ResponseWriter, err *Error) {

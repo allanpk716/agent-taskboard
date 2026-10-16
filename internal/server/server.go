@@ -13,7 +13,9 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/httpapi"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
+	"github.com/allanpk716/agent-taskboard/internal/labels"
 	"github.com/allanpk716/agent-taskboard/internal/store"
+	"github.com/allanpk716/agent-taskboard/internal/tickets"
 	"github.com/allanpk716/agent-taskboard/internal/webapp"
 )
 
@@ -30,9 +32,14 @@ type Server struct {
 }
 
 // New 打开数据库、装配 API 与静态站点。webDir 不存在会报错。
+// 首次启动时导入标签字典的一次性种子（spec「初始数据」）。
 func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	ident := identity.NewManager(st.DB, c)
-	api := httpapi.NewAPI(ident)
+	labelDict := labels.NewManager(st.DB)
+	if err := labelDict.SeedIfEmpty(context.Background()); err != nil {
+		return nil, fmt.Errorf("导入标签字典种子失败：%w", err)
+	}
+	api := httpapi.NewAPI(ident, tickets.NewManager(st.DB, c, labelDict))
 	web, err := webapp.New(cfg.WebDir)
 	if err != nil {
 		return nil, err
