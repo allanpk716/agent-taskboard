@@ -120,12 +120,12 @@ type createTicketRequest struct {
 // createTicketResponse 是建单成功的响应（201）。share_text 只在指派给他人时
 // 非空，可直接转发给同事。
 type createTicketResponse struct {
-	Number    string           `json:"number"`
-	Seq       int64            `json:"seq"`
-	URL       string           `json:"url"`
-	Assignee  *memberRef       `json:"assignee"`
-	WaitingOn waitingOnView    `json:"waiting_on"`
-	ShareText *string          `json:"share_text"`
+	Number    string        `json:"number"`
+	Seq       int64         `json:"seq"`
+	URL       string        `json:"url"`
+	Assignee  *memberRef    `json:"assignee"`
+	WaitingOn waitingOnView `json:"waiting_on"`
+	ShareText *string       `json:"share_text"`
 }
 
 func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
@@ -557,12 +557,21 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer) markdownview
 		AssigneeName:    full.AssigneeName,
 		WaitingOnText:   waitingOn.Text,
 		WaitingOnReason: waitingOn.Reason,
+		WaitingOnWhy:    waitingOn.Why,
+		SinceSeq:        waitingOn.SinceSeq,
 		BriefMarkdown:   full.BriefMD,
 		BriefRevision:   full.BriefRevision,
 		ViewerName:      viewerName,
 		ViewerRole:      roleOf(viewer, full),
 		YourTurn:        yourTurnOf(viewer, waitingOn),
 		APIPath:         "/api/v1/tickets/" + full.Number,
+	}
+	in.CanReopen = capsOf(viewer, full).Reopen
+	for _, e := range full.Timeline {
+		if isGuest && !visibleToGuest(e) {
+			continue
+		}
+		in.LastSeq = e.Seq
 	}
 	if !isGuest {
 		labels := full.Labels

@@ -48,6 +48,13 @@ type Input struct {
 	ViewerRole      string // assignee | creator | member | guest
 	YourTurn        bool
 	APIPath         string // /api/v1/tickets/<编号>，「下一步」引用
+
+	// #36：按 角色×轮次 生成「下一步」所需。
+	WaitingOnWhy string // 原因码：new|guest_replied|delivered|assignee_replied|sent_back|creator_replied
+	SinceSeq     int64  // 推导所依据的回复事件 seq
+	CanReopen    bool   // 已关闭时是否可重新开启（成员恒可）
+	CanReply     bool   // 访客在关闭工单上不能回复
+	LastSeq      int64  // 时间线最后一条（可见）事件的 seq，增量读取用
 }
 
 // Ticket 渲染单张工单的 Markdown：头部信息、说明、附件（占位）、时间线和「下一步」。
@@ -89,43 +96,78 @@ func Ticket(in Input) string {
 	return strings.Join(L, "\n")
 }
 
-// nextStep 生成末尾的「下一步」。访客（#32）按轮次给回复或增量读取的示例；
-// 完整的按角色×轮次的成员指引（含交付、验收的请求示例）随 #36 的回复与指派加入。
+// nextStep 生成末尾的「下一步」：按 角色×轮次 给出可直接复制执行的 HTTP
+// 请求（含请求体），照搬 prototype/member-handoff 的 guidance()。
+// 验收点：只凭这一节就能写出交付和验收的请求。
 func nextStep(in Input) []string {
 	L := []string{
 		"## 下一步（给 Agent 的操作指引）", "",
 		"你是 **" + in.ViewerName + "**，在这张工单里的角色是 **" + roleText(in.ViewerRole) +
 			"**；现在轮到：**" + in.WaitingOnText + "**。", "",
 	}
-	if in.ViewerRole == "guest" {
-		if in.YourTurn {
-			L = append(L, "现在轮到你（访客）回复：", "",
-				"```http",
-				"POST "+in.APIPath+"/replies",
-				"Authorization: Bearer <访客链接密钥>",
-				"Content-Type: application/json",
-				"",
-				`{"body_md": "……", "author_name": "你的署名", "via_agent": false}`,
-				"```", "")
-		} else {
-			L = append(L, "现在不需要你行动；等成员回复后再来看增量：", "",
-				"```http",
-				"GET "+in.APIPath+"/timeline?after=<上次响应里的 cursor>",
-				"Authorization: Bearer <访客链接密钥>",
-				"```", "")
+	// req 生成一个可复制执行的 ```http 代码块。
+	req := func(method, path string, body string) []string {
+		out := []string{"```http", method + " " + path, "Authorization: Bearer <你的 token>"}
+		if body != "" {
+			out = append(out, "Content-Type: application/json", "", body)
 		}
-		return L
+		return append(out, "```")
 	}
-	if in.YourTurn {
-		L = append(L, "现在轮到你行动；先重读这张工单，按说明行事：", "")
-	} else {
+	since := func(prefix string) string {
+		return prefix + "在 [" + strconv.FormatInt(in.SinceSeq, 10) + "] "
+	}
+
+	switch {
+	case in.Status == "closed":
+		L = append(L, "工单已关闭（"+in.CloseReasonText+"），不需要再做什么。")
+		if in.CanReopen {
+			L = append(L, "", "确实还要继续时，先重新开启：", "")
+			L = append(L, req("POST", in.APIPath+"/reopen", "")...)
+		}
+	case in.ViewerRole == "assignee" && in.YourTurn:
+		switch in.WaitingOnWhy {
+		case "sent_back":
+			L = append(L, since("发起人")+"退回了上次的交付，先读那条回复，按要求修改。", "")
+		case "creator_replied":
+			L = append(L, since("发起人")+"回复了你，先读那条回复。", "")
+		case "guest_replied":
+			L = append(L, since("访客")+"回复了，先读那条回复。", "")
+		}
+		L = append(L,
+			"1. 按上面的说明完成工作，以说明中的验收标准为准。",
+			"2. **有疑问**：普通回复提问，之后轮到发起人答复：", "")
+		L = append(L, req("POST", in.APIPath+"/replies", `{"body_md": "我的问题……"}`)...)
+		L = append(L, "",
+			"3. **要交文件**：先用 `POST "+in.APIPath+"/attachments` 上传拿到 `att:` 引用"+
+				"（单个文件超过 5MB 时改在正文中写 NAS 路径），再写进交付回复的正文。",
+			"4. **做完了**：带上 `deliver: true` 回复，写明做了什么、交付物在哪里，然后轮到发起人验收：", "")
+		L = append(L, req("POST", in.APIPath+"/replies", `{"body_md": "已完成……", "deliver": true}`)...)
+		L = append(L, "",
+			"交付后**不要关闭工单**，由发起人验收后关闭。需要人来判断时，先问你所属的成员。")
+	case in.ViewerRole == "creator" && in.YourTurn:
+		if in.WaitingOnWhy == "delivered" {
+			L = append(L, since("指派人")+"**交付**了。对照说明中的验收标准检查交付物；需要人来判断时，先问你所属的成员。", "",
+				"- **验收通过**：以“完成”关闭：", "")
+			L = append(L, req("POST", in.APIPath+"/close", `{"reason": "done"}`)...)
+			L = append(L, "", "- **不通过**：普通回复，写明哪里不符合，工单会退回指派人：", "")
+			L = append(L, req("POST", in.APIPath+"/replies", `{"body_md": "还差……"}`)...)
+		} else {
+			L = append(L, since("指派人")+"回复了，等你答复：", "")
+			L = append(L, req("POST", in.APIPath+"/replies", `{"body_md": "答复……"}`)...)
+		}
+	case in.ViewerRole == "guest" && in.YourTurn:
+		L = append(L, "现在轮到你（访客）回复（可自报署名 author_name）：", "")
+		L = append(L, req("POST", in.APIPath+"/replies", `{"body_md": "……", "author_name": "张三"}`)...)
+	default:
 		L = append(L, "现在不需要你行动。之后要查是否轮到你：", "")
+		if in.ViewerRole != "guest" {
+			L = append(L, req("GET", "/api/v1/inbox", "")...)
+			L = append(L, "", "或者只读这张工单的新内容：", "")
+		} else {
+			L = append(L, "等对方回复后再来看增量：", "")
+		}
+		L = append(L, req("GET", in.APIPath+"/timeline?after="+strconv.FormatInt(in.LastSeq, 10), "")...)
 	}
-	L = append(L,
-		"```http",
-		"GET "+in.APIPath,
-		"Authorization: Bearer <你的 token>",
-		"```", "")
 	return L
 }
 
