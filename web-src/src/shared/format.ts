@@ -42,6 +42,22 @@ export function linkExpired(iso: string): boolean {
   return new Date(iso).getTime() <= Date.now()
 }
 
+/** RFC3339 → 北京时间「2026-10-16 09:30」。平台时区固定为北京时间（UTC+8，
+ *  无夏令时），与浏览器所在时区无关（评审 P2-14）。 */
+export function fmtBeijing(iso: string): string {
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(iso))
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? ''
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`
+}
+
 /** 关闭原因文案。 */
 export function closeReasonText(reason?: string | null): string {
   switch (reason) {
