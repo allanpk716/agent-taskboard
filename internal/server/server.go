@@ -16,6 +16,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/labels"
 	"github.com/allanpk716/agent-taskboard/internal/store"
+	"github.com/allanpk716/agent-taskboard/internal/templates"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
 	"github.com/allanpk716/agent-taskboard/internal/webapp"
 )
@@ -33,14 +34,18 @@ type Server struct {
 }
 
 // New 打开数据库、装配 API 与静态站点。webDir 不存在会报错。
-// 首次启动时导入标签字典的一次性种子（spec「初始数据」）。
+// 首次启动时导入标签字典与预置模板的一次性种子（spec「初始数据」）。
 func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	ident := identity.NewManager(st.DB, c)
 	labelDict := labels.NewManager(st.DB)
 	if err := labelDict.SeedIfEmpty(context.Background()); err != nil {
 		return nil, fmt.Errorf("导入标签字典种子失败：%w", err)
 	}
-	api := httpapi.NewAPI(ident, tickets.NewManager(st.DB, c, labelDict), idempotency.NewManager(st.DB))
+	templateDict := templates.NewManager(st.DB, c)
+	if err := templateDict.SeedIfEmpty(context.Background()); err != nil {
+		return nil, fmt.Errorf("导入预置模板失败：%w", err)
+	}
+	api := httpapi.NewAPI(ident, tickets.NewManager(st.DB, c, labelDict, templateDict), templateDict, idempotency.NewManager(st.DB))
 	web, err := webapp.New(cfg.WebDir)
 	if err != nil {
 		return nil, err

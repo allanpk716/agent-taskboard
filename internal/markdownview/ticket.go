@@ -45,6 +45,8 @@ type Input struct {
 	ViewerRole      string // assignee | creator | member | guest
 	YourTurn        bool
 	APIPath         string // /api/v1/tickets/<编号>，「下一步」引用
+	TemplateName    string // 模板工单的模板名（不用模板为空）
+	AgentNote       string // 模板里「给 Agent 的说明」（spec 用户故事 35）
 }
 
 // Ticket 渲染单张工单的 Markdown：头部信息、说明、附件（占位）、时间线和「下一步」。
@@ -94,6 +96,16 @@ func nextStep(in Input) []string {
 		"你是 **" + in.ViewerName + "**，在这张工单里的角色是 **" + roleText(in.ViewerRole) +
 			"**；现在轮到：**" + in.WaitingOnText + "**。", "",
 	}
+
+	// 模板里写给 Agent 的说明出现在工单 Markdown 的「下一步」里（spec 用户故事 35）。
+	if in.AgentNote != "" {
+		name := "模板"
+		if in.TemplateName != "" {
+			name = in.TemplateName + " 模板"
+		}
+		L = append(L, name+"给 Agent 的说明："+in.AgentNote, "")
+	}
+
 	if in.ViewerRole == "guest" {
 		if in.YourTurn {
 			L = append(L, "现在轮到你（访客）回复：", "",

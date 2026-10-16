@@ -55,6 +55,19 @@ const (
 	CodeQRequired          = "q_required"           // resolve 缺少 q
 	CodeLabelRequired      = "label_required"       // 请求里的标签为空
 
+	// #34：模板（维护、读取与按模板建单）。
+	CodeTemplateFormatError   = "template_format_error"   // 模板格式错误（message 带行号）
+	CodeTemplateKeyRequired   = "template_key_required"   // 新建模板时 key 为空
+	CodeInvalidTemplateKey    = "invalid_template_key"    // key 里有不适合 URL 的字符
+	CodeMarkdownRequired      = "markdown_required"       // 没写模板内容
+	CodeTemplateKeyTaken      = "template_key_taken"      // 模板 key 已存在（不能复用）
+	CodeTemplateNotFound      = "template_not_found"      // 引用的模板不存在
+	CodeTemplateInactive      = "template_inactive"       // 用已停用的模板建单
+	CodeUnknownField          = "unknown_field"           // fields 里有模板没有的字段键
+	CodeInvalidFieldOption    = "invalid_field_option"    // 单选/维度字段的值不在选项里
+	CodeFieldsWithoutTemplate = "fields_without_template" // 非模板工单用 fields 修订
+	CodeBriefMDWithTemplate   = "brief_md_with_template"  // 模板工单用 brief_md 修订
+
 	// #32：访客链接与访客视角。
 	CodeLinkRevoked         = "link_revoked"           // 访客链接已被撤销（401，即时生效）
 	CodeLinkExpired         = "link_expired"           // 访客链接已过期（401，即时生效）

@@ -22,9 +22,16 @@ type createTicketBody struct {
 
 // createTicketResponse 是 POST /api/v1/tickets 的响应结构。
 type createTicketResponse struct {
-	Number string `json:"number"`
-	Seq    int64  `json:"seq"`
-	URL    string `json:"url"`
+	Number   string          `json:"number"`
+	Seq      int64           `json:"seq"`
+	URL      string          `json:"url"`
+	Warnings []ticketWarning `json:"warnings"`
+}
+
+// ticketWarning 是用模板建单时「缺必填」的逐项提醒（工单照常创建）。
+type ticketWarning struct {
+	Field   string `json:"field"`
+	Message string `json:"message"`
 }
 
 // errorBodyWithExtra 是可能带附加字段（如 suggestions）的错误结构。
@@ -186,7 +193,7 @@ func Test建单标签值不在字典返回unknownLabelValue(t *testing.T) {
 	})
 
 	t.Run("不在字典中的不带维度标签", func(t *testing.T) {
-		res := createTicket(t, s, web, createTicketBody{Title: "固件升级", Labels: []string{"机型:UD-2300", "待初筛"}})
+		res := createTicket(t, s, web, createTicketBody{Title: "固件升级", Labels: []string{"机型:UD-2300", "待复测"}})
 		if res.StatusCode != http.StatusUnprocessableEntity {
 			t.Fatalf("状态码 = %d, 想 422", res.StatusCode)
 		}
