@@ -100,20 +100,25 @@ spec 用户故事 84），没有 `inbox`：
 
 （labels 在 #31、attachments 在 #33；guest-links 见下。）
 
-- 建单请求体 `{"kind", "title", "brief_md", "labels", "assignee?"}`：
-  - `kind` 可省（默认 `task`），只能是 `task`（任务）或 `report`（反馈）；用模板创建时由模板决定（#34）。
-  - `title` 必填；`brief_md` 是不用模板时的一整块说明（可空）。
+- 建单请求体 `{"kind", "title", "brief_md", "labels", "assignee?"}`（不用模板）或
+  `{"template", "title", "fields", "labels", "assignee?"}`（用模板，见下面的「模板（#34）」）：
+  - `kind` 可省（默认 `task`），只能是 `task`（任务）或 `report`（反馈）；用模板创建时由模板决定（请求里的 `kind` 被忽略）。
+  - `title` 必填；`brief_md` 是不用模板时的一整块说明（可空）；模板工单的说明由 `fields` 按字段拼成。
   - `labels` 至少要有一个 `维度:值` 形式的维度标签；且每个标签（含不带维度的）
     必须是字典中在用的标准值（种子维度：产品线、系统、机型、部门、算法、立项、子项目；
     初始值见 `internal/labels/seeds.go`）。别名与 allow_new 见下面的「标签、字典与别名（#31）」。
+    用模板创建时，模板的预设标签与维度字段选中的值会自动并进来（预设标签、维度字段值
+    都要满足同样的字典校验；「不确定」不打标签）。
   - `assignee`（#36）可写成员 id 或姓名；写成成员 Agent（署名写法或 Agent 名字）
     返回 `422 assignee_must_be_member`（成员 Agent 不能被指派，hint 列出可选成员）；
     查无此人返回 `422 unknown_member`。建单时指派会在 `created` 事件后记一条
     `assigned{from: null, to}` 事件。
-- 建单响应 `201`：`{number, seq, url, assignee, waiting_on, share_text}`
-  （`url` 即 `/t/<编号>`；`assignee` 为成员或 null；`share_text` 只在指派给**他人**时
-  非空，可直接转发：`李工：给你派了一张工单「整理对照表」，让你的 Agent 读一下
-  /t/20261016-001（它也会出现在你的收件箱里）`）。
+- 建单响应 `201`：`{number, seq, url, warnings, assignee, waiting_on, share_text}`
+  （`url` 即 `/t/<编号>`）。`warnings` 是用模板建单时「缺必填」的逐项提醒
+  `{field, message}[]`——工单照常创建，只在响应里提醒（spec 用户故事 6）；不用模板或
+  必填全填时为空数组。`assignee` 为成员或 null；`share_text` 只在指派给**他人**时非空，
+  可直接转发：`李工：给你派了一张工单「整理对照表」，让你的 Agent 读一下
+  /t/20261016-001（它也会出现在你的收件箱里）`。
 - 建单错误码：`422 title_required`、`422 invalid_kind`、
   `422 dimension_label_required`（hint 给出字典里的维度标签示例）、
   `422 unknown_label_value`（附 `suggestions`：同维度里规范化后相等或互相包含的值，
@@ -168,19 +173,25 @@ spec 用户故事 84），没有 `inbox`：
   `waiting_on` 结构同 GET（由时间线推导，见下）。
 - 时间线记一条 `reply` 事件（`reply_no`、`body_md`）。
 
-### 修订标题/说明（#30）
+### 修订标题/说明（#30；#34 起支持按字段修订）
 
-- 请求体 `{"title?": "…", "brief_md?": "…", "base_revision": N}`，只需传改动的部分；
-  模板工单按字段修订（`fields`）在 #34 加入。
+- 请求体 `{"title?": "…", "brief_md?": "…", "fields?": {…}, "base_revision": N}`，
+  只需传改动的部分。`brief_md` 只用于非模板工单；模板工单用 `fields` 传**改动的字段**
+  （键是小节标题（问句）原文，未传的字段保持不变），两类修订按工单类型互斥：
+  用错时分别返回 `422 fields_without_template` / `422 brief_md_with_template`。
 - `base_revision` 必填（`422 base_revision_required`），不等于当前版本时返回
   `409 revision_conflict`（附 `current_revision`，重读合并后再提交）。
   只有 title 或什么都没改的修订同样推进版本号。
 - 权限：创建者本人及其任意 Agent（其他成员 `403 not_brief_owner`，用回复补充内容）；
   持「可填写说明」链接的访客（工单需开启；无权限的链接 `403 link_cannot_edit_brief`，
-  关闭后 `409 ticket_closed`）。反馈入口提交者在 #35 加入。修订不再做必填校验，
+  关闭后 `409 ticket_closed`）；反馈入口的提交者视同创建者，靠提交响应里那条带
+  「可填写说明」的访客链接行使这项权限（入口在 #35 落地）。修订不再做必填校验，
   但标题改成空白返回 `422 title_required`。访客修订可自报 `author_name`/`via_agent`
   （记在修订事件的作者上）。
 - 成功 `200`：`{"revision": N}`；每次修订记一条 `brief_revised` 事件（带 `revision`）。
+  字段修订的取值仍做结构校验：键必须是模板（创建时版本）里的字段（`422 unknown_field`）、
+  单选值必须在选项里（`422 invalid_field_option`）、维度值必须是字典里在用的值
+  （`422 unknown_label_value`；「不确定」除外）；但**不做必填校验**，可以把字段清空。
 
 ### 关闭与重新开启（#30）
 
@@ -263,13 +274,86 @@ spec 用户故事 84），没有 `inbox`：
 ## 幂等（#30）
 
 对所有会产生新内容的请求（建单、回复、说明修订——成员与访客凭证都一样；
-反馈提交与附件上传随后续工单接入）支持 `Idempotency-Key` 请求头：
+反馈入口提交在 #35 起支持；附件上传随后续工单接入）支持 `Idempotency-Key` 请求头：
 
 - 记录按（key、凭证、端点）隔离：同一 key 换了凭证（另一成员、另一个 Agent）
   或换了端点，都是新请求。
 - 首次成功响应（2xx）存快照（含状态码与响应体）；重放返回首次结果，逐字节
   相同，不产生新内容。失败的请求不存快照，修正后重试照常执行。
 - 同名请求头留空视为没带；幂等表在数据库里（迁移 `0004`）。
+
+
+## 模板（#34）
+
+成员用 Markdown 维护模板；成员和 Agent 都按模板的字段建单、填写。任何成员
+（含成员 Agent）都能新建和修改模板；每次修改产生一个新版本并记录修改人；
+模板只能停用、不能删除；用模板建的工单保存创建时那个版本的字段定义，
+模板以后修改不影响已有工单。
+
+### 模板语法（来自 #9，格式错误保存失败并报出行号）
+
+```markdown
+---
+名称: Bug 反馈
+类型: 反馈
+预设标签: [待初筛]
+---
+## 哪台仪器？ {维度:机型 必填}
+在仪器背面铭牌上可以看到型号；不确定可以选“不确定”。
+## 你做了哪些操作？ {必填}
+按顺序写，一步一行。
+> 示例：1. 开机自检完成 2. 进入质控界面 3. 点击“开始”
+```
+
+- YAML 头（首尾 `---`）：键只认 `名称`、`类型`（任务/反馈）、`预设标签`（`[a, b]`），其余键报错。
+- 每个 `##` 小节是一个字段：标题写成问句（**问句原文就是 `fields` 的键**），小节正文是
+  引导说明，`> 示例：` 起的引用行是占位示例。
+- 花括号标记写在标题行末尾：`{必填}`、`{选填}`、`{单选: A | B}`、`{维度:X 必填}`
+  （可与 `必填`/`选填` 组合）；不写时默认多行文本、选填。
+- 小节标题为「给 Agent 的说明」的一段不是字段，是一段说明；会出现在模板的填写指南里，
+  也会出现在按该模板建的工单 Markdown 的「下一步」里（spec 用户故事 35）。
+- 字段标题重复、标记无法识别、YAML 头缺键等格式错误：保存失败（422
+  `template_format_error`），message 里带行号（如「第 3 行：类型只能是 任务 或 反馈」）。
+
+### 端点
+
+| 方法与路径 | 说明 |
+|---|---|
+| `GET /api/v1/templates` | 模板列表（含已停用，各项带 `active`），成员与成员 Agent 可读。 |
+| `POST /api/v1/templates` | 新建：`{"key": "check", "markdown": "模板原文"}`，成功 201。 |
+| `GET /api/v1/templates/{key}` | 读当前版本：字段定义、`agent_note`、模板原文 `markdown`、`version`、`updated_by`。 |
+| `GET /api/v1/templates/{key}?format=markdown` | 给 Agent 的填写指南（`text/markdown`）：建单请求示例、逐字段问句/引导/示例/候选值、「给 Agent 的说明」。 |
+| `PATCH /api/v1/templates/{key}` | 修改：`{"markdown": "新原文"}`，产生新版本（版本号 +1，记录修改人）。 |
+| `POST /api/v1/templates/{key}/deactivate` | 停用（幂等 200；模板不能删除，停用后不能再用它建单，读取仍可见）。 |
+
+- 新建/修改请求带 `Idempotency-Key` 时同样去重。
+- `key` 是模板的稳定标识（出现在工单的 `template` 字段里），不能含空格或 `/`，
+  且不能复用已存在的 key（409 `template_key_taken`）。
+- 字段定义结构：`{key, title, guide, example, required, type, options[], dimension?}`；
+  `type` 为 `text | radio | dimension`。**维度字段的 `options` 是读取时从标签字典现取的
+  候选值 + 「不确定」**（字典会变，不缓存在模板里）。
+- 错误码：`422 template_format_error`（带行号）、`422 template_key_required`、
+  `422 invalid_template_key`、`422 markdown_required`、`409 template_key_taken`、
+  `404 template_not_found`。
+
+### 按模板建单与修订
+
+- `POST /api/v1/tickets {"template", "title", "fields", "labels"}`：
+  - `fields` 的键是模板小节标题（问句）原文；值是填写的文字。
+  - 缺必填项**不拦截**：工单照常创建，响应 `warnings` 逐项列出；维度字段选「不确定」
+    算已填、且不打该维度的标签。
+  - 结构错误会拦：未知字段键 `422 unknown_field`、单选值不在选项里
+    `422 invalid_field_option`、维度值不在字典里 `422 unknown_label_value`（附 suggestions）。
+  - 模板的预设标签自动打上；维度字段选中的值同时成为标签并以文字写进说明
+    （访客看不到标签）；类型由模板决定。
+  - 未知模板 404 `template_not_found`；已停用模板 422 `template_inactive`。
+- `GET /api/v1/tickets/{id}` 的模板工单：`template` 为模板 key；`brief.fields` 为字段值
+  map，`brief.markdown` 为按字段拼好的说明（`### 问句` + 内容，只拼已填字段）；
+  `brief.template` 同 `template`。
+- `PATCH /api/v1/tickets/{id} {"fields": {改动的字段}, "base_revision": N}`：
+  只改动传入的字段，其余保持不变；每次修订记一条 `brief_revised` 事件（见上）。
+- 预置三份模板（spec「初始数据」）：`bug-report`（Bug 反馈，预设 `待初筛`）、
+  `assign-task`（分配任务）、`question`（问题咨询）；模板是运行时数据，上线后可随时修改。
 
 
 ## 标签、字典与别名（#31）
@@ -386,5 +470,57 @@ spec 用户故事 84），没有 `inbox`：
   不自报时 `访客（经「检验科-张三」链接）`。
 - 修订标题/说明：只有持「可填写说明」权限链接的访客可以（`can.edit_brief`），
   乐观锁同样生效；无权限 403 `link_cannot_edit_brief`，工单关闭后 409 `ticket_closed`。
-- 仅成员的接口（建单、标签全套、关闭、重开、访客链接管理）对访客统一
-  403 `members_only`（决议 4）。
+- 仅成员的接口（建单、标签全套、关闭、重开、访客链接管理，以及 #35 起的反馈入口
+  管理）对访客统一 403 `members_only`（决议 4）。
+
+## 反馈入口（#35）
+
+反馈入口是部门级的长期地址 `/i/<slug>`：内网任何人（或其 Agent）不用账号、不用
+访客链接，凭入口地址就能自助提交一张反馈，提交成功当场拿到这张反馈的专属访客
+链接（30 天、「可填写说明」权限）——之后完全按访客的方式参与（读、修订说明、
+回复，密钥直接作 Bearer）。每个入口绑定一个**反馈类型**的模板，始终使用该模板的
+**最新版本**；入口不能查看其他工单（匿名端点只读入口本身）。
+
+### 端点
+
+| 方法与路径 | 说明 |
+|---|---|
+| `POST /api/v1/intakes` | 创建（任何成员）：`{"slug", "name", "template"}`。 |
+| `GET /api/v1/intakes` | 列表（任何成员，含已停用，各项带 `active`）。 |
+| `GET /api/v1/intakes/{slug}` | **匿名**读取：入口信息 + 绑定模板的当前版本（维度字段带字典候选值和「不确定」）。 |
+| `GET /api/v1/intakes/{slug}?format=markdown` | **匿名**读取给 Agent 的填写指南（`text/markdown`，与 `GET /api/v1/templates/{key}?format=markdown` 同一份）。 |
+| `POST /api/v1/intakes/{slug}/tickets` | **匿名**提交：`{"title", "fields", "author_name?"}`。 |
+| `POST /api/v1/intakes/{slug}/deactivate` | 停用（任何成员；幂等 200）。 |
+| `POST /api/v1/intakes/{slug}/rotate` | 轮换 slug（任何成员）：`{"slug": "新 slug"}`；旧 slug 立即失效。 |
+
+- 创建：`slug` 只用小写字母、数字和连字符（`422 slug_required` / `invalid_slug`），
+  且不能与已有入口重复（`409 slug_taken`）；`name` 会显示在提交页上（`422 name_required`）；
+  `template` 必须存在（`404 template_not_found`）、在用（`422 template_inactive`）且
+  类型为反馈（`422 template_not_report`）。响应 `201` 是入口的管理视图
+  `{slug, name, template, active, url: "/i/<slug>", created_by, created_at}`。
+- 匿名读取：不存在或已停用的入口一律 `404 intake_not_found`（轮换后的旧 slug 同样，
+  与「不存在」不可区分，防枚举）。响应 `{slug, name, url, kind, template}`，其中
+  `template` 是当前版本 `{key, name, version, kind, preset_labels, agent_note, fields}`
+  （字段结构与 `GET /api/v1/templates/{key}` 相同）。
+- 提交（严格校验，与成员建单的 warnings 相反）：
+  - 缺必填项直接拦下：`422 missing_fields`，`fields` 附加数组逐项给出
+    `{field, hint, example?}`（引导说明、维度字段的「不确定」、单选字段的选项），
+    `hint` 汇总逐项说明缺什么、怎么填。**「不确定」算已填**（不打该维度的标签）。
+  - 结构错误与成员建单同码：空标题 `422 title_required`、未知字段键
+    `422 unknown_field`、单选值不在选项里 `422 invalid_field_option`、维度值不在
+    字典里 `422 unknown_label_value`（附 `suggestions`）。
+  - 提交**不要求**维度标签（GLOSSARY：入口提交是「至少一个维度标签」的唯一例外）；
+    模板预设标签与维度字段选中的值自动打上。
+  - 成功 `201`：`{ticket: {number, seq, title, url}, guest_link: {url: "/g/<密钥>",
+    note, expires_at, can_edit_brief: true}, next}`。密钥只在提交响应里出现一次。
+    工单类型由模板决定（恒为 `report`）；编号与序号的分配同建单。
+- 提交者**视同说明的创建者**：工单的创建者记录为访客（带链接备注
+  `反馈入口「<名称>」提交人` 与自报的 `author_name`）；`viewer.role` 为 `creator`，
+    用返回的链接即可读工单、修订说明（带「可填写说明」权限）和回复。时间线记
+    `created`（访客作者）与 `guest_link_created` 两条事件；等待方推导照常
+    （反馈：成员回复轮到访客，访客回复轮回本部门）。
+- 停用与轮换：停用后匿名读写都按不存在处理；轮换把入口换到新 slug，旧 slug 立即
+  失效（`404 intake_not_found`）。两者都不影响已提交的工单和提交者手里的访客链接
+  （链接独立于入口存在，见「访客链接（#32）」）。
+- 入口提交同样支持 `Idempotency-Key`（匿名凭证按同一 key 去重，重放返回首次结果）。
+- 管理端点仅限成员；访客 403 `members_only`（hint 指向入口地址），匿名 401。

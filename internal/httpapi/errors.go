@@ -60,6 +60,19 @@ const (
 	CodeQRequired          = "q_required"           // resolve 缺少 q
 	CodeLabelRequired      = "label_required"       // 请求里的标签为空
 
+	// #34：模板（维护、读取与按模板建单）。
+	CodeTemplateFormatError   = "template_format_error"   // 模板格式错误（message 带行号）
+	CodeTemplateKeyRequired   = "template_key_required"   // 新建模板时 key 为空
+	CodeInvalidTemplateKey    = "invalid_template_key"    // key 里有不适合 URL 的字符
+	CodeMarkdownRequired      = "markdown_required"       // 没写模板内容
+	CodeTemplateKeyTaken      = "template_key_taken"      // 模板 key 已存在（不能复用）
+	CodeTemplateNotFound      = "template_not_found"      // 引用的模板不存在
+	CodeTemplateInactive      = "template_inactive"       // 用已停用的模板建单
+	CodeUnknownField          = "unknown_field"           // fields 里有模板没有的字段键
+	CodeInvalidFieldOption    = "invalid_field_option"    // 单选/维度字段的值不在选项里
+	CodeFieldsWithoutTemplate = "fields_without_template" // 非模板工单用 fields 修订
+	CodeBriefMDWithTemplate   = "brief_md_with_template"  // 模板工单用 brief_md 修订
+
 	// #32：访客链接与访客视角。
 	CodeLinkRevoked         = "link_revoked"           // 访客链接已被撤销（401，即时生效）
 	CodeLinkExpired         = "link_expired"           // 访客链接已过期（401，即时生效）
@@ -70,6 +83,14 @@ const (
 	CodeLinkNotExtendable   = "link_not_extendable"    // 已撤销或已过期的链接不能延期
 	CodeLinkCannotEditBrief = "link_cannot_edit_brief" // 链接没有「可填写说明」权限
 	CodeTicketClosed        = "ticket_closed"          // 工单已关闭，访客链接只读
+
+	// #35：反馈入口。
+	CodeIntakeNotFound    = "intake_not_found"    // 入口不存在或已停用（含轮换后的旧 slug）
+	CodeSlugRequired      = "slug_required"       // 创建/轮换入口时没写 slug
+	CodeInvalidSlug       = "invalid_slug"        // slug 里有不适合 URL 的字符
+	CodeSlugTaken         = "slug_taken"          // slug 已被另一个入口占用
+	CodeTemplateNotReport = "template_not_report" // 入口只能绑定反馈类型的模板
+	CodeMissingFields     = "missing_fields"      // 入口提交缺必填项（严格校验，逐项提示）
 )
 
 // ErrorBody 是统一错误格式 {error:{code, message, hint?}} 的内层；

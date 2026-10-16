@@ -188,3 +188,52 @@ func Test凭Markdown的下一步写出交付与验收请求(t *testing.T) {
 		}
 	}
 }
+
+// 模板工单（#34）与指派（#36）合在一起：用「分配任务」模板建单并指派给同事，
+// 说明按字段拼出、assigned 事件与 share_text 照常；指派人的 Markdown「下一步」
+// 末尾附模板「给 Agent 的说明」，交付请求仍可直接照抄执行。
+func Test用分配任务模板建单并指派(t *testing.T) {
+	w := newHandoffWorld(t)
+	var created createAssignedResponse
+	res := w.s.Do(t, w.wangA, http.MethodPost, "/api/v1/tickets", map[string]any{
+		"template": "assign-task", "title": "BH-5100 质控模块回归测试", "assignee": "李工",
+		"labels":  []string{"机型:UD-2300", "部门:研发部"},
+		"fields": map[string]string{
+			"要达成什么目标？":        "验证 v3.2 的质控模块在 BH-5100 上没有回归。",
+			"交付什么？":            "一份测试报告（Markdown 即可），附失败用例截图。",
+			"怎样算完成（验收标准）？": "Westgard 6 条规则全部覆盖；失败用例写清复现步骤。",
+		},
+	}, &created)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("模板建单指派状态码 = %d, 想 201", res.StatusCode)
+	}
+	if created.Assignee == nil || created.Assignee.Name != "李工" || created.ShareText == nil {
+		t.Errorf("模板建单的 assignee/share_text 不对：%+v", created)
+	}
+	if len(created.WaitingOn.Party) == 0 || created.WaitingOn.Party != "assignee" {
+		t.Errorf("waiting_on = %+v, 想 assignee", created.WaitingOn)
+	}
+
+	// 指派人的 Markdown：模板的 Agent 说明出现在「下一步」里，交付请求可照抄。
+	md := w.readMarkdown(t, w.liA, "/api/v1/tickets/"+created.Number+"?format=markdown")
+	for _, want := range []string{
+		"### 要达成什么目标？",
+		"验证 v3.2 的质控模块在 BH-5100 上没有回归。",
+		"分配任务 模板给 Agent 的说明：交付时在回复里带 deliver: true",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("模板工单的 Markdown 缺少 %q：\n%s", want, md)
+		}
+	}
+	deliver := httpBlockAfter(t, md, "4. **做完了**")
+	var delivered replyBody
+	res = w.s.Do(t, w.liA, deliver.Method, deliver.Path, deliver.Body, &delivered)
+	if res.StatusCode != http.StatusCreated || !delivered.Deliver {
+		t.Fatalf("照抄交付请求状态码 = %d, 想 201", res.StatusCode)
+	}
+	// 模板说明里的验收标准就是发起人的验收依据。
+	md = w.readMarkdown(t, w.wangA, "/api/v1/tickets/"+created.Number+"?format=markdown")
+	if !strings.Contains(md, "对照说明中的验收标准检查交付物") {
+		t.Errorf("发起人 Markdown 应提示按验收标准检查：\n%s", md)
+	}
+}

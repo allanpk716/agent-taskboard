@@ -46,8 +46,13 @@ type Input struct {
 	Timeline        []Event
 	ViewerName      string // 已按 ADR 0003 拼好的署名
 	ViewerRole      string // assignee | creator | member | guest
+	ViewerIsGuest   bool   // 访客凭证（#35：入口提交者的角色是 creator，指引仍按访客给）
 	YourTurn        bool
 	APIPath         string // /api/v1/tickets/<编号>，「下一步」引用
+
+	// 模板工单（#34）：模板名与「给 Agent 的说明」（出现在「下一步」里，spec 用户故事 35）。
+	TemplateName string
+	AgentNote    string
 
 	// #36：按 角色×轮次 生成「下一步」所需。
 	WaitingOnWhy     string // 原因码：new|guest_replied|delivered|assignee_replied|sent_back|creator_replied
@@ -105,6 +110,16 @@ func nextStep(in Input) []string {
 		"你是 **" + in.ViewerName + "**，在这张工单里的角色是 **" + roleText(in.ViewerRole) +
 			"**；现在轮到：**" + in.WaitingOnText + "**。", "",
 	}
+
+	// 模板里写给 Agent 的说明出现在工单 Markdown 的「下一步」里（spec 用户故事 35）。
+	if in.AgentNote != "" {
+		name := "模板"
+		if in.TemplateName != "" {
+			name = in.TemplateName + " 模板"
+		}
+		L = append(L, name+"给 Agent 的说明："+in.AgentNote, "")
+	}
+
 	// req 生成一个可复制执行的 ```http 代码块。
 	req := func(method, path string, body string) []string {
 		out := []string{"```http", method + " " + path, "Authorization: Bearer <你的 token>"}
@@ -117,12 +132,6 @@ func nextStep(in Input) []string {
 		return prefix + "在 [" + strconv.FormatInt(in.SinceSeq, 10) + "] "
 	}
 
-	if in.ReopenedByViewer {
-		L = append(L, "这张工单刚由你重新开启。先回复说明重开原因：", "")
-		L = append(L, req("POST", in.APIPath+"/replies", `{"body_md": "重开原因：……"}`)...)
-		L = append(L, "")
-	}
-
 	switch {
 	case in.Status == "closed":
 		L = append(L, "工单已关闭（"+in.CloseReasonText+"），不需要再做什么。")
@@ -130,6 +139,28 @@ func nextStep(in Input) []string {
 			L = append(L, "", "确实还要继续时，先重新开启：", "")
 			L = append(L, req("POST", in.APIPath+"/reopen", "")...)
 		}
+	case in.ViewerIsGuest:
+		// 访客凭证（链接或经入口提交、角色记 creator 的提交者，#35）：指引按访客给。
+		if in.YourTurn {
+			L = append(L, "现在轮到你（访客）回复：", "",
+				"```http",
+				"POST "+in.APIPath+"/replies",
+				"Authorization: Bearer <访客链接密钥>",
+				"Content-Type: application/json",
+				"",
+				`{"body_md": "……", "author_name": "你的署名", "via_agent": false}`,
+				"```", "")
+		} else {
+			L = append(L, "现在不需要你行动；等成员回复后再来看增量：", "",
+				"```http",
+				"GET "+in.APIPath+"/timeline?after=<上次响应里的 cursor>",
+				"Authorization: Bearer <访客链接密钥>",
+				"```", "")
+		}
+	case in.ReopenedByViewer:
+		// 已接受边界（spec）：重开后「下一步」提示重开的一方先回复说明原因。
+		L = append(L, "这张工单刚由你重新开启。先回复说明重开原因：", "")
+		L = append(L, req("POST", in.APIPath+"/replies", `{"body_md": "重开原因：……"}`)...)
 	case in.ViewerRole == "assignee" && in.YourTurn:
 		switch in.WaitingOnWhy {
 		case "sent_back":
@@ -161,17 +192,10 @@ func nextStep(in Input) []string {
 			L = append(L, since("指派人")+"回复了，等你答复：", "")
 			L = append(L, req("POST", in.APIPath+"/replies", `{"body_md": "答复……"}`)...)
 		}
-	case in.ViewerRole == "guest" && in.YourTurn:
-		L = append(L, "现在轮到你（访客）回复（可自报署名 author_name）：", "")
-		L = append(L, req("POST", in.APIPath+"/replies", `{"body_md": "……", "author_name": "张三"}`)...)
 	default:
 		L = append(L, "现在不需要你行动。之后要查是否轮到你：", "")
-		if in.ViewerRole != "guest" {
-			L = append(L, req("GET", "/api/v1/inbox", "")...)
-			L = append(L, "", "或者只读这张工单的新内容：", "")
-		} else {
-			L = append(L, "等对方回复后再来看增量：", "")
-		}
+		L = append(L, req("GET", "/api/v1/inbox", "")...)
+		L = append(L, "", "或者只读这张工单的新内容：", "")
 		L = append(L, req("GET", in.APIPath+"/timeline?after="+strconv.FormatInt(in.LastSeq, 10), "")...)
 	}
 	return L

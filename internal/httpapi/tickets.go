@@ -10,6 +10,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/labels"
 	"github.com/allanpk716/agent-taskboard/internal/markdownview"
+	"github.com/allanpk716/agent-taskboard/internal/templates"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
 
@@ -107,25 +108,30 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// createTicketRequest 是 POST /api/v1/tickets 的请求体。assignee 可写成员 id
-// 或姓名；写成成员 Agent → 422 assignee_must_be_member（#36）。
+// createTicketRequest 是 POST /api/v1/tickets 的请求体。
+// 用模板创建时带 template 与 fields（类型由模板决定、缺必填只 warnings）；
+// assignee 可写成员 id 或姓名，写成成员 Agent → 422 assignee_must_be_member（#36）。
 type createTicketRequest struct {
-	Kind     string   `json:"kind"`
-	Title    string   `json:"title"`
-	BriefMD  string   `json:"brief_md"`
-	Labels   []string `json:"labels"`
-	Assignee string   `json:"assignee"`
+	Kind     string            `json:"kind"`
+	Template string            `json:"template"`
+	Title    string            `json:"title"`
+	BriefMD  string            `json:"brief_md"`
+	Fields   map[string]string `json:"fields"`
+	Labels   []string          `json:"labels"`
+	Assignee string            `json:"assignee"`
 }
 
-// createTicketResponse 是建单成功的响应（201）。share_text 只在指派给他人时
-// 非空，可直接转发给同事。
+// createTicketResponse 是建单成功的响应（201）。用模板建单缺必填项时
+// 工单照常创建，warnings 逐项列出（选「不确定」算已填）；指派给他人时
+// 另带 assignee、waiting_on 和一句可直接转发的 share_text（#36）。
 type createTicketResponse struct {
-	Number    string        `json:"number"`
-	Seq       int64         `json:"seq"`
-	URL       string        `json:"url"`
-	Assignee  *memberRef    `json:"assignee"`
-	WaitingOn waitingOnView `json:"waiting_on"`
-	ShareText *string       `json:"share_text"`
+	Number    string                 `json:"number"`
+	Seq       int64                  `json:"seq"`
+	URL       string                 `json:"url"`
+	Warnings  []tickets.FieldWarning `json:"warnings"`
+	Assignee  *memberRef             `json:"assignee"`
+	WaitingOn waitingOnView          `json:"waiting_on"`
+	ShareText *string                `json:"share_text"`
 }
 
 func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
@@ -135,17 +141,19 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createTicketRequest
-	if !decodeJSON(w, r, &req, `{"kind": "task|report", "title": "…", "brief_md": "…", "labels": ["维度:值"], "assignee?": "成员 id 或姓名"}`) {
+	if !decodeJSON(w, r, &req, `{"kind?": "task|report", "template?": "模板 key", "title": "…", "brief_md?": "…", "fields?": {"问句？": "…"}, "labels": ["维度:值"], "assignee?": "成员 id 或姓名"}`) {
 		return
 	}
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
-		full, err := a.tickets.Create(r.Context(), tickets.CreateInput{
-			Kind:     req.Kind,
-			Title:    req.Title,
-			BriefMD:  req.BriefMD,
-			Labels:   req.Labels,
-			Assignee: req.Assignee,
-			Creator:  viewer,
+		full, warnings, err := a.tickets.Create(r.Context(), tickets.CreateInput{
+			Kind:        req.Kind,
+			Title:       req.Title,
+			BriefMD:     req.BriefMD,
+			Labels:      req.Labels,
+			TemplateKey: req.Template,
+			Fields:      req.Fields,
+			Assignee:    req.Assignee,
+			Creator:     viewer,
 		})
 		if err != nil {
 			a.writeTicketError(w, r, err)
@@ -155,6 +163,7 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 			Number:    full.Number,
 			Seq:       full.Seq,
 			URL:       "/t/" + full.Number,
+			Warnings:  warnings,
 			WaitingOn: newWaitingOnView(tickets.WaitingOnOf(full)),
 		}
 		if full.AssigneeID != 0 {
@@ -258,6 +267,25 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, err error
 	case isAlreadyAssigned(err):
 		e := err.(*tickets.AlreadyAssignedError)
 		WriteError(w, http.StatusUnprocessableEntity, CodeAlreadyAssigned, e.Error(), "改派时换一位成员")
+	case errors.Is(err, templates.ErrNotFound):
+		WriteError(w, http.StatusNotFound, CodeTemplateNotFound, "没有这个模板",
+			"模板列表见 GET /api/v1/templates")
+	case errors.Is(err, tickets.ErrTemplateInactive):
+		WriteError(w, http.StatusUnprocessableEntity, CodeTemplateInactive, err.Error(),
+			"已停用的模板不能再用来建单；换用其他模板或新建一份")
+	case isUnknownField(err):
+		e := err.(*tickets.UnknownFieldError)
+		WriteError(w, http.StatusUnprocessableEntity, CodeUnknownField, e.Error(),
+			"fields 的键要用模板里的小节标题（问句）原文；字段定义见 GET /api/v1/templates/{key}")
+	case isInvalidFieldOption(err):
+		e := err.(*tickets.InvalidFieldOptionError)
+		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidFieldOption, e.Error(),
+			"维度字段从字典候选值里选，选「不确定」也算已填")
+	case errors.Is(err, tickets.ErrFieldsWithoutTemplate):
+		WriteError(w, http.StatusUnprocessableEntity, CodeFieldsWithoutTemplate, err.Error(), "")
+	case errors.Is(err, tickets.ErrBriefMDWithTemplate):
+		WriteError(w, http.StatusUnprocessableEntity, CodeBriefMDWithTemplate, err.Error(),
+			"fields 里只需传改动的字段，并带上 base_revision")
 	case errors.As(err, &conflict):
 		WriteErrorExtra(w, http.StatusConflict, CodeRevisionConflict,
 			conflict.Error(), "重新读取工单，合并修改后再提交",
@@ -303,6 +331,16 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, err error
 	default:
 		panic(err)
 	}
+}
+
+func isUnknownField(err error) bool {
+	var e *tickets.UnknownFieldError
+	return errors.As(err, &e)
+}
+
+func isInvalidFieldOption(err error) bool {
+	var e *tickets.InvalidFieldOptionError
+	return errors.As(err, &e)
 }
 
 func isUnknownLabelValue(err error) bool {
@@ -505,6 +543,14 @@ func newTicketView(full tickets.Full, viewer identity.Viewer) ticketView {
 	if full.AssigneeID != 0 {
 		v.Assignee = &authorView{Member: &memberRef{ID: full.AssigneeID, Name: full.AssigneeName}}
 	}
+	if full.TemplateKey != "" {
+		key := full.TemplateKey
+		v.Template = &key
+		v.Brief.Template = &key
+		// 读取同时返回 fields 和拼好的 brief_md（说明由创建时版本的字段定义拼出）。
+		fields := full.Fields
+		v.Brief.Fields = &fields
+	}
 	if !isGuest {
 		labels := full.Labels
 		v.Labels = &labels
@@ -563,8 +609,13 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer) markdownview
 		BriefRevision:   full.BriefRevision,
 		ViewerName:      viewerName,
 		ViewerRole:      roleOf(viewer, full),
+		ViewerIsGuest:   isGuest,
 		YourTurn:        yourTurnOf(viewer, waitingOn),
 		APIPath:         "/api/v1/tickets/" + full.Number,
+	}
+	if full.TemplateDef != nil {
+		in.AgentNote = full.TemplateDef.AgentNote
+		in.TemplateName = full.TemplateDef.Name
 	}
 	in.CanReopen = capsOf(viewer, full).Reopen
 	// 重开提示（spec 已接受边界）：工单开启且最后一条事件是重开、重开者就是
@@ -612,9 +663,13 @@ func yourTurnOf(viewer identity.Viewer, waitingOn tickets.WaitingOn) bool {
 }
 
 // roleOf 判定当前凭证在这张工单里的角色：指派人 / 发起人（创建者一方）/ 成员 / 访客。
-// 自派自时创建者同时也是指派人，按指派人算（照抄原型 roleOf 的优先级）。
+// 自派自时创建者同时也是指派人，按指派人算（照抄原型 roleOf 的优先级）；
+// 通过反馈入口提交的访客视同创建者（#35）：持有创建者链接的访客角色是 creator。
 func roleOf(viewer identity.Viewer, full tickets.Full) string {
 	if viewer.Kind == identity.ViewerGuest {
+		if full.CreatorLinkID != 0 && viewer.GuestLink != nil && viewer.GuestLink.ID == full.CreatorLinkID {
+			return "creator" // 入口提交者视同创建者
+		}
 		return "guest"
 	}
 	if full.AssigneeID != 0 && viewer.Member.ID == full.AssigneeID {
