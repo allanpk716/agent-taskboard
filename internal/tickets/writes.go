@@ -48,10 +48,12 @@ func (e *RevisionConflictError) Error() string {
 }
 
 // ReplyInput 是回复的输入。附件引用（attachment_ids 与正文里的 att:）在 #33 加入；
-// 访客自报的 author_name / via_agent 在 #32 加入。
+// AuthorName / ViaAgent 是访客的自报信息（#32，仅访客凭证采纳）。
 type ReplyInput struct {
-	BodyMD  string
-	Deliver bool // 交付标记，仅指派人一方可用（#36）
+	BodyMD     string
+	Deliver    bool   // 交付标记，仅指派人一方可用（#36）
+	AuthorName string // 访客自报的署名
+	ViaAgent   bool   // 访客自报「由其 Agent 写成」
 }
 
 // ReplyResult 是回复成功后的投影。
@@ -63,11 +65,21 @@ type ReplyResult struct {
 }
 
 // Reply 以 viewer 的身份在 ref 指向的工单上回复一条。成员（含成员 Agent）
-// 在关闭的工单上仍可回复——那不会重开它，重开是显式动作。
+// 在关闭的工单上仍可回复——那不会重开它，重开是显式动作；访客链接在
+// 工单关闭后只读，重开后恢复可回复（spec「凭证与访问」）。访客的回复带
+// 链接备注与自报信息；成员的自报字段不采纳（署名由凭证决定，ADR 0003）。
 func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string, in ReplyInput) (ReplyResult, error) {
 	full, err := m.ByRef(ctx, ref)
 	if err != nil {
 		return ReplyResult{}, err
+	}
+	if err := guestScope(viewer, full.Seq); err != nil {
+		return ReplyResult{}, err
+	}
+	if viewer.Kind == identity.ViewerGuest {
+		if full.Status != "open" {
+			return ReplyResult{}, ErrTicketClosed
+		}
 	}
 	if in.Deliver {
 		// #30 没有指派人；指派与交付在 #36 加入后这里才有例外。
@@ -79,6 +91,9 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 
 	now := m.clk.Now()
 	author := authorOf(viewer)
+	if viewer.Kind == identity.ViewerGuest {
+		author = guestAuthorOf(viewer, in.AuthorName, in.ViaAgent)
+	}
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return ReplyResult{}, err
@@ -121,23 +136,38 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 }
 
 // ReviseInput 是修订说明的输入。只需传改动的部分；title 与 brief_md 都可省（空修订
-// 也推进版本，行为与 title-only 修订一致）。模板工单按字段修订（fields）在 #34 加入。
+// 也推进版本，行为与 title-only 修订一致）。模板工单按字段修订（fields）在 #34 加入；
+// AuthorName / ViaAgent 是访客的自报署名（#32）。
 type ReviseInput struct {
 	Title        *string
 	BriefMD      *string
-	BaseRevision int64 // 缺省时为 0，视为没带
+	BaseRevision int64  // 缺省时为 0，视为没带
+	AuthorName   string // 访客自报的署名（仅访客凭证采纳）
+	ViaAgent     bool   // 访客自报「由其 Agent 写成」
 }
 
 // Revise 以 viewer 的身份修订标题/说明：校验 base_revision 乐观锁、推进版本号、
-// 记一条 brief_revised 事件。只有创建者一方（本人或其任意 Agent）能修订。
+// 记一条 brief_revised 事件。可编辑的人：创建者一方（本人或其任意 Agent）；
+// 持「可填写说明」链接的访客（工单需开启；无权限的链接 403 link_cannot_edit_brief）。
+// 反馈入口提交者（#35）也视同创建者，届时在这里加入。
 func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string, in ReviseInput) (Ticket, error) {
 	full, err := m.ByRef(ctx, ref)
 	if err != nil {
 		return Ticket{}, err
 	}
-	// 权限：创建者一方（本人或其任意 Agent）。反馈入口提交者（#35）与
-	// 持「可填写说明」链接的访客（#32）也视同创建者，届时在这里加入。
-	if viewer.Member.ID != full.Creator.MemberID {
+	if err := guestScope(viewer, full.Seq); err != nil {
+		return Ticket{}, err
+	}
+	author := authorOf(viewer)
+	if viewer.Kind == identity.ViewerGuest {
+		if full.Status != "open" {
+			return Ticket{}, ErrTicketClosed
+		}
+		if !viewer.GuestLink.CanEditBrief {
+			return Ticket{}, ErrLinkCannotEditBrief
+		}
+		author = guestAuthorOf(viewer, in.AuthorName, in.ViaAgent)
+	} else if viewer.Member.ID != full.Creator.MemberID {
 		return Ticket{}, ErrNotBriefOwner
 	}
 	if in.BaseRevision == 0 {
@@ -171,7 +201,7 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 		title, brief, revision, full.Seq); err != nil {
 		return Ticket{}, fmt.Errorf("写入修订失败：%w", err)
 	}
-	eventSeq, change, err := m.appendEvent(ctx, tx, full.Seq, now, authorOf(viewer), "brief_revised")
+	eventSeq, change, err := m.appendEvent(ctx, tx, full.Seq, now, author, "brief_revised")
 	if err != nil {
 		return Ticket{}, err
 	}
@@ -331,7 +361,8 @@ func (m *Manager) BySeq(ctx context.Context, seq int64) (Ticket, error) {
 }
 
 // appendEvent 追加一条时间线事件：分配单内 seq 与全局变更序号（同事务）。
-// 附加字段随后用 UPDATE 补上（各类型列不同，避免拼 SQL）。
+// 附加字段随后用 UPDATE 补上（各类型列不同，避免拼 SQL）；访客作者的
+// 链接备注与自报信息在这里直接写入（#32）。
 func (m *Manager) appendEvent(ctx context.Context, tx *sql.Tx, ticketSeq int64, at time.Time, actor Author, typ string) (seq, change int64, err error) {
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(seq), 0) + 1 FROM timeline_events WHERE ticket_seq = ?`, ticketSeq).Scan(&seq); err != nil {
@@ -349,10 +380,20 @@ func (m *Manager) appendEvent(ctx context.Context, tx *sql.Tx, ticketSeq int64, 
 	if actor.MemberID != 0 {
 		memberID = actor.MemberID
 	}
+	var linkID any
+	if actor.LinkID != 0 {
+		linkID = actor.LinkID
+	}
+	var authorName any
+	if actor.AuthorName != "" {
+		authorName = actor.AuthorName
+	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO timeline_events (ticket_seq, seq, change_seq, type, actor_member_id, actor_agent_id, at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		ticketSeq, seq, change, typ, memberID, agentID, at.Format(time.RFC3339Nano)); err != nil {
+		INSERT INTO timeline_events (ticket_seq, seq, change_seq, type, actor_member_id, actor_agent_id, at,
+		                            actor_link_id, actor_link_note, actor_author_name, actor_via_agent)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ticketSeq, seq, change, typ, memberID, agentID, at.Format(time.RFC3339Nano),
+		linkID, actor.LinkNote, authorName, boolToInt(actor.ViaAgent)); err != nil {
 		return 0, 0, fmt.Errorf("写入 %s 事件失败：%w", typ, err)
 	}
 	return seq, change, nil
@@ -374,6 +415,17 @@ func authorOf(v identity.Viewer) Author {
 	return a
 }
 
+// guestAuthorOf 把访客链接凭证转成作者结构：带链接备注与自报信息（ADR 0003：
+// 自报信息未经平台核实，展示时与成员 Agent 的平台认证署名明确区分）。
+func guestAuthorOf(v identity.Viewer, authorName string, viaAgent bool) Author {
+	a := Author{AuthorName: strings.TrimSpace(authorName), ViaAgent: viaAgent}
+	if v.GuestLink != nil {
+		a.LinkID = v.GuestLink.ID
+		a.LinkNote = v.GuestLink.Note
+	}
+	return a
+}
+
 func nullInt(n int64) any {
 	if n == 0 {
 		return nil
@@ -386,4 +438,13 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// guestScope 套上访客链接的作用域：访客只能操作链接指向的那张工单，
+// 访问其他工单一律 ErrNotFound（与「不存在」不可区分，防枚举）。
+func guestScope(viewer identity.Viewer, ticketSeq int64) error {
+	if viewer.Kind == identity.ViewerGuest && viewer.GuestLink.TicketSeq != ticketSeq {
+		return ErrNotFound
+	}
+	return nil
 }

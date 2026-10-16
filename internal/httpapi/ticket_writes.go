@@ -4,24 +4,19 @@ package httpapi
 import (
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
 
-// ticketRefAndSub 从路径 /api/v1/tickets/{ref}[/{子资源}] 里取出工单引用与子资源。
-func ticketRefAndSub(path string) (ref, sub string, hasSub bool) {
-	rest := strings.TrimPrefix(path, "/api/v1/tickets/")
-	ref, sub, hasSub = strings.Cut(rest, "/")
-	return ref, sub, hasSub
-}
-
-// replyRequest 是 POST …/replies 的请求体。attachment_ids 与访客自报的
-// author_name/via_agent 分别在 #33/#32 加入。
+// replyRequest 是 POST …/replies 的请求体。attachment_ids 在 #33 加入；
+// author_name / via_agent 是访客的自报信息（#32）：只有访客凭证会采纳，
+// 成员的署名由凭证决定，不能自报（ADR 0003）。
 type replyRequest struct {
-	BodyMD  string `json:"body_md"`
-	Deliver bool   `json:"deliver"`
+	BodyMD     string `json:"body_md"`
+	Deliver    bool   `json:"deliver"`
+	AuthorName string `json:"author_name"`
+	ViaAgent   bool   `json:"via_agent"`
 }
 
 // replyTicketView 是回复成功（201）的响应。
@@ -44,8 +39,10 @@ func (a *API) replyTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	}
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
 		result, err := a.tickets.Reply(r.Context(), viewer, ref, tickets.ReplyInput{
-			BodyMD:  req.BodyMD,
-			Deliver: req.Deliver,
+			BodyMD:     req.BodyMD,
+			Deliver:    req.Deliver,
+			AuthorName: req.AuthorName,
+			ViaAgent:   req.ViaAgent,
 		})
 		if err != nil {
 			a.writeTicketError(w, r, err)
@@ -62,11 +59,14 @@ func (a *API) replyTicket(w http.ResponseWriter, r *http.Request, ref string) {
 }
 
 // reviseTicketRequest 是 PATCH /api/v1/tickets/{id} 的请求体。
-// 只需传改动的字段；模板工单按字段修订（fields）在 #34 加入。
+// 只需传改动的字段；模板工单按字段修订（fields）在 #34 加入；
+// author_name / via_agent 是访客的自报署名（#32，仅访客凭证采纳）。
 type reviseTicketRequest struct {
 	Title        *string `json:"title"`
 	BriefMD      *string `json:"brief_md"`
 	BaseRevision int64   `json:"base_revision"`
+	AuthorName   string  `json:"author_name"`
+	ViaAgent     bool    `json:"via_agent"`
 }
 
 func (a *API) reviseTicket(w http.ResponseWriter, r *http.Request, ref string) {
@@ -83,6 +83,8 @@ func (a *API) reviseTicket(w http.ResponseWriter, r *http.Request, ref string) {
 			Title:        req.Title,
 			BriefMD:      req.BriefMD,
 			BaseRevision: req.BaseRevision,
+			AuthorName:   req.AuthorName,
+			ViaAgent:     req.ViaAgent,
 		})
 		if err != nil {
 			a.writeTicketError(w, r, err)
@@ -112,7 +114,8 @@ type closeTicketView struct {
 }
 
 func (a *API) closeTicket(w http.ResponseWriter, r *http.Request, ref string) {
-	viewer, ok := a.viewerFromRequest(w, r)
+	// 关闭仅限成员；访客 403 members_only（决策：访客调成员专属接口统一这个码）。
+	viewer, ok := a.memberFromRequest(w, r)
 	if !ok {
 		return
 	}
@@ -153,7 +156,8 @@ type reopenTicketView struct {
 }
 
 func (a *API) reopenTicket(w http.ResponseWriter, r *http.Request, ref string) {
-	viewer, ok := a.viewerFromRequest(w, r)
+	// 重新开启仅限成员；访客 403 members_only。
+	viewer, ok := a.memberFromRequest(w, r)
 	if !ok {
 		return
 	}
@@ -170,6 +174,8 @@ func (a *API) reopenTicket(w http.ResponseWriter, r *http.Request, ref string) {
 
 // ticketTimeline 处理 GET /api/v1/tickets/{id}/timeline?after=N（增量读取）。
 // 返回 after 之后的事件、当前游标、等待方、是否轮到当前凭证和状态。
+// 访客（#32）只能读链接指向的工单，且看不到标签事件（cursor 因此是访客可见的
+// 最后一条事件 seq，跳过的序号不会当作增量重发）。
 func (a *API) ticketTimeline(w http.ResponseWriter, r *http.Request, ref string) {
 	viewer, ok := a.viewerFromRequest(w, r)
 	if !ok {
@@ -185,25 +191,28 @@ func (a *API) ticketTimeline(w http.ResponseWriter, r *http.Request, ref string)
 		}
 		after = n
 	}
-	full, err := a.tickets.ByRef(r.Context(), ref)
-	if err != nil {
-		a.writeTicketError(w, r, err)
+	full, ok := a.loadTicketForViewer(w, r, viewer, ref)
+	if !ok {
 		return
 	}
+	isGuest := viewer.Kind == identity.ViewerGuest
 	waitingOn := tickets.WaitingOnOf(full)
 	cursor := int64(0)
-	if n := len(full.Timeline); n > 0 {
-		cursor = full.Timeline[n-1].Seq
+	for _, e := range full.Timeline {
+		if isGuest && !visibleToGuest(e) {
+			continue
+		}
+		cursor = e.Seq
 	}
 	view := timelineEnvelope{
 		Events:    []eventView{},
 		Cursor:    cursor,
 		WaitingOn: newWaitingOnView(waitingOn),
-		YourTurn:  viewer.Kind == identity.ViewerMember && waitingOn.MemberID == viewer.Member.ID,
+		YourTurn:  yourTurnOf(viewer, waitingOn),
 		Status:    full.Status,
 	}
 	for _, e := range full.Timeline {
-		if e.Seq <= after {
+		if e.Seq <= after || (isGuest && !visibleToGuest(e)) {
 			continue
 		}
 		view.Events = append(view.Events, newEventView(e))

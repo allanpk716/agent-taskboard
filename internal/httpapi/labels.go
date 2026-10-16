@@ -232,7 +232,7 @@ type setTicketLabelsRequest struct {
 }
 
 // setTicketLabels 处理 POST /api/v1/tickets/{编号或序号}/labels：
-// 打标签 / 摘标签（成员与成员 Agent；访客 403 members_only，访客链接在 #32 加入）。
+// 打标签 / 摘标签（仅成员与成员 Agent；访客 403 members_only）。
 func (a *API) setTicketLabels(w http.ResponseWriter, r *http.Request, ref string) {
 	viewer, ok := a.memberFromRequest(w, r)
 	if !ok {
