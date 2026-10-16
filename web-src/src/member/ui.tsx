@@ -46,6 +46,22 @@ export function useRoute(): Route {
   return route
 }
 
+/** 导护序号：每次导航（含同路径重复点击）递增，用作页面组件的 key，
+ * 让「换一种方式」这类回到同一页的操作能重置页面状态。 */
+export function useNavSeq(): number {
+  const [seq, setSeq] = useState(0)
+  useEffect(() => {
+    const bump = () => setSeq((n) => n + 1)
+    window.addEventListener('popstate', bump)
+    window.addEventListener('tb:nav', bump)
+    return () => {
+      window.removeEventListener('popstate', bump)
+      window.removeEventListener('tb:nav', bump)
+    }
+  }, [])
+  return seq
+}
+
 /** 动作之后让别的页面（如收件箱角标）刷新。 */
 export function invalidate() {
   window.dispatchEvent(new Event('tb:invalidate'))

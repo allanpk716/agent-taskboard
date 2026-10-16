@@ -10,7 +10,7 @@ import { TicketDetailPage } from './TicketDetailPage'
 import { NewTicketPage } from './NewTicketPage'
 import { ToolsPage } from './ToolsPage'
 import { MePage } from './MePage'
-import { nav, useRoute, type Route } from './ui'
+import { nav, useNavSeq, useRoute, type Route } from './ui'
 
 function pageTitle(route: Route): string {
   switch (route.page) {
@@ -31,6 +31,7 @@ function pageTitle(route: Route): string {
 
 export function MemberApp() {
   const route = useRoute()
+  const navSeq = useNavSeq()
   const [me, setMe] = useState<Me | null>(null)
   const [denied, setDenied] = useState(false)
   const [inboxCount, setInboxCount] = useState(0)
@@ -104,12 +105,12 @@ export function MemberApp() {
           </div>
         </header>
         <div className="b-body">
-          {route.page === 'inbox' && <InboxPage />}
-          {route.page === 'tickets' && <TicketsPage />}
-          {route.page === 'new' && <NewTicketPage />}
-          {route.page === 'detail' && <TicketDetailPage ticketRef={route.ref} me={me} />}
-          {route.page === 'tools' && <ToolsPage />}
-          {route.page === 'me' && <MePage me={me} />}
+          {route.page === 'inbox' && <InboxPage key={navSeq} />}
+          {route.page === 'tickets' && <TicketsPage key={navSeq} />}
+          {route.page === 'new' && <NewTicketPage key={navSeq} />}
+          {route.page === 'detail' && <TicketDetailPage key={navSeq} ticketRef={route.ref} />}
+          {route.page === 'tools' && <ToolsPage key={navSeq} />}
+          {route.page === 'me' && <MePage key={navSeq} me={me} />}
         </div>
         <nav className="b-tabs">
           {tab('inbox', '📥', '收件箱', inboxCount)}

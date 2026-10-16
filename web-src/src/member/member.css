@@ -347,6 +347,8 @@
   box-shadow: 0 -2px 8px rgba(20, 30, 50, 0.04);
 }
 .composer.ro {
+  position: static;
+  margin: 0 8px 10px;
   color: #66707f;
   display: flex;
   gap: 8px;
