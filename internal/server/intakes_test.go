@@ -299,3 +299,144 @@ func Test成员创建反馈入口匿名读到模板与维度候选值(t *testing
 		t.Errorf("匿名创建入口 = %d, 想 401", res.StatusCode)
 	}
 }
+
+// 入口提交是严格校验：缺必填项 422 missing_fields 拦下（与成员建单只 warnings
+// 相反），hint 逐项说明缺什么、怎么填；「不确定」算已填；结构性错误照样拦。
+func Test入口提交缺必填被拦下且逐项提示(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+
+	// 两个必填没填：哪台仪器？（维度）与 你做了哪些操作？（文本）。
+	res := s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/intakes/bug/tickets", map[string]any{
+		"title": "UD-2300 报警",
+		"fields": map[string]string{
+			"什么时候发生的？":  "今天上午",
+			"实际看到了什么？": "弹出“E-203”",
+			"你期望看到什么？": "正常开始",
+			"出现得频繁吗？":   "每次",
+		},
+		"author_name": "赵六",
+	}, nil)
+	var err intakeErrorBody
+	tbtest.DecodeJSON(t, res, &err)
+	if res.StatusCode != http.StatusUnprocessableEntity || err.Error.Code != "missing_fields" {
+		t.Fatalf("缺必填 = %d/%s, 想 422/missing_fields", res.StatusCode, err.Error.Code)
+	}
+	byField := map[string]struct {
+		Hint    string `json:"hint"`
+		Example string `json:"example"`
+	}{}
+	for _, f := range err.Error.Fields {
+		byField[f.Field] = struct {
+			Hint    string `json:"hint"`
+			Example string `json:"example"`
+		}{f.Hint, f.Example}
+	}
+	if len(err.Error.Fields) != 2 {
+		t.Fatalf("missing fields = %+v, 想恰好两项", err.Error.Fields)
+	}
+	if h, ok := byField["哪台仪器？"]; !ok {
+		t.Errorf("缺「哪台仪器？」的提示：%+v", err.Error.Fields)
+	} else {
+		if !strings.Contains(h.Hint, "不确定") || !strings.Contains(h.Hint, "机型") {
+			t.Errorf("「哪台仪器？」的提示应说明可从机型里选、可选「不确定」：%q", h.Hint)
+		}
+	}
+	if h, ok := byField["你做了哪些操作？"]; !ok {
+		t.Errorf("缺「你做了哪些操作？」的提示：%+v", err.Error.Fields)
+	} else {
+		if h.Hint == "" {
+			t.Error("「你做了哪些操作？」的提示不能为空")
+		}
+		if !strings.Contains(h.Example, "开机自检") {
+			t.Errorf("提示应带上模板里的示例：%q", h.Example)
+		}
+	}
+	// 汇总 hint 逐项说明（每一项都出现）。
+	for _, want := range []string{"哪台仪器？", "你做了哪些操作？"} {
+		if !strings.Contains(err.Error.Hint, want) {
+			t.Errorf("hint 里应提到 %q：\n%s", want, err.Error.Hint)
+		}
+	}
+	// 被拦下时不产生工单。
+	var list struct {
+		Intakes []struct {
+			Active bool `json:"active"`
+		} `json:"intakes"`
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/intakes", nil, &list)
+	res = s.Do(t, web, http.MethodGet, "/api/v1/tickets/1", nil, nil)
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("被拦下的提交不应产生工单（/tickets/1 = %d, 想 404）", res.StatusCode)
+	}
+
+	// 「不确定」算已填（维度字段不打标签，但不再报 missing_fields）。
+	fields := bugFields()
+	fields["哪台仪器？"] = "不确定"
+	fields["你做了哪些操作？"] = "1. 开机 2. 自检"
+	fields["出现得频繁吗？"] = "每次" // 单选字段用合法选项
+	for _, k := range []string{"序列号和软件版本是多少？", "实际看到了什么？", "你期望看到什么？"} {
+		fields[k] = "略"
+	}
+	res = s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/intakes/bug/tickets",
+		map[string]any{"title": "不知道机型的报警", "fields": fields}, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("「不确定」算已填：状态码 = %d, 想 201", res.StatusCode)
+	}
+	var got ticketResponseBody
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/1", nil, &got)
+	for _, l := range got.Labels {
+		if strings.HasPrefix(l, "机型:") {
+			t.Errorf("「不确定」不应打机型标签：%v", got.Labels)
+		}
+	}
+
+	// 没有标题 → 422 title_required；结构性错误：未知字段键、单选值不在选项里、
+	// 维度值不在字典里（带 suggestions）。
+	cases := []struct {
+		name string
+		body map[string]any
+		code string
+	}{
+		{"无标题", map[string]any{"fields": bugFields()}, "title_required"},
+		{"未知字段", map[string]any{"title": "t", "fields": withExtra(bugFields(), "不存在的问句？", "x")}, "unknown_field"},
+		{"单选值不在选项里", map[string]any{"title": "t", "fields": withExtra(bugFields(), "出现得频繁吗？", "偶尔中的偶尔")}, "invalid_field_option"},
+		{"维度值不在字典里", map[string]any{"title": "t", "fields": withExtra(bugFields(), "哪台仪器？", "BH-9999")}, "unknown_label_value"},
+	}
+	for _, tc := range cases {
+		res := s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/intakes/bug/tickets", tc.body, nil)
+		var e intakeErrorBody
+		tbtest.DecodeJSON(t, res, &e)
+		if res.StatusCode != http.StatusUnprocessableEntity || e.Error.Code != tc.code {
+			t.Errorf("%s = %d/%s, 想 422/%s", tc.name, res.StatusCode, e.Error.Code, tc.code)
+		}
+	}
+}
+
+// withExtra 返回加了额外字段值的副本（不影响原 map）。
+func withExtra(fields map[string]string, key, value string) map[string]string {
+	out := map[string]string{}
+	for k, v := range fields {
+		out[k] = v
+	}
+	out[key] = value
+	return out
+}
+
+// intakeErrorBody 是入口接口可能带附加字段（missing_fields 的 fields、
+// unknown_label_value 的 suggestions）的错误结构。
+type intakeErrorBody struct {
+	Error struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+		Hint    string `json:"hint"`
+		Fields  []struct {
+			Field   string `json:"field"`
+			Hint    string `json:"hint"`
+			Example string `json:"example"`
+		} `json:"fields"`
+		Suggestions []string `json:"suggestions"`
+	} `json:"error"`
+}
