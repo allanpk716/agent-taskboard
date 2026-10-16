@@ -404,9 +404,11 @@ spec 用户故事 84），没有 `inbox`：
 - 新建/修改请求带 `Idempotency-Key` 时同样去重。
 - `key` 是模板的稳定标识（出现在工单的 `template` 字段里），不能含空格或 `/`，
   且不能复用已存在的 key（409 `template_key_taken`）。
-- 字段定义结构：`{key, title, guide, example, required, type, options[], dimension?}`；
-  `type` 为 `text | radio | dimension`。**维度字段的 `options` 是读取时从标签字典现取的
-  候选值 + 「不确定」**（字典会变，不缓存在模板里）。
+- 字段定义结构：`{key, title, guide, example, required, type, options[], dimension?,
+  option_aliases?}`；`type` 为 `text | radio | dimension`。**维度字段的 `options` 是读取时
+  从标签字典现取的候选值 + 「不确定」**（字典会变，不缓存在模板里）；`option_aliases`
+  是各候选值的别名（`{值: [别名…]}`，同样读取时现取，#39：网页的下拉框按别名搜索；
+  匿名的入口读取也带，因为字典端点仅成员可用）。
 - 错误码：`422 template_format_error`（带行号）、`422 template_key_required`、
   `422 invalid_template_key`、`422 markdown_required`、`409 template_key_taken`、
   `404 template_not_found`。
@@ -426,7 +428,9 @@ spec 用户故事 84），没有 `inbox`：
   map，`brief.markdown` 为按字段拼好的说明（`### 问句` + 内容，只拼已填字段）；
   `brief.template` 同 `template`；`brief.template_fields` 是创建时版本的字段定义
   （与模板接口同形，含未填字段，按模板顺序），访客网页据此按问句渲染说明气泡、
-  对未填字段显示「（未填写）」（#38）；非模板工单没有这个字段。
+  对未填字段显示「（未填写）」（#38）；非模板工单没有这个字段。维度字段在此视图
+  里同样带 `options`（字典候选值 + 「不确定」）与 `option_aliases`（#39：「补全说明」
+  表单的下拉框用，读取时现取）。
 - `PATCH /api/v1/tickets/{id} {"fields": {改动的字段}, "base_revision": N}`：
   只改动传入的字段，其余保持不变；每次修订记一条 `brief_revised` 事件（见上）。
 - 预置三份模板（spec「初始数据」）：`bug-report`（Bug 反馈，预设 `待初筛`）、

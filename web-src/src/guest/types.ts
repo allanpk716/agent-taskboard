@@ -28,6 +28,8 @@ export interface TemplateField {
   type: 'text' | 'radio' | 'dimension'
   options?: string[]
   dimension?: string
+  /** 维度字段各候选值的别名（#39：下拉框按别名搜索；随字典现取） */
+  option_aliases?: Record<string, string[]>
 }
 
 export interface Attachment {
@@ -97,4 +99,35 @@ export interface GuestSession {
     can_edit_brief: boolean
   }
   ticket: { number: string; seq: number; title: string; api: string }
+}
+
+// GET /api/v1/intakes/{slug}（匿名，#35/#39）的响应结构。
+export interface IntakeView {
+  slug: string
+  name: string
+  url: string
+  kind: string
+  template: {
+    key: string
+    name: string
+    version: number
+    kind: string
+    preset_labels: string[]
+    agent_note?: string
+    fields: TemplateField[]
+  }
+}
+
+// POST /api/v1/intakes/{slug}/tickets（匿名）成功 201 的响应。
+export interface IntakeSubmitResult {
+  ticket: { number: string; seq: number; title: string; url: string }
+  guest_link: { url: string; note: string; expires_at: string; can_edit_brief: boolean }
+  next: string
+}
+
+// 422 missing_fields 附加在 error.fields 里的逐项提示（严格校验）。
+export interface MissingFieldHint {
+  field: string
+  hint: string
+  example?: string
 }
