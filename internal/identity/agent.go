@@ -113,6 +113,49 @@ func (m *Manager) RevokeAgentToken(ctx context.Context, member Member, id int64)
 	return err
 }
 
+// AgentTokenInfo 是成员名下一个具名 Agent 的信息（列表用，不含明文 token）。
+type AgentTokenInfo struct {
+	Agent
+	CreatedAt time.Time
+	// RevokedAt 非零表示已撤销（历史署名保留并标注「已停用」）。
+	RevokedAt time.Time
+	Revoked   bool
+}
+
+// ListAgentTokens 列出成员名下的全部 Agent（含已撤销，新→旧），供个人设置页
+// 展示与撤销；不返回明文 token（只在签发时出现一次）。
+func (m *Manager) ListAgentTokens(ctx context.Context, member Member) ([]AgentTokenInfo, error) {
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT id, name, created_at, revoked_at FROM agent_tokens
+		WHERE member_id = ? ORDER BY id DESC`, member.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AgentTokenInfo{}
+	for rows.Next() {
+		var (
+			info      AgentTokenInfo
+			createdAt string
+			revokedAt sql.NullString
+		)
+		if err := rows.Scan(&info.ID, &info.Name, &createdAt, &revokedAt); err != nil {
+			return nil, err
+		}
+		if info.CreatedAt, err = time.ParseInLocation(time.RFC3339Nano, createdAt, time.Local); err != nil {
+			return nil, err
+		}
+		if revokedAt.Valid {
+			if info.RevokedAt, err = time.ParseInLocation(time.RFC3339Nano, revokedAt.String, time.Local); err != nil {
+				return nil, err
+			}
+			info.Revoked = true
+		}
+		out = append(out, info)
+	}
+	return out, rows.Err()
+}
+
 // ViewerFromAgentToken 把 Agent token 解析成 Viewer；token 未知或已撤销时
 // 返回 ErrInvalidCredentials（撤销即时生效，所以每次都实时查库）。
 // 成员账号被停用（#42）后，其名下 Agent token 也一并失效。

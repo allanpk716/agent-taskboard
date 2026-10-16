@@ -12,14 +12,49 @@ import (
 
 // handleAgentTokens 处理成员名下的 Agent token 集合：
 //
-//	POST /api/v1/me/agent-tokens  签发一个具名 token（只接受网页会话）
+//	GET   /api/v1/me/agent-tokens  列表（含已撤销；只接受网页会话，#42）
+//	POST  /api/v1/me/agent-tokens  签发一个具名 token（只接受网页会话）
 func (a *API) handleAgentTokens(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
+	case http.MethodGet:
+		a.listAgentTokens(w, r)
 	case http.MethodPost:
 		a.issueAgentToken(w, r)
 	default:
 		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
 	}
+}
+
+// agentTokenRow 是 Agent token 列表的条目；明文 token 不回显（只在签发响应里
+// 出现一次）。撤销的保留在列表里，页面标注「已停用」。
+type agentTokenRow struct {
+	ID        int64   `json:"id"`
+	Name      string  `json:"name"`
+	CreatedAt string  `json:"created_at"`
+	RevokedAt *string `json:"revoked_at"`
+}
+
+func (a *API) listAgentTokens(w http.ResponseWriter, r *http.Request) {
+	viewer, ok := a.webSessionFromRequest(w, r)
+	if !ok {
+		return
+	}
+	list, err := a.ident.ListAgentTokens(r.Context(), viewer.Member)
+	if err != nil {
+		panic(err)
+	}
+	rows := make([]agentTokenRow, 0, len(list))
+	for _, tk := range list {
+		row := agentTokenRow{ID: tk.ID, Name: tk.Name, CreatedAt: tk.CreatedAt.Format("2006-01-02T15:04:05Z07:00")}
+		if tk.Revoked {
+			at := tk.RevokedAt.Format("2006-01-02T15:04:05Z07:00")
+			row.RevokedAt = &at
+		}
+		rows = append(rows, row)
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Tokens []agentTokenRow `json:"tokens"`
+	}{Tokens: rows})
 }
 
 // handleAgentToken 处理单个 Agent token：

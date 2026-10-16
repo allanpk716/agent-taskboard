@@ -63,6 +63,7 @@ spec 用户故事 84），没有 `inbox`：
 | 方法与路径 | 说明 |
 |---|---|
 | `POST /api/v1/me/agent-tokens` | 签发一个具名 Agent token。**只接受网页会话**。 |
+| `GET /api/v1/me/agent-tokens` | 列出成员名下的全部 Agent（含已撤销，新→旧；#42 个人设置页）。**只接受网页会话**，不回显明文 token。 |
 | `DELETE /api/v1/me/agent-tokens/{id}` | 撤销（立即生效，幂等 204）。**只接受网页会话**。 |
 
 - 签发请求体 `{"name":"笔记本"}`；成功 `201`：
@@ -72,6 +73,8 @@ spec 用户故事 84），没有 `inbox`：
   ```
 
   明文 `token` 只在签发响应里出现一次，之后任何接口都不回显（库中只存 SHA-256 哈希）。
+- 列表响应 `{tokens: [{id, name, created_at, revoked_at?}]}`（新→旧）；撤销的保留在列表里，
+  页面标注「已停用」（历史署名不受影响）。
 - 撤销 Agent 后它的历史署名保留并标注「已停用」（时间线渲染见后续工单）；未撤销的同名不能重复，撤销后名字可复用。
 - 错误码：
   - `401 unauthenticated` / `401 invalid_token`：凭证缺失或失效（撤销后的 token 再用就是 401）。
@@ -80,14 +83,32 @@ spec 用户故事 84），没有 `inbox`：
   - `409 agent_name_taken`：该成员名下已有同名、未撤销的 Agent。
   - `404 agent_token_not_found`：id 不存在、不属于当前成员，或路径不是数字（`/me/` 下只看自己的资源，防枚举）。
 
-## 成员名单（#41 成员网页用）
+## 成员名单与成员账号（#41 指派下拉；#42 账号管理）
 
 | 方法与路径 | 说明 |
 |---|---|
-| `GET /api/v1/members` | 列出全部成员（按 id），供建单/改派的下拉选择。 |
+| `GET /api/v1/members` | 列出全部成员（按 id，各项带 `active`），供建单/改派的下拉选择与管理页。 |
+| `POST /api/v1/members` | 创建成员账号（**仅管理员网页会话**，#42）。 |
+| `POST /api/v1/members/{id}/deactivate` | 停用成员账号（**仅管理员网页会话**，幂等；#42）。 |
 
-- 响应 `{members: [{id, name}]}`；只读。仅成员可读（匿名 401，访客 403 `members_only`）。
-- 账号的创建与停用（写接口）在 #42 成员网页加入。
+- `GET` 响应 `{members: [{id, username, name, active}]}`；仅成员可读（匿名 401，访客 403 `members_only`）。
+  停用的成员仍列出（历史署名与事件保留），`active: false`。
+- 创建请求体 `{"username": "zhao", "name": "赵工"}`（密码不收：服务器生成初始密码）。成功 `201`：
+
+  ```json
+  {"member": {"id": 4, "username": "zhao", "name": "赵工", "is_admin": false, "active": true},
+   "initial_password": "仅出现一次"}
+  ```
+
+  `initial_password` 只在创建响应里出现一次，成员用它首次登录（创建和停用账号只能在
+  网页上操作，spec 用户故事 88；MVP 不接 LDAP/SSO）。错误码：`422 username_required`、
+  `422 invalid_username`（含空格或斜杠）、`409 username_taken`。
+- 停用 `{"id": …, "active": false, "deactivated": 是否这次发生}`；幂等。**停用即时生效**：
+  该成员不能再登录（401 `member_deactivated`），已有会话与其名下 Agent token 一并失效
+  （401）；账号、历史署名与事件保留（停用不是删除）。错误码：`422 cannot_deactivate_self`
+  （不能停用自己的账号）、`404 member_not_found`。
+- 越权：非管理员 403 `admin_required`；Agent token 403 `web_session_required`
+  （ADR 0003：Agent 不能创建或停用账号）；访客 403 `members_only`；匿名 401。
 
 ## 工单（#29：建单与读取；#30：回复、修订、关闭与时间线）
 
@@ -408,6 +429,7 @@ spec 用户故事 84），没有 `inbox`：
 | `GET /api/v1/templates/{key}` | 读当前版本：字段定义、`agent_note`、模板原文 `markdown`、`version`、`updated_by`。 |
 | `GET /api/v1/templates/{key}?format=markdown` | 给 Agent 的填写指南（`text/markdown`）：建单请求示例、逐字段问句/引导/示例/候选值、「给 Agent 的说明」。 |
 | `PATCH /api/v1/templates/{key}` | 修改：`{"markdown": "新原文"}`，产生新版本（版本号 +1，记录修改人）。 |
+| `GET /api/v1/templates/{key}/versions` | 历史版本（新→旧），每版 `{version, name, markdown, updated_by, updated_at}`（#42 模板维护页）。 |
 | `POST /api/v1/templates/{key}/deactivate` | 停用（幂等 200；模板不能删除，停用后不能再用它建单，读取仍可见）。 |
 
 - 新建/修改请求带 `Idempotency-Key` 时同样去重。
