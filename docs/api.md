@@ -146,7 +146,8 @@ spec 用户故事 84），没有 `inbox`：
     都要满足同样的字典校验；「不确定」不打标签）。
   - `assignee`（#36）可写成员 id 或姓名；写成成员 Agent（署名写法或 Agent 名字）
     返回 `422 assignee_must_be_member`（成员 Agent 不能被指派，hint 列出可选成员）；
-    查无此人返回 `422 unknown_member`。建单时指派会在 `created` 事件后记一条
+    查无此人返回 `422 unknown_member`；账号已停用的成员返回 `422 assignee_deactivated`
+    （#42：停用即时生效，不再接新工单）。建单时指派会在 `created` 事件后记一条
     `assigned{from: null, to}` 事件。
 - 建单响应 `201`：`{number, seq, url, warnings, assignee, waiting_on, share_text}`
   （`url` 即 `/t/<编号>`）。`warnings` 是用模板建单时「缺必填」的逐项提醒
@@ -270,7 +271,8 @@ spec 用户故事 84），没有 `inbox`：
 
 - `POST /api/v1/tickets/{id}/assign {"assignee": "成员 id 或姓名"}`（仅成员；
   访客 403 `members_only`）。改派给当前指派人 → `422 already_assigned`；
-  写成成员 Agent → `422 assignee_must_be_member`；查无此人 → `422 unknown_member`
+  写成成员 Agent → `422 assignee_must_be_member`；查无此人 → `422 unknown_member`；
+  指派停用成员 → `422 assignee_deactivated`（#42）
   （hint 列出可选成员）。
 - 成功 `200`：`{assignee, waiting_on, share_text}`；`share_text` 只在改派给**他人**时
   非空：`赵工：工单「整理对照表」转给你了，让你的 Agent 读一下 /t/20261016-001`。

@@ -297,6 +297,10 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, ref strin
 	case isAlreadyAssigned(err):
 		e := err.(*tickets.AlreadyAssignedError)
 		WriteError(w, http.StatusUnprocessableEntity, CodeAlreadyAssigned, e.Error(), "改派时换一位成员")
+	case isAssigneeDeactivated(err):
+		e := err.(*tickets.AssigneeDeactivatedError)
+		WriteError(w, http.StatusUnprocessableEntity, CodeAssigneeDeactivated, e.Error(),
+			a.memberNamesHint(r, "停用成员不再接新工单；从在岗成员里选一位"))
 	case errors.Is(err, templates.ErrNotFound):
 		WriteError(w, http.StatusNotFound, CodeTemplateNotFound, "没有这个模板",
 			"模板列表见 GET /api/v1/templates")
@@ -406,6 +410,11 @@ func isUnknownMember(err error) bool {
 
 func isAlreadyAssigned(err error) bool {
 	var e *tickets.AlreadyAssignedError
+	return errors.As(err, &e)
+}
+
+func isAssigneeDeactivated(err error) bool {
+	var e *tickets.AssigneeDeactivatedError
 	return errors.As(err, &e)
 }
 

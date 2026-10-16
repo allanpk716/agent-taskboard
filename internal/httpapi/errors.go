@@ -42,6 +42,7 @@ const (
 	CodeAssigneeMustBeMember = "assignee_must_be_member" // 指派对象是成员 Agent
 	CodeUnknownMember        = "unknown_member"          // 指派对象不是成员
 	CodeAlreadyAssigned      = "already_assigned"        // 改派给当前指派人
+	CodeAssigneeDeactivated  = "assignee_deactivated"    // 指派对象的账号已停用（#42 评审修正）
 
 	// #31：标签、字典与别名。
 	CodeMembersOnly        = "members_only"         // 仅成员可用（访客 403）

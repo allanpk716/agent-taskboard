@@ -275,3 +275,48 @@ func Test停用成员账号立即生效(t *testing.T) {
 		t.Errorf("停用不存在成员状态码 = %d, 想 404", res.StatusCode)
 	}
 }
+
+// 停用的成员不能再被指派（评审 P1-6，#42）：建单指派与改派都 422
+// assignee_deactivated——账号停用即时生效，名单里的「不在岗」成员不该接到新工单。
+func Test停用成员不能被指派(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+
+	var created struct {
+		Member struct {
+			ID int64 `json:"id"`
+		} `json:"member"`
+	}
+	s.Do(t, admin, http.MethodPost, "/api/v1/members",
+		map[string]string{"username": "zhao", "name": "赵工"}, &created)
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/members/"+itoa(created.Member.ID)+"/deactivate", nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("停用赵工状态码 = %d, 想 200", res.StatusCode)
+	}
+
+	number := mustCreateTicket(t, s, admin, "升级 UD-2300 固件")
+
+	// 改派给停用成员 → 422 assignee_deactivated。
+	res := s.Do(t, admin, http.MethodPost, "/api/v1/tickets/"+number+"/assign",
+		map[string]string{"assignee": "赵工"}, nil)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("改派给停用成员状态码 = %d, 想 422：%s", res.StatusCode, readAll(t, res))
+	}
+	var errBody errorBody
+	tbtest.DecodeJSON(t, res, &errBody)
+	if errBody.Error.Code != "assignee_deactivated" {
+		t.Errorf("改派错误码 = %q, 想 assignee_deactivated", errBody.Error.Code)
+	}
+
+	// 建单时指派给停用成员 → 同样 422 assignee_deactivated。
+	res = s.Do(t, admin, http.MethodPost, "/api/v1/tickets",
+		map[string]any{"kind": "task", "title": "指派给停用成员", "brief_md": "x", "labels": []string{"机型:UD-2300"}, "assignee": "赵工"}, nil)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("建单指派给停用成员状态码 = %d, 想 422：%s", res.StatusCode, readAll(t, res))
+	}
+	errBody = errorBody{}
+	tbtest.DecodeJSON(t, res, &errBody)
+	if errBody.Error.Code != "assignee_deactivated" {
+		t.Errorf("建单指派错误码 = %q, 想 assignee_deactivated", errBody.Error.Code)
+	}
+}
