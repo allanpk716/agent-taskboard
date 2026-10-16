@@ -90,14 +90,16 @@ func (a *API) createGuestLink(w http.ResponseWriter, r *http.Request, ref string
 	if !ok {
 		return
 	}
-	link, err := a.tickets.CreateGuestLink(r.Context(), viewer, ref, spec)
-	if err != nil {
-		a.writeTicketError(w, r, ref, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, guestLinkView{
-		ID: link.ID, URL: "/g/" + link.Key, Note: link.Note,
-		ExpiresAt: link.ExpiresAt.Format(time.RFC3339Nano), CanEditBrief: link.CanEditBrief,
+	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
+		link, err := a.tickets.CreateGuestLink(r.Context(), viewer, ref, spec)
+		if err != nil {
+			a.writeTicketError(w, r, ref, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, guestLinkView{
+			ID: link.ID, URL: a.absURL("/g/" + link.Key), Note: link.Note,
+			ExpiresAt: link.ExpiresAt.Format(time.RFC3339Nano), CanEditBrief: link.CanEditBrief,
+		})
 	})
 }
 
@@ -171,7 +173,8 @@ func newGuestLinkView(l tickets.GuestLinkInfo) guestLinkView {
 }
 
 // parseGuestLinkSpec 解析请求体里的有效期写法：valid_days（7/30/90）或
-// expires_at（YYYY-MM-DD 或 RFC3339，北京时间；日期按当天 00:00 起算）。
+// expires_at（YYYY-MM-DD 或 RFC3339，北京时间；日期按次日 00:00 起算——
+// 「到 12-01 为止」要管满 12-01 一整天，评审 P2-8）。
 // 语义校验（天数枚举、必须晚于现在）留给工单模块。
 func parseGuestLinkSpec(w http.ResponseWriter, req guestLinkRequest) (tickets.GuestLinkSpec, bool) {
 	spec := tickets.GuestLinkSpec{Note: req.Note, CanEditBrief: req.CanEditBrief}
@@ -193,18 +196,18 @@ func parseGuestLinkSpec(w http.ResponseWriter, req guestLinkRequest) (tickets.Gu
 	return spec, true
 }
 
-// parseExpiresAt 把日期（YYYY-MM-DD，按北京时间当天 00:00）或时刻（RFC3339）
-// 解析成时间。
+// parseExpiresAt 把日期（YYYY-MM-DD，按北京时间次日 00:00——日期写的
+// 「有效期到某天为止」包含那一整天）或时刻（RFC3339）解析成时间。
 func parseExpiresAt(w http.ResponseWriter, raw string) (time.Time, bool) {
 	if t, err := time.ParseInLocation("2006-01-02", raw, clock.Beijing); err == nil {
-		return t, true
+		return t.AddDate(0, 0, 1), true
 	}
 	if t, err := time.ParseInLocation(time.RFC3339, raw, clock.Beijing); err == nil {
 		return t, true
 	}
 	WriteError(w, http.StatusUnprocessableEntity, CodeInvalidExpiresAt,
 		"expires_at 应写成日期（2026-12-01）或时刻（2026-12-01T18:00:00+08:00）",
-		"日期按北京时间当天 00:00 起算；访客链接没有永久有效的选项")
+		"日期指「管满这一整天」：到 12-01 为止的链接在 12-02 00:00（北京时间）过期；访客链接没有永久有效的选项")
 	return time.Time{}, false
 }
 

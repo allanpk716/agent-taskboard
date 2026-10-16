@@ -116,19 +116,29 @@ export async function fetchTemplate(key: string): Promise<TemplateDetail> {
   return api(`/api/v1/templates/${encodeURIComponent(key)}`)
 }
 
-export async function createTemplate(key: string, markdown: string): Promise<TemplateSummary> {
+/** idemKey：同一次用户动作自动重试时复用同一个 Idempotency-Key（ADR 0002
+ *  「放心自动重试」，评审 P2-13）；不传就按一次性动作现生成。 */
+export async function createTemplate(
+  key: string,
+  markdown: string,
+  idemKey: string = crypto.randomUUID(),
+): Promise<TemplateSummary> {
   return api('/api/v1/templates', {
     method: 'POST',
     body: JSON.stringify({ key, markdown }),
-    idempotencyKey: crypto.randomUUID(),
+    idempotencyKey: idemKey,
   })
 }
 
-export async function updateTemplate(key: string, markdown: string): Promise<TemplateSummary> {
+export async function updateTemplate(
+  key: string,
+  markdown: string,
+  idemKey: string = crypto.randomUUID(),
+): Promise<TemplateSummary> {
   return api(`/api/v1/templates/${encodeURIComponent(key)}`, {
     method: 'PATCH',
     body: JSON.stringify({ markdown }),
-    idempotencyKey: crypto.randomUUID(),
+    idempotencyKey: idemKey,
   })
 }
 
@@ -289,11 +299,12 @@ export async function deactivateMemberAccount(id: number): Promise<void> {
 export async function replyTicket(
   number: string,
   body: { body_md: string; deliver?: boolean },
+  idemKey: string = crypto.randomUUID(),
 ): Promise<void> {
   await api(`/api/v1/tickets/${encodeURIComponent(number)}/replies`, {
     method: 'POST',
     body: JSON.stringify(body),
-    idempotencyKey: crypto.randomUUID(),
+    idempotencyKey: idemKey,
   })
 }
 
@@ -364,7 +375,7 @@ export async function fetchGuestLinks(number: string): Promise<GuestLink[]> {
 
 export async function createGuestLink(
   number: string,
-  body: { note: string; valid_days?: number; can_edit_brief?: boolean },
+  body: { note: string; valid_days?: number; expires_at?: string; can_edit_brief?: boolean },
 ): Promise<CreatedGuestLink> {
   return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links`, {
     method: 'POST',
@@ -376,10 +387,15 @@ export async function revokeGuestLink(number: string, id: number): Promise<void>
   await api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}`, { method: 'DELETE' })
 }
 
-export async function extendGuestLink(number: string, id: number, validDays: number): Promise<void> {
+/** 延期：valid_days（7/30/90）或 expires_at（YYYY-MM-DD，管满该日全天）二选一。 */
+export async function extendGuestLink(
+  number: string,
+  id: number,
+  body: { valid_days?: number; expires_at?: string },
+): Promise<void> {
   await api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}/extend`, {
     method: 'POST',
-    body: JSON.stringify({ valid_days: validDays }),
+    body: JSON.stringify(body),
   })
 }
 
@@ -388,6 +404,7 @@ export async function extendGuestLink(number: string, id: number, validDays: num
 export async function uploadMemberAttachment(
   number: string,
   file: File,
+  idemKey: string = crypto.randomUUID(),
 ): Promise<{ id: string; markdown: string; filename: string }> {
   const prepared = file.type.startsWith('image/') ? await compressImage(file) : file
   const form = new FormData()
@@ -395,7 +412,7 @@ export async function uploadMemberAttachment(
   return api(`/api/v1/tickets/${encodeURIComponent(number)}/attachments`, {
     method: 'POST',
     body: form,
-    idempotencyKey: crypto.randomUUID(),
+    idempotencyKey: idemKey,
   })
 }
 

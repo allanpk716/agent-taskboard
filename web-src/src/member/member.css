@@ -824,3 +824,18 @@ textarea.src {
 .mcard .frow {
   margin: 10px 0 4px;
 }
+
+/* 更多筛选（评审 P2-11）：chips 行里内嵌的小输入框（标签/姓名/日期） */
+.fgroup .finput {
+  border: 1px solid #d7dde8;
+  border-radius: 14px;
+  padding: 3px 10px;
+  font-size: 13px;
+  color: #345;
+  background: #fff;
+  min-width: 0;
+}
+.fgroup .finput:disabled {
+  color: #aab;
+  background: #f2f4f8;
+}

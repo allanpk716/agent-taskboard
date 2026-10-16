@@ -127,7 +127,7 @@ spec 用户故事 84），没有 `inbox`：
 | `POST /api/v1/tickets/{id}/replies` | 回复（成员、成员 Agent、访客）；`deliver: true` 仅指派人一方（#36）。 |
 | `POST /api/v1/tickets/{id}/close` | 关闭（任何成员；访客 403 `members_only`）。 |
 | `POST /api/v1/tickets/{id}/reopen` | 重新开启（任何成员；访客 403 `members_only`）。 |
-| `POST /api/v1/tickets/{id}/assign` | 改派（#36，仅成员；记 `assigned` 事件，附改派版 `share_text`）。 |
+| `POST /api/v1/tickets/{id}/assign` | 改派（#36，仅成员；记 `assigned` 事件，附改派版 `share_text`；支持 `Idempotency-Key`）。 |
 | `GET /api/v1/tickets/{id}/timeline?after=N` | 时间线增量读取。 |
 | `POST /api/v1/tickets/{id}/attachments` | 上传一个待用附件（multipart；见「附件（#33）」）。 |
 | `GET /api/v1/attachments/{att_N}/{filename}` | 附件下载（与工单相同的凭证，或访客链接的签名地址）。 |
@@ -146,7 +146,8 @@ spec 用户故事 84），没有 `inbox`：
     都要满足同样的字典校验；「不确定」不打标签）。
   - `assignee`（#36）可写成员 id 或姓名；写成成员 Agent（署名写法或 Agent 名字）
     返回 `422 assignee_must_be_member`（成员 Agent 不能被指派，hint 列出可选成员）；
-    查无此人返回 `422 unknown_member`。建单时指派会在 `created` 事件后记一条
+    查无此人返回 `422 unknown_member`；账号已停用的成员返回 `422 assignee_deactivated`
+    （#42：停用即时生效，不再接新工单）。建单时指派会在 `created` 事件后记一条
     `assigned{from: null, to}` 事件。
 - 建单响应 `201`：`{number, seq, url, warnings, assignee, waiting_on, share_text}`
   （`url` 即 `/t/<编号>`）。`warnings` 是用模板建单时「缺必填」的逐项提醒
@@ -162,7 +163,9 @@ spec 用户故事 84），没有 `inbox`：
   并推进全局变更序号（事件里的 `change` 字段，与事件写入同事务）。
 - `GET` 响应（成员视角）：`number, seq, url, kind, title, status, close_reason,
   template, creator, assignee, waiting_on, labels, brief, viewer, timeline`；
-  - 作者结构统一 `{member: {id, name}, agent: {id, name}|null}`，本人操作 `agent` 为 `null`；
+  - 作者结构统一 `{member: {id, name}, agent: {id, name, revoked}|null}`，本人操作
+    `agent` 为 `null`；`agent.revoked` 为 `true` 表示这个具名 Agent 已被撤销——
+    历史署名照实标注「（已停用）」（#28 评审修正：撤销不删历史，展示反映现状）。
     时间线事件带 `seq`（单内递增）、`change`、`at`、`actor`、`type`。
   - `viewer`：`{kind, member, agent, role(assignee|creator|member|guest), your_turn, can}`；
     `can` 是完整能力表 `reply/upload/edit_brief/label/close/reopen/manage_guest_links/deliver/assign`。
@@ -270,7 +273,8 @@ spec 用户故事 84），没有 `inbox`：
 
 - `POST /api/v1/tickets/{id}/assign {"assignee": "成员 id 或姓名"}`（仅成员；
   访客 403 `members_only`）。改派给当前指派人 → `422 already_assigned`；
-  写成成员 Agent → `422 assignee_must_be_member`；查无此人 → `422 unknown_member`
+  写成成员 Agent → `422 assignee_must_be_member`；查无此人 → `422 unknown_member`；
+  指派停用成员 → `422 assignee_deactivated`（#42）
   （hint 列出可选成员）。
 - 成功 `200`：`{assignee, waiting_on, share_text}`；`share_text` 只在改派给**他人**时
   非空：`赵工：工单「整理对照表」转给你了，让你的 Agent 读一下 /t/20261016-001`。
@@ -333,9 +337,10 @@ spec 用户故事 84），没有 `inbox`：
   - `assignee=<名|id>|me|none`、`creator=<名|id>|me|guest`（经反馈入口提交）、
     `waiting_on=assignee|creator|guest|department|me`（不存在的成员 422 `unknown_member`）。
   - `actor_kind=member|agent`（orchestrator 决议 5，「本人 / Agent」筛选）：按**创建者**
-    的署名区分——`member` 是非 Agent 署名（成员本人或访客），`agent` 是成员 Agent。
+    的署名区分——`member` 是真人署名（成员本人或未自报 `via_agent` 的访客），
+    `agent` 是成员 Agent 署名，或访客自报「由 Agent 写成」（`via_agent`，评审 P2-12）。
     时间线接口 `GET /api/v1/tickets/{id}/timeline` 也接受同一参数（按事件的作者筛，
-    `cursor` 只数筛后仍可见的事件）；非法取值 422 `invalid_actor_kind`。
+    同一口径；`cursor` 只数筛后仍可见的事件）；非法取值 422 `invalid_actor_kind`。
   - `created_/updated_/closed_` + `after/before`：写日期（默认当天 00:00）或日期时分
     （`2026-10-01T09:30`），北京时间；**`_after` 包含该时刻，`_before` 不包含**；
     `closed_*` 只作用于已关闭的工单。
@@ -379,14 +384,21 @@ spec 用户故事 84），没有 `inbox`：
 
 ## 幂等（#30）
 
-对所有会产生新内容的请求（建单、回复、说明修订——成员与访客凭证都一样；
-反馈入口提交在 #35 起支持；附件上传随后续工单接入）支持 `Idempotency-Key` 请求头：
+对所有会产生新内容的请求（建单、回复、说明修订、建访客链接、改派、加别名、
+加维度——成员与访客凭证都一样；反馈入口提交在 #35 起支持）支持 `Idempotency-Key`
+请求头：
 
 - 记录按（key、凭证、端点）隔离：同一 key 换了凭证（另一成员、另一个 Agent）
-  或换了端点，都是新请求。
+  或换了端点，都是新请求。匿名提交（入口提交）没有凭证，按入口隔离：
+  同一入口内共享 `intake:<slug>` 这个范围，不同入口互不共享。
 - 首次成功响应（2xx）存快照（含状态码与响应体）；重放返回首次结果，逐字节
   相同，不产生新内容。失败的请求不存快照，修正后重试照常执行。
-- 同名请求头留空视为没带；幂等表在数据库里（迁移 `0004`）。
+- 执行前先原子预留：同一个（key、凭证、端点）的**并发**重放（首次请求还在
+  执行中）得到 `409 idempotency_in_progress`，稍后重试即可拿到首次结果。
+- 快照保留 24 小时（created_at 由服务时钟记录）：超过 24 小时的重放当作新
+  请求重新执行，过期记录由周期任务清除。入口提交的快照里含访客链接地址
+  （`/g/<密钥>`），因此快照里的访客密钥至多保留 24 小时。
+- 同名请求头留空视为没带；幂等表在数据库里（迁移 `0004`、`0013`）。
 
 
 ## 模板（#34）
@@ -479,9 +491,9 @@ spec 用户故事 84），没有 `inbox`：
 | `POST /api/v1/tickets/{id}/labels` | 打标签 / 摘标签：`{"add":[…],"remove":[…],"allow_new":false}`。 |
 | `GET /api/v1/labels[?dimension=]` | 字典列表：每个值带 `aliases`，另列出不带维度的标签。 |
 | `GET /api/v1/labels/resolve?q=&dimension=` | 俗称换标准值，注明匹配方式 `exact` / `alias` / `fuzzy`。 |
-| `POST /api/v1/labels/aliases` | 添加别名（任何成员）；冲突 409。 |
+| `POST /api/v1/labels/aliases` | 添加别名（任何成员）；冲突 409；支持 `Idempotency-Key`。 |
 | `PATCH /api/v1/labels/aliases` | 改别名的指向（**管理员**）。 |
-| `POST /api/v1/labels/dimensions` | 添加新维度（**管理员**；新维度只能由管理员加）。 |
+| `POST /api/v1/labels/dimensions` | 添加新维度（**管理员**；新维度只能由管理员加）；支持 `Idempotency-Key`。 |
 | `POST /api/v1/labels/rename` | 改名（**管理员**），改写历史工单上的标签。 |
 | `POST /api/v1/labels/merge` | 合并（**管理员**），改写历史工单、别名改指向、from 停用。 |
 | `POST /api/v1/labels/deactivate` | 停用（**管理员**，幂等），历史工单保留。 |
@@ -545,17 +557,19 @@ spec 用户故事 84），没有 `inbox`：
 
 | 方法与路径 | 说明 |
 |---|---|
-| `POST /api/v1/tickets/{id}/guest-links` | 创建：`{"note", "valid_days"?, "expires_at"?, "can_edit_brief"}`。 |
+| `POST /api/v1/tickets/{id}/guest-links` | 创建：`{"note", "valid_days"?, "expires_at"?, "can_edit_brief"}`；支持 `Idempotency-Key`（地址里的密钥只出现一次，重放返回首次结果）。 |
 | `GET /api/v1/tickets/{id}/guest-links` | 列表（任何成员；**不回显密钥**）。 |
 | `DELETE /api/v1/tickets/{id}/guest-links/{链接id}` | 撤销（立即生效，幂等 204）。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/extend` | 延期：`{"valid_days"|"expires_at"}`（二选一，必填其一）。 |
 
 - 创建：`note` 必填（422 `note_required`）；有效期 `valid_days: 7|30|90` 或
-  `expires_at`（`YYYY-MM-DD` 按北京时间当天 00:00 起算，或 RFC3339 时刻）**二选一**，
+  `expires_at`（`YYYY-MM-DD` 指「管满这一整天」：到 12-01 为止的链接在
+  12-02 00:00（北京时间）过期；也可写 RFC3339 时刻）**二选一**，
   都不填时默认 30 天，**没有永久有效的选项**（显式 `valid_days: 0`、非法天数、
   `expires_at` 不晚于现在或格式错误分别返回 422 `invalid_valid_days` /
   `invalid_expires_at`）。`can_edit_brief` 授予「可填写说明」权限（默认 false）。
-- 创建成功 `201`：`{id, url: "/g/<密钥>", note, expires_at, can_edit_brief}`。
+- 创建成功 `201`：`{id, url: "/g/<密钥>", note, expires_at, can_edit_brief}`。配置了
+  `[server] public_url` 时 `url` 是绝对地址（`https://…/g/<密钥>`，评审 P2-7）。
   完整密钥只在创建响应里出现一次（库中只存 SHA-256 哈希）；列表项是
   `{id, note, expires_at, revoked_at?, can_edit_brief, created_by, created_at}`。
 - 创建、撤销、延期各记一条时间线事件（`guest_link_created` / `guest_link_revoked` /
@@ -678,8 +692,9 @@ spec 用户故事 84），没有 `inbox`：
     字典里 `422 unknown_label_value`（附 `suggestions`）。
   - 提交**不要求**维度标签（GLOSSARY：入口提交是「至少一个维度标签」的唯一例外）；
     模板预设标签与维度字段选中的值自动打上。
-  - 成功 `201`：`{ticket: {number, seq, title, url}, guest_link: {url: "/g/<密钥>",
-    note, expires_at, can_edit_brief: true}, next}`。密钥只在提交响应里出现一次。
+  - 成功 `201`：`{ticket: {number, seq, title, url}, guest_link: {url, note, expires_at,
+    can_edit_brief: true}, next}`；`guest_link.url` 是 `/g/<密钥>`（配置了
+    `[server] public_url` 时为绝对地址，评审 P2-7）。密钥只在提交响应里出现一次。
     工单类型由模板决定（恒为 `report`）；编号与序号的分配同建单。
 - 提交者**视同说明的创建者**：工单的创建者记录为访客（带链接备注
   `反馈入口「<名称>」提交人` 与自报的 `author_name`）；`viewer.role` 为 `creator`，
@@ -689,7 +704,8 @@ spec 用户故事 84），没有 `inbox`：
 - 停用与轮换：停用后匿名读写都按不存在处理；轮换把入口换到新 slug，旧 slug 立即
   失效（`404 intake_not_found`）。两者都不影响已提交的工单和提交者手里的访客链接
   （链接独立于入口存在，见「访客链接（#32）」）。
-- 入口提交同样支持 `Idempotency-Key`（匿名凭证按同一 key 去重，重放返回首次结果）。
+- 入口提交同样支持 `Idempotency-Key`（匿名凭证按入口隔离去重，重放返回首次结果；
+  并发重放 409 `idempotency_in_progress`，快照保留 24 小时，见「幂等（#30）」）。
 - 管理端点仅限成员；访客 403 `members_only`（hint 指向入口地址），匿名 401。
 
 
@@ -697,7 +713,7 @@ spec 用户故事 84），没有 `inbox`：
 
 | 方法与路径 | 说明 |
 |---|---|
-| `GET /api/v1/admin/backups` | 备份状态（仅管理员；访客/普通成员 403 `admin_required`，匿名 401）。 |
+| `GET /api/v1/admin/backups` | 备份状态（仅管理员；访客 403 `members_only`，普通成员 403 `admin_required`，匿名 401）。 |
 
 响应结构：
 
@@ -733,7 +749,7 @@ spec 用户故事 84），没有 `inbox`：
 
 | 方法与路径 | 说明 |
 |---|---|
-| `GET /api/v1/admin/update` | 检查更新（仅管理员；访客/普通成员 403 `admin_required`，匿名 401）。 |
+| `GET /api/v1/admin/update` | 检查更新（仅管理员；访客 403 `members_only`，普通成员 403 `admin_required`，匿名 401）。 |
 | `POST /api/v1/admin/update` | 执行更新（仅管理员）。 |
 | `GET /api/v1/health` | 健康检查（公开，不需要登录）：`{"status":"ok","server_version":"…","web_version":"…"}`。更新流程里新版本启动时对它自检；也可作 Caddy/NSSM 的探活地址。 |
 

@@ -42,6 +42,7 @@ const (
 	CodeAssigneeMustBeMember = "assignee_must_be_member" // 指派对象是成员 Agent
 	CodeUnknownMember        = "unknown_member"          // 指派对象不是成员
 	CodeAlreadyAssigned      = "already_assigned"        // 改派给当前指派人
+	CodeAssigneeDeactivated  = "assignee_deactivated"    // 指派对象的账号已停用（#42 评审修正）
 
 	// #31：标签、字典与别名。
 	CodeMembersOnly        = "members_only"         // 仅成员可用（访客 403）
@@ -112,6 +113,9 @@ const (
 	CodeMemberNotFound       = "member_not_found"       // 没有这位成员（404）
 	CodeMemberDeactivated    = "member_deactivated"     // 账号已停用（登录 401）
 	CodeCannotDeactivateSelf = "cannot_deactivate_self" // 不能停用自己的账号
+
+	// 幂等（评审修正）：同键并发重放。
+	CodeIdempotencyInProgress = "idempotency_in_progress" // 同一个 Idempotency-Key 的请求正在执行（409）
 
 	// #37：查询与计数。
 	CodeUnknownParameter = "unknown_parameter"  // 不认识的查询参数（附可用参数列表）

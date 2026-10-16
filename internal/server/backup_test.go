@@ -68,7 +68,7 @@ func Test管理员可查询备份状态(t *testing.T) {
 	}
 
 	// 备份一次：有最近成功时间，不再 overdue；没有配置目标 → 备份未离开本机。
-	if _, err := s.Backups().Now(context.Background(), ops.KindDaily); err != nil {
+	if _, err := s.Backups().BackupNow(context.Background(), ops.KindDaily); err != nil {
 		t.Fatal(err)
 	}
 	status = backupsStatusBody{}
@@ -109,7 +109,7 @@ func Test备份目标连不上时记录失败且服务照常运行(t *testing.T)
 	s.CreateAdmin("admin", "pass-word")
 	admin := s.Login("admin", "pass-word")
 
-	rec, err := s.Backups().Now(context.Background(), ops.KindDaily)
+	rec, err := s.Backups().BackupNow(context.Background(), ops.KindDaily)
 	if err == nil {
 		t.Fatal("目标连不上时备份应当失败")
 	}

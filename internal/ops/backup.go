@@ -160,7 +160,7 @@ func (b *Backups) attachmentsDir() string { return filepath.Join(b.dataDir, "att
 // 导出（VACUUM INTO）→ 附件增量镜像（只增不删）→ 对副本 PRAGMA integrity_check
 // → 结果写库 → 清点既有副本（损坏的改名 .bad）→ 按保留份数轮换。
 // 失败也返回记录（已写库）和错误；调用方的服务照常运行。
-func (b *Backups) Now(ctx context.Context, kind Kind) (Record, error) {
+func (b *Backups) BackupNow(ctx context.Context, kind Kind) (Record, error) {
 	now := b.clk.Now()
 	rec := Record{At: now, Kind: kind}
 
@@ -208,7 +208,7 @@ func (b *Backups) Now(ctx context.Context, kind Kind) (Record, error) {
 
 // Preupdate 是更新前备份（#45 的更新流程调用；失败时更新必须中止）。
 func (b *Backups) Preupdate(ctx context.Context) (Record, error) {
-	return b.Now(ctx, KindPreupdate)
+	return b.BackupNow(ctx, KindPreupdate)
 }
 
 // fail 把失败也记一行并返回错误。

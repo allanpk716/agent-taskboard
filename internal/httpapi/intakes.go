@@ -27,6 +27,10 @@ func (a *API) handleIntakesRoot(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// guestHint 是访客调用入口管理端点时的统一提示（members_only 的 hint；
+// 建议值在各处重复了四份，收成常量，评审 P3-16）。
+const guestHint = "反馈入口由成员创建和维护；其他部门的人直接使用入口地址提交"
+
 // handleIntakeRef 处理单个入口：
 //
 //	GET  /api/v1/intakes/{slug}            匿名读取（模板最新版与维度候选值；
@@ -144,8 +148,7 @@ type intakeSubmitView struct {
 }
 
 func (a *API) createIntake(w http.ResponseWriter, r *http.Request) {
-	viewer, ok := a.memberFromRequestFor(w, r,
-		"反馈入口由成员创建和维护；其他部门的人直接使用入口地址提交")
+	viewer, ok := a.memberFromRequestFor(w, r, guestHint)
 	if !ok {
 		return
 	}
@@ -166,8 +169,7 @@ func (a *API) createIntake(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) listIntakes(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.memberFromRequestFor(w, r,
-		"反馈入口由成员创建和维护；其他部门的人直接使用入口地址提交"); !ok {
+	if _, ok := a.memberFromRequestFor(w, r, guestHint); !ok {
 		return
 	}
 	list, err := a.tickets.Intakes(r.Context())
@@ -214,8 +216,7 @@ func (a *API) readIntake(w http.ResponseWriter, r *http.Request, slug string) {
 }
 
 func (a *API) deactivateIntake(w http.ResponseWriter, r *http.Request, slug string) {
-	if _, ok := a.memberFromRequestFor(w, r,
-		"反馈入口由成员创建和维护；其他部门的人直接使用入口地址提交"); !ok {
+	if _, ok := a.memberFromRequestFor(w, r, guestHint); !ok {
 		return
 	}
 	changed, err := a.tickets.DeactivateIntake(r.Context(), slug)
@@ -227,8 +228,7 @@ func (a *API) deactivateIntake(w http.ResponseWriter, r *http.Request, slug stri
 }
 
 func (a *API) rotateIntake(w http.ResponseWriter, r *http.Request, slug string) {
-	if _, ok := a.memberFromRequestFor(w, r,
-		"反馈入口由成员创建和维护；其他部门的人直接使用入口地址提交"); !ok {
+	if _, ok := a.memberFromRequestFor(w, r, guestHint); !ok {
 		return
 	}
 	var req intakeRotateRequest
@@ -266,7 +266,7 @@ func (a *API) submitToIntake(w http.ResponseWriter, r *http.Request, slug string
 			},
 			Next: "之后用这条访客链接查看这张反馈、补充说明和回复；请收藏链接（也可以把它交给你的 Agent 作 Bearer token）",
 		}
-		view.GuestLink.URL = "/g/" + result.LinkKey
+		view.GuestLink.URL = a.absURL("/g/" + result.LinkKey)
 		view.GuestLink.Note = result.LinkNote
 		view.GuestLink.ExpiresAt = result.ExpiresAt.Format(time.RFC3339Nano)
 		view.GuestLink.CanEditBrief = true
@@ -307,7 +307,7 @@ func (a *API) writeIntakesError(w http.ResponseWriter, r *http.Request, err erro
 			"换一个 slug；已占用的 slug 不能复用（历史工单和成员还引用着旧地址），可换用轮换保留旧入口")
 	case errors.Is(err, tickets.ErrNameRequired):
 		WriteError(w, http.StatusUnprocessableEntity, CodeNameRequired, err.Error(),
-			"名称会显示在提交页上，如「部门 Bug 反馈」")
+			"名称会显示在反馈入口上，如「部门 Bug 反馈」")
 	case errors.Is(err, tickets.ErrTemplateNotReport):
 		WriteError(w, http.StatusUnprocessableEntity, CodeTemplateNotReport, err.Error(),
 			"入口提交的是反馈，换一份类型为「反馈」的模板（如 bug-report），或先修改模板类型")

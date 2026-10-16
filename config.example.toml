@@ -10,6 +10,12 @@ port = 8080
 # 前端静态文件目录（web-src 执行 npm run build 的产物）。
 web_dir = 'web'
 
+# 对外地址（评审 P2-7）。配置后 API 回给用户的访客链接与 share_text 用绝对
+# 地址（如 https://taskboard.urithub.com/g/<密钥>），网页上的「复制链接」拿到
+# 即可发送；留空（默认）时保持相对路径，前端复制时用当前页面的地址拼绝对。
+[server]
+public_url = ''
+
 # 附件上限（#33）。服务端只检查上限，不压缩图片（压缩在前端做）；超过上限
 # 的文件改用 NAS 外部文件引用，把路径写在说明或回复里。
 [attachments]

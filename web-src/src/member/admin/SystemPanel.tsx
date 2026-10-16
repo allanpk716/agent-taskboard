@@ -3,6 +3,7 @@
 // 绝不自动安装；更新走与管理 API、taskboard update 同一套逻辑。
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '../../api'
+import { fmtBeijing } from '../../shared/format'
 import {
   applyUpdate,
   fetchBackupsStatus,
@@ -13,10 +14,9 @@ import {
   type UpdateStatus,
 } from './systemApi'
 
+// 平台时区固定为北京时间：展示不随浏览器所在时区变（评审 P2-14）。
 function fmtTime(iso: string | null): string {
-  if (!iso) return '从未成功备份'
-  const d = new Date(iso)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return iso ? fmtBeijing(iso) : '从未成功备份'
 }
 
 export function SystemPanel() {

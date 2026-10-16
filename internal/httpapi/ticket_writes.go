@@ -202,7 +202,7 @@ func (a *API) ticketTimeline(w http.ResponseWriter, r *http.Request, ref string)
 	actorKind := r.URL.Query().Get("actor_kind")
 	if actorKind != "" && actorKind != "member" && actorKind != "agent" {
 		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidActorKind,
-			"actor_kind 只能是 member（本人或访客署名）或 agent（成员 Agent 署名）", "")
+			"actor_kind 只能是 member（本人或访客真人署名）或 agent（成员 Agent 或访客自报由 Agent 写成）", "")
 		return
 	}
 	full, ok := a.loadTicketForViewer(w, r, viewer, ref)
@@ -216,9 +216,9 @@ func (a *API) ticketTimeline(w http.ResponseWriter, r *http.Request, ref string)
 		}
 		switch actorKind {
 		case "member":
-			return e.Actor.AgentID == 0
+			return e.Actor.AgentID == 0 && !e.Actor.ViaAgent
 		case "agent":
-			return e.Actor.AgentID != 0
+			return e.Actor.AgentID != 0 || e.Actor.ViaAgent
 		}
 		return true
 	}
@@ -312,19 +312,21 @@ func (a *API) assignTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if !decodeJSON(w, r, &req, `{"assignee": "成员 id 或姓名"}`) {
 		return
 	}
-	result, err := a.tickets.Assign(r.Context(), viewer, ref, req.Assignee)
-	if err != nil {
-		a.writeTicketError(w, r, ref, err)
-		return
-	}
-	view := assignTicketView{
-		Assignee:  &memberRef{ID: result.AssigneeID, Name: result.AssigneeName},
-		WaitingOn: newWaitingOnView(result.WaitingOn),
-	}
-	// 改派给自己不需要通知，share_text 为空。
-	if result.AssigneeID != viewer.Member.ID {
-		share := reassignShareText(result.AssigneeName, result.Title, result.Number)
-		view.ShareText = &share
-	}
-	writeJSON(w, http.StatusOK, view)
+	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
+		result, err := a.tickets.Assign(r.Context(), viewer, ref, req.Assignee)
+		if err != nil {
+			a.writeTicketError(w, r, ref, err)
+			return
+		}
+		view := assignTicketView{
+			Assignee:  &memberRef{ID: result.AssigneeID, Name: result.AssigneeName},
+			WaitingOn: newWaitingOnView(result.WaitingOn),
+		}
+		// 改派给自己不需要通知，share_text 为空。
+		if result.AssigneeID != viewer.Member.ID {
+			share := a.reassignShareText(result.AssigneeName, result.Title, result.Number)
+			view.ShareText = &share
+		}
+		writeJSON(w, http.StatusOK, view)
+	})
 }

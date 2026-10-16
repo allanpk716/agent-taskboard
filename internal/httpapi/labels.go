@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/labels"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
@@ -138,17 +137,20 @@ func (a *API) addAlias(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req, `{"label": "维度:值", "alias": "俗称"}`) {
 		return
 	}
-	label, aliases, err := a.tickets.Labels().AddAlias(r.Context(), req.Label, req.Alias)
-	if err != nil {
-		a.writeLabelsError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, aliasView{Label: label, Aliases: aliases})
+	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
+		label, aliases, err := a.tickets.Labels().AddAlias(r.Context(), req.Label, req.Alias)
+		if err != nil {
+			a.writeLabelsError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, aliasView{Label: label, Aliases: aliases})
+	})
 }
 
 // repointAlias 处理 PATCH /api/v1/labels/aliases：把别名改指向另一个标准值（管理员）。
 func (a *API) repointAlias(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.adminFromRequest(w, r); !ok {
+	if _, ok := a.adminFromRequestFor(w, r, "访客不能查看或维护标签",
+		"浏览字典（GET /api/v1/labels）和添加别名（POST /api/v1/labels/aliases）对成员开放"); !ok {
 		return
 	}
 	var req aliasRequest
@@ -165,7 +167,8 @@ func (a *API) repointAlias(w http.ResponseWriter, r *http.Request) {
 
 // addDimension 处理 POST /api/v1/labels/dimensions：新维度只能由管理员添加。
 func (a *API) addDimension(w http.ResponseWriter, r *http.Request) {
-	if _, ok := a.adminFromRequest(w, r); !ok {
+	if _, ok := a.adminFromRequestFor(w, r, "访客不能查看或维护标签",
+		"浏览字典（GET /api/v1/labels）和添加别名（POST /api/v1/labels/aliases）对成员开放"); !ok {
 		return
 	}
 	var req struct {
@@ -174,11 +177,13 @@ func (a *API) addDimension(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req, `{"name": "新维度"}`) {
 		return
 	}
-	if err := a.tickets.Labels().AddDimension(r.Context(), req.Name); err != nil {
-		a.writeLabelsError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{"name": req.Name, "values": []string{}})
+	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
+		if err := a.tickets.Labels().AddDimension(r.Context(), req.Name); err != nil {
+			a.writeLabelsError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"name": req.Name, "values": []string{}})
+	})
 }
 
 // governRequest 是标签治理（停用 / 改名 / 合并）的请求体。
@@ -192,7 +197,8 @@ type governRequest struct {
 // governLabel 处理 POST /api/v1/labels/{rename|merge|deactivate}（管理员）。
 // 合并时改写历史工单上的标签；时间线事件保持当时记下的原文。
 func (a *API) governLabel(w http.ResponseWriter, r *http.Request, action string) {
-	if _, ok := a.adminFromRequest(w, r); !ok {
+	if _, ok := a.adminFromRequestFor(w, r, "访客不能查看或维护标签",
+		"浏览字典（GET /api/v1/labels）和添加别名（POST /api/v1/labels/aliases）对成员开放"); !ok {
 		return
 	}
 	var req governRequest
@@ -313,41 +319,6 @@ type setLabelsResponse struct {
 	Labels                  []string    `json:"labels"`
 	Changed                 changedView `json:"changed"`
 	CreatedDictionaryValues []string    `json:"created_dictionary_values"`
-}
-
-// ---- 凭证与错误 ----
-
-// memberFromRequest 要求凭证是成员（本人网页会话或成员 Agent）；访客 403 members_only。
-func (a *API) memberFromRequest(w http.ResponseWriter, r *http.Request) (identity.Viewer, bool) {
-	return a.memberFromRequestFor(w, r, "访客不能查看或维护标签")
-}
-
-// memberFromRequestFor 同 memberFromRequest，但用传入的 hint 提示访客该模块的
-// 正确用法（反馈入口 #35 等：同一错误码、不同的指引）。
-func (a *API) memberFromRequestFor(w http.ResponseWriter, r *http.Request, guestHint string) (identity.Viewer, bool) {
-	viewer, ok := a.viewerFromRequest(w, r)
-	if !ok {
-		return identity.Viewer{}, false
-	}
-	if viewer.Kind != identity.ViewerMember {
-		WriteError(w, http.StatusForbidden, CodeMembersOnly, "这个接口只对成员开放", guestHint)
-		return identity.Viewer{}, false
-	}
-	return viewer, true
-}
-
-// adminFromRequest 要求凭证是管理员的成员（治理：停用、改名、合并、加维度、改别名指向）。
-func (a *API) adminFromRequest(w http.ResponseWriter, r *http.Request) (identity.Viewer, bool) {
-	viewer, ok := a.memberFromRequest(w, r)
-	if !ok {
-		return identity.Viewer{}, false
-	}
-	if !viewer.Member.IsAdmin {
-		WriteError(w, http.StatusForbidden, CodeAdminRequired, "标签治理只能由管理员执行",
-			"浏览字典（GET /api/v1/labels）和添加别名（POST /api/v1/labels/aliases）对成员开放")
-		return identity.Viewer{}, false
-	}
-	return viewer, true
 }
 
 // writeLabelsError 把标签字典模块的错误映射成 HTTP 错误。

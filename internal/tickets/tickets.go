@@ -73,6 +73,9 @@ type Author struct {
 	MemberName string
 	AgentID    int64
 	AgentName  string
+	// AgentRevoked：这个具名 Agent 已被撤销（历史署名照实标注「已停用」，
+	// #28 评审修正；只影响展示，历史事件不可变）。
+	AgentRevoked bool
 
 	// 访客作者（#32）：经哪条链接操作、链接备注（存当时的原文）、自报署名与
 	// 自报「由 Agent 写成」。成员作者的这些字段为零值。
@@ -88,7 +91,11 @@ type Author struct {
 func (a Author) DisplayName() string {
 	if a.MemberID != 0 {
 		if a.AgentID != 0 {
-			return a.MemberName + " 的 Agent · " + a.AgentName
+			name := a.MemberName + " 的 Agent · " + a.AgentName
+			if a.AgentRevoked {
+				name += "（已停用）"
+			}
+			return name
 		}
 		return a.MemberName
 	}
@@ -431,6 +438,7 @@ func (m *Manager) ByRef(ctx context.Context, ref string) (Full, error) {
 		memberName      sql.NullString
 		agentID         sql.NullInt64
 		agentName       sql.NullString
+		agentRevoked    sql.NullString
 		assigneeID      sql.NullInt64
 		assigneeName    sql.NullString
 		creatorLinkID   sql.NullInt64
@@ -443,14 +451,14 @@ func (m *Manager) ByRef(ctx context.Context, ref string) (Full, error) {
 	)
 	scan := func(row *sql.Row) error {
 		return row.Scan(&t.Seq, &t.Number, &t.Kind, &t.Title, &t.Status, &closeReason, &duplicateOfSeq,
-			&t.BriefMD, &t.BriefRevision, &memberID, &memberName, &agentID, &agentName,
+			&t.BriefMD, &t.BriefRevision, &memberID, &memberName, &agentID, &agentName, &agentRevoked,
 			&assigneeID, &assigneeName,
 			&creatorLinkID, &creatorIntakeID, &creatorName,
 			&at, &t.LastChange, &templateKey, &snapshotJSON, &fieldsJSON)
 	}
 	const cols = `t.seq, t.number, t.kind, t.title, t.status, t.close_reason, t.duplicate_of_seq,
 		t.brief_md, t.brief_revision,
-		t.creator_member_id, cm.name, t.creator_agent_id, ca.name,
+		t.creator_member_id, cm.name, t.creator_agent_id, ca.name, ca.revoked_at,
 		t.assignee_id, am.name,
 		t.creator_link_id, t.creator_intake_id, t.creator_author_name,
 		t.created_at, t.last_change, t.template_key, t.template_snapshot, t.fields_json`
@@ -481,10 +489,11 @@ func (m *Manager) ByRef(ctx context.Context, ref string) (Full, error) {
 	t.AssigneeID = assigneeID.Int64
 	t.AssigneeName = assigneeName.String
 	t.Creator = Author{
-		MemberID:   memberID.Int64,
-		MemberName: memberName.String,
-		AgentID:    agentID.Int64,
-		AgentName:  agentName.String,
+		MemberID:     memberID.Int64,
+		MemberName:   memberName.String,
+		AgentID:      agentID.Int64,
+		AgentName:    agentName.String,
+		AgentRevoked: agentRevoked.Valid && agentRevoked.String != "",
 	}
 	// 入口提交的工单：创建者是访客，带返回链接的备注与提交者的自报署名（#35）。
 	t.CreatorLinkID = creatorLinkID.Int64
@@ -566,7 +575,7 @@ func (m *Manager) ticketLabels(ctx context.Context, seq int64) ([]string, error)
 
 func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT e.seq, e.change_seq, e.at, e.type, e.actor_member_id, mm.name, e.actor_agent_id, aa.name,
+		SELECT e.seq, e.change_seq, e.at, e.type, e.actor_member_id, mm.name, e.actor_agent_id, aa.name, aa.revoked_at,
 		       e.body_md, e.reply_no, e.deliver, e.revision, e.reason, e.duplicate_of, e.label,
 		       e.note, e.link_expires_at, e.attachment_ids, e.assign_from, e.assign_to,
 		       e.actor_link_id, e.actor_link_note, e.actor_author_name, e.actor_via_agent
@@ -581,45 +590,47 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 	events := []Event{}
 	for rows.Next() {
 		var (
-			e               Event
-			at              string
-			actorMemberID   sql.NullInt64
-			actorMemberName sql.NullString
-			actorAgentID    sql.NullInt64
-			actorAgentName  sql.NullString
-			bodyMD          sql.NullString
-			replyNo         sql.NullInt64
-			deliver         int
-			revision        sql.NullInt64
-			reason          sql.NullString
-			duplicateOf     sql.NullString
-			label           sql.NullString
-			note            sql.NullString
-			linkExpiresAt   sql.NullString
-			attachmentIDs   sql.NullString
-			assignFrom      sql.NullString
-			assignTo        sql.NullString
-			actorLinkID     sql.NullInt64
-			actorLinkNote   sql.NullString
-			actorAuthorName sql.NullString
-			actorViaAgent   int
+			e                 Event
+			at                string
+			actorMemberID     sql.NullInt64
+			actorMemberName   sql.NullString
+			actorAgentID      sql.NullInt64
+			actorAgentName    sql.NullString
+			actorAgentRevoked sql.NullString
+			bodyMD            sql.NullString
+			replyNo           sql.NullInt64
+			deliver           int
+			revision          sql.NullInt64
+			reason            sql.NullString
+			duplicateOf       sql.NullString
+			label             sql.NullString
+			note              sql.NullString
+			linkExpiresAt     sql.NullString
+			attachmentIDs     sql.NullString
+			assignFrom        sql.NullString
+			assignTo          sql.NullString
+			actorLinkID       sql.NullInt64
+			actorLinkNote     sql.NullString
+			actorAuthorName   sql.NullString
+			actorViaAgent     int
 		)
 		if err := rows.Scan(&e.Seq, &e.Change, &at, &e.Type,
-			&actorMemberID, &actorMemberName, &actorAgentID, &actorAgentName,
+			&actorMemberID, &actorMemberName, &actorAgentID, &actorAgentName, &actorAgentRevoked,
 			&bodyMD, &replyNo, &deliver, &revision, &reason, &duplicateOf, &label,
 			&note, &linkExpiresAt, &attachmentIDs, &assignFrom, &assignTo,
 			&actorLinkID, &actorLinkNote, &actorAuthorName, &actorViaAgent); err != nil {
 			return nil, err
 		}
 		e.Actor = Author{
-			MemberID:   actorMemberID.Int64,
-			MemberName: actorMemberName.String,
-			AgentID:    actorAgentID.Int64,
-			AgentName:  actorAgentName.String,
-			LinkID:     actorLinkID.Int64,
-			LinkNote:   actorLinkNote.String,
-			AuthorName: actorAuthorName.String,
-			ViaAgent:   actorViaAgent == 1,
+			MemberID:     actorMemberID.Int64,
+			MemberName:   actorMemberName.String,
+			AgentID:      actorAgentID.Int64,
+			AgentName:    actorAgentName.String,
+			AgentRevoked: actorAgentRevoked.Valid && actorAgentRevoked.String != "",
+			LinkID:       actorLinkID.Int64,
+			LinkNote:     actorLinkNote.String,
+			AuthorName:   actorAuthorName.String,
+			ViaAgent:     actorViaAgent == 1,
 		}
 		e.BodyMD = bodyMD.String
 		e.ReplyNo = replyNo.Int64

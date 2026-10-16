@@ -186,7 +186,7 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 			res.Assignee = &memberRef{ID: full.AssigneeID, Name: full.AssigneeName}
 			// 指派给他人时才附一句可转发的 share_text（自派自不需要通知自己）。
 			if full.AssigneeID != full.Creator.MemberID {
-				share := createShareText(full.AssigneeName, full.Title, full.Number)
+				share := a.createShareText(full.AssigneeName, full.Title, full.Number)
 				res.ShareText = &share
 			}
 		}
@@ -194,15 +194,16 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// createShareText 是建单指派时的可转发文案（原型的句子）。
-func createShareText(assigneeName, title, number string) string {
-	return assigneeName + "：给你派了一张工单「" + title + "」，让你的 Agent 读一下 /t/" +
-		number + "（它也会出现在你的收件箱里）"
+// createShareText 是建单指派时的可转发文案（原型的句子）。工单地址用
+// absURL：配置了 public_url 时是绝对地址（评审 P2-7），否则保持 /t/<编号>。
+func (a *API) createShareText(assigneeName, title, number string) string {
+	return assigneeName + "：给你派了一张工单「" + title + "」，让你的 Agent 读一下 " +
+		a.absURL("/t/"+number) + "（它也会出现在你的收件箱里）"
 }
 
 // reassignShareText 是改派时的可转发文案。
-func reassignShareText(assigneeName, title, number string) string {
-	return assigneeName + "：工单「" + title + "」转给你了，让你的 Agent 读一下 /t/" + number
+func (a *API) reassignShareText(assigneeName, title, number string) string {
+	return assigneeName + "：工单「" + title + "」转给你了，让你的 Agent 读一下 " + a.absURL("/t/"+number)
 }
 
 // readTicket 处理 GET /api/v1/tickets/{id}[?format=markdown]。访客链接只能
@@ -297,6 +298,10 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, ref strin
 	case isAlreadyAssigned(err):
 		e := err.(*tickets.AlreadyAssignedError)
 		WriteError(w, http.StatusUnprocessableEntity, CodeAlreadyAssigned, e.Error(), "改派时换一位成员")
+	case isAssigneeDeactivated(err):
+		e := err.(*tickets.AssigneeDeactivatedError)
+		WriteError(w, http.StatusUnprocessableEntity, CodeAssigneeDeactivated, e.Error(),
+			a.memberNamesHint(r, "停用成员不再接新工单；从在岗成员里选一位"))
 	case errors.Is(err, templates.ErrNotFound):
 		WriteError(w, http.StatusNotFound, CodeTemplateNotFound, "没有这个模板",
 			"模板列表见 GET /api/v1/templates")
@@ -409,6 +414,11 @@ func isAlreadyAssigned(err error) bool {
 	return errors.As(err, &e)
 }
 
+func isAssigneeDeactivated(err error) bool {
+	var e *tickets.AssigneeDeactivatedError
+	return errors.As(err, &e)
+}
+
 func isDeliverAssigneeOnly(err error) bool {
 	var e *tickets.DeliverAssigneeOnlyError
 	return errors.As(err, &e)
@@ -439,10 +449,12 @@ type memberRef struct {
 	Name string `json:"name"`
 }
 
-// agentRef 是具名 Agent 的对外结构。
+// agentRef 是具名 Agent 的对外结构。revoked 表示这个 Agent 已被撤销
+//（历史署名照实标注「已停用」，#28 评审修正；活动会话的 viewer 恒为 false）。
 type agentRef struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	Revoked bool   `json:"revoked"`
 }
 
 // authorView 是作者结构 {member, agent}：本人操作 agent 为 null；访客作者
@@ -461,7 +473,7 @@ func newAuthorView(a tickets.Author) authorView {
 	if a.MemberID != 0 {
 		v.Member = &memberRef{ID: a.MemberID, Name: a.MemberName}
 		if a.AgentID != 0 {
-			v.Agent = &agentRef{ID: a.AgentID, Name: a.AgentName}
+			v.Agent = &agentRef{ID: a.AgentID, Name: a.AgentName, Revoked: a.AgentRevoked}
 		}
 		return v
 	}
@@ -736,7 +748,7 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer, atts []attac
 		in.Labels = &labels
 	}
 	if full.CloseReason != "" {
-		in.CloseReasonText = closeReasonText(full.CloseReason)
+		in.CloseReasonText = markdownview.CloseReasonText(full.CloseReason)
 	}
 	for _, e := range full.Timeline {
 		if isGuest && !visibleToGuest(e) {
@@ -817,17 +829,4 @@ func sizeLabel(n int64) string {
 	default:
 		return strconv.FormatInt(n, 10) + " B"
 	}
-}
-
-// closeReasonText 把关闭原因码翻成中文（Markdown 视图用）。
-func closeReasonText(reason string) string {
-	switch reason {
-	case "done":
-		return "完成"
-	case "wontfix":
-		return "不处理"
-	case "duplicate":
-		return "重复"
-	}
-	return reason
 }

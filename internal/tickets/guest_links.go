@@ -156,7 +156,7 @@ func (m *Manager) GuestLinks(ctx context.Context, ref string) ([]GuestLinkInfo, 
 	}
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT g.id, g.note, g.expires_at, g.revoked_at, g.can_edit_brief, g.created_at,
-		       m.id, m.name, a.id, a.name
+		       m.id, m.name, a.id, a.name, a.revoked_at
 		FROM guest_links g
 		LEFT JOIN members m ON m.id = g.created_by_member_id
 		LEFT JOIN agent_tokens a ON a.id = g.created_by_agent_id
@@ -168,18 +168,19 @@ func (m *Manager) GuestLinks(ctx context.Context, ref string) ([]GuestLinkInfo, 
 	out := []GuestLinkInfo{}
 	for rows.Next() {
 		var (
-			info       GuestLinkInfo
-			expiresAt  string
-			createdAt  string
-			revokedAt  sql.NullString
-			canEdit    int
-			memberID   sql.NullInt64
-			memberName sql.NullString
-			agentID    sql.NullInt64
-			agentName  sql.NullString
+			info         GuestLinkInfo
+			expiresAt    string
+			createdAt    string
+			revokedAt    sql.NullString
+			canEdit      int
+			memberID     sql.NullInt64
+			memberName   sql.NullString
+			agentID      sql.NullInt64
+			agentName    sql.NullString
+			agentRevoked sql.NullString
 		)
 		if err := rows.Scan(&info.ID, &info.Note, &expiresAt, &revokedAt, &canEdit, &createdAt,
-			&memberID, &memberName, &agentID, &agentName); err != nil {
+			&memberID, &memberName, &agentID, &agentName, &agentRevoked); err != nil {
 			return nil, err
 		}
 		if info.ExpiresAt, err = parseTime(expiresAt); err != nil {

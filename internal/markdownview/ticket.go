@@ -288,15 +288,16 @@ func eventText(e Event) string {
 		if e.Reason == "duplicate" && e.DuplicateOf != "" {
 			return "关闭工单（重复：与 " + e.DuplicateOf + " 重复）"
 		}
-		return "关闭工单（" + closeReasonText(e.Reason) + "）"
+		return "关闭工单（" + CloseReasonText(e.Reason) + "）"
 	case "reopened":
 		return "重新开启工单"
 	}
 	return e.Type
 }
 
-// closeReasonText 把关闭原因码翻成中文。
-func closeReasonText(reason string) string {
+// CloseReasonText 把关闭原因码翻成中文（API 的 close_reason 文本与 Markdown
+// 视图共用这一份，评审 P3-16）。
+func CloseReasonText(reason string) string {
 	switch reason {
 	case "done":
 		return "完成"

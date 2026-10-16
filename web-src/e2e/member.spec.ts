@@ -166,13 +166,14 @@ test('详情页创建访客链接并复制', async ({ page, request }) => {
   await page.getByLabel('备注').fill('检验科-张三')
   await page.getByRole('button', { name: '创建', exact: true }).click()
 
-  // 链接只出现一次：显示在链接框里，复制后剪贴板内容一致
+  // 链接只出现一次：显示在链接框里，复制后剪贴板内容一致。显示与复制的都是
+  // 绝对地址（服务端没配 public_url，用当前页面的 origin 拼出，评审 P2-7）。
   const linkText = await page.locator('.linkbox').textContent()
-  expect(linkText).toMatch(/^\/g\/tbg_/)
+  expect(linkText).toMatch(/^https?:\/\/127\.0\.0\.1:\d+\/g\/tbg_/)
   await page.getByRole('button', { name: '复制链接' }).click()
   await expect(page.getByText('已复制')).toBeVisible()
   const clip = await page.evaluate(() => navigator.clipboard.readText())
-  expect(clip).toMatch(/^\/g\/tbg_/)
+  expect(clip).toMatch(/^https?:\/\/127\.0\.0\.1:\d+\/g\/tbg_/)
   expect(clip.trim()).toBe(linkText!.trim())
 
   // 创建事件记入时间线；复制出的链接真的能打开（访客页显示工单标题）
@@ -356,4 +357,128 @@ test('建单（模板）：缺必填项弹出确认，仍创建后逐项提示',
   await expect(page.locator('[data-bubble="brief"]')).toContainText('BM-10vet')
   await expect(page.getByText('（未填写）').first()).toBeVisible()
   await expect(page.locator('[data-bubble="brief"]')).toContainText('现场日志.log')
+})
+
+// 9. 访客链接的「指定日期」：创建与延期都能选日期（当天有效，评审 P2-9）；
+//    撤销后链接行不再提供延期。
+test('访客链接支持指定日期创建与延期', async ({ page, request }) => {
+  const number = await createTicket(request, { title: '指定日期访客链接的工单' })
+  await login(page, ADMIN)
+  await page.goto(`/t/${number}`)
+  await page.getByRole('button', { name: '访客链接' }).click()
+
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const fmt = (iso: string) => `${parseInt(iso.slice(5, 7), 10)}月${parseInt(iso.slice(8, 10), 10)}日`
+  const pickDate = new Date(Date.now() + 45 * 86400_000) // 今天 +45 天
+  const pickStr = `${pickDate.getFullYear()}-${pad(pickDate.getMonth() + 1)}-${pad(pickDate.getDate())}`
+  const pickLabel = `${fmt(pickStr)}为止` // 日期写法当天有效：展示为所选那天「为止」
+
+  // 创建：有效期选「指定日期」，到期日按当天有效展示
+  await page.getByLabel('备注').fill('外包-赵')
+  await page.getByLabel('有效期').selectOption('date')
+  await page.getByLabel('到期日期').fill(pickStr)
+  await page.getByRole('button', { name: '创建', exact: true }).click()
+  await expect(page.getByText('✓ 已创建（完整链接只在创建时出现一次）')).toBeVisible()
+  const row = page.locator('.mini-tbl tr', { hasText: '外包-赵' })
+  await expect(row).toContainText(pickLabel)
+
+  // 延期到另一个日期（今天 +60 天）：行内日期输入 + 延期到该日
+  const laterDate = new Date(Date.now() + 60 * 86400_000)
+  const laterStr = `${laterDate.getFullYear()}-${pad(laterDate.getMonth() + 1)}-${pad(laterDate.getDate())}`
+  const laterLabel = `${fmt(laterStr)}为止`
+  await row.getByLabel('指定日期 外包-赵').fill(laterStr)
+  await row.getByRole('button', { name: '延期到该日' }).click()
+  await expect(page.getByText(`✓ 已延期到 ${laterStr}（当天有效）`)).toBeVisible()
+  await expect(row).toContainText(laterLabel)
+
+  // 撤销后不再提供延期（已失效，不能延期）
+  await row.getByRole('button', { name: '撤销', exact: true }).click()
+  await expect(row).toContainText('已失效，不能延期')
+  await expect(row.getByRole('button', { name: '延期 30 天' })).toHaveCount(0)
+  await expect(row.getByRole('button', { name: '延期到该日' })).toHaveCount(0)
+})
+
+// 10. 更多筛选（评审 P2-11）：按标签（别名可用）与创建时间范围筛出目标工单。
+test('工单列表更多筛选：标签（别名）与时间范围', async ({ page, request }) => {
+  const a = await createTicket(request, { title: '要按标签筛中的工单', labels: ['机型:UD-2300'] })
+  const b = await createTicket(request, { title: '不该出现的工单', labels: ['机型:US-1680'] })
+
+  // 给 UD-2300 挂一个别名，筛别名也应命中（服务端解析成标准值）。
+  await loginAdmin(request)
+  const alias = await request.post('/api/v1/labels/aliases', {
+    data: { label: '机型:UD-2300', alias: '优典两千三' },
+  })
+  expect(alias.ok(), await alias.text()).toBeTruthy()
+
+  await login(page, ADMIN)
+  await page.locator('.b-tabs').getByRole('link', { name: '工单' }).click()
+  await page.getByRole('button', { name: /更多筛选/ }).click()
+
+  // 标签：填别名 → 只有 A（标准值 机型:UD-2300）
+  await page.getByRole('combobox', { name: '标签' }).fill('优典两千三')
+  await page.getByRole('combobox', { name: '标签' }).blur()
+  await expect(page.locator('.tcard', { hasText: a })).toBeVisible()
+  await expect(page.locator('.tcard', { hasText: b })).toHaveCount(0)
+
+  // 时间范围：创建于「明天起」→ 一张都没有
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const tomorrow = new Date(Date.now() + 86400_000)
+  await page.getByLabel('时间字段').selectOption('created')
+  await page.getByLabel('从（含当天）').fill(`${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}`)
+  await expect(page.getByText('没有符合条件的工单')).toBeVisible()
+  await expect(page.locator('.tcard', { hasText: a })).toHaveCount(0)
+
+  // 改回「今天起」→ A 又出现（时间条件与标签条件同时生效）
+  const today = new Date()
+  await page.getByLabel('从（含当天）').fill(`${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`)
+  await expect(page.locator('.tcard', { hasText: a })).toBeVisible()
+  await expect(page.locator('.tcard', { hasText: b })).toHaveCount(0)
+})
+
+// 11. 成员网页的幂等重试（评审 P2-13，ADR 0002）：服务中断时发送回复，
+// 自动重试复用同一个 Idempotency-Key，恢复后只产生一条回复。
+test('成员回复在服务中断时自动重试且只产生一条', async ({ page, request }) => {
+  const number = await createTicket(request, { title: '自动重试的成员回复' })
+  await login(page, ADMIN)
+  await page.goto(`/t/${number}`)
+
+  // 模拟服务不可用：拦下回复请求
+  await page.route('**/api/v1/tickets/*/replies', (route) => route.abort('connectionfailed'))
+  await page.getByPlaceholder(/写回复/).fill('网络抖动时发的回复。')
+  await page.getByRole('button', { name: /发送/ }).click()
+  await expect(page.getByText('服务更新中，回复没有丢失，正在自动重试')).toBeVisible()
+
+  // 恢复服务：自动重试成功，回复出现；库里只有这一条。
+  await page.unroute('**/api/v1/tickets/*/replies')
+  await expect(page.locator('[data-bubble="reply"]').getByText('网络抖动时发的回复。')).toBeVisible({ timeout: 20000 })
+  const res = await request.get(`/api/v1/tickets/${number}`)
+  expect(res.ok()).toBeTruthy()
+  const ticket = await res.json()
+  const same = ticket.timeline.filter((e: any) => e.type === 'reply' && e.body_md === '网络抖动时发的回复。')
+  expect(same).toHaveLength(1)
+})
+
+// 12. 建单同样复用幂等键：中断后自动重试只建一张单。
+test('建单在服务中断时自动重试且只建一张', async ({ page, request }) => {
+  await login(page, ADMIN)
+  await page.goto('/new')
+  await page.locator('.tplpick', { hasText: '自由格式' }).click()
+  await page.getByLabel('标题').fill('网络抖动时建的单')
+  await page.getByLabel('说明', { exact: true }).fill('内容。')
+  await page.getByLabel('标签输入').fill('机型:UD-2300')
+  await page.getByLabel('标签输入').press('Enter')
+
+  // 模拟服务不可用：拦下建单请求
+  await page.route('**/api/v1/tickets', (route) => route.abort('connectionfailed'))
+  await page.getByRole('button', { name: /创建/ }).click()
+  await expect(page.getByText('服务更新中，正在自动重试')).toBeVisible()
+
+  // 恢复服务：自动重试成功；工单列表里只有这一张。
+  await page.unroute('**/api/v1/tickets')
+  await expect(page.getByText(/已创建/)).toBeVisible({ timeout: 20000 })
+  await loginAdmin(request)
+  const res = await request.get('/api/v1/tickets?q=' + encodeURIComponent('网络抖动时建的单') + '&status=all')
+  expect(res.ok()).toBeTruthy()
+  const body = await res.json()
+  expect(body.items).toHaveLength(1)
 })

@@ -121,11 +121,12 @@ func SwitchWebDir(webDir, newDir string) error {
 		if err := os.Remove(webDir); err != nil {
 			return fmt.Errorf("移除旧的前端链接失败：%w", err)
 		}
-	} else if _, err := os.Stat(webDir); err == nil {
+	} else {
 		// web/ 还是普通目录（服务从未启动过、没做过启动时的链接化）：
-		// 挪到一边留档，再建链接。
+		// 挪到一边留档（与 webapp 首次链接化共用 fslink.MovePlainDirAside，
+		// 评审 P3-16），再建链接。
 		retired := filepath.Join(filepath.Dir(webDir), "web-retired-"+time.Now().Format("20060102-150405"))
-		if err := os.Rename(webDir, retired); err != nil {
+		if _, err := fslink.MovePlainDirAside(webDir, retired); err != nil {
 			return fmt.Errorf("挪开旧的前端目录失败（服务运行中会占用它，先停服务或用管理页更新）：%w", err)
 		}
 	}
@@ -140,11 +141,12 @@ func SwitchWebDir(webDir, newDir string) error {
 // 供静态服务给「翻页翻到一半的旧页面」补旧资源，见 internal/webapp）。
 const keepWebVersions = 3
 
-// pruneWebVersions 删掉 web-* 目录里最旧的，只保留 keep 份新的（按修改时间
-// 排序，最近解压的最新）。
+// pruneWebVersions 删掉更新器自己创建的版本目录里最旧的，只保留 keep 份新的
+// （按修改时间排序，最近解压的最新）。只认自己的命名（评审修正）：web-<semver>、
+// web-retired-*、web-initial*；web-src 这样的其他 web-* 目录无论多旧都不动。
 func pruneWebVersions(parent string, keep int) {
 	matches, err := filepath.Glob(filepath.Join(parent, "web-*"))
-	if err != nil || len(matches) <= keep {
+	if err != nil {
 		return
 	}
 	type entry struct {
@@ -153,12 +155,48 @@ func pruneWebVersions(parent string, keep int) {
 	}
 	entries := make([]entry, 0, len(matches))
 	for _, m := range matches {
+		if !updaterOwnedWebDir(filepath.Base(m)) {
+			continue
+		}
 		if info, err := os.Stat(m); err == nil {
 			entries = append(entries, entry{path: m, mod: info.ModTime()})
 		}
+	}
+	if len(entries) <= keep {
+		return
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].mod.After(entries[j].mod) })
 	for _, old := range entries[keep:] {
 		_ = os.RemoveAll(old.path)
 	}
+}
+
+// updaterOwnedWebDir 判断 parent 下的目录名是否更新器自己创建的：
+//   - web-<semver>：解压的新版本（extractWeb，版本号来自发布清单 X.Y.Z）；
+//   - web-retired-<时间戳>：切换链接时挪开的原普通目录（SwitchWebDir）；
+//   - web-initial、web-initial-2、web-initial-3：首次链接化时挪开的手动
+//     部署目录（internal/webapp）。
+//
+// 其余 web-* 一律视为别人放的（如开发机的 web-src 源码目录），不能删。
+func updaterOwnedWebDir(name string) bool {
+	if strings.HasPrefix(name, "web-retired-") || strings.HasPrefix(name, "web-initial") {
+		return true
+	}
+	v, ok := strings.CutPrefix(name, "web-")
+	if !ok {
+		return false
+	}
+	return semverLike(v)
+}
+
+// semverLike 判断 v 是否形如发布清单里的版本号 X.Y.Z（容忍 v 前缀与预发布
+// 后缀，如 v1.2.3、0.4.0-beta.1）；只要不以数字开头就不是版本目录。
+func semverLike(v string) bool {
+	v = strings.TrimPrefix(v, "v")
+	major, rest, ok := strings.Cut(v, ".")
+	if !ok || major == "" || major[0] < '0' || major[0] > '9' {
+		return false
+	}
+	minor, _, ok := strings.Cut(rest, ".")
+	return ok && minor != "" && minor[0] >= '0' && minor[0] <= '9'
 }

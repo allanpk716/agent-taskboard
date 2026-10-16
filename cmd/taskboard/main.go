@@ -166,17 +166,13 @@ func cmdBackup(args []string) error {
 		return err
 	}
 	defer st.Close()
-	b, err := ops.NewBackups(st.DB, cfg.DataDir, ops.BackupOptions{
-		Target: cfg.Backup.Target, DailyAt: cfg.Backup.DailyAt,
-		KeepDaily: cfg.Backup.KeepDaily, KeepMonthly: cfg.Backup.KeepMonthly,
-		KeepPreupdate: cfg.Backup.KeepPreupdate,
-	}, clock.Real{})
+	b, err := ops.NewBackups(st.DB, cfg.DataDir, cfg.Backup.BackupOptions(), clock.Real{})
 	if err != nil {
 		return err
 	}
 	// 手动备份按当天的日期定时备份算（每月 1 日是 monthly），参与同类轮换。
 	now := clock.Real{}.Now()
-	rec, err := b.Now(context.Background(), ops.KindForDate(now))
+	rec, err := b.BackupNow(context.Background(), ops.KindForDate(now))
 	if err != nil {
 		return fmt.Errorf("备份失败：%w", err)
 	}

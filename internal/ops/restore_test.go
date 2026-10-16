@@ -55,7 +55,7 @@ func Test恢复换库并从镜像补齐附件(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := b.Now(context.Background(), ops.KindDaily); err != nil {
+	if _, err := b.BackupNow(context.Background(), ops.KindDaily); err != nil {
 		t.Fatal(err)
 	}
 	st.Close() // 服务停止，释放库文件
@@ -95,7 +95,7 @@ func Test恢复换库并从镜像补齐附件(t *testing.T) {
 func Test服务运行时拒绝恢复(t *testing.T) {
 	target := t.TempDir()
 	b, _, dataDir := newBackups(t, target)
-	if _, err := b.Now(context.Background(), ops.KindDaily); err != nil {
+	if _, err := b.BackupNow(context.Background(), ops.KindDaily); err != nil {
 		t.Fatal(err)
 	}
 	backup := filepath.Join(target, "taskboard-20261016-030005-daily.db")
@@ -122,7 +122,7 @@ func Test服务运行时拒绝恢复(t *testing.T) {
 func Test拒绝恢复损坏的备份文件(t *testing.T) {
 	target := t.TempDir()
 	b, _, dataDir := newBackups(t, target)
-	if _, err := b.Now(context.Background(), ops.KindDaily); err != nil {
+	if _, err := b.BackupNow(context.Background(), ops.KindDaily); err != nil {
 		t.Fatal(err)
 	}
 	good := filepath.Join(target, "taskboard-20261016-030005-daily.db")

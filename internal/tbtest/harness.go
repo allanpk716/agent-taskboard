@@ -20,6 +20,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
+	"github.com/allanpk716/agent-taskboard/internal/idempotency"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
 	"github.com/allanpk716/agent-taskboard/internal/server"
 	"github.com/allanpk716/agent-taskboard/internal/store"
@@ -45,6 +46,7 @@ type options struct {
 	attachments config.Attachments
 	backup      config.Backup
 	update      config.Update
+	publicURL   string
 }
 
 // WithWebDir 指定前端目录（默认用临时目录里的一页 index.html 占位）。
@@ -67,6 +69,10 @@ func WithAttachments(maxFileMB, maxFilesPerPost, maxImagesPerPost, maxTicketMB i
 // WithBackup 指定备份配置（#43；默认无目标，即 data_dir\backups\ + local_only）。
 // 测试里用临时目录充当备份目标，或用“文件下的子路径”模拟连不上的目标。
 func WithBackup(b config.Backup) Option { return func(o *options) { o.backup = b } }
+
+// WithPublicURL 指定 [server] public_url（评审 P2-7：访客链接与 share_text
+// 回绝对地址）；默认留空（相对路径）。
+func WithPublicURL(url string) Option { return func(o *options) { o.publicURL = url } }
 
 // WithUpdate 指定更新源配置（#45；默认不配置任何源：管理端点会明确报
 // “没有配置更新源”，测试里指向本地假源，不碰真实 GitHub/UpdateHub）。
@@ -109,6 +115,9 @@ func Start(t testing.TB, opts ...Option) *Server {
 	}
 	if len(o.update.Sources) > 0 {
 		cfg.Update = o.update
+	}
+	if o.publicURL != "" {
+		cfg.Server.PublicURL = o.publicURL
 	}
 	config.ApplyDefaults(&cfg) // 与 config.Load 一致：端口、附件上限等补默认值
 	clk := clock.NewFake(o.clockStart)
@@ -166,6 +175,10 @@ func (s *Server) Attachments() *attachments.Manager { return s.srv.Atts }
 // Backups 暴露备份模块（#43）：测试里直接做一次备份或触发调度检查
 // （服务里由定时器周期调用；备份时刻由注入时钟决定）。
 func (s *Server) Backups() *ops.Backups { return s.srv.Backups }
+
+// Idempotency 暴露幂等模块（评审修正）：测试里直接触发 24 小时清除任务
+// （服务里由定时器周期调用；不睡真实时间，用注入时钟推进后手动跑）。
+func (s *Server) Idempotency() *idempotency.Manager { return s.srv.Idem }
 
 // CreateAdmin 造一位管理员（等价于 taskboard create-admin 子命令做的事）。
 func (s *Server) CreateAdmin(username, password string) {

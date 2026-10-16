@@ -96,7 +96,7 @@ export function briefDraftKey(linkKey: string, ticketNumber: string): string {
   return `${draftKey(linkKey, ticketNumber)}:brief`
 }
 
-/** 反馈入口提交页的草稿键（还没有链接，以入口为单位）。 */
+/** 反馈入口页的草稿键（还没有链接，以入口为单位）。 */
 export function intakeDraftKey(slug: string): string {
   return `tb:guest:intake:${slug}`
 }

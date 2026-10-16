@@ -77,7 +77,7 @@ func Test成员创建访客链接默认三十天并记入时间线(t *testing.T)
 	}{
 		"七天":   {map[string]any{"note": "设备科-王五", "valid_days": 7}, "2026-10-23T09:00:00+08:00"},
 		"九十天":  {map[string]any{"note": "质量部", "valid_days": 90}, "2027-01-14T09:00:00+08:00"},
-		"指定日期": {map[string]any{"note": "外包-赵", "expires_at": "2026-12-01"}, "2026-12-01T00:00:00+08:00"},
+		"指定日期": {map[string]any{"note": "外包-赵", "expires_at": "2026-12-01"}, "2026-12-02T00:00:00+08:00"},
 		"指定时刻": {map[string]any{"note": "短期", "expires_at": "2026-10-18T18:00:00+08:00"}, "2026-10-18T18:00:00+08:00"},
 	} {
 		got := mustCreateGuestLink(t, s, web, number, tc.body)
@@ -934,5 +934,40 @@ func Test访客回复的幂等键按凭证隔离(t *testing.T) {
 	}
 	if replies != 2 {
 		t.Errorf("回复有 %d 条, 想 2（访客重放不产生新内容）", replies)
+	}
+}
+
+// 日期写法「到 12-01 为止」要管满一整天（评审 P2-8，#32）：有效期到
+// 2026-10-16 的链接在 10-16 全天可用，10-17 00:00（北京时间）才过期。
+func Test日期有效期管满一整天(t *testing.T) {
+	s := tbtest.Start(t) // 假时钟起点：2026-10-16 09:00（北京时间）
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	number := mustCreateTicket(t, s, web, "升级 UD-2300 固件")
+
+	link := s.CreateGuestLink(t, web, number, map[string]any{"note": "检验科-张三", "expires_at": "2026-10-16"})
+	if link.ExpiresAt != "2026-10-17T00:00:00+08:00" {
+		t.Fatalf("日期有效期应到次日 00:00，实际 %q", link.ExpiresAt)
+	}
+
+	// 当天白天（09:00 与 23:59）链接都能用。
+	guest := s.GuestClient(link.Key(t))
+	for _, at := range []string{"当天 09:00", "当天 23:59"} {
+		res := s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+number, nil, nil)
+		if res.StatusCode != http.StatusOK {
+			t.Errorf("%s 用链接读工单状态码 = %d, 想 200", at, res.StatusCode)
+		}
+		s.Clock().Advance(14*time.Hour + 59*time.Minute) // 拨到 23:59
+	}
+	// 次日 00:00 已过 → 401 link_expired。
+	s.Clock().Advance(time.Minute)
+	res := s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+number, nil, nil)
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("次日 00:00 后状态码 = %d, 想 401", res.StatusCode)
+	}
+	var got errorBody
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "link_expired" {
+		t.Errorf("错误码 = %q, 想 link_expired", got.Error.Code)
 	}
 }

@@ -67,7 +67,7 @@ func Test备份文件命名正确并通过完整性校验(t *testing.T) {
 	target := t.TempDir()
 	b, clk, _ := newBackups(t, target)
 
-	rec, err := b.Now(context.Background(), ops.KindDaily)
+	rec, err := b.BackupNow(context.Background(), ops.KindDaily)
 	if err != nil {
 		t.Fatalf("备份失败：%v", err)
 	}
@@ -121,7 +121,7 @@ func Test每月一日的那份备份是monthly(t *testing.T) {
 	target := t.TempDir()
 	b, clk, _ := newBackups(t, target)
 	clk.Set(beijing(2026, 11, 1, 3, 0, 5))
-	rec, err := b.Now(context.Background(), ops.KindMonthly)
+	rec, err := b.BackupNow(context.Background(), ops.KindMonthly)
 	if err != nil {
 		t.Fatalf("备份失败：%v", err)
 	}
@@ -147,7 +147,7 @@ func Test附件镜像只增不删并统计新增文件数(t *testing.T) {
 
 	writeFile("1", "one")
 	writeFile("2", "two")
-	rec, err := b.Now(context.Background(), ops.KindDaily)
+	rec, err := b.BackupNow(context.Background(), ops.KindDaily)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func Test附件镜像只增不删并统计新增文件数(t *testing.T) {
 	// 第二次只同步新文件。
 	writeFile("3", "three")
 	clk.Advance(time.Hour)
-	rec, err = b.Now(context.Background(), ops.KindDaily)
+	rec, err = b.BackupNow(context.Background(), ops.KindDaily)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func Test附件镜像只增不删并统计新增文件数(t *testing.T) {
 		t.Fatal(err)
 	}
 	clk.Advance(time.Hour)
-	if _, err := b.Now(context.Background(), ops.KindDaily); err != nil {
+	if _, err := b.BackupNow(context.Background(), ops.KindDaily); err != nil {
 		t.Fatal(err)
 	}
 	if read(t, filepath.Join(mirror, "1")) != "one" {
@@ -187,7 +187,7 @@ func Test附件镜像只增不删并统计新增文件数(t *testing.T) {
 // （local_only；管理页据此提示）。
 func Test未配置目标时备份存数据目录并标注未离开本机(t *testing.T) {
 	b, _, dataDir := newBackups(t, "")
-	if _, err := b.Now(context.Background(), ops.KindDaily); err != nil {
+	if _, err := b.BackupNow(context.Background(), ops.KindDaily); err != nil {
 		t.Fatal(err)
 	}
 	if got := b.TargetDir(); got != filepath.Join(dataDir, "backups") {

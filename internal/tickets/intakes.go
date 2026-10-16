@@ -120,7 +120,7 @@ func (m *Manager) CreateIntake(ctx context.Context, viewer identity.Viewer, spec
 func (m *Manager) Intakes(ctx context.Context) ([]Intake, error) {
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT i.id, i.slug, i.name, i.template_key, i.active, i.created_at, i.deactivated_at,
-		       m.id, m.name, a.id, a.name
+		       m.id, m.name, a.id, a.name, a.revoked_at
 		FROM intakes i
 		LEFT JOIN members m ON m.id = i.created_by_member_id
 		LEFT JOIN agent_tokens a ON a.id = i.created_by_agent_id
@@ -212,7 +212,7 @@ func (m *Manager) RotateIntakeSlug(ctx context.Context, slug, newSlug string) (I
 func (m *Manager) intakeRow(ctx context.Context, slug string) (Intake, error) {
 	row := m.db.QueryRowContext(ctx, `
 		SELECT i.id, i.slug, i.name, i.template_key, i.active, i.created_at, i.deactivated_at,
-		       m.id, m.name, a.id, a.name
+		       m.id, m.name, a.id, a.name, a.revoked_at
 		FROM intakes i
 		LEFT JOIN members m ON m.id = i.created_by_member_id
 		LEFT JOIN agent_tokens a ON a.id = i.created_by_agent_id
@@ -236,15 +236,17 @@ func scanIntake(row intakeScanner) (Intake, error) {
 		memberName    sql.NullString
 		agentID       sql.NullInt64
 		agentName     sql.NullString
+		agentRevoked  sql.NullString
 	)
 	if err := row.Scan(&in.ID, &in.Slug, &in.Name, &in.TemplateKey, &active,
-		&createdAt, &deactivatedAt, &memberID, &memberName, &agentID, &agentName); err != nil {
+		&createdAt, &deactivatedAt, &memberID, &memberName, &agentID, &agentName, &agentRevoked); err != nil {
 		return Intake{}, err
 	}
 	in.Active = active == 1
 	in.CreatedBy = Author{
 		MemberID: memberID.Int64, MemberName: memberName.String,
 		AgentID: agentID.Int64, AgentName: agentName.String,
+		AgentRevoked: agentRevoked.Valid && agentRevoked.String != "",
 	}
 	var err error
 	if in.CreatedAt, err = parseTime(createdAt); err != nil {

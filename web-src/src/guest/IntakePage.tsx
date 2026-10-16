@@ -1,4 +1,4 @@
-// 反馈入口提交页（#39）：/i/<slug>，匿名。其他部门的人按模板字段分区填写，
+// 反馈入口页（#39）：/i/<slug>，匿名。其他部门的人按模板字段分区填写，
 // 提交成功显示工单编号和专属访客链接，并提醒收藏。严格校验：网页实时标出
 // 未填的必填项，提交被拦下时顶部汇总「还差 N 项必填」、各字段标红并显示
 // 提示和示例；服务端的 422 missing_fields（逐项 hint）并入同一展示。
@@ -13,7 +13,7 @@ import { clearFormDraft, intakeDraftKey, loadAuthor, loadFormDraft, saveAuthor, 
 import { guestApi } from './guestApi'
 import type { IntakeSubmitResult, IntakeView, MissingFieldHint, TemplateField } from '../shared/types'
 import { uploadAttachment } from './upload'
-import { fmtDateCN } from '../shared/format'
+import { fmtDateCN, absoluteUrl } from '../shared/format'
 
 const RETRY_FIRST_MS = 1500
 const RETRY_MS = 4000
@@ -232,7 +232,7 @@ export function IntakePage({ slug }: { slug: string }) {
     )
   }
   if (phase.kind === 'done') {
-    const url = new URL(phase.result.guest_link.url, window.location.origin).href
+    const url = absoluteUrl(phase.result.guest_link.url)
     return (
       <main className="guest-root">
         <div className="full intake-done">

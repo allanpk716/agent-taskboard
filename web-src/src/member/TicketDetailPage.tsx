@@ -3,7 +3,7 @@
 // 等待方、访客链接）、一排小按钮（打标签/改派/访客链接/关闭/重开）、验收面板、
 // 带「交付」标记的回复输入区、时间线按「本人 / Agent」筛选（客户端筛，与
 // 服务端 actor_kind 同一语义：成员 Agent 的回复算 Agent 一方）。
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api'
 import type { MemberTicket } from './memberApi'
 import {
@@ -24,7 +24,7 @@ import {
 } from './memberApi'
 import { BriefBubble, EventLine, ReplyBubble } from '../shared/conversation'
 import { Lightbox } from '../shared/widgets'
-import { authorName, closeReasonText, fmtDateCN } from '../shared/format'
+import { absoluteUrl, authorName, closeReasonText, fmtLinkExpiry, linkExpired } from '../shared/format'
 import { Confirm, Modal, copyText, invalidate, nav, toast } from './ui'
 import { LabelChips, chipClass } from './TicketsPage'
 
@@ -251,9 +251,11 @@ function LinksDialog({
   const [links, setLinks] = useState<GuestLink[] | null>(null)
   const [note, setNote] = useState('')
   const [days, setDays] = useState('30')
+  const [date, setDate] = useState('') // 「指定日期」写法的到期日（YYYY-MM-DD，管满该日全天）
   const [canEdit, setCanEdit] = useState(false)
   const [created, setCreated] = useState<{ url: string } | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [extendDates, setExtendDates] = useState<Record<number, string>>({}) // 每条链接「延期到该日」的日期
 
   const reload = useCallback(async () => {
     try {
@@ -272,11 +274,18 @@ function LinksDialog({
       return
     }
     try {
-      const link = await createGuestLink(ticket.number, {
-        note: note.trim(),
-        valid_days: Number(days),
-        can_edit_brief: canEdit,
-      })
+      const link =
+        days === 'date'
+          ? await createGuestLink(ticket.number, {
+              note: note.trim(),
+              expires_at: date,
+              can_edit_brief: canEdit,
+            })
+          : await createGuestLink(ticket.number, {
+              note: note.trim(),
+              valid_days: Number(days),
+              can_edit_brief: canEdit,
+            })
       setCreated({ url: link.url })
       setErr(null)
       setNote('')
@@ -300,54 +309,81 @@ function LinksDialog({
               <td className="hint">还没有访客链接</td>
             </tr>
           ) : (
-            links.map((g) => (
-              <tr key={g.id}>
-                <td>
-                  {g.note}
-                  {g.can_edit_brief && <span className="mini">可填写说明</span>}
-                </td>
-                <td>
-                  {fmtDateCN(g.expires_at)}到期
-                  {g.revoked_at ? ' · 已撤销' : ''}
-                </td>
-                <td>
-                  {g.revoked_at ? (
-                    <span className="hint">已失效，不能延期</span>
-                  ) : (
-                    <>
-                      <button
-                        className="btn sm ghost"
-                        onClick={() => {
-                          void extendGuestLink(ticket.number, g.id, 30)
-                            .then(() => {
-                              toast('✓ 已延期 30 天')
-                              void reload()
-                              onChanged()
-                            })
-                            .catch((e) => toast(e instanceof ApiError ? e.message : '延期失败'))
-                        }}
-                      >
-                        延期 30 天
-                      </button>{' '}
-                      <button
-                        className="btn sm ghost"
-                        onClick={() => {
-                          void revokeGuestLink(ticket.number, g.id)
-                            .then(() => {
-                              toast('已撤销，对方再打开会看到链接失效页')
-                              void reload()
-                              onChanged()
-                            })
-                            .catch((e) => toast(e instanceof ApiError ? e.message : '撤销失败'))
-                        }}
-                      >
-                        撤销
-                      </button>
-                    </>
-                  )}
-                </td>
-              </tr>
-            ))
+            links.map((g) => {
+              const dead = !!g.revoked_at || linkExpired(g.expires_at)
+              return (
+                <tr key={g.id}>
+                  <td>
+                    {g.note}
+                    {g.can_edit_brief && <span className="mini">可填写说明</span>}
+                  </td>
+                  <td>
+                    {fmtLinkExpiry(g.expires_at)}
+                    {g.revoked_at ? ' · 已撤销' : ''}
+                    {!g.revoked_at && linkExpired(g.expires_at) ? ' · 已过期' : ''}
+                  </td>
+                  <td>
+                    {dead ? (
+                      <span className="hint">{g.revoked_at ? '已失效，不能延期' : '已过期，不能延期'}</span>
+                    ) : (
+                      <>
+                        <button
+                          className="btn sm ghost"
+                          onClick={() => {
+                            void extendGuestLink(ticket.number, g.id, { valid_days: 30 })
+                              .then(() => {
+                                toast('✓ 已延期 30 天')
+                                void reload()
+                                onChanged()
+                              })
+                              .catch((e) => toast(e instanceof ApiError ? e.message : '延期失败'))
+                          }}
+                        >
+                          延期 30 天
+                        </button>{' '}
+                        <input
+                          type="date"
+                          aria-label={`指定日期 ${g.note}`}
+                          value={extendDates[g.id] ?? ''}
+                          onChange={(e) => setExtendDates((m) => ({ ...m, [g.id]: e.target.value }))}
+                        />{' '}
+                        <button
+                          className="btn sm ghost"
+                          disabled={!extendDates[g.id]}
+                          onClick={() => {
+                            const until = extendDates[g.id] ?? ''
+                            void extendGuestLink(ticket.number, g.id, { expires_at: until })
+                              .then(() => {
+                                toast(`✓ 已延期到 ${until}（当天有效）`)
+                                setExtendDates((m) => ({ ...m, [g.id]: '' }))
+                                void reload()
+                                onChanged()
+                              })
+                              .catch((e) => toast(e instanceof ApiError ? e.message : '延期失败'))
+                          }}
+                        >
+                          延期到该日
+                        </button>{' '}
+                        <button
+                          className="btn sm ghost"
+                          onClick={() => {
+                            void revokeGuestLink(ticket.number, g.id)
+                              .then(() => {
+                                toast('已撤销，对方再打开会看到链接失效页')
+                                void reload()
+                                onChanged()
+                              })
+                              .catch((e) => toast(e instanceof ApiError ? e.message : '撤销失败'))
+                          }}
+                        >
+                          撤销
+                        </button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              )
+            })
           )}
         </tbody>
       </table>
@@ -365,7 +401,11 @@ function LinksDialog({
           <option value="7">7 天</option>
           <option value="30">30 天（默认）</option>
           <option value="90">90 天</option>
+          <option value="date">指定日期（当天有效）</option>
         </select>
+        {days === 'date' && (
+          <input type="date" aria-label="到期日期" value={date} onChange={(e) => setDate(e.target.value)} />
+        )}
         <label className="ckrow" style={{ margin: 0 }}>
           <input type="checkbox" checked={canEdit} onChange={(e) => setCanEdit(e.target.checked)} /> 可填写说明
         </label>
@@ -375,11 +415,13 @@ function LinksDialog({
       {created && (
         <div className="okbox">
           ✓ 已创建（完整链接只在创建时出现一次）。
-          <div className="linkbox">{created.url}</div>
+          <div className="linkbox">{absoluteUrl(created.url)}</div>
           <button
             className="btn sm"
             onClick={() => {
-              void copyText(created.url).then((ok) => toast(ok ? '✓ 已复制到剪贴板' : '复制失败，请手动选择文字复制'))
+              // 复制出去的链接必须能直接打开：API 给了绝对地址就用它，
+              // 相对路径用当前页面的 origin 拼绝对（评审 P2-7）。
+              void copyText(absoluteUrl(created.url)).then((ok) => toast(ok ? '✓ 已复制到剪贴板' : '复制失败，请手动选择文字复制'))
             }}
           >
             复制链接
@@ -670,12 +712,12 @@ export function TicketDetailPage({ ticketRef }: { ticketRef: string; me?: { id: 
               </button>
             ))}
           </span>
-          <span className="hint">（访客与系统事件始终显示；成员 Agent 的回复算它所属成员一方）</span>
+          <span className="hint">（访客与系统事件始终显示；成员 Agent 的回复算它所属成员一方；访客自报「由 Agent 写成」的算 Agent）</span>
         </div>
         <BriefBubble ticket={ticket} onImageClick={setLightbox} />
         {ticket.timeline.map((e) =>
           e.type === 'reply' ? (
-            (actor === 'all' || (actor === 'agent') === !!e.actor.agent ? (
+            (actor === 'all' || (actor === 'agent') === (!!e.actor.agent || !!e.actor.via_agent) ? (
               <ReplyBubble key={e.seq} event={e} ticket={ticket} onImageClick={setLightbox} />
             ) : null)
           ) : e.type === 'created' ? null : (
@@ -747,28 +789,77 @@ function Composer({
   const [body, setBody] = useState('')
   const [deliver, setDeliver] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
+  const [down, setDown] = useState<string | null>(null)
   const [uploading, setUploading] = useState(0)
   const [bigWarn, setBigWarn] = useState<string | null>(null)
+  // 同一次发送动作复用同一个 Idempotency-Key（ADR 0002「放心自动重试」，评审
+  // P2-13）：网络失败/5xx 自动重试不会产生重复回复（照访客 Composer 的做法）。
+  const idemKeyRef = useRef<string | undefined>(undefined)
+  const sendingRef = useRef(false)
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const stateRef = useRef({ body, deliver })
+  stateRef.current = { body, deliver }
+
+  useEffect(() => {
+    return () => {
+      if (retryTimer.current) clearTimeout(retryTimer.current)
+    }
+  }, [])
+
+  function scheduleRetry() {
+    if (retryTimer.current) clearTimeout(retryTimer.current)
+    retryTimer.current = setTimeout(() => void trySend(), 3000)
+  }
 
   async function send() {
-    if (!body.trim() && !/att:[A-Za-z0-9_]+/.test(body)) {
-      setNotice('422 empty_reply：空回复会被拒绝，请写内容或添加附件。')
+    // 新的用户动作：清掉上一条的服务中断提示再进入发送。
+    setDown(null)
+    await trySend()
+  }
+
+  async function trySend() {
+    if (sendingRef.current) {
+      scheduleRetry() // 上一轮还没结束，稍后再看
       return
     }
+    const { body: text, deliver: mark } = stateRef.current
+    if (!text.trim() && !/att:[A-Za-z0-9_]+/.test(text)) {
+      setNotice('422 empty_reply：空回复会被拒绝，请写内容或添加附件。')
+      idemKeyRef.current = undefined
+      return
+    }
+    sendingRef.current = true
     try {
-      await replyTicket(ticket.number, { body_md: body, ...(deliver ? { deliver: true } : {}) })
+      if (!idemKeyRef.current) idemKeyRef.current = crypto.randomUUID()
+      await replyTicket(ticket.number, { body_md: text, ...(mark ? { deliver: true } : {}) }, idemKeyRef.current)
+      // 成功：这次动作结束，下一次发送是新动作（新 key）。
+      idemKeyRef.current = undefined
       setBody('')
       setDeliver(false)
       setNotice(null)
+      setDown(null)
       onSent()
-      toast(deliver ? '✓ 已交付，轮到创建者验收' : '✓ 已发送')
+      toast(mark ? '✓ 已交付，轮到创建者验收' : '✓ 已发送')
     } catch (e) {
       if (e instanceof ApiError) {
+        if (e.status >= 500 || e.status === 429) {
+          serviceDown()
+          return
+        }
+        // 4xx：内容被拒，改完再发是新动作。
+        idemKeyRef.current = undefined
         setNotice(e.hint ? `${e.code}：${e.message}（${e.hint}）` : `${e.code}：${e.message}`)
       } else {
-        setNotice('发送失败，请重试')
+        serviceDown() // 网络错误（TypeError: Failed to fetch）等
       }
+    } finally {
+      sendingRef.current = false
     }
+  }
+
+  function serviceDown() {
+    setDown('服务更新中，回复没有丢失，正在自动重试…')
+    scheduleRetry()
   }
 
   async function handleFiles(files: File[]) {
@@ -793,6 +884,11 @@ function Composer({
   return (
     <div className="composer mcard">
       {bigWarn && <div className="toobig">{bigWarn}</div>}
+      {down && (
+        <div className="notice down" role="status">
+          {down}
+        </div>
+      )}
       {notice && (
         <div className="notice err" role="alert">
           {notice}

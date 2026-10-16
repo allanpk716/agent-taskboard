@@ -23,7 +23,7 @@ func (b *Backups) CheckSchedule(ctx context.Context) bool {
 	if now.Before(b.nextDue) {
 		return false
 	}
-	rec, err := b.Now(ctx, KindForDate(now))
+	rec, err := b.BackupNow(ctx, KindForDate(now))
 	if err == nil && rec.Success() {
 		// 成功：下一次是严格晚于现在的第一个每日时刻。
 		b.nextDue = b.nextSlotAfter(now)
