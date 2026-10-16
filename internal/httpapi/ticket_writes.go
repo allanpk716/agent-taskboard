@@ -312,19 +312,21 @@ func (a *API) assignTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if !decodeJSON(w, r, &req, `{"assignee": "成员 id 或姓名"}`) {
 		return
 	}
-	result, err := a.tickets.Assign(r.Context(), viewer, ref, req.Assignee)
-	if err != nil {
-		a.writeTicketError(w, r, ref, err)
-		return
-	}
-	view := assignTicketView{
-		Assignee:  &memberRef{ID: result.AssigneeID, Name: result.AssigneeName},
-		WaitingOn: newWaitingOnView(result.WaitingOn),
-	}
-	// 改派给自己不需要通知，share_text 为空。
-	if result.AssigneeID != viewer.Member.ID {
-		share := reassignShareText(result.AssigneeName, result.Title, result.Number)
-		view.ShareText = &share
-	}
-	writeJSON(w, http.StatusOK, view)
+	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
+		result, err := a.tickets.Assign(r.Context(), viewer, ref, req.Assignee)
+		if err != nil {
+			a.writeTicketError(w, r, ref, err)
+			return
+		}
+		view := assignTicketView{
+			Assignee:  &memberRef{ID: result.AssigneeID, Name: result.AssigneeName},
+			WaitingOn: newWaitingOnView(result.WaitingOn),
+		}
+		// 改派给自己不需要通知，share_text 为空。
+		if result.AssigneeID != viewer.Member.ID {
+			share := reassignShareText(result.AssigneeName, result.Title, result.Number)
+			view.ShareText = &share
+		}
+		writeJSON(w, http.StatusOK, view)
+	})
 }

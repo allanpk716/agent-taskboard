@@ -127,7 +127,7 @@ spec 用户故事 84），没有 `inbox`：
 | `POST /api/v1/tickets/{id}/replies` | 回复（成员、成员 Agent、访客）；`deliver: true` 仅指派人一方（#36）。 |
 | `POST /api/v1/tickets/{id}/close` | 关闭（任何成员；访客 403 `members_only`）。 |
 | `POST /api/v1/tickets/{id}/reopen` | 重新开启（任何成员；访客 403 `members_only`）。 |
-| `POST /api/v1/tickets/{id}/assign` | 改派（#36，仅成员；记 `assigned` 事件，附改派版 `share_text`）。 |
+| `POST /api/v1/tickets/{id}/assign` | 改派（#36，仅成员；记 `assigned` 事件，附改派版 `share_text`；支持 `Idempotency-Key`）。 |
 | `GET /api/v1/tickets/{id}/timeline?after=N` | 时间线增量读取。 |
 | `POST /api/v1/tickets/{id}/attachments` | 上传一个待用附件（multipart；见「附件（#33）」）。 |
 | `GET /api/v1/attachments/{att_N}/{filename}` | 附件下载（与工单相同的凭证，或访客链接的签名地址）。 |
@@ -379,8 +379,9 @@ spec 用户故事 84），没有 `inbox`：
 
 ## 幂等（#30）
 
-对所有会产生新内容的请求（建单、回复、说明修订——成员与访客凭证都一样；
-反馈入口提交在 #35 起支持；附件上传随后续工单接入）支持 `Idempotency-Key` 请求头：
+对所有会产生新内容的请求（建单、回复、说明修订、建访客链接、改派、加别名、
+加维度——成员与访客凭证都一样；反馈入口提交在 #35 起支持）支持 `Idempotency-Key`
+请求头：
 
 - 记录按（key、凭证、端点）隔离：同一 key 换了凭证（另一成员、另一个 Agent）
   或换了端点，都是新请求。匿名提交（入口提交）没有凭证，按入口隔离：
@@ -485,9 +486,9 @@ spec 用户故事 84），没有 `inbox`：
 | `POST /api/v1/tickets/{id}/labels` | 打标签 / 摘标签：`{"add":[…],"remove":[…],"allow_new":false}`。 |
 | `GET /api/v1/labels[?dimension=]` | 字典列表：每个值带 `aliases`，另列出不带维度的标签。 |
 | `GET /api/v1/labels/resolve?q=&dimension=` | 俗称换标准值，注明匹配方式 `exact` / `alias` / `fuzzy`。 |
-| `POST /api/v1/labels/aliases` | 添加别名（任何成员）；冲突 409。 |
+| `POST /api/v1/labels/aliases` | 添加别名（任何成员）；冲突 409；支持 `Idempotency-Key`。 |
 | `PATCH /api/v1/labels/aliases` | 改别名的指向（**管理员**）。 |
-| `POST /api/v1/labels/dimensions` | 添加新维度（**管理员**；新维度只能由管理员加）。 |
+| `POST /api/v1/labels/dimensions` | 添加新维度（**管理员**；新维度只能由管理员加）；支持 `Idempotency-Key`。 |
 | `POST /api/v1/labels/rename` | 改名（**管理员**），改写历史工单上的标签。 |
 | `POST /api/v1/labels/merge` | 合并（**管理员**），改写历史工单、别名改指向、from 停用。 |
 | `POST /api/v1/labels/deactivate` | 停用（**管理员**，幂等），历史工单保留。 |
@@ -551,7 +552,7 @@ spec 用户故事 84），没有 `inbox`：
 
 | 方法与路径 | 说明 |
 |---|---|
-| `POST /api/v1/tickets/{id}/guest-links` | 创建：`{"note", "valid_days"?, "expires_at"?, "can_edit_brief"}`。 |
+| `POST /api/v1/tickets/{id}/guest-links` | 创建：`{"note", "valid_days"?, "expires_at"?, "can_edit_brief"}`；支持 `Idempotency-Key`（地址里的密钥只出现一次，重放返回首次结果）。 |
 | `GET /api/v1/tickets/{id}/guest-links` | 列表（任何成员；**不回显密钥**）。 |
 | `DELETE /api/v1/tickets/{id}/guest-links/{链接id}` | 撤销（立即生效，幂等 204）。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/extend` | 延期：`{"valid_days"|"expires_at"}`（二选一，必填其一）。 |

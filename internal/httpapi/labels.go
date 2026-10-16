@@ -138,12 +138,14 @@ func (a *API) addAlias(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req, `{"label": "维度:值", "alias": "俗称"}`) {
 		return
 	}
-	label, aliases, err := a.tickets.Labels().AddAlias(r.Context(), req.Label, req.Alias)
-	if err != nil {
-		a.writeLabelsError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, aliasView{Label: label, Aliases: aliases})
+	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
+		label, aliases, err := a.tickets.Labels().AddAlias(r.Context(), req.Label, req.Alias)
+		if err != nil {
+			a.writeLabelsError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, aliasView{Label: label, Aliases: aliases})
+	})
 }
 
 // repointAlias 处理 PATCH /api/v1/labels/aliases：把别名改指向另一个标准值（管理员）。
@@ -174,11 +176,13 @@ func (a *API) addDimension(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req, `{"name": "新维度"}`) {
 		return
 	}
-	if err := a.tickets.Labels().AddDimension(r.Context(), req.Name); err != nil {
-		a.writeLabelsError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{"name": req.Name, "values": []string{}})
+	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
+		if err := a.tickets.Labels().AddDimension(r.Context(), req.Name); err != nil {
+			a.writeLabelsError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"name": req.Name, "values": []string{}})
+	})
 }
 
 // governRequest 是标签治理（停用 / 改名 / 合并）的请求体。

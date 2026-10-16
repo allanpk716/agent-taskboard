@@ -90,14 +90,16 @@ func (a *API) createGuestLink(w http.ResponseWriter, r *http.Request, ref string
 	if !ok {
 		return
 	}
-	link, err := a.tickets.CreateGuestLink(r.Context(), viewer, ref, spec)
-	if err != nil {
-		a.writeTicketError(w, r, ref, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, guestLinkView{
-		ID: link.ID, URL: "/g/" + link.Key, Note: link.Note,
-		ExpiresAt: link.ExpiresAt.Format(time.RFC3339Nano), CanEditBrief: link.CanEditBrief,
+	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
+		link, err := a.tickets.CreateGuestLink(r.Context(), viewer, ref, spec)
+		if err != nil {
+			a.writeTicketError(w, r, ref, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, guestLinkView{
+			ID: link.ID, URL: "/g/" + link.Key, Note: link.Note,
+			ExpiresAt: link.ExpiresAt.Format(time.RFC3339Nano), CanEditBrief: link.CanEditBrief,
+		})
 	})
 }
 

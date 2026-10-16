@@ -163,3 +163,88 @@ func Test建单与修订说明支持幂等键(t *testing.T) {
 		t.Errorf("重放不应产生第二条修订：事件 %d 条、版本 %d", revisions, got.Brief.Revision)
 	}
 }
+
+// 其余产生新内容的端点同样支持 Idempotency-Key（评审 P1-4）：建访客链接、
+// 改派、加别名、加维度——重放逐字节返回首次结果，不重复产生内容。
+func Test建访客链接改派加别名加维度支持幂等键(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	s.CreateMember("赵工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	number := mustCreateTicket(t, s, web, "升级 UD-2300 固件")
+
+	// 建访客链接：重放返回同一条链接（只出现一次的 /g/<密钥>）。
+	lkey := map[string]string{"Idempotency-Key": "link-once"}
+	l1 := s.DoWithHeaders(t, web, http.MethodPost, "/api/v1/tickets/"+number+"/guest-links",
+		lkey, map[string]any{"note": "检验科-张三", "valid_days": 7}, nil)
+	if l1.StatusCode != http.StatusCreated {
+		t.Fatalf("建访客链接状态码 = %d, 想 201", l1.StatusCode)
+	}
+	l1Body := readAll(t, l1)
+	l2 := s.DoWithHeaders(t, web, http.MethodPost, "/api/v1/tickets/"+number+"/guest-links",
+		lkey, map[string]any{"note": "检验科-张三", "valid_days": 7}, nil)
+	if l2.StatusCode != http.StatusCreated || string(l1Body) != string(readAll(t, l2)) {
+		t.Fatalf("重放建访客链接没有返回首次结果：%d vs %d", l1.StatusCode, l2.StatusCode)
+	}
+	var links struct {
+		Links []struct {
+			ID int64 `json:"id"`
+		} `json:"links"`
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number+"/guest-links", nil, &links)
+	if len(links.Links) != 1 {
+		t.Errorf("重放不应再建访客链接，现有 %d 条", len(links.Links))
+	}
+
+	// 改派：重放不重复记 assigned 事件。
+	akey := map[string]string{"Idempotency-Key": "assign-once"}
+	a1 := s.DoWithHeaders(t, web, http.MethodPost, "/api/v1/tickets/"+number+"/assign",
+		akey, map[string]string{"assignee": "赵工"}, nil)
+	if a1.StatusCode != http.StatusOK {
+		t.Fatalf("改派状态码 = %d, 想 200", a1.StatusCode)
+	}
+	a1Body := readAll(t, a1)
+	a2 := s.DoWithHeaders(t, web, http.MethodPost, "/api/v1/tickets/"+number+"/assign",
+		akey, map[string]string{"assignee": "赵工"}, nil)
+	if a2.StatusCode != http.StatusOK || string(a1Body) != string(readAll(t, a2)) {
+		t.Fatalf("重放改派没有返回首次结果：%d vs %d", a1.StatusCode, a2.StatusCode)
+	}
+	var got ticketResponseBody
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number, nil, &got)
+	assigned := 0
+	for _, ev := range got.Timeline {
+		if ev.Type == "assigned" {
+			assigned++
+		}
+	}
+	if assigned != 1 {
+		t.Errorf("重放不应记第二条 assigned 事件，实际 %d 条", assigned)
+	}
+
+	// 加别名与加维度：重放返回首次 201，而不是 409 alias_taken / dimension_taken。
+	alkey := map[string]string{"Idempotency-Key": "alias-once"}
+	al1 := s.DoWithHeaders(t, web, http.MethodPost, "/api/v1/labels/aliases",
+		alkey, map[string]string{"label": "机型:UD-2300", "alias": "优典两千三"}, nil)
+	if al1.StatusCode != http.StatusCreated {
+		t.Fatalf("加别名状态码 = %d, 想 201", al1.StatusCode)
+	}
+	al1Body := readAll(t, al1)
+	al2 := s.DoWithHeaders(t, web, http.MethodPost, "/api/v1/labels/aliases",
+		alkey, map[string]string{"label": "机型:UD-2300", "alias": "优典两千三"}, nil)
+	if al2.StatusCode != http.StatusCreated || string(al1Body) != string(readAll(t, al2)) {
+		t.Fatalf("重放加别名没有返回首次结果：%d vs %d", al1.StatusCode, al2.StatusCode)
+	}
+
+	dkey := map[string]string{"Idempotency-Key": "dim-once"}
+	d1 := s.DoWithHeaders(t, web, http.MethodPost, "/api/v1/labels/dimensions",
+		dkey, map[string]string{"name": "紧急程度"}, nil)
+	if d1.StatusCode != http.StatusCreated {
+		t.Fatalf("加维度状态码 = %d, 想 201", d1.StatusCode)
+	}
+	d1Body := readAll(t, d1)
+	d2 := s.DoWithHeaders(t, web, http.MethodPost, "/api/v1/labels/dimensions",
+		dkey, map[string]string{"name": "紧急程度"}, nil)
+	if d2.StatusCode != http.StatusCreated || string(d1Body) != string(readAll(t, d2)) {
+		t.Fatalf("重放加维度没有返回首次结果：%d vs %d（应重放首次 201 而不是 409 dimension_taken）", d1.StatusCode, d2.StatusCode)
+	}
+}
