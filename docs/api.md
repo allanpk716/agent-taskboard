@@ -337,9 +337,10 @@ spec 用户故事 84），没有 `inbox`：
   - `assignee=<名|id>|me|none`、`creator=<名|id>|me|guest`（经反馈入口提交）、
     `waiting_on=assignee|creator|guest|department|me`（不存在的成员 422 `unknown_member`）。
   - `actor_kind=member|agent`（orchestrator 决议 5，「本人 / Agent」筛选）：按**创建者**
-    的署名区分——`member` 是非 Agent 署名（成员本人或访客），`agent` 是成员 Agent。
+    的署名区分——`member` 是真人署名（成员本人或未自报 `via_agent` 的访客），
+    `agent` 是成员 Agent 署名，或访客自报「由 Agent 写成」（`via_agent`，评审 P2-12）。
     时间线接口 `GET /api/v1/tickets/{id}/timeline` 也接受同一参数（按事件的作者筛，
-    `cursor` 只数筛后仍可见的事件）；非法取值 422 `invalid_actor_kind`。
+    同一口径；`cursor` 只数筛后仍可见的事件）；非法取值 422 `invalid_actor_kind`。
   - `created_/updated_/closed_` + `after/before`：写日期（默认当天 00:00）或日期时分
     （`2026-10-01T09:30`），北京时间；**`_after` 包含该时刻，`_before` 不包含**；
     `closed_*` 只作用于已关闭的工单。

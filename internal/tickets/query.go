@@ -36,8 +36,9 @@ type ListQuery struct {
 	WaitingOn      string // assignee | creator | guest | department | me
 	ViewerMemberID int64  // waiting_on=me 时按谁的收件箱算
 
-	// ActorKind 是「本人 / Agent」筛选（orchestrator 决议 5）：按创建者的署名
-	// 区分——member = 非 Agent 署名（成员本人或访客），agent = 成员 Agent 署名。
+	// ActorKind 是「本人 / Agent」筛选（orchestrator 决议 5，评审 P2-12 修正）：
+	// 按创建者的署名区分——member = 真人署名（成员本人或未自报 via_agent 的
+	// 访客），agent = 成员 Agent 署名，或访客自报「由 Agent 写成」（via_agent）。
 	ActorKind string
 
 	CreatedAfter, CreatedBefore *time.Time // _after 包含该时刻，_before 不包含
@@ -186,11 +187,11 @@ func (q *ListQuery) matches(t *Full) bool {
 	}
 	switch q.ActorKind {
 	case "member":
-		if t.Creator.AgentID != 0 {
+		if t.Creator.AgentID != 0 || t.Creator.ViaAgent {
 			return false
 		}
 	case "agent":
-		if t.Creator.MemberID == 0 || t.Creator.AgentID == 0 {
+		if t.Creator.AgentID == 0 && !t.Creator.ViaAgent {
 			return false
 		}
 	}

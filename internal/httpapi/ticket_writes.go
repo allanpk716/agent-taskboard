@@ -202,7 +202,7 @@ func (a *API) ticketTimeline(w http.ResponseWriter, r *http.Request, ref string)
 	actorKind := r.URL.Query().Get("actor_kind")
 	if actorKind != "" && actorKind != "member" && actorKind != "agent" {
 		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidActorKind,
-			"actor_kind 只能是 member（本人或访客署名）或 agent（成员 Agent 署名）", "")
+			"actor_kind 只能是 member（本人或访客真人署名）或 agent（成员 Agent 或访客自报由 Agent 写成）", "")
 		return
 	}
 	full, ok := a.loadTicketForViewer(w, r, viewer, ref)
@@ -216,9 +216,9 @@ func (a *API) ticketTimeline(w http.ResponseWriter, r *http.Request, ref string)
 		}
 		switch actorKind {
 		case "member":
-			return e.Actor.AgentID == 0
+			return e.Actor.AgentID == 0 && !e.Actor.ViaAgent
 		case "agent":
-			return e.Actor.AgentID != 0
+			return e.Actor.AgentID != 0 || e.Actor.ViaAgent
 		}
 		return true
 	}

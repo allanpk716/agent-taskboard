@@ -712,12 +712,12 @@ export function TicketDetailPage({ ticketRef }: { ticketRef: string; me?: { id: 
               </button>
             ))}
           </span>
-          <span className="hint">（访客与系统事件始终显示；成员 Agent 的回复算它所属成员一方）</span>
+          <span className="hint">（访客与系统事件始终显示；成员 Agent 的回复算它所属成员一方；访客自报「由 Agent 写成」的算 Agent）</span>
         </div>
         <BriefBubble ticket={ticket} onImageClick={setLightbox} />
         {ticket.timeline.map((e) =>
           e.type === 'reply' ? (
-            (actor === 'all' || (actor === 'agent') === !!e.actor.agent ? (
+            (actor === 'all' || (actor === 'agent') === (!!e.actor.agent || !!e.actor.via_agent) ? (
               <ReplyBubble key={e.seq} event={e} ticket={ticket} onImageClick={setLightbox} />
             ) : null)
           ) : e.type === 'created' ? null : (

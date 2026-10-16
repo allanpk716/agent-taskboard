@@ -1149,3 +1149,61 @@ func Test时间线按本人Agent筛选(t *testing.T) {
 		t.Errorf("actor_kind=x 错误码 = %q", e.Error.Code)
 	}
 }
+
+// 评审 P2-12（#37）：访客自报「由 Agent 写成」（via_agent）的内容算 agent，
+// 普通访客内容算 member（真人）——时间线与列表的 actor_kind 同一口径。
+func Test访客自报viaAgent的内容算agent(t *testing.T) {
+	w := newQueryWorld(t)
+	w.at(t, "2026-10-16T10:30")
+	res := w.s.Do(t, w.s.GuestClient(w.fbKey), http.MethodPost, "/api/v1/tickets/"+w.fb+"/replies",
+		map[string]any{"body_md": "我的 Agent 整理了一份数据。", "author_name": "张三", "via_agent": true}, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("访客自报 via_agent 回复状态码 = %d, 想 201", res.StatusCode)
+	}
+
+	read := func(query string) timelineBody {
+		t.Helper()
+		var body timelineBody
+		res := w.s.Do(t, w.webWang, http.MethodGet, "/api/v1/tickets/"+w.fb+"/timeline"+query, nil, &body)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("GET timeline%s 状态码 = %d", query, res.StatusCode)
+		}
+		return body
+	}
+	agent := read("?actor_kind=agent")
+	if len(agent.Events) != 1 || agent.Events[0].BodyMD != "我的 Agent 整理了一份数据。" {
+		t.Fatalf("agent 事件 = %d 条, 想 1 条张三自报 via_agent 的回复：%+v", len(agent.Events), agent.Events)
+	}
+	member := read("?actor_kind=member")
+	zhangHuman := false
+	for _, ev := range member.Events {
+		if ev.BodyMD == "我的 Agent 整理了一份数据。" {
+			t.Errorf("member 筛选不应包含访客自报 via_agent 的回复")
+		}
+		if ev.BodyMD == "附上近一个月的质控数据。" {
+			zhangHuman = true // 张三真人的回复算 member
+		}
+	}
+	if !zhangHuman {
+		t.Errorf("member 筛选应保留张三真人的回复")
+	}
+
+	// 入口提交（真人，未自报 via_agent）仍算 member：actor_kind=member 的列表
+	// 里包含入口提交的 OLD，agent 的列表里没有它。
+	oldSeen := func(kind string) bool {
+		t.Helper()
+		body := w.list(t, w.webWang, "?actor_kind="+kind+"&status=all")
+		for _, it := range body.Items {
+			if it.Number == w.old {
+				return true
+			}
+		}
+		return false
+	}
+	if !oldSeen("member") {
+		t.Errorf("入口提交（真人）应在 actor_kind=member 的列表里")
+	}
+	if oldSeen("agent") {
+		t.Errorf("入口提交（真人）不应在 actor_kind=agent 的列表里")
+	}
+}
