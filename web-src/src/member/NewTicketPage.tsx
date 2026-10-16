@@ -1,13 +1,16 @@
-// 建单（#41）：第一步选「用模板」或「自由格式」；第二步填表单（模板工单按
-// 字段逐项填写，自由格式一整块 Markdown 说明）；维度标签先经 resolve 换成
-// 标准值（建单接口只收标准值）；缺必填只弹确认、不拦截（spec 用户故事 6）；
-// 创建后显示编号与可直接转发的 share_text。
-import { useEffect, useState, type ReactNode } from 'react'
+// 建单（#41）：第一步选「用模板」或「自由格式」；第二步填表单——模板工单
+// 复用 #39 的 FieldForm（按字段分区、维度字段可按别名搜索、统一附件区，
+// 附件先暂存本机，建单后立即上传并把引用写进说明）；自由格式一整块
+// Markdown 说明。维度标签先经 resolve 换成标准值（建单接口只收标准值）；
+// 缺必填只弹确认、不拦截（spec 用户故事 6）；创建后显示编号与可转发的
+// share_text。
+import { useEffect, useState } from 'react'
 import { ApiError, api } from '../api'
 import type { TemplateField } from '../shared/types'
-import { fetchMembers, type MemberRef } from './memberApi'
+import { fetchMembers, uploadMemberAttachment, type MemberRef } from './memberApi'
 import { Confirm, copyText, invalidate, nav, toast } from './ui'
 import { chipClass } from './TicketsPage'
+import { FieldForm, appendRef, missingRequired, type StagedFile } from '../guest/FieldForm'
 
 interface TemplateSummary {
   key: string
@@ -190,59 +193,70 @@ export function NewTicketPage() {
 
 /* ---------------- 第二步：表单 ---------------- */
 
-function FieldInput({
-  field,
-  value,
-  onChange,
-}: {
-  field: TemplateField
-  value: string
-  onChange: (v: string) => void
-}) {
-  const id = `nf-${field.key}`
-  let ctl: ReactNode
-  if (field.type === 'dimension') {
-    ctl = (
-      <select className="sel" id={id} aria-label={field.title} value={value} onChange={(e) => onChange(e.target.value)}>
-        <option value="">请选择</option>
-        {(field.options ?? []).map((o) => (
-          <option key={o} value={o === '不确定' ? '' : o}>
-            {o}
-          </option>
-        ))}
-      </select>
-    )
-  } else if (field.type === 'radio') {
-    ctl = (
-      <div className="radios" aria-label={field.title} role="radiogroup">
-        {(field.options ?? []).map((o) => (
-          <label key={o}>
-            <input type="radio" name={id} value={o} checked={value === o} onChange={() => onChange(o)} /> {o}
-          </label>
-        ))}
-      </div>
-    )
-  } else {
-    ctl = (
-      <textarea
-        id={id}
-        aria-label={field.title}
-        placeholder={field.example ? `示例：${field.example}` : ''}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      />
-    )
+/** 暂存选中的文件（本机预览；建单成功后才上传，照 #39 入口页的模式）。 */
+function stageFilesOf(fieldKey: string, picked: File[]): StagedFile[] {
+  return picked.map((file, i) => ({
+    id: `${fieldKey}-${Date.now()}-${i}-${file.name}`,
+    name: file.name,
+    size: file.size,
+    fieldKey,
+    area: true,
+    status: 'ready' as const,
+    previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+    blob: file,
+  }))
+}
+
+/** 建单后补传暂存附件：上传拿 att: 引用，再 PATCH 说明把引用挂上
+ *（模板工单按字段挂到对应字段；自由格式追加到整块说明末尾）。 */
+async function attachStagedFiles(
+  number: string,
+  template: TemplateDetail | null,
+  brief: string,
+  stagedFiles: StagedFile[],
+): Promise<{ field: string; message: string }[]> {
+  const staged = stagedFiles.filter((f) => f.blob)
+  if (staged.length === 0) return []
+  const warnings: { field: string; message: string }[] = []
+  const refsByField: Record<string, string[]> = {}
+  for (const f of staged) {
+    try {
+      const att = await uploadMemberAttachment(number, f.blob!)
+      ;(refsByField[f.fieldKey] ??= []).push(att.markdown)
+    } catch (err) {
+      const why = err instanceof ApiError ? `${err.message}${err.hint ? `（${err.hint}）` : ''}` : '上传失败'
+      warnings.push({ field: f.name, message: `未能附上（${why}），请打开工单后用回复补充。` })
+    }
   }
-  return (
-    <div className="fld">
-      <label htmlFor={id}>
-        {field.title}
-        {field.required && <i className="req">必填</i>}
-      </label>
-      {field.guide && <div className="guide">{field.guide}</div>}
-      {ctl}
-    </div>
-  )
+  if (Object.keys(refsByField).length === 0) return warnings
+  try {
+    const fresh = await api(`/api/v1/tickets/${encodeURIComponent(number)}`)
+    if (template) {
+      const merged: Record<string, string> = { ...(fresh.brief.fields ?? {}) }
+      const byTitle = new Map(template.fields.map((f) => [f.key, f.title]))
+      for (const [fieldKey, refs] of Object.entries(refsByField)) {
+        const title = byTitle.get(fieldKey) ?? fieldKey
+        merged[title] = appendRef(merged[title] ?? '', refs.join('\n'))
+      }
+      await api(`/api/v1/tickets/${encodeURIComponent(number)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ fields: merged, base_revision: fresh.brief.revision }),
+        idempotencyKey: crypto.randomUUID(),
+      })
+    } else {
+      let merged = brief
+      for (const refs of Object.values(refsByField)) merged = appendRef(merged, refs.join('\n'))
+      await api(`/api/v1/tickets/${encodeURIComponent(number)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ brief_md: merged, base_revision: fresh.brief.revision }),
+        idempotencyKey: crypto.randomUUID(),
+      })
+    }
+  } catch (err) {
+    const why = err instanceof ApiError ? err.message : '网络问题'
+    warnings.push({ field: '附件', message: `已上传，但没能写进说明（${why}），请打开工单后补充。` })
+  }
+  return warnings
 }
 
 function NewTicketForm({
@@ -255,7 +269,8 @@ function NewTicketForm({
   const [title, setTitle] = useState('')
   const [kind, setKind] = useState('task')
   const [brief, setBrief] = useState('')
-  const [fields, setFields] = useState<Record<string, string>>({})
+  const [values, setValues] = useState<Record<string, string>>({})
+  const [files, setFiles] = useState<StagedFile[]>([])
   const [labels, setLabels] = useState<string[]>([])
   const [labelInput, setLabelInput] = useState('')
   const [labelErr, setLabelErr] = useState<string | null>(null)
@@ -273,6 +288,10 @@ function NewTicketForm({
 
   function paintLabels(next: string[]) {
     setLabels(next)
+  }
+
+  function stageFiles(fieldKey: string, picked: File[]) {
+    setFiles((fs) => [...fs, ...stageFilesOf(fieldKey, picked)])
   }
 
   async function addLabel() {
@@ -305,11 +324,9 @@ function NewTicketForm({
 
   function collectMissing(): string[] {
     if (!template) return []
-    const out: string[] = []
-    for (const f of template.fields) {
-      if (f.required && !(fields[f.title] ?? '').trim()) out.push(f.title)
-    }
-    return out
+    return missingRequired(template.fields, values).map(
+      (k) => template!.fields.find((f) => f.key === k)?.title ?? k,
+    )
   }
 
   async function submit() {
@@ -337,7 +354,8 @@ function NewTicketForm({
     if (!template) return []
     const out: string[] = []
     for (const f of template.fields) {
-      if (f.type === 'dimension' && (fields[f.title] ?? '').trim()) out.push(`${f.dimension}:${fields[f.title]}`)
+      const v = values[f.key] ?? ''
+      if (f.type === 'dimension' && v.trim() && v !== '不确定') out.push(`${f.dimension}:${v}`)
     }
     return out
   }
@@ -354,7 +372,7 @@ function NewTicketForm({
         body.template = template.key
         const filled: Record<string, string> = {}
         for (const f of template.fields) {
-          const v = fields[f.title] ?? ''
+          const v = values[f.key] ?? ''
           if (v.trim()) filled[f.title] = v
         }
         body.fields = filled
@@ -367,6 +385,9 @@ function NewTicketForm({
         body: JSON.stringify(body),
         idempotencyKey: crypto.randomUUID(),
       })
+      // 暂存的附件此刻上传（建单本身不认领 att: 引用），再把引用写进说明。
+      const warnings = await attachStagedFiles(created.number, template, brief, files)
+      created.warnings = [...created.warnings, ...warnings]
       invalidate()
       onDone(created, title.trim())
       window.scrollTo(0, 0)
@@ -410,9 +431,14 @@ function NewTicketForm({
           />
         </div>
         {template ? (
-          template.fields.map((f) => (
-            <FieldInput key={f.key} field={f} value={fields[f.title] ?? ''} onChange={(v) => setFields({ ...fields, [f.title]: v })} />
-          ))
+          <FieldForm
+            fields={template.fields}
+            values={values}
+            onChange={(k, v) => setValues({ ...values, [k]: v })}
+            onPickFiles={(fieldKey, picked) => stageFiles(fieldKey, picked)}
+            files={files}
+            onRemoveFile={(id) => setFiles((fs) => fs.filter((f) => f.id !== id))}
+          />
         ) : (
           <>
             <div className="fld">

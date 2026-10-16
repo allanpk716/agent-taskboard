@@ -355,9 +355,17 @@ test('建单（模板）：缺必填项弹出确认，仍创建后逐项提示',
   await page.locator('.tplpick', { hasText: 'Bug 反馈' }).click()
   await expect(page.getByText('哪台仪器？')).toBeVisible()
 
-  // 只填标题和一个维度字段，其余必填留空
+  // 只填标题和一个维度字段，其余必填留空；统一附件区暂存一个文件
   await page.getByLabel('标题').fill('BM-10vet 质控偏低')
-  await page.getByLabel('哪台仪器？').selectOption('BM-10vet')
+  const dim = page.getByRole('combobox', { name: '哪台仪器？' })
+  await dim.fill('BM-10vet')
+  await dim.press('Enter') // 选第一个候选（可按别名搜索的下拉框，#39）
+  await page.setInputFiles('input[aria-label="选择附件"]', {
+    name: '现场日志.log',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('E-203 试剂余量不足\n'),
+  })
+  await expect(page.locator('.staged-file')).toContainText('现场日志.log')
 
   // 维度标签：选中的机型值自动成为标签；但建单请求仍要显式维度标签吗？
   // 模板的维度字段值会自动并入标签，无需手填。
@@ -373,8 +381,10 @@ test('建单（模板）：缺必填项弹出确认，仍创建后逐项提示',
   await expect(page.locator('.donet')).toContainText('已创建')
   await expect(page.locator('.warnbox')).toContainText('必填未填')
 
-  // 打开工单：说明气泡按字段显示，未填的显示（未填写），机型值同时进了标签
+  // 打开工单：说明气泡按字段显示，未填的显示（未填写），机型值同时进了标签；
+  // 暂存的附件建单后已上传并写进说明
   await page.getByRole('button', { name: '打开工单' }).click()
   await expect(page.locator('[data-bubble="brief"]')).toContainText('BM-10vet')
   await expect(page.getByText('（未填写）').first()).toBeVisible()
+  await expect(page.locator('[data-bubble="brief"]')).toContainText('现场日志.log')
 })

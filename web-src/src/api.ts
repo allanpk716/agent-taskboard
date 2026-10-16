@@ -11,6 +11,8 @@ export class ApiError extends Error {
     public code: string,
     message: string,
     public hint?: string,
+    /** 完整的 error 对象（附带字段在此，如 422 missing_fields 的 fields） */
+    public body?: any,
   ) {
     super(message)
   }
@@ -40,7 +42,7 @@ export async function api(path: string, init?: ApiRequest): Promise<any> {
   }
   if (!res.ok) {
     const e: ApiErrorBody | undefined = body?.error
-    throw new ApiError(res.status, e?.code ?? 'unknown', e?.message ?? `请求失败（${res.status}）`, e?.hint)
+    throw new ApiError(res.status, e?.code ?? 'unknown', e?.message ?? `请求失败（${res.status}）`, e?.hint, e)
   }
   return body
 }

@@ -17,3 +17,15 @@ max_file_mb         = 5    # 单个文件，超过返回 413 attachment_too_larg
 max_files_per_post  = 5    # 每条说明或回复的附件个数（插图另计）
 max_images_per_post = 10   # 每条说明或回复的插图张数
 max_ticket_mb       = 50   # 整张工单合计（待用附件也计入）
+
+# 备份（#43，见 docs/deploy-and-release.md「备份与恢复」）。定时备份内置在 serve 里；
+# 手动备份用 taskboard backup，恢复用 taskboard restore <备份文件>。
+[backup]
+# 备份目标：NAS 上的专用共享，用 UNC 路径（映射盘符对 Windows 服务不可见），
+# 服务账号需要有写权限。留空时备份存到 data_dir\backups\，管理页会提示
+# “备份未离开本机”。
+target         = ''
+daily_at       = "03:00"  # 每日定时备份时刻（北京时间）；每月 1 日那份是 monthly
+keep_daily     = 30       # 每日备份保留份数
+keep_monthly   = 12       # 每月备份（每月 1 日那份）保留份数
+keep_preupdate = 5        # 更新前备份保留份数（#45 的更新流程用）

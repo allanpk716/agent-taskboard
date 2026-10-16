@@ -23,7 +23,7 @@ export async function guestApi(linkKey: string, path: string, init?: GuestReques
   }
   if (!res.ok) {
     const e = body?.error
-    throw new ApiError(res.status, e?.code ?? 'unknown', e?.message ?? `请求失败（${res.status}）`, e?.hint)
+    throw new ApiError(res.status, e?.code ?? 'unknown', e?.message ?? `请求失败（${res.status}）`, e?.hint, e)
   }
   return body
 }

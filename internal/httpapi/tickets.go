@@ -229,6 +229,13 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		return
 	}
 	v := newTicketView(full, viewer)
+	// 维度字段补上字典候选值与别名（#39：补全说明表单的下拉框按别名搜索；
+	// 快照里不存候选值，读取时现取）。
+	for i := range v.Brief.TemplateFields {
+		if v.Brief.TemplateFields[i].Type == template.TypeDimension {
+			a.fillDimensionOptions(r.Context(), &v.Brief.TemplateFields[i])
+		}
+	}
 	v.Attachments, v.Usage = atts, usage
 	writeJSON(w, http.StatusOK, v)
 }

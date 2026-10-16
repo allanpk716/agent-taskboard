@@ -413,9 +413,11 @@ spec 用户故事 84），没有 `inbox`：
 - 新建/修改请求带 `Idempotency-Key` 时同样去重。
 - `key` 是模板的稳定标识（出现在工单的 `template` 字段里），不能含空格或 `/`，
   且不能复用已存在的 key（409 `template_key_taken`）。
-- 字段定义结构：`{key, title, guide, example, required, type, options[], dimension?}`；
-  `type` 为 `text | radio | dimension`。**维度字段的 `options` 是读取时从标签字典现取的
-  候选值 + 「不确定」**（字典会变，不缓存在模板里）。
+- 字段定义结构：`{key, title, guide, example, required, type, options[], dimension?,
+  option_aliases?}`；`type` 为 `text | radio | dimension`。**维度字段的 `options` 是读取时
+  从标签字典现取的候选值 + 「不确定」**（字典会变，不缓存在模板里）；`option_aliases`
+  是各候选值的别名（`{值: [别名…]}`，同样读取时现取，#39：网页的下拉框按别名搜索；
+  匿名的入口读取也带，因为字典端点仅成员可用）。
 - 错误码：`422 template_format_error`（带行号）、`422 template_key_required`、
   `422 invalid_template_key`、`422 markdown_required`、`409 template_key_taken`、
   `404 template_not_found`。
@@ -435,7 +437,9 @@ spec 用户故事 84），没有 `inbox`：
   map，`brief.markdown` 为按字段拼好的说明（`### 问句` + 内容，只拼已填字段）；
   `brief.template` 同 `template`；`brief.template_fields` 是创建时版本的字段定义
   （与模板接口同形，含未填字段，按模板顺序），访客网页据此按问句渲染说明气泡、
-  对未填字段显示「（未填写）」（#38）；非模板工单没有这个字段。
+  对未填字段显示「（未填写）」（#38）；非模板工单没有这个字段。维度字段在此视图
+  里同样带 `options`（字典候选值 + 「不确定」）与 `option_aliases`（#39：「补全说明」
+  表单的下拉框用，读取时现取）。
 - `PATCH /api/v1/tickets/{id} {"fields": {改动的字段}, "base_revision": N}`：
   只改动传入的字段，其余保持不变；每次修订记一条 `brief_revised` 事件（见上）。
 - 预置三份模板（spec「初始数据」）：`bug-report`（Bug 反馈，预设 `待初筛`）、
@@ -665,3 +669,34 @@ spec 用户故事 84），没有 `inbox`：
 - 入口提交同样支持 `Idempotency-Key`（匿名凭证按同一 key 去重，重放返回首次结果）。
 - 管理端点仅限成员；访客 403 `members_only`（hint 指向入口地址），匿名 401。
 
+
+## 备份状态（#43）
+
+| 方法与路径 | 说明 |
+|---|---|
+| `GET /api/v1/admin/backups` | 备份状态（仅管理员；访客/普通成员 403 `admin_required`，匿名 401）。 |
+
+响应结构：
+
+```json
+{
+  "local_only": true,
+  "last_success_at": "2026-10-16T03:00:05+08:00",
+  "overdue": false,
+  "overdue_after_hours": 36,
+  "last_failure": null,
+  "records": [
+    {"at": "2026-10-16T03:00:05+08:00", "kind": "daily", "filename": "taskboard-20261016-030005-daily.db",
+     "size": 192512, "integrity_ok": true, "files_added": 2, "success": true}
+  ]
+}
+```
+
+- `local_only` 为 `true` 表示没有配置备份目标（备份都在本机 `data_dir\backups\`），
+  管理页据此显示「备份未离开本机」。
+- `overdue` 为 `true` 表示最近一次成功备份已超过 `overdue_after_hours`（36）小时，
+  或从未成功过；管理页据此标红。
+- `records` 是最近 20 条备份记录（新→旧），失败记录带 `error` 字段与
+  `success: false`（含目标连不上、完整性校验未通过等）。
+- 手动备份走命令行 `taskboard backup`（与定时备份、更新前备份共用同一段代码），
+  不提供 HTTP 触发；更新流程的「更新前备份」由 #45 的更新接口触发。

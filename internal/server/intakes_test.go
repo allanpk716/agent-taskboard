@@ -15,21 +15,12 @@ type intakeView struct {
 	URL      string `json:"url"`
 	Kind     string `json:"kind"`
 	Template struct {
-		Key          string   `json:"key"`
-		Name         string   `json:"name"`
-		Version      int64    `json:"version"`
-		Kind         string   `json:"kind"`
-		PresetLabels []string `json:"preset_labels"`
-		Fields       []struct {
-			Key       string   `json:"key"`
-			Title     string   `json:"title"`
-			Guide     string   `json:"guide"`
-			Example   string   `json:"example"`
-			Required  bool     `json:"required"`
-			Type      string   `json:"type"`
-			Options   []string `json:"options"`
-			Dimension string   `json:"dimension"`
-		} `json:"fields"`
+		Key          string              `json:"key"`
+		Name         string              `json:"name"`
+		Version      int64               `json:"version"`
+		Kind         string              `json:"kind"`
+		PresetLabels []string            `json:"preset_labels"`
+		Fields       []templateFieldBody `json:"fields"`
 	} `json:"template"`
 }
 
@@ -234,16 +225,7 @@ func Test成员创建反馈入口匿名读到模板与维度候选值(t *testing
 	if !containsString(view.Template.PresetLabels, "待初筛") {
 		t.Errorf("预设标签里缺 待初筛：%v", view.Template.PresetLabels)
 	}
-	var machine *struct {
-		Key       string   `json:"key"`
-		Title     string   `json:"title"`
-		Guide     string   `json:"guide"`
-		Example   string   `json:"example"`
-		Required  bool     `json:"required"`
-		Type      string   `json:"type"`
-		Options   []string `json:"options"`
-		Dimension string   `json:"dimension"`
-	}
+	var machine *templateFieldBody
 	for i := range view.Template.Fields {
 		if view.Template.Fields[i].Key == "哪台仪器？" {
 			machine = &view.Template.Fields[i]
