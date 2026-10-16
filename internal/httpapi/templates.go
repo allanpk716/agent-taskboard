@@ -118,6 +118,29 @@ func (a *API) listTemplates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// templateFieldsView 把模板字段定义转成对外结构；维度字段的 options 从标签字典
+// 现取（字典会变，不能缓存在模板里），末尾带「不确定」。反馈入口的匿名读取
+// （#35）复用同一结构。
+func (a *API) templateFieldsView(r *http.Request, t templates.Template) []templateFieldView {
+	fields := []templateFieldView{}
+	for _, f := range t.Fields {
+		fv := templateFieldView{
+			Key: f.Key, Title: f.Title, Guide: f.Guide, Example: f.Example,
+			Required: f.Required, Type: f.Type, Options: nonNil(f.Options), Dimension: f.Dimension,
+		}
+		if f.Type == template.TypeDimension {
+			// 维度字段带上字典中的候选值和「不确定」选项（spec「读取」）。
+			values, err := a.tickets.Labels().DimensionValues(r.Context(), f.Dimension)
+			if err != nil {
+				panic(err)
+			}
+			fv.Options = append(append([]string{}, values...), template.UnsureOption)
+		}
+		fields = append(fields, fv)
+	}
+	return fields
+}
+
 func (a *API) readTemplate(w http.ResponseWriter, r *http.Request, key string) {
 	if _, ok := a.memberFromRequest(w, r); !ok {
 		return
@@ -146,21 +169,7 @@ func (a *API) readTemplate(w http.ResponseWriter, r *http.Request, key string) {
 		av := newAuthorView(authorOfUpdater(u))
 		view.UpdatedBy = &av
 	}
-	for _, f := range t.Fields {
-		fv := templateFieldView{
-			Key: f.Key, Title: f.Title, Guide: f.Guide, Example: f.Example,
-			Required: f.Required, Type: f.Type, Options: nonNil(f.Options), Dimension: f.Dimension,
-		}
-		if f.Type == template.TypeDimension {
-			// 维度字段带上字典中的候选值和「不确定」选项（spec「读取」）。
-			values, err := a.tickets.Labels().DimensionValues(r.Context(), f.Dimension)
-			if err != nil {
-				panic(err)
-			}
-			fv.Options = append(append([]string{}, values...), template.UnsureOption)
-		}
-		view.Fields = append(view.Fields, fv)
-	}
+	view.Fields = a.templateFieldsView(r, t)
 	writeJSON(w, http.StatusOK, view)
 }
 
