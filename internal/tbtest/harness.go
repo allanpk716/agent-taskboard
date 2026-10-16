@@ -44,6 +44,7 @@ type options struct {
 	clockStart  time.Time
 	attachments config.Attachments
 	backup      config.Backup
+	update      config.Update
 }
 
 // WithWebDir 指定前端目录（默认用临时目录里的一页 index.html 占位）。
@@ -66,6 +67,10 @@ func WithAttachments(maxFileMB, maxFilesPerPost, maxImagesPerPost, maxTicketMB i
 // WithBackup 指定备份配置（#43；默认无目标，即 data_dir\backups\ + local_only）。
 // 测试里用临时目录充当备份目标，或用“文件下的子路径”模拟连不上的目标。
 func WithBackup(b config.Backup) Option { return func(o *options) { o.backup = b } }
+
+// WithUpdate 指定更新源配置（#45；默认不配置任何源：管理端点会明确报
+// “没有配置更新源”，测试里指向本地假源，不碰真实 GitHub/UpdateHub）。
+func WithUpdate(u config.Update) Option { return func(o *options) { o.update = u } }
 
 // defaultClockStart 是假时钟默认起点：一个工作日的上午。
 var defaultClockStart = time.Date(2026, 10, 16, 9, 0, 0, 0, clock.Beijing)
@@ -101,6 +106,9 @@ func Start(t testing.TB, opts ...Option) *Server {
 	}
 	if o.backup != (config.Backup{}) {
 		cfg.Backup = o.backup
+	}
+	if len(o.update.Sources) > 0 {
+		cfg.Update = o.update
 	}
 	config.ApplyDefaults(&cfg) // 与 config.Load 一致：端口、附件上限等补默认值
 	clk := clock.NewFake(o.clockStart)

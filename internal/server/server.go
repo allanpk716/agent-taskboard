@@ -20,6 +20,8 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/store"
 	"github.com/allanpk716/agent-taskboard/internal/templates"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
+	"github.com/allanpk716/agent-taskboard/internal/updater"
+	"github.com/allanpk716/agent-taskboard/internal/version"
 	"github.com/allanpk716/agent-taskboard/internal/webapp"
 )
 
@@ -64,7 +66,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 		return nil, err
 	}
 	api := httpapi.NewAPI(ident, tickets.NewManager(st.DB, c, labelDict, templateDict, atts),
-		templateDict, idempotency.NewManager(st.DB), atts, backups)
+		templateDict, idempotency.NewManager(st.DB), atts, backups, cfg)
 	web, err := webapp.New(cfg.WebDir)
 	if err != nil {
 		return nil, err
@@ -128,13 +130,36 @@ func (s *Server) runAttachmentJanitor(done <-chan struct{}) {
 }
 
 // ListenAndServe 监听 127.0.0.1:<port> 并服务。平台只监听回环地址，HTTPS 由 Caddy 反代提供。
+// 启动后做一次健康自检（更新流程的最后一步：新版本起进程时先迁移——
+// store.Open 已做——再做健康检查，见 docs/deploy-and-release.md「更新」）。
 func (s *Server) ListenAndServe() error {
 	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(s.cfg.Port)))
 	if err != nil {
 		return fmt.Errorf("监听 127.0.0.1:%d 失败：%w", s.cfg.Port, err)
 	}
 	fmt.Printf("taskboard 已启动：http://127.0.0.1:%d（数据目录 %s）\n", s.cfg.Port, s.cfg.DataDir)
+	go s.selfHealthCheck()
 	return s.Serve(ln)
+}
+
+// selfHealthCheck 启动后对自身做一次健康检查：通过则记录版本（更新成功的
+// 标志），不通过只警告不退出——是否重启交给 NSSM；新版本起不来时用
+// taskboard rollback 回滚。
+func (s *Server) selfHealthCheck() {
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/v1/health", s.cfg.Port)
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		res, err := http.Get(url)
+		if err == nil {
+			res.Body.Close()
+			if res.StatusCode == http.StatusOK {
+				fmt.Printf("健康检查通过（后端 %s，前端 %s）\n", version.Server, updater.WebVersion(s.cfg.WebDir))
+				return
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	fmt.Printf("警告：健康检查未通过（%s）：请查看日志；新版本有问题时执行 taskboard rollback 回滚\n", url)
 }
 
 // Shutdown 优雅停机。

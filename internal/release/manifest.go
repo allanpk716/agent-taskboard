@@ -49,6 +49,16 @@ func NormalizeVersion(v string) (string, error) {
 	return m[1], nil
 }
 
+// FileEntry 返回清单里名为 name 的产物条目；没有时返回 nil。
+func (m *Manifest) FileEntry(name string) *FileEntry {
+	for i := range m.Files {
+		if m.Files[i].Name == name {
+			return &m.Files[i]
+		}
+	}
+	return nil
+}
+
 // BuildManifest 为 dir 下的产物生成清单。names 为 nil 时取目录下全部普通文件
 // （跳过已有的 manifest.json），按名称排序，保证重复构建结果一致。
 func BuildManifest(component, version, minServer, dir string, names []string) (*Manifest, error) {

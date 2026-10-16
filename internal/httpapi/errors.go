@@ -102,6 +102,9 @@ const (
 	CodeTemplateNotReport = "template_not_report" // 入口只能绑定反馈类型的模板
 	CodeMissingFields     = "missing_fields"      // 入口提交缺必填项（严格校验，逐项提示）
 
+	// #45：更新。
+	CodeUpdateSourceUnreachable = "update_source_unreachable" // 所有更新源都连不上（502）
+	CodeUpdateFailed            = "update_failed"             // 更新本身的失败（哈希不符、备份失败等）
 	// #42：成员账号管理（网页上创建与停用，仅管理员）。
 	CodeUsernameRequired     = "username_required"      // 创建成员时登录名为空
 	CodeInvalidUsername      = "invalid_username"       // 登录名里有不适合的字符

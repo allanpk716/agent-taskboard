@@ -61,12 +61,12 @@ func (a *API) handleAdminBackups(w http.ResponseWriter, r *http.Request) {
 // 管理页显示“备份未离开本机”；overdue 为 true 时（超过 36 小时或从未成功）
 // 标红。
 type backupsStatusView struct {
-	LocalOnly     bool                `json:"local_only"`
-	LastSuccessAt *string             `json:"last_success_at"`
-	Overdue       bool                `json:"overdue"`
-	OverdueAfter  int                 `json:"overdue_after_hours"`
-	LastFailure   *backupRecordView   `json:"last_failure"`
-	Records       []backupRecordView  `json:"records"`
+	LocalOnly     bool               `json:"local_only"`
+	LastSuccessAt *string            `json:"last_success_at"`
+	Overdue       bool               `json:"overdue"`
+	OverdueAfter  int                `json:"overdue_after_hours"`
+	LastFailure   *backupRecordView  `json:"last_failure"`
+	Records       []backupRecordView `json:"records"`
 }
 
 // backupRecordView 是一条备份记录的对外结构。

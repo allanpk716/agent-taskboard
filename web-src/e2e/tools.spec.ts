@@ -277,6 +277,7 @@ test('管理页：创建成员账号并停用', async ({ page, request }) => {
   // 管理员自己的行没有停用按钮
   await expect(page.locator('tr[data-member="admin"]').getByRole('button', { name: '停用' })).toHaveCount(0)
 
-  // 备份状态 / 更新是 #45 的内容：本张留出明确占位
-  await expect(page.locator('[data-admin-slot="#45"]')).toContainText('#45')
+  // 系统状态（#45）已挂在管理页：备份状态卡 + 版本更新卡（细节见 admin.spec.ts）
+  await expect(page.getByTestId('backup-card')).toBeVisible()
+  await expect(page.getByTestId('update-card')).toBeVisible()
 })

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
+	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
@@ -26,10 +27,11 @@ type API struct {
 	idem      *idempotency.Manager
 	atts      *attachments.Manager
 	backups   *ops.Backups
+	cfg       config.Config
 }
 
-func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager, backups *ops.Backups) *API {
-	return &API{ident: ident, tickets: tk, templates: tpl, idem: idem, atts: atts, backups: backups}
+func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager, backups *ops.Backups, cfg config.Config) *API {
+	return &API{ident: ident, tickets: tk, templates: tpl, idem: idem, atts: atts, backups: backups, cfg: cfg}
 }
 
 // Handler 返回 /api/v1 前缀的 http.Handler（带 panic 恢复，统一错误格式）。
@@ -51,6 +53,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/intakes", a.handleIntakesRoot)
 	mux.HandleFunc("/api/v1/intakes/", a.handleIntakeRef)
 	mux.HandleFunc("/api/v1/admin/backups", a.handleAdminBackups)
+	mux.HandleFunc("/api/v1/admin/update", a.handleAdminUpdate)
+	mux.HandleFunc("/api/v1/health", a.handleHealth)
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "接口都在 /api/v1 之下，检查路径拼写")
 	})

@@ -723,3 +723,54 @@ spec 用户故事 84），没有 `inbox`：
   `success: false`（含目标连不上、完整性校验未通过等）。
 - 手动备份走命令行 `taskboard backup`（与定时备份、更新前备份共用同一段代码），
   不提供 HTTP 触发；更新流程的「更新前备份」由 #45 的更新接口触发。
+
+## 更新（#45）
+
+只由管理员手动触发；服务只提示有新版本，绝不自动安装。三个入口（管理页按钮、
+`taskboard update`、下面的管理 API）共用 `internal/updater` 的同一套逻辑；流程
+细节（源回退、`min_server`、`.prev`、前端原子切换、回滚）见
+`docs/deploy-and-release.md`「更新」。
+
+| 方法与路径 | 说明 |
+|---|---|
+| `GET /api/v1/admin/update` | 检查更新（仅管理员；访客/普通成员 403 `admin_required`，匿名 401）。 |
+| `POST /api/v1/admin/update` | 执行更新（仅管理员）。 |
+| `GET /api/v1/health` | 健康检查（公开，不需要登录）：`{"status":"ok","server_version":"…","web_version":"…"}`。更新流程里新版本启动时对它自检；也可作 Caddy/NSSM 的探活地址。 |
+
+`GET` 响应（每次现查更新源，按 `[update].sources` 顺序回退并记录实际用的源）：
+
+```json
+{
+  "source_used": "github",
+  "server": {"current": "1.0.0", "latest": "1.2.3", "update_available": true},
+  "web": {"current": "2.0.0", "latest": "2.1.0", "update_available": false, "min_server": "1.0.0"},
+  "web_needs_newer_server": false
+}
+```
+
+- 源全不可用或没有配置 `[update].sources` 时返回 `502 update_source_unreachable`
+  （message 带每个源的失败原因），不会去连没配置的地址。
+- 前端版本来自 `web/version.json`；手动部署的首个前端没有它，`current` 为空串（未知），
+  任何已发布版本都比它新。
+- `web_needs_newer_server` 为 `true` 表示前端有新版但当前后端不够新：执行更新时会
+  **先升级后端**。
+
+`POST` 响应：
+
+```json
+{
+  "source_used": "github",
+  "steps": ["后端 1.0.0 → 1.2.3", "前端 2.0.0 → 2.1.0"],
+  "message": "后端已更新：服务即将退出，由 NSSM 拉起新版本（新版本启动时会自动迁移并做健康检查）",
+  "server_updated": true,
+  "web_updated": true,
+  "restart_needed": true,
+  "preupdate_backup": "taskboard-20261016-220105-preupdate.db"
+}
+```
+
+- 已经是最新时 `steps` 为空、`message` 为「已是最新，无需更新」。
+- 更新本身的失败（产物哈希不符、更新前备份失败等）返回 `500 update_failed`，
+  message 说明原因；哈希不符或备份失败时**不会**替换任何文件。
+- 后端更新成功后服务写完响应即退出，由 NSSM 拉起新版本；命令行等价的入口是
+  `taskboard update`（提示重启）、`taskboard rollback`（回滚）。

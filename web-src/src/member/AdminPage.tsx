@@ -22,6 +22,7 @@ import {
 } from './memberApi'
 import { Confirm, Modal, copyText, toast } from './ui'
 import { chipClass } from './TicketsPage'
+import { SystemPanel } from './admin/SystemPanel'
 
 type AdminTab = 'members' | 'governance'
 
@@ -65,15 +66,10 @@ export function AdminPage({ me }: { me: Me }) {
         </div>
       </div>
       {tab === 'members' ? <MembersTab me={me} /> : <GovernanceTab />}
-      {/* #45 预留：备份状态（最近一次成功备份、超 36 小时标红、「备份未离开本机」）
-          与更新（版本、更新按钮）。数据和按钮由 #45 的 GET /api/v1/admin/backups、
-          更新接口提供。 */}
-      <div className="mcard" data-admin-slot="#45">
-        <div className="sec-t" style={{ marginTop: 0 }}>
-          备份状态 · 更新
-        </div>
-        <div className="hint">备份状态与版本更新在 #45 加入。</div>
-      </div>
+      {/* 系统状态（#45）：备份状态（最近一次成功备份、超 36 小时标红、
+          「备份未离开本机」）与版本更新（管理页按钮与命令行、管理 API 共用
+          同一套逻辑）。 */}
+      <SystemPanel />
     </div>
   )
 }
