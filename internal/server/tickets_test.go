@@ -302,17 +302,17 @@ type authorBody struct {
 
 // ticketResponseBody 是 GET /api/v1/tickets/{编号或序号} 的响应结构。
 type ticketResponseBody struct {
-	Number      string `json:"number"`
-	Seq         int64  `json:"seq"`
-	URL         string `json:"url"`
-	Kind        string `json:"kind"`
-	Title       string `json:"title"`
-	Status      string `json:"status"`
-	CloseReason *string `json:"close_reason"`
-	Template  *string     `json:"template"`
-	Creator   authorBody  `json:"creator"`
-	Assignee  *authorBody `json:"assignee"`
-	WaitingOn struct {
+	Number      string      `json:"number"`
+	Seq         int64       `json:"seq"`
+	URL         string      `json:"url"`
+	Kind        string      `json:"kind"`
+	Title       string      `json:"title"`
+	Status      string      `json:"status"`
+	CloseReason *string     `json:"close_reason"`
+	Template    *string     `json:"template"`
+	Creator     authorBody  `json:"creator"`
+	Assignee    *authorBody `json:"assignee"`
+	WaitingOn   struct {
 		Party  string  `json:"party"`
 		Member *string `json:"member"`
 		Text   string  `json:"text"`

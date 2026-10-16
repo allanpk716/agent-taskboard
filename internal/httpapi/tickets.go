@@ -40,7 +40,8 @@ func (a *API) handleTicketsRoot(w http.ResponseWriter, r *http.Request) {
 //	GET    …/timeline[?after=N]            增量读取（#30）
 //	POST   …/replies                       回复（#30）
 //	POST   …/close  …/reopen               关闭与重开（#30）
-//	（labels 在 #31、attachments 在 #33、guest-links 在 #32、assign 在 #36）
+//	POST   …/labels                        打标签 / 摘标签（#31）
+//	（attachments 在 #33、guest-links 在 #32、assign 在 #36）
 //
 // 工单引用接受 YYYYMMDD-NNN 工单编号或全局序号（可带 # 前缀）。
 func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
@@ -81,6 +82,12 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.reopenTicket(w, r, ref)
+	case "labels":
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "打标签用 POST")
+			return
+		}
+		a.setTicketLabels(w, r, ref)
 	default:
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
 			"读工单用 /api/v1/tickets/{编号或序号}；回复、关闭、时间线等子资源见 docs/api.md")
@@ -174,7 +181,11 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, err error
 		e := err.(*labels.UnknownValueError)
 		extra := map[string]any{"suggestions": e.Suggestions}
 		WriteErrorExtra(w, http.StatusUnprocessableEntity, CodeUnknownLabelValue,
-			e.Error(), "改用字典中已有的值；完整字典见 GET /api/v1/labels（#31 提供）", extra)
+			e.Error(), "改用字典中已有的值，或带 allow_new: true 新建；完整字典见 GET /api/v1/labels", extra)
+	case isLabelDeactivated(err):
+		e := err.(*labels.LabelDeactivatedError)
+		WriteError(w, http.StatusUnprocessableEntity, CodeLabelDeactivated, e.Error(),
+			"这个值已停用，不能再新打；历史工单上仍保留")
 	case errors.Is(err, tickets.ErrNotFound):
 		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
 			"用工单编号（YYYYMMDD-NNN）或全局序号引用；编号按北京时间分配")
@@ -207,6 +218,11 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, err error
 
 func isUnknownLabelValue(err error) bool {
 	var e *labels.UnknownValueError
+	return errors.As(err, &e)
+}
+
+func isLabelDeactivated(err error) bool {
+	var e *labels.LabelDeactivatedError
 	return errors.As(err, &e)
 }
 
@@ -277,6 +293,8 @@ type eventView struct {
 	At     time.Time  `json:"at"`
 	Actor  authorView `json:"actor"`
 	Type   string     `json:"type"`
+	Label  string     `json:"label,omitempty"` // label_added / label_removed 事件带（#31）
+
 	// 附加字段按事件类型出现（只追加）。
 	ReplyNo     int64  `json:"reply_no,omitempty"`
 	BodyMD      string `json:"body_md,omitempty"`
@@ -290,7 +308,7 @@ type eventView struct {
 func newEventView(e tickets.Event) eventView {
 	return eventView{
 		Seq: e.Seq, Change: e.Change, At: e.At, Actor: newAuthorView(e.Actor), Type: e.Type,
-		ReplyNo: e.ReplyNo, BodyMD: e.BodyMD, Deliver: e.Deliver,
+		Label: e.Label, ReplyNo: e.ReplyNo, BodyMD: e.BodyMD, Deliver: e.Deliver,
 		Revision: e.Revision, Reason: e.Reason, DuplicateOf: e.DuplicateOf,
 	}
 }
@@ -379,7 +397,7 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer) markdownview
 	for _, e := range full.Timeline {
 		in.Timeline = append(in.Timeline, markdownview.Event{
 			Seq: e.Seq, At: e.At, AuthorName: e.Actor.DisplayName(), Type: e.Type,
-			BodyMD: e.BodyMD, Deliver: e.Deliver, Revision: e.Revision,
+			Label: e.Label, BodyMD: e.BodyMD, Deliver: e.Deliver, Revision: e.Revision,
 			Reason: e.Reason, DuplicateOf: e.DuplicateOf,
 		})
 	}

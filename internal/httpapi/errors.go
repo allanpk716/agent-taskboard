@@ -37,6 +37,23 @@ const (
 	CodeNotClosed            = "not_closed"             // 工单没关闭，谈不上重开
 	CodeDeliverAssigneeOnly  = "deliver_assignee_only"  // 交付标记只限指派人（#36）
 	CodeInvalidCursor        = "invalid_cursor"         // after 等游标参数不是整数
+
+	// #31：标签、字典与别名。
+	CodeMembersOnly        = "members_only"         // 仅成员可用（访客 403）
+	CodeAdminRequired      = "admin_required"       // 标签治理仅管理员
+	CodeUnknownDimension   = "unknown_dimension"    // 维度不存在（新维度只能由管理员加）
+	CodeWildcardNotAllowed = "wildcard_not_allowed" // 维度:* 不能打到工单上
+	CodeLabelDeactivated   = "label_deactivated"    // 标签值已停用，不能再新打
+	CodeAliasTaken         = "alias_taken"          // 写法已被同维度另一标准值占用
+	CodeAliasExists        = "alias_exists"         // 别名已挂在这个标准值上
+	CodeAliasRequired      = "alias_required"       // 别名为空
+	CodeAliasNotFound      = "alias_not_found"      // 改指向时别名不存在
+	CodeDimensionTaken     = "dimension_taken"      // 维度已存在
+	CodeValueTaken         = "value_taken"          // 改名/合并目标已存在
+	CodeSameLabel          = "same_label"           // 两个标签是同一个
+	CodeDimensionMismatch  = "dimension_mismatch"   // 改名/合并两端维度不一致
+	CodeQRequired          = "q_required"           // resolve 缺少 q
+	CodeLabelRequired      = "label_required"       // 请求里的标签为空
 )
 
 // ErrorBody 是统一错误格式 {error:{code, message, hint?}} 的内层；

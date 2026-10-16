@@ -132,6 +132,15 @@ func (s *Server) CreateAdmin(username, password string) {
 	}
 }
 
+// CreateMember 造一位普通成员（标签治理等需要非管理员账号的测试用；
+// 成员账号管理界面在 #42）。
+func (s *Server) CreateMember(username, password string) {
+	s.TB.Helper()
+	if _, err := s.srv.Ident.CreateMember(context.Background(), username, username, password); err != nil {
+		s.TB.Fatalf("创建成员 %s 失败：%v", username, err)
+	}
+}
+
 // NewClient 返回不带任何凭证的 HTTP 客户端。
 func (s *Server) NewClient() *http.Client { return &http.Client{} }
 

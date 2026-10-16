@@ -15,6 +15,8 @@ type Event struct {
 	At         time.Time
 	AuthorName string // 已按 ADR 0003 拼好的署名
 	Type       string
+	Label      string // label_added / label_removed 的标签（#31）
+
 	// 附加字段，按事件类型出现。
 	BodyMD      string // reply 的正文
 	Deliver     bool   // reply 带「交付」标记（#36 启用）
@@ -133,6 +135,10 @@ func eventText(e Event) string {
 	switch e.Type {
 	case "created":
 		return "创建工单"
+	case "label_added":
+		return "打上标签 " + e.Label
+	case "label_removed":
+		return "摘掉标签 " + e.Label
 	case "brief_revised":
 		return "修订说明（第 " + strconv.FormatInt(e.Revision, 10) + " 版）"
 	case "closed":

@@ -68,9 +68,10 @@ type Event struct {
 	Change int64 // 全局变更序号（与事件写入同事务推进）
 	At     time.Time
 	Actor  Author
-	Type   string // created | reply | brief_revised | closed | reopened | …（后续工单扩展）
+	Type   string // created | reply | brief_revised | closed | reopened | label_added | …
+	Label  string // label_added / label_removed 的标签（#31）
 
-	// 附加字段，按事件类型出现（写入端点在 #30；assigned/label 等随后续工单扩展）。
+	// 附加字段，按事件类型出现（写入端点在 #30；assigned 等随后续工单扩展）。
 	BodyMD      string // reply 的正文
 	ReplyNo     int64  // reply 在单内的序号
 	Deliver     bool   // reply 带「交付」标记（#36 启用）
@@ -313,7 +314,7 @@ func (m *Manager) ticketLabels(ctx context.Context, seq int64) ([]string, error)
 func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT e.seq, e.change_seq, e.at, e.type, e.actor_member_id, mm.name, e.actor_agent_id, aa.name,
-		       e.body_md, e.reply_no, e.deliver, e.revision, e.reason, e.duplicate_of
+		       e.body_md, e.reply_no, e.deliver, e.revision, e.reason, e.duplicate_of, e.label
 		FROM timeline_events e
 		LEFT JOIN members mm ON mm.id = e.actor_member_id
 		LEFT JOIN agent_tokens aa ON aa.id = e.actor_agent_id
@@ -337,10 +338,11 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 			revision        sql.NullInt64
 			reason          sql.NullString
 			duplicateOf     sql.NullString
+			label           sql.NullString
 		)
 		if err := rows.Scan(&e.Seq, &e.Change, &at, &e.Type,
 			&actorMemberID, &actorMemberName, &actorAgentID, &actorAgentName,
-			&bodyMD, &replyNo, &deliver, &revision, &reason, &duplicateOf); err != nil {
+			&bodyMD, &replyNo, &deliver, &revision, &reason, &duplicateOf, &label); err != nil {
 			return nil, err
 		}
 		e.Actor = Author{
@@ -355,6 +357,7 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 		e.Revision = revision.Int64
 		e.Reason = reason.String
 		e.DuplicateOf = duplicateOf.String
+		e.Label = label.String
 		if e.At, err = time.ParseInLocation(time.RFC3339Nano, at, clock.Beijing); err != nil {
 			return nil, fmt.Errorf("解析事件时间 %q 失败：%w", at, err)
 		}
@@ -373,7 +376,7 @@ type WaitingOn struct {
 }
 
 // WaitingOnOf 推导当前轮到谁，规则照抄 prototype/member-handoff 的 turnOf
-//（spec「等待方与收件箱」，也是后续 #36 收件箱的依据）：
+// （spec「等待方与收件箱」，也是后续 #36 收件箱的依据）：
 //
 //	已关闭                    → 无等待方
 //	尚无回复                  → 指派人（未指派 → 本部门；#36 起才有指派）

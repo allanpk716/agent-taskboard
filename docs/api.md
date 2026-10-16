@@ -85,8 +85,8 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
   - `kind` 可省（默认 `task`），只能是 `task`（任务）或 `report`（反馈）；用模板创建时由模板决定（#34）。
   - `title` 必填；`brief_md` 是不用模板时的一整块说明（可空）。
   - `labels` 至少要有一个 `维度:值` 形式的维度标签；且每个标签（含不带维度的）
-    必须是字典中已有的值（种子维度：产品线、系统、机型、部门、算法、立项、子项目；
-    初始值见 `internal/labels/seeds.go`）。完整的标签操作（allow_new、别名）在 #31。
+    必须是字典中在用的标准值（种子维度：产品线、系统、机型、部门、算法、立项、子项目；
+    初始值见 `internal/labels/seeds.go`）。别名与 allow_new 见下面的「标签、字典与别名（#31）」。
   - `assignee`（建单时指派与 `share_text`）预留给 #36，本版忽略。
 - 建单响应 `201`：`{number, seq, url}`（`url` 即 `/t/<编号>`）。
 - 建单错误码：`422 title_required`、`422 invalid_kind`、
@@ -105,6 +105,10 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
   - 访客视角的可见性过滤（无 `labels`、跳过标签事件）在 #32 加入。
 - `?format=markdown` 返回 `text/markdown`：头部信息、说明、附件（占位）、时间线和
   「下一步」；署名按 ADR 0003：成员 `陈某`，成员 Agent `陈某 的 Agent · 名字`。
+  时间线里回复单独成节（`### [seq] 时间 · 作者 回复` + 正文），
+  说明修订/关闭/重开等事件写成 `- [seq] 时间 · 作者 事件文案`（如
+  `修订说明（第 2 版）`、`关闭工单（重复：与 20261016-001 重复）`）；
+  标签事件写成「打上标签 X」「摘掉标签 Y」。
   时间线里回复单独成节（`### [seq] 时间 · 作者 回复` + 正文），
   说明修订/关闭/重开等事件写成 `- [seq] 时间 · 作者 事件文案`（如
   `修订说明（第 2 版）`、`关闭工单（重复：与 20261016-001 重复）`）。
@@ -172,3 +176,71 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 - 首次成功响应（2xx）存快照（含状态码与响应体）；重放返回首次结果，逐字节
   相同，不产生新内容。失败的请求不存快照，修正后重试照常执行。
 - 同名请求头留空视为没带；幂等表在数据库里（迁移 `0004`）。
+
+
+## 标签、字典与别名（#31）
+
+标签可以带维度（`维度:值`，如 `机型:UD-2300`）或不带维度（如 `待初筛`）；同一维度可以打多个值。
+成员和成员 Agent 都能打标签；访客 403 `members_only`（访客链接在 #32 加入）。
+
+| 方法与路径 | 说明 |
+|---|---|
+| `POST /api/v1/tickets/{id}/labels` | 打标签 / 摘标签：`{"add":[…],"remove":[…],"allow_new":false}`。 |
+| `GET /api/v1/labels[?dimension=]` | 字典列表：每个值带 `aliases`，另列出不带维度的标签。 |
+| `GET /api/v1/labels/resolve?q=&dimension=` | 俗称换标准值，注明匹配方式 `exact` / `alias` / `fuzzy`。 |
+| `POST /api/v1/labels/aliases` | 添加别名（任何成员）；冲突 409。 |
+| `PATCH /api/v1/labels/aliases` | 改别名的指向（**管理员**）。 |
+| `POST /api/v1/labels/dimensions` | 添加新维度（**管理员**；新维度只能由管理员加）。 |
+| `POST /api/v1/labels/rename` | 改名（**管理员**），改写历史工单上的标签。 |
+| `POST /api/v1/labels/merge` | 合并（**管理员**），改写历史工单、别名改指向、from 停用。 |
+| `POST /api/v1/labels/deactivate` | 停用（**管理员**，幂等），历史工单保留。 |
+
+### 打标签 / 摘标签（POST /api/v1/tickets/{id}/labels）
+
+- `add` / `remove` 里的写法先解析再落库：
+  1. **exact**：与字典值规范化后相同（忽略大小写、空格、连字符、下划线）；
+  2. **alias**：被同维度恰一个在用值认领（裸写法则要求全字典恰一个），多义不换；
+  3. 都不是且未带 `allow_new` → 422 `unknown_label_value` + `suggestions`（同范围里规范化后互相包含的近似值，最多 5 个）。
+- `allow_new: true` 时新建未知值（响应的 `created_dictionary_values` 回显）；维度必须已存在，
+  否则 422 `unknown_dimension`（新维度只能由管理员加）。不带维度的标签同样可以新建。
+- 响应 200：`{labels, changed: {added, removed, alias_resolved}, created_dictionary_values}`，
+  `alias_resolved` 注明「由别名 X 换成标准值」。
+- 每次（净）增删记一条 `label_added` / `label_removed` 时间线事件（带 `label` 字段），
+  并推进全局变更序号；打已在单上的标签、摘不在单上的标签都是幂等成功，不记事件。
+- `remove` 解析不到的写法 422 `unknown_label_value`；解析得到但不在单上则幂等成功
+  （决议：摘不存在的标签是幂等成功，不是 422）。停用值可以摘（工单上可能还带着）。
+- `维度:*` 是查询用的通配，不能上工单：422 `wildcard_not_allowed`。
+- 已停用的值不能再新打：422 `label_deactivated`（建单同样）。
+- 注意：建单（POST /api/v1/tickets）的 `labels` 仍是严格校验（必须是字典里的标准值，
+  不做别名替换），别名只在打标签 / resolve / 筛选（#37）里生效。
+
+### 字典列表与 resolve
+
+- `GET /api/v1/labels`：`{dimensions: [{name, values: [{value, label, aliases}]}], plain: [不带维度的标签]}`；
+  指定 `dimension` 时只列该维度并省略 `plain`；未知维度 422 `unknown_dimension`。停用的值不列出。
+- `GET /api/v1/labels/resolve`：`{q, matches: [{label, via, alias?}]}`，按 exact → alias → fuzzy
+  排序（同级按字典顺序），`alias` 字段是命中的那个别名；fuzzy 要求规范化后 ≥2 字符且互相包含。
+  `q` 可以是裸写法、别名或 `维度:值`；`dimension` 参数限定范围。无命中时 `hint` 指向
+  allow_new / 加别名。缺 `q` → 422 `q_required`；未知维度 → 422 `unknown_dimension`。
+
+### 别名（POST /api/v1/labels/aliases）
+
+- 请求体 `{"label": "维度:值", "alias": "俗称"}`（任何成员，含成员 Agent）；
+  成功 201 `{label, aliases}`。别名只能挂在 `维度:值` 标准值上，不能挂在不带维度的标签上。
+- 冲突按规范化比较（忽略大小写、空格、连字符）：
+  - 已被同维度另一个标准值（或它的别名）占用 → 409 `alias_taken`；
+  - 已挂在这个值上（或与标准值本身写法相同）→ 409 `alias_exists`。
+- 同一个别名可以被不同维度的值分别认领（跨维度不冲突）；但裸写法只有唯一认领时才会自动换。
+
+### 治理（仅管理员；非管理员 403 `admin_required`）
+
+- `POST /api/v1/labels/dimensions {"name"}`：新维度；重复 409 `dimension_taken`，空名 422 `name_required`。
+- `POST /api/v1/labels/rename {"label", "to"}`：两端维度必须一致（或都是不带维度），目标已存在
+  409 `value_taken`（提示改用合并）。字典、别名（FK 级联）与历史工单上的标签一并改。
+- `POST /api/v1/labels/merge {"from", "into"}`：历史工单上的 `from` 改写成 `into`（同单两值去重），
+  `from` 的别名改指向 `into`，`from` 停用（字典不物理删除）。响应 `{from, into, tickets_updated}`。
+  时间线事件只追加，保留当时的原文（决议 7）。
+- `POST /api/v1/labels/deactivate {"label"}`：幂等；历史工单保留该值，建单与打标签被拒
+  （422 `label_deactivated`），字典与 resolve 不再列出。
+- `PATCH /api/v1/labels/aliases {"alias", "label"}`：把该维度里已有的别名改指向另一个标准值；
+  别名不存在 404 `alias_not_found`。
