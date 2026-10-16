@@ -367,7 +367,7 @@ func parseTime(s string) (time.Time, error) {
 }
 
 func mbText(bytes int64) string {
-	return strconv.FormatFloat(float64(bytes)/(1<<20), 'f', -1, 64) + " MB"
+	return strconv.FormatFloat(float64(bytes)/(1<<20), 'f', 1, 64) + " MB"
 }
 
 // ---- 文件类型判定与正文引用的提取（纯逻辑） ----

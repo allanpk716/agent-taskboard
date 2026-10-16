@@ -71,16 +71,39 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 // Handler 返回完整路由（测试和反向代理调试用）。
 func (s *Server) Handler() http.Handler { return s.handler }
 
-// Serve 在 ln 上对外服务，直到 Shutdown 或关闭连接。
+// Serve 在 ln 上对外服务，直到 Shutdown 或关闭连接。服务期间周期运行附件
+// 清除任务（未引用满 24 小时的待用附件；时钟可注入，见 internal/attachments）。
 func (s *Server) Serve(ln net.Listener) error {
 	s.listener = ln
 	s.httpSrv = &http.Server{Handler: s.handler}
+	janitorDone := make(chan struct{})
+	go s.runAttachmentJanitor(janitorDone)
+	defer func() { close(janitorDone) }()
 	defer s.web.Close()
 	err := s.httpSrv.Serve(ln)
 	if err == http.ErrServerClosed {
 		return nil
 	}
 	return err
+}
+
+// attachmentJanitorInterval 是附件清除任务的运行间隔（真实时钟；24 小时的
+// 判定用注入时钟，测试里直接调 CleanupUnreferenced，不睡真实时间）。
+const attachmentJanitorInterval = 10 * time.Minute
+
+// runAttachmentJanitor 周期清除未引用的待用附件。清除失败只影响本轮
+// （下一轮再试），不影响服务。
+func (s *Server) runAttachmentJanitor(done <-chan struct{}) {
+	ticker := time.NewTicker(attachmentJanitorInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			_, _ = s.Atts.CleanupUnreferenced(context.Background())
+		}
+	}
 }
 
 // ListenAndServe 监听 127.0.0.1:<port> 并服务。平台只监听回环地址，HTTPS 由 Caddy 反代提供。

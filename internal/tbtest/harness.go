@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
@@ -139,6 +140,10 @@ func (s *Server) Identity() *identity.Manager { return s.srv.Ident }
 // Store 暴露数据库（测试造数据的快路径，如给「第 1000 张」编号测试预置占位工单；
 // 断言外部行为仍应走 HTTP 接口）。
 func (s *Server) Store() *store.Store { return s.srv.Store }
+
+// Attachments 暴露附件模块（#33）：测试里直接触发 24 小时清除任务
+// （服务里由定时器周期调用；测试不睡真实时间，用注入时钟推进后手动跑）。
+func (s *Server) Attachments() *attachments.Manager { return s.srv.Atts }
 
 // CreateAdmin 造一位管理员（等价于 taskboard create-admin 子命令做的事）。
 func (s *Server) CreateAdmin(username, password string) {
