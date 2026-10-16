@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/labels"
 	"github.com/allanpk716/agent-taskboard/internal/markdownview"
@@ -138,7 +140,7 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 			Creator: viewer,
 		})
 		if err != nil {
-			a.writeTicketError(w, r, err)
+			a.writeTicketError(w, r, "", err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, createTicketResponse{
@@ -161,19 +163,19 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if !ok {
 		return
 	}
+	atts, usage, err := a.attachmentProjection(r.Context(), full, viewer)
+	if err != nil {
+		panic(err)
+	}
 	if r.URL.Query().Get("format") == "markdown" {
-		md := markdownview.Ticket(ticketMarkdownInput(full, viewer))
+		md := markdownview.Ticket(ticketMarkdownInput(full, viewer, atts, usage))
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(md))
 		return
 	}
 	v := newTicketView(full, viewer)
-	if atts, usage, err := a.attachmentProjection(r.Context(), full, viewer); err != nil {
-		panic(err)
-	} else {
-		v.Attachments, v.Usage = atts, usage
-	}
+	v.Attachments, v.Usage = atts, usage
 	writeJSON(w, http.StatusOK, v)
 }
 
@@ -182,7 +184,7 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 func (a *API) loadTicketForViewer(w http.ResponseWriter, r *http.Request, viewer identity.Viewer, ref string) (tickets.Full, bool) {
 	full, err := a.tickets.ByRef(r.Context(), ref)
 	if err != nil {
-		a.writeTicketError(w, r, err)
+		a.writeTicketError(w, r, ref, err)
 		return tickets.Full{}, false
 	}
 	if viewer.Kind == identity.ViewerGuest && viewer.GuestLink.TicketSeq != full.Seq {
@@ -193,8 +195,9 @@ func (a *API) loadTicketForViewer(w http.ResponseWriter, r *http.Request, viewer
 	return full, true
 }
 
-// writeTicketError 把工单模块的错误映射成 HTTP 错误。
-func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, err error) {
+// writeTicketError 把工单模块的错误映射成 HTTP 错误。ref 是请求里的工单引用
+// （错误 hint 里给 NAS 路径示例时用）。
+func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, ref string, err error) {
 	var conflict *tickets.RevisionConflictError
 	switch {
 	case errors.Is(err, tickets.ErrTitleRequired):
@@ -227,7 +230,7 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, err error
 			conflict.Error(), "重新读取工单，合并修改后再提交",
 			map[string]any{"current_revision": conflict.CurrentRevision})
 	case errors.Is(err, tickets.ErrEmptyReply):
-		WriteError(w, http.StatusUnprocessableEntity, CodeEmptyReply, err.Error(), "写正文后重试；附件引用在 #33 提供")
+		WriteError(w, http.StatusUnprocessableEntity, CodeEmptyReply, err.Error(), "写正文，或在 attachment_ids / 正文里引用至少一个附件")
 	case errors.Is(err, tickets.ErrNotBriefOwner):
 		WriteError(w, http.StatusForbidden, CodeNotBriefOwner, err.Error(), "只有创建者（本人或其 Agent）能修订说明；其他人用回复补充内容")
 	case errors.Is(err, tickets.ErrBaseRevisionRequired):
@@ -259,9 +262,25 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, err error
 		WriteError(w, http.StatusForbidden, CodeLinkCannotEditBrief, err.Error(), "用回复补充内容；需要访客能改说明时由成员创建带「可填写说明」权限的链接")
 	case errors.Is(err, tickets.ErrTicketClosed):
 		WriteError(w, http.StatusConflict, CodeTicketClosed, err.Error(), "如需继续，请联系成员重新开启工单（成员回复不会重开工单）")
+	case isAttachmentCountExceeded(err):
+		e := err.(*attachments.CountExceededError)
+		number := ref
+		if full, ferr := a.tickets.ByRef(r.Context(), ref); ferr == nil {
+			number = full.Number
+		}
+		WriteError(w, http.StatusRequestEntityTooLarge, CodeAttachmentCountExceeded,
+			e.Error(), nasHint(number, ""))
+	case errors.Is(err, attachments.ErrNotUsable):
+		WriteError(w, http.StatusUnprocessableEntity, CodeAttachmentNotUsable, err.Error(),
+			"先调上传接口拿到 att: 引用，再在自己发的回复或说明里引用它")
 	default:
 		panic(err)
 	}
+}
+
+func isAttachmentCountExceeded(err error) bool {
+	var e *attachments.CountExceededError
+	return errors.As(err, &e)
 }
 
 func isUnknownLabelValue(err error) bool {
@@ -379,6 +398,8 @@ type eventView struct {
 	Reason      string `json:"reason,omitempty"`
 	DuplicateOf string `json:"duplicate_of,omitempty"`
 	ExpiresAt   string `json:"expires_at,omitempty"` // guest_link_extended 的新到期时刻（#32）
+
+	AttachmentIDs []string `json:"attachment_ids,omitempty"` // reply 引用的附件（#33）
 }
 
 // newEventView 把时间线事件转成对外结构。
@@ -387,6 +408,7 @@ func newEventView(e tickets.Event) eventView {
 		Seq: e.Seq, Change: e.Change, At: e.At, Actor: newAuthorView(e.Actor), Type: e.Type,
 		Label: e.Label, Note: e.Note, ReplyNo: e.ReplyNo, BodyMD: e.BodyMD, Deliver: e.Deliver,
 		Revision: e.Revision, Reason: e.Reason, DuplicateOf: e.DuplicateOf, ExpiresAt: e.LinkExpires,
+		AttachmentIDs: e.AttachmentIDs,
 	}
 }
 
@@ -486,8 +508,9 @@ func newTicketView(full tickets.Full, viewer identity.Viewer) ticketView {
 }
 
 // ticketMarkdownInput 把投影 + 当前凭证组装成 Markdown 视图的输入。
-// 访客（#32）：无标签行、时间线跳过标签事件，署名按访客写法。
-func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer) markdownview.Input {
+// 访客（#32）：无标签行、时间线跳过标签事件，署名按访客写法；附件小节与
+// 用量由 attachmentProjection 生成（#33），访客的下载链接是签名地址。
+func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer, atts []attachmentView, usage attachmentUsage) markdownview.Input {
 	waitingOn := tickets.WaitingOnOf(full)
 	isGuest := viewer.Kind == identity.ViewerGuest
 	viewerName := viewer.Member.Name
@@ -510,6 +533,13 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer) markdownview
 		ViewerRole:      roleOf(viewer, full),
 		YourTurn:        yourTurnOf(viewer, waitingOn),
 		APIPath:         "/api/v1/tickets/" + full.Number,
+		Usage:           strconv.FormatFloat(usage.UsedMB, 'f', -1, 64) + " / " + strconv.Itoa(usage.TicketLimitMB) + " MB",
+	}
+	for _, att := range atts {
+		in.Attachments = append(in.Attachments, markdownview.Attachment{
+			Filename: att.Filename, URL: att.URL,
+			SizeLabel: sizeLabel(att.Size), AttachedTo: att.AttachedTo,
+		})
 	}
 	if !isGuest {
 		labels := full.Labels
@@ -526,6 +556,7 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer) markdownview
 			Seq: e.Seq, At: e.At, AuthorName: e.Actor.DisplayName(), Type: e.Type,
 			Label: e.Label, BodyMD: e.BodyMD, Deliver: e.Deliver, Revision: e.Revision,
 			Reason: e.Reason, DuplicateOf: e.DuplicateOf, Note: e.Note, LinkExpiresAt: e.LinkExpires,
+			AttachmentIDs: e.AttachmentIDs,
 		})
 	}
 	return in
@@ -574,6 +605,18 @@ func capsOf(viewer identity.Viewer, full tickets.Full) canView {
 		Deliver:          false, // 需要本人是指派人；指派在 #36 加入
 		Assign:           true,
 		EditBrief:        viewer.Member.ID == full.Creator.MemberID,
+	}
+}
+
+// sizeLabel 把字节数写成人类可读的大小（Markdown 附件小节用）。
+func sizeLabel(n int64) string {
+	switch {
+	case n >= 1<<20:
+		return strconv.FormatFloat(float64(n)/(1<<20), 'f', 1, 64) + " MB"
+	case n >= 1<<10:
+		return strconv.FormatFloat(float64(n)/(1<<10), 'f', 1, 64) + " KB"
+	default:
+		return strconv.FormatInt(n, 10) + " B"
 	}
 }
 

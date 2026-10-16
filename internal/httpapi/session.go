@@ -97,9 +97,10 @@ func (a *API) current(w http.ResponseWriter, r *http.Request) {
 	}
 	view := newSessionView(viewer)
 	if viewer.Kind == identity.ViewerGuest {
-		full, err := a.tickets.ByRef(r.Context(), strconv.FormatInt(viewer.GuestLink.TicketSeq, 10))
+		seq := strconv.FormatInt(viewer.GuestLink.TicketSeq, 10)
+		full, err := a.tickets.ByRef(r.Context(), seq)
 		if err != nil {
-			a.writeTicketError(w, r, err)
+			a.writeTicketError(w, r, seq, err)
 			return
 		}
 		view.Ticket = &sessionTicketView{

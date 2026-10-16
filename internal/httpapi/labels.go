@@ -251,7 +251,7 @@ func (a *API) setTicketLabels(w http.ResponseWriter, r *http.Request, ref string
 	})
 	if err != nil {
 		if errors.Is(err, tickets.ErrNotFound) {
-			a.writeTicketError(w, r, err)
+			a.writeTicketError(w, r, ref, err)
 			return
 		}
 		a.writeLabelsError(w, err)

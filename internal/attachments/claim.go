@@ -43,6 +43,7 @@ func (m *Manager) ClaimTx(ctx context.Context, tx *sql.Tx, ticketSeq int64,
 		}
 		var (
 			a          AttachmentInfo
+			attachedTo sql.NullString
 			memberID   sql.NullInt64
 			agentID    sql.NullInt64
 			linkID     sql.NullInt64
@@ -52,14 +53,16 @@ func (m *Manager) ClaimTx(ctx context.Context, tx *sql.Tx, ticketSeq int64,
 			SELECT id, ticket_seq, filename, size, state, attached_to,
 			       uploader_member_id, uploader_agent_id, uploader_link_id, uploaded_at
 			FROM attachments WHERE id = ?`, id).
-			Scan(&a.ID, &a.TicketSeq, &a.Filename, &a.Size, &a.State, &a.AttachedTo,
+			Scan(&a.ID, &a.TicketSeq, &a.Filename, &a.Size, &a.State, &attachedTo,
 				&memberID, &agentID, &linkID, &uploadedAt)
 		if err != nil {
 			return notUsable(ref.ID)
 		}
+		a.AttachedTo = attachedTo.String
 		if a.TicketSeq != ticketSeq {
 			return notUsable(ref.ID) // 别的工单上的附件引用不到
 		}
+		a.Uploader = Principal{MemberID: memberID.Int64, AgentID: agentID.Int64, LinkID: linkID.Int64}
 		rows[ref.ID] = a
 	}
 

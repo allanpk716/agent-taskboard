@@ -92,7 +92,7 @@ func (a *API) createGuestLink(w http.ResponseWriter, r *http.Request, ref string
 	}
 	link, err := a.tickets.CreateGuestLink(r.Context(), viewer, ref, spec)
 	if err != nil {
-		a.writeTicketError(w, r, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, guestLinkView{
@@ -107,7 +107,7 @@ func (a *API) listGuestLinks(w http.ResponseWriter, r *http.Request, ref string)
 	}
 	links, err := a.tickets.GuestLinks(r.Context(), ref)
 	if err != nil {
-		a.writeTicketError(w, r, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	out := []guestLinkView{}
@@ -123,7 +123,7 @@ func (a *API) revokeGuestLink(w http.ResponseWriter, r *http.Request, ref string
 		return
 	}
 	if err := a.tickets.RevokeGuestLink(r.Context(), viewer, ref, id); err != nil {
-		a.writeTicketError(w, r, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -149,7 +149,7 @@ func (a *API) extendGuestLink(w http.ResponseWriter, r *http.Request, ref string
 	}
 	link, err := a.tickets.ExtendGuestLink(r.Context(), viewer, ref, id, spec)
 	if err != nil {
-		a.writeTicketError(w, r, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, newGuestLinkView(link))
