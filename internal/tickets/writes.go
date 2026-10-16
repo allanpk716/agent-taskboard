@@ -73,6 +73,9 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 	if err != nil {
 		return ReplyResult{}, err
 	}
+	if err := guestScope(viewer, full.Seq); err != nil {
+		return ReplyResult{}, err
+	}
 	if viewer.Kind == identity.ViewerGuest {
 		if full.Status != "open" {
 			return ReplyResult{}, ErrTicketClosed
@@ -150,6 +153,9 @@ type ReviseInput struct {
 func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string, in ReviseInput) (Ticket, error) {
 	full, err := m.ByRef(ctx, ref)
 	if err != nil {
+		return Ticket{}, err
+	}
+	if err := guestScope(viewer, full.Seq); err != nil {
 		return Ticket{}, err
 	}
 	author := authorOf(viewer)
@@ -432,4 +438,13 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// guestScope 套上访客链接的作用域：访客只能操作链接指向的那张工单，
+// 访问其他工单一律 ErrNotFound（与「不存在」不可区分，防枚举）。
+func guestScope(viewer identity.Viewer, ticketSeq int64) error {
+	if viewer.Kind == identity.ViewerGuest && viewer.GuestLink.TicketSeq != ticketSeq {
+		return ErrNotFound
+	}
+	return nil
 }

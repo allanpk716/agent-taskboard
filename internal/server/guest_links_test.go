@@ -263,3 +263,186 @@ func Test访客链接过期即时生效(t *testing.T) {
 		t.Errorf("成员读工单 status = %q", view.Status)
 	}
 }
+
+// 访客读工单看不到 labels 字段和标签事件（事件序号会跳号，这是已接受的）；
+// 成员视角仍然齐全。时间线增量接口同样过滤。
+func Test访客读工单看不到标签与标签事件(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	number := mustCreateTicket(t, s, web, "BH-7600CS 质控结果偏高")
+
+	// 造标签事件：created(seq1) → guest_link_created(seq2) → label_added(seq3) →
+	// label_added(seq4)。访客应只看到 1、2（跳过 3、4）。
+	mustCreateGuestLink(t, s, web, number, map[string]any{"note": "检验科-张三"})
+	setLabels := func(add ...string) {
+		t.Helper()
+		res := s.Do(t, web, http.MethodPost, "/api/v1/tickets/"+number+"/labels",
+			map[string]any{"add": add, "allow_new": true}, nil)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("打标签状态码 = %d, 想 200", res.StatusCode)
+		}
+	}
+	setLabels("部门:研发部", "待初筛")
+	key := guestKeyOf(t, mustCreateGuestLink(t, s, web, number, map[string]any{"note": "质量部 Agent"}))
+	guest := s.GuestClient(key)
+
+	// JSON：没有 labels 字段；时间线没有标签事件；viewer 是访客形状。
+	var raw map[string]any
+	s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+number, nil, &raw)
+	if _, has := raw["labels"]; has {
+		t.Error("访客的 JSON 里不应有 labels 字段")
+	}
+	var got ticketResponseBody
+	res := s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+number, nil, &got)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("访客读工单状态码 = %d, 想 200", res.StatusCode)
+	}
+	for _, ev := range got.Timeline {
+		if ev.Type == "label_added" || ev.Type == "label_removed" {
+			t.Errorf("访客时间线里出现了标签事件：%+v", ev)
+		}
+	}
+	wantSeqs := []int64{1, 2, 5} // created、guest_link_created、再一条 guest_link_created；3、4 是标签事件
+	if len(got.Timeline) != len(wantSeqs) {
+		t.Fatalf("访客时间线有 %d 条, 想 %d（跳号）", len(got.Timeline), len(wantSeqs))
+	}
+	for i, want := range wantSeqs {
+		if got.Timeline[i].Seq != want {
+			t.Errorf("访客时间线[%d].seq = %d, 想 %d（跳号是已接受的）", i, got.Timeline[i].Seq, want)
+		}
+	}
+	if got.Viewer.Kind != "guest" || got.Viewer.Role != "guest" {
+		t.Errorf("viewer 不对：%+v", got.Viewer.Kind)
+	}
+	if got.Viewer.Member != nil || got.Viewer.Agent != nil {
+		t.Errorf("访客的 viewer 不应带成员或 Agent")
+	}
+	if got.Viewer.LinkNote == nil || *got.Viewer.LinkNote != "质量部 Agent" {
+		t.Errorf("viewer.link_note 不对：%+v", got.Viewer.LinkNote)
+	}
+	// 访客的能力表：可回复/上传（工单开启），不可打标签、关闭、管理链接。
+	if !got.Viewer.Can.Reply || !got.Viewer.Can.Upload {
+		t.Errorf("开启工单上访客应可回复/上传：%+v", got.Viewer.Can)
+	}
+	if got.Viewer.Can.Label || got.Viewer.Can.Close || got.Viewer.Can.Reopen || got.Viewer.Can.ManageGuestLinks {
+		t.Errorf("访客不应能打标签/关闭/重开/管理链接：%+v", got.Viewer.Can)
+	}
+	if got.Viewer.Can.EditBrief {
+		t.Error("这条链接没有「可填写说明」权限")
+	}
+
+	// 时间线增量接口：同样过滤，cursor 是访客可见的最后一条。
+	var tl timelineBody
+	s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+number+"/timeline?after=1", nil, &tl)
+	if len(tl.Events) != 2 || tl.Events[0].Seq != 2 || tl.Events[1].Seq != 5 {
+		t.Errorf("访客增量时间线不对：%+v", tl.Events)
+	}
+	if tl.Cursor != 5 {
+		t.Errorf("访客 cursor = %d, 想 5（可见的最后一条，不是全量最后一条）", tl.Cursor)
+	}
+
+	// Markdown 视图：没有标签行、没有标签事件。
+	res = s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+number+"?format=markdown", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("访客 Markdown 状态码 = %d, 想 200", res.StatusCode)
+	}
+	body := readAll(t, res)
+	if strings.Contains(string(body), "标签：") || strings.Contains(string(body), "打上标签") {
+		t.Errorf("访客 Markdown 里不应有标签：%s", body)
+	}
+
+	// 成员视角：labels 与标签事件齐全。
+	var member ticketResponseBody
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number, nil, &member)
+	if len(member.Labels) != 3 {
+		t.Errorf("成员的 labels = %+v, 想三个", member.Labels)
+	}
+	labelEvents := 0
+	for _, ev := range member.Timeline {
+		if ev.Type == "label_added" {
+			labelEvents++
+		}
+	}
+	if labelEvents != 2 {
+		t.Errorf("成员看到 %d 条标签事件, 想 2", labelEvents)
+	}
+}
+
+// 访客访问其他工单一律 404（防枚举，不用 403）：读、时间线、回复都一样。
+func Test访客访问其他工单返回404(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	mine := mustCreateTicket(t, s, web, "整理 Q3 质控规则说明")
+	other := mustCreateTicket(t, s, web, "另一张工单")
+
+	link := mustCreateGuestLink(t, s, web, mine, map[string]any{"note": "检验科-张三"})
+	guest := s.GuestClient(guestKeyOf(t, link))
+
+	for name, req := range map[string]struct{ method, path string }{
+		"读工单":  {http.MethodGet, "/api/v1/tickets/" + other},
+		"按序号读": {http.MethodGet, "/api/v1/tickets/2"},
+		"时间线":  {http.MethodGet, "/api/v1/tickets/" + other + "/timeline"},
+		"回复":   {http.MethodPost, "/api/v1/tickets/" + other + "/replies"},
+		"修订说明": {http.MethodPatch, "/api/v1/tickets/" + other},
+	} {
+		res := s.Do(t, guest, req.method, req.path, map[string]string{"body_md": "x"}, nil)
+		if res.StatusCode != http.StatusNotFound {
+			t.Errorf("[%s] 状态码 = %d, 想 404", name, res.StatusCode)
+			continue
+		}
+		var got errorBody
+		tbtest.DecodeJSON(t, res, &got)
+		if got.Error.Code != "ticket_not_found" {
+			t.Errorf("[%s] 错误码 = %q, 想 ticket_not_found", name, got.Error.Code)
+		}
+	}
+
+	// 指向的工单照常可读。
+	if res := s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+mine, nil, nil); res.StatusCode != http.StatusOK {
+		t.Errorf("指向的工单状态码 = %d, 想 200", res.StatusCode)
+	}
+}
+
+// 访客调用仅成员的接口：统一 403 members_only（决策 4）。这也是 #31 留下的
+// 「访客 → 标签接口」测试。
+func Test访客调用仅成员接口返回membersOnly(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	number := mustCreateTicket(t, s, web, "整理 Q3 质控规则说明")
+	link := mustCreateGuestLink(t, s, web, number, map[string]any{"note": "检验科-张三"})
+	guest := s.GuestClient(guestKeyOf(t, link))
+
+	for name, req := range map[string]struct {
+		method, path string
+		body         any
+	}{
+		"建单":        {http.MethodPost, "/api/v1/tickets", map[string]any{"title": "x", "labels": []string{"机型:UD-2300"}}},
+		"字典列表":      {http.MethodGet, "/api/v1/labels", nil},
+		"resolve":   {http.MethodGet, "/api/v1/labels/resolve?q=7600", nil},
+		"打标签":       {http.MethodPost, "/api/v1/tickets/" + number + "/labels", map[string]any{"add": []string{"待初筛"}}},
+		"加别名":       {http.MethodPost, "/api/v1/labels/aliases", map[string]any{"label": "机型:UD-2300", "alias": "x"}},
+		"关闭":        {http.MethodPost, "/api/v1/tickets/" + number + "/close", map[string]any{"reason": "done"}},
+		"重开":        {http.MethodPost, "/api/v1/tickets/" + number + "/reopen", nil},
+		"创建访客链接":    {http.MethodPost, "/api/v1/tickets/" + number + "/guest-links", map[string]any{"note": "x"}},
+		"列出访客链接":    {http.MethodGet, "/api/v1/tickets/" + number + "/guest-links", nil},
+		"签发Agent令牌": {http.MethodPost, "/api/v1/me/agent-tokens", map[string]any{"name": "x"}},
+	} {
+		res := s.Do(t, guest, req.method, req.path, req.body, nil)
+		if res.StatusCode != http.StatusForbidden {
+			t.Errorf("[%s] 状态码 = %d, 想 403", name, res.StatusCode)
+			continue
+		}
+		var got errorBody
+		tbtest.DecodeJSON(t, res, &got)
+		want := "members_only"
+		if name == "签发Agent令牌" {
+			want = "web_session_required" // 只接受网页会话（ADR 0003），比 members_only 更具体
+		}
+		if got.Error.Code != want {
+			t.Errorf("[%s] 错误码 = %q, 想 %q", name, got.Error.Code, want)
+		}
+	}
+}
