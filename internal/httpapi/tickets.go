@@ -42,8 +42,9 @@ func (a *API) handleTicketsRoot(w http.ResponseWriter, r *http.Request) {
 //	POST   …/replies                       回复（#30；访客 #32）
 //	POST   …/close  …/reopen               关闭与重开（#30，仅成员）
 //	POST   …/labels                        打标签 / 摘标签（#31，仅成员）
+//	POST   …/assign                        改派（#36，仅成员）
 //	POST/GET …/guest-links[/… ]            访客链接的创建/列表/撤销/延期（#32，仅成员）
-//	（attachments 在 #33、assign 在 #36）
+//	（attachments 在 #33）
 //
 // 工单引用接受 YYYYMMDD-NNN 工单编号或全局序号（可带 # 前缀）。
 func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
@@ -92,6 +93,12 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.setTicketLabels(w, r, ref)
+	case "assign":
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "改派用 POST")
+			return
+		}
+		a.assignTicket(w, r, ref)
 	case "guest-links":
 		a.handleGuestLinks(w, r, ref, rest)
 	default:
@@ -271,8 +278,13 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, err error
 		WriteError(w, http.StatusConflict, CodeAlreadyClosed, err.Error(), "需要重新处理时先 POST …/reopen")
 	case errors.Is(err, tickets.ErrNotClosed):
 		WriteError(w, http.StatusConflict, CodeNotClosed, err.Error(), "")
-	case errors.Is(err, tickets.ErrDeliverAssigneeOnly):
-		WriteError(w, http.StatusForbidden, CodeDeliverAssigneeOnly, err.Error(), "去掉 deliver 作为普通回复；该你做就请发起人改派（指派在 #36 提供）")
+	case isDeliverAssigneeOnly(err):
+		e := err.(*tickets.DeliverAssigneeOnlyError)
+		hint := "去掉 deliver 作为普通回复；如果这活该你做，请发起人先改派给你"
+		if e.Closed {
+			hint = "工单已关闭；去掉 deliver 作为普通回复，需要返工流程时先重新开启工单"
+		}
+		WriteError(w, http.StatusForbidden, CodeDeliverAssigneeOnly, e.Error(), hint)
 	case errors.Is(err, tickets.ErrNoteRequired):
 		WriteError(w, http.StatusUnprocessableEntity, CodeNoteRequired, err.Error(), "备注写对方是谁，如「检验科-张三」；链接创建后凭备注区分多条链接")
 	case errors.Is(err, tickets.ErrInvalidValidDays):
@@ -310,6 +322,11 @@ func isUnknownMember(err error) bool {
 
 func isAlreadyAssigned(err error) bool {
 	var e *tickets.AlreadyAssignedError
+	return errors.As(err, &e)
+}
+
+func isDeliverAssigneeOnly(err error) bool {
+	var e *tickets.DeliverAssigneeOnlyError
 	return errors.As(err, &e)
 }
 

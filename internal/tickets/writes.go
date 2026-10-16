@@ -32,10 +32,25 @@ var (
 	ErrAlreadyClosed = errors.New("工单已经关闭")
 	// ErrNotClosed 表示工单没有关闭，谈不上重新开启。
 	ErrNotClosed = errors.New("工单没有关闭")
-	// ErrDeliverAssigneeOnly 表示只有指派人一方能用交付标记（指派在 #36 加入，
-	// 在那之前任何凭证都不能带 deliver）。
-	ErrDeliverAssigneeOnly = errors.New("只有指派人一方的回复能带交付标记")
 )
+
+// DeliverAssigneeOnlyError 是回复带了交付标记但当前凭证不是指派人一方
+//（403 deliver_assignee_only；工单已关闭时同样不能交付）。
+type DeliverAssigneeOnlyError struct {
+	Closed   bool
+	Assignee string // 当前指派人姓名；空 = 未指派
+}
+
+func (e *DeliverAssigneeOnlyError) Error() string {
+	if e.Closed {
+		return "工单已关闭，不能交付"
+	}
+	who := e.Assignee
+	if who == "" {
+		who = "未指派"
+	}
+	return "只有指派人（" + who + "）一方能交付"
+}
 
 // RevisionConflictError 是 base_revision 乐观锁冲突（409），带当前版本号。
 type RevisionConflictError struct {
@@ -48,7 +63,8 @@ func (e *RevisionConflictError) Error() string {
 }
 
 // ReplyInput 是回复的输入。附件引用（attachment_ids 与正文里的 att:）在 #33 加入；
-// AuthorName / ViaAgent 是访客的自报信息（#32，仅访客凭证采纳）。
+// AuthorName / ViaAgent 是访客的自报信息（#32，仅访客凭证采纳）；
+// Deliver 是交付标记，仅指派人一方可用（#36）。
 type ReplyInput struct {
 	BodyMD     string
 	Deliver    bool   // 交付标记，仅指派人一方可用（#36）
@@ -82,8 +98,13 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 		}
 	}
 	if in.Deliver {
-		// #30 没有指派人；指派与交付在 #36 加入后这里才有例外。
-		return ReplyResult{}, ErrDeliverAssigneeOnly
+		// 交付标记只限指派人一方（本人或其 Agent）；交付不改变工单状态，
+		// 由发起人验收后关闭。
+		if full.Status != "open" || full.AssigneeID == 0 || viewer.Member.ID != full.AssigneeID {
+			return ReplyResult{}, &DeliverAssigneeOnlyError{
+				Closed: full.Status != "open", Assignee: full.AssigneeName,
+			}
+		}
 	}
 	if strings.TrimSpace(in.BodyMD) == "" {
 		return ReplyResult{}, ErrEmptyReply

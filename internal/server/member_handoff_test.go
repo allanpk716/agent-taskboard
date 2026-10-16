@@ -197,3 +197,315 @@ func Test指派给成员Agent被拒绝(t *testing.T) {
 		t.Errorf("hint 应列出可选成员：%q", got.Error.Hint)
 	}
 }
+
+// waitOf 读取工单当前的 waiting_on。
+func (w *handoffWorld) waitOf(t testing.TB, c *http.Client, number string) waitingOnBody {
+	t.Helper()
+	var body ticketResponseBody
+	w.s.Do(t, c, http.MethodGet, "/api/v1/tickets/"+number, nil, &body)
+	return waitingOnBody{
+		Party: body.WaitingOn.Party, Member: body.WaitingOn.Member,
+		Text: body.WaitingOn.Text, Reason: body.WaitingOn.Reason,
+	}
+}
+
+// assertWaitingOn 对照整行（party/member/text/reason）。
+func assertWaitingOn(t testing.TB, got waitingOnBody, want waitingOnBody, note string) {
+	t.Helper()
+	if got.Party != want.Party {
+		t.Errorf("%s：party = %q, 想 %q", note, got.Party, want.Party)
+	}
+	if want.Member == nil {
+		if got.Member != nil {
+			t.Errorf("%s：member = %q, 想为空", note, *got.Member)
+		}
+	} else if got.Member == nil || *got.Member != *want.Member {
+		gotName := "<空>"
+		if got.Member != nil {
+			gotName = *got.Member
+		}
+		t.Errorf("%s：member = %q, 想 %q", note, gotName, *want.Member)
+	}
+	if want.Text != "" && got.Text != want.Text {
+		t.Errorf("%s：text = %q, 想 %q", note, got.Text, want.Text)
+	}
+	if want.Reason != "" && got.Reason != want.Reason {
+		t.Errorf("%s：reason = %q, 想 %q", note, got.Reason, want.Reason)
+	}
+}
+
+// 等待方推导表的每一行都有对应的一步（spec「等待方与收件箱」）。
+// 成员 Agent 的回复算其所属成员一方；改派后原指派人的回复不再参与推导。
+func Test等待方推导表(t *testing.T) {
+	w := newHandoffWorld(t)
+	// 一个任务（王工→李工，王工的 Agent 建的）、一个自派自的反馈和一个未指派的反馈。
+	task := w.createHandoffTicket(t, w.wangA, "整理对照表", "李工").Number
+	selfReport := w.createHandoffTicket(t, w.webWang, "质控结果偏高", "王工").Number
+	reportRes := w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets", map[string]any{
+		"kind": "report", "title": "耗材到货异常", "brief_md": "……", "labels": []string{"机型:UD-2300"},
+	}, nil)
+	var reportBody createAssignedResponse
+	tbtest.DecodeJSON(t, reportRes, &reportBody)
+	report := reportBody.Number
+
+	// 行 1a：尚无回复、未指派 → department / 尚未指派。
+	plain := w.createHandoffTicket(t, w.webWang, "未指派的工单", "").Number
+	assertWaitingOn(t, w.waitOf(t, w.webWang, plain),
+		waitingOnBody{Party: "department", Text: "本部门（未指派）", Reason: "尚未指派"}, "尚无回复未指派")
+
+	// 行 1b：尚无回复、已指派 → 指派人 / 新指派给你。
+	m := strp("李工")
+	assertWaitingOn(t, w.waitOf(t, w.webWang, task),
+		waitingOnBody{Party: "assignee", Member: m, Text: "李工（指派人）", Reason: "新指派给你"}, "尚无回复已指派")
+
+	// 行 2：最后是访客回复 → 指派人（访客链接由 #32 的接口创建）。
+	link := w.s.CreateGuestLink(t, w.webWang, task, map[string]any{"note": "检验科-张三"})
+	guest := w.s.GuestClient(link.Key(t))
+	w.s.Do(t, guest, http.MethodPost, "/api/v1/tickets/"+task+"/replies",
+		map[string]string{"body_md": "补充：试剂批号 R20260930。", "author_name": "张三"}, nil)
+	assertWaitingOn(t, w.waitOf(t, w.webWang, task),
+		waitingOnBody{Party: "assignee", Member: m, Text: "李工（指派人）", Reason: "访客回复了"}, "访客回复后轮到指派人")
+
+	// 行 2b：访客回复、未指派 → department / 访客回复了。
+	guestPlain := w.s.CreateGuestLink(t, w.webWang, plain, map[string]any{"note": "检验科-李四"})
+	w.s.Do(t, w.s.GuestClient(guestPlain.Key(t)), http.MethodPost, "/api/v1/tickets/"+plain+"/replies",
+		map[string]string{"body_md": "补充材料。"}, nil)
+	assertWaitingOn(t, w.waitOf(t, w.webWang, plain),
+		waitingOnBody{Party: "department", Text: "本部门（未指派）", Reason: "访客回复了"}, "访客回复未指派")
+
+	// 行 3：任务、指派人一方回复（这里是李工的 Agent）→ 创建者 / 指派人回复了，待你答复。
+	var delivered replyBody
+	w.s.Do(t, w.liA, http.MethodPost, "/api/v1/tickets/"+task+"/replies",
+		map[string]string{"body_md": "「适用机型」要细到软件版本吗？"}, &delivered)
+	wang := strp("王工")
+	assertWaitingOn(t, w.waitOf(t, w.webWang, task),
+		waitingOnBody{Party: "creator", Member: wang, Text: "王工（发起人）", Reason: "指派人回复了，待你答复"}, "指派人回复轮到创建者")
+
+	// 行 4：创建者一方回复 → 指派人 / 发起人回复了（此前没有交付）。
+	w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets/"+task+"/replies",
+		map[string]string{"body_md": "不用，写到机型即可。"}, nil)
+	assertWaitingOn(t, w.waitOf(t, w.webWang, task),
+		waitingOnBody{Party: "assignee", Member: m, Text: "李工（指派人）", Reason: "发起人回复了"}, "创建者回复轮到指派人")
+
+	// 行 5：第三位成员回复 → 不改变轮次（仍轮到李工）。
+	w.s.Do(t, w.zhaoA, http.MethodPost, "/api/v1/tickets/"+task+"/replies",
+		map[string]string{"body_md": "我这边有类似经验，供参考。"}, nil)
+	assertWaitingOn(t, w.waitOf(t, w.webWang, task),
+		waitingOnBody{Party: "assignee", Member: m, Text: "李工（指派人）", Reason: "发起人回复了"}, "第三位成员不改轮次")
+
+	// 行 6：其余情况（反馈、自派自）成员回复 → 访客。
+	var selfReply replyBody
+	w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets/"+selfReport+"/replies",
+		map[string]string{"body_md": "收到，先查批号记录。"}, &selfReply)
+	assertWaitingOn(t, w.waitOf(t, w.webWang, selfReport),
+		waitingOnBody{Party: "guest", Text: "访客"}, "自派自反馈回复轮到访客")
+	// 未指派的反馈没有对手，同样轮到访客。
+	w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets/"+report+"/replies",
+		map[string]string{"body_md": "先查物流记录。"}, nil)
+	assertWaitingOn(t, w.waitOf(t, w.webWang, report),
+		waitingOnBody{Party: "guest", Text: "访客"}, "反馈回复轮到访客")
+	// 未指派的任务仍有对手（创建者）：第三位成员的回复不改轮次，
+	// 创建者一方回复则轮到本部门（照抄原型 counterpartMember）。
+	w.s.Do(t, w.webLi, http.MethodPost, "/api/v1/tickets/"+plain+"/replies",
+		map[string]string{"body_md": "我来跟进。"}, nil)
+	assertWaitingOn(t, w.waitOf(t, w.webWang, plain),
+		waitingOnBody{Party: "department", Text: "本部门（未指派）", Reason: "访客回复了"}, "未指派任务第三者回复不改轮次")
+	w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets/"+plain+"/replies",
+		map[string]string{"body_md": "本周内处理。"}, nil)
+	assertWaitingOn(t, w.waitOf(t, w.webWang, plain),
+		waitingOnBody{Party: "department", Text: "本部门（未指派）", Reason: "尚未指派"}, "未指派任务创建者回复轮到本部门")
+
+	// 行 7：交付 → 创建者 / 已交付，待你验收；交付不改变状态。
+	var deliverRes replyBody
+	w.s.Do(t, w.liA, http.MethodPost, "/api/v1/tickets/"+task+"/replies",
+		map[string]any{"body_md": "对照表已完成，共 9 条规则。", "deliver": true}, &deliverRes)
+	assertWaitingOn(t, w.waitOf(t, w.webWang, task),
+		waitingOnBody{Party: "creator", Member: wang, Text: "王工（发起人）", Reason: "已交付，待你验收"}, "交付后轮到创建者")
+	if !deliverRes.Deliver {
+		t.Error("交付回复的响应 deliver 应为 true")
+	}
+
+	// 行 8：验收不通过，创建者普通回复 → 指派人 / 发起人退回修改。
+	w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets/"+task+"/replies",
+		map[string]string{"body_md": "漏了 10-08 发布的 R4s 规则，请补上。"}, nil)
+	assertWaitingOn(t, w.waitOf(t, w.webWang, task),
+		waitingOnBody{Party: "assignee", Member: m, Text: "李工（指派人）", Reason: "发起人退回修改"}, "退回修改")
+
+	// 行 9：改派后，原指派人的回复不再参与推导（照抄原型：按当前指派人重算）。
+	// 王工的退回回复仍相关（对手一方），轮到赵工、原因仍是发起人回复了。
+	w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets/"+task+"/assign",
+		map[string]string{"assignee": "赵工"}, nil)
+	// 李工（已不是指派人）再回复：不改变轮次；轮次仍由王工的退回回复推导。
+	w.s.Do(t, w.liA, http.MethodPost, "/api/v1/tickets/"+task+"/replies",
+		map[string]string{"body_md": "已不是我负责，供赵工参考。"}, nil)
+	assertWaitingOn(t, w.waitOf(t, w.webWang, task),
+		waitingOnBody{Party: "assignee", Member: strp("赵工"), Text: "赵工（指派人）", Reason: "发起人回复了"}, "改派后旧指派人回复不参与推导")
+}
+
+// strp 取字符串指针（测试里写期望值用）。
+func strp(s string) *string { return &s }
+
+// 交付标记只限指派人一方：非指派人的成员、创建者、访客、未指派与已关闭的
+// 工单一律 403 deliver_assignee_only；被拒的回复不落地。
+func Test交付只限指派人一方(t *testing.T) {
+	w := newHandoffWorld(t)
+	task := w.createHandoffTicket(t, w.wangA, "整理对照表", "李工").Number
+
+	deliver := func(c *http.Client, body string) *http.Response {
+		t.Helper()
+		return w.s.Do(t, c, http.MethodPost, "/api/v1/tickets/"+task+"/replies",
+			map[string]any{"body_md": body, "deliver": true}, nil)
+	}
+	assertRefused := func(res *http.Response, note string) {
+		t.Helper()
+		if res.StatusCode != http.StatusForbidden {
+			t.Fatalf("%s：状态码 = %d, 想 403", note, res.StatusCode)
+		}
+		var got errorBody
+		tbtest.DecodeJSON(t, res, &got)
+		if got.Error.Code != "deliver_assignee_only" {
+			t.Errorf("%s：错误码 = %q, 想 deliver_assignee_only", note, got.Error.Code)
+		}
+	}
+
+	// 第三位成员（赵工 的 Agent）不能交付。
+	assertRefused(deliver(w.zhaoA, "我顺手做了"), "第三位成员")
+	// 创建者（王工 的 Agent）也不能交付——活是指派给李工的。
+	assertRefused(deliver(w.wangA, "我自己做完吧"), "创建者")
+	// 访客不能交付。
+	link := w.s.CreateGuestLink(t, w.webWang, task, map[string]any{"note": "检验科-张三"})
+	assertRefused(w.s.Do(t, w.s.GuestClient(link.Key(t)), http.MethodPost,
+		"/api/v1/tickets/"+task+"/replies",
+		map[string]any{"body_md": "已解决", "deliver": true}, nil), "访客")
+
+	// 指派人本人的 Agent 可以交付；交付不改变工单状态。
+	var delivered replyBody
+	w.s.Do(t, w.liA, http.MethodPost, "/api/v1/tickets/"+task+"/replies",
+		map[string]any{"body_md": "已完成。", "deliver": true}, &delivered)
+	if !delivered.Deliver {
+		t.Error("指派人 Agent 的交付回复应成功且 deliver=true")
+	}
+	var body ticketResponseBody
+	w.s.Do(t, w.webWang, http.MethodGet, "/api/v1/tickets/"+task, nil, &body)
+	if body.Status != "open" {
+		t.Errorf("交付后状态 = %q, 想仍为 open（验收后才关闭）", body.Status)
+	}
+
+	// 工单关闭后，即使是指派人也不能交付。
+	w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets/"+task+"/close",
+		map[string]string{"reason": "done"}, nil)
+	res := deliver(w.liA, "再交一次")
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("关闭后交付状态码 = %d, 想 403", res.StatusCode)
+	}
+	var got errorBody
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "deliver_assignee_only" || got.Error.Message != "工单已关闭，不能交付" {
+		t.Errorf("关闭后交付错误 = %s/%s, 想 deliver_assignee_only/工单已关闭，不能交付",
+			got.Error.Code, got.Error.Message)
+	}
+
+	// 被拒的回复不落地。
+	w.s.Do(t, w.webWang, http.MethodGet, "/api/v1/tickets/"+task, nil, &body)
+	for _, e := range body.Timeline {
+		if e.Type == "reply" && e.Actor.Member != nil && e.Actor.Member.Name == "赵工" {
+			t.Errorf("被拒的交付回复不应落地：%+v", e)
+		}
+	}
+}
+
+// 改派：guest 403、改派给当前指派人 422 already_assigned、查无此人 422
+// unknown_member、写成成员 Agent 422 assignee_must_be_member；时间线记
+// assigned{from,to}，Markdown 里写成「改派：李工 → 赵工」。
+func Test改派接口的边界(t *testing.T) {
+	w := newHandoffWorld(t)
+	task := w.createHandoffTicket(t, w.wangA, "整理对照表", "李工").Number
+
+	link := w.s.CreateGuestLink(t, w.webWang, task, map[string]any{"note": "检验科-张三"})
+	res := w.s.Do(t, w.s.GuestClient(link.Key(t)), http.MethodPost,
+		"/api/v1/tickets/"+task+"/assign", map[string]string{"assignee": "赵工"}, nil)
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("访客改派状态码 = %d, 想 403", res.StatusCode)
+	}
+	var got errorBody
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "members_only" {
+		t.Errorf("访客改派错误码 = %q, 想 members_only", got.Error.Code)
+	}
+
+	for name, body := range map[string]struct {
+		assignee string
+		code     string
+	}{
+		"改派给当前指派人":  {assignee: "李工", code: "already_assigned"},
+		"查无此人":      {assignee: "张三丰", code: "unknown_member"},
+		"写成成员Agent": {assignee: "工位", code: "assignee_must_be_member"},
+	} {
+		res := w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets/"+task+"/assign",
+			map[string]string{"assignee": body.assignee}, nil)
+		if res.StatusCode != http.StatusUnprocessableEntity {
+			t.Fatalf("%s：状态码 = %d, 想 422", name, res.StatusCode)
+		}
+		var got errorBody
+		tbtest.DecodeJSON(t, res, &got)
+		if got.Error.Code != body.code {
+			t.Errorf("%s：错误码 = %q, 想 %s", name, got.Error.Code, body.code)
+		}
+	}
+
+	// 改派给赵工：响应带指派人、等待方与改派版 share_text；assigned 事件落地。
+	var view struct {
+		Assignee struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		} `json:"assignee"`
+		WaitingOn waitingOnBody `json:"waiting_on"`
+		ShareText *string       `json:"share_text"`
+	}
+	w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets/"+task+"/assign",
+		map[string]string{"assignee": "赵工"}, &view)
+	if view.Assignee.Name != "赵工" || view.WaitingOn.Member == nil || *view.WaitingOn.Member != "赵工" {
+		t.Errorf("改派响应 assignee/waiting_on 不对：%+v", view)
+	}
+	wantShare := "赵工：工单「整理对照表」转给你了，让你的 Agent 读一下 /t/" + task
+	if view.ShareText == nil || *view.ShareText != wantShare {
+		t.Errorf("改派 share_text = %v, 想 %q", view.ShareText, wantShare)
+	}
+	var body ticketResponseBody
+	w.s.Do(t, w.webZhao, http.MethodGet, "/api/v1/tickets/"+task, nil, &body)
+	found := false
+	for _, e := range body.Timeline {
+		if e.Type == "assigned" && e.From == "李工" && e.To == "赵工" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("时间线缺少 assigned{from:李工,to:赵工} 事件：%+v", body.Timeline)
+	}
+	// 改派给自己时不需要通知。
+	var selfView struct {
+		ShareText *string `json:"share_text"`
+	}
+	w.s.Do(t, w.webZhao, http.MethodPost, "/api/v1/tickets/"+task+"/assign",
+		map[string]string{"assignee": "王工"}, nil)
+	w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets/"+task+"/assign",
+		map[string]string{"assignee": "王工"}, &selfView)
+	if selfView.ShareText != nil {
+		t.Errorf("改派给自己的 share_text = %q, 想为空", *selfView.ShareText)
+	}
+
+	// Markdown 时间线里的改派文案。
+	res = w.s.Do(t, w.webWang, http.MethodGet, "/api/v1/tickets/"+task+"?format=markdown", nil, nil)
+	var md strings.Builder
+	buf := make([]byte, 4096)
+	for {
+		n, err := res.Body.Read(buf)
+		md.Write(buf[:n])
+		if err != nil {
+			break
+		}
+	}
+	if !strings.Contains(md.String(), "改派：李工 → 赵工") {
+		t.Errorf("Markdown 应含改派文案：\n%s", md.String())
+	}
+}

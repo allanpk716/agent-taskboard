@@ -255,3 +255,50 @@ func newWaitingOnView(waitingOn tickets.WaitingOn) waitingOnView {
 	}
 	return v
 }
+
+// assignTicketRequest 是 POST …/assign 的请求体：assignee 可写成员 id 或姓名。
+type assignTicketRequest struct {
+	Assignee string `json:"assignee"`
+}
+
+// assignTicketView 是改派成功（200）的响应；改派给他人时带一句可转发的
+// share_text。
+type assignTicketView struct {
+	Assignee  *memberRef    `json:"assignee"`
+	WaitingOn waitingOnView `json:"waiting_on"`
+	ShareText *string       `json:"share_text"`
+}
+
+// assignTicket 处理 POST /api/v1/tickets/{id}/assign（改派，仅成员；访客 403
+// members_only）。记一条 assigned{from,to} 事件；改派后原指派人的回复不再
+// 参与等待方推导，工单随推导从原指派人的收件箱移到新指派人的收件箱。
+func (a *API) assignTicket(w http.ResponseWriter, r *http.Request, ref string) {
+	viewer, ok := a.viewerFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if viewer.Kind != identity.ViewerMember {
+		WriteError(w, http.StatusForbidden, CodeMembersOnly, "改派只对成员开放",
+			"访客不能改派工单；如需转办请联系成员")
+		return
+	}
+	var req assignTicketRequest
+	if !decodeJSON(w, r, &req, `{"assignee": "成员 id 或姓名"}`) {
+		return
+	}
+	result, err := a.tickets.Assign(r.Context(), viewer, ref, req.Assignee)
+	if err != nil {
+		a.writeTicketError(w, r, err)
+		return
+	}
+	view := assignTicketView{
+		Assignee:  &memberRef{ID: result.AssigneeID, Name: result.AssigneeName},
+		WaitingOn: newWaitingOnView(result.WaitingOn),
+	}
+	// 改派给自己不需要通知，share_text 为空。
+	if result.AssigneeID != viewer.Member.ID {
+		share := reassignShareText(result.AssigneeName, result.Title, result.Number)
+		view.ShareText = &share
+	}
+	writeJSON(w, http.StatusOK, view)
+}

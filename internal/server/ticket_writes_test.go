@@ -146,8 +146,8 @@ func Test空回复返回422(t *testing.T) {
 	}
 }
 
-// 交付标记只有指派人一方能用；指派在 #36 才有，在那之前带 deliver 一律 403
-// deliver_assignee_only（结构先定好，避免悄悄丢掉交付意图）。
+// 未指派的工单没有指派人，带 deliver 一律 403 deliver_assignee_only
+//（#36：交付标记只限指派人一方；结构先定好，避免悄悄丢掉交付意图）。
 func Test回复带交付标记返回403(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")
