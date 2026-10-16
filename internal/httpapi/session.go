@@ -40,6 +40,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/labels/", a.handleLabelsSub)
 	mux.HandleFunc("/api/v1/templates", a.handleTemplatesRoot)
 	mux.HandleFunc("/api/v1/templates/", a.handleTemplateRef)
+	mux.HandleFunc("/api/v1/intakes", a.handleIntakesRoot)
+	mux.HandleFunc("/api/v1/intakes/", a.handleIntakeRef)
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "接口都在 /api/v1 之下，检查路径拼写")
 	})

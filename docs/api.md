@@ -166,7 +166,8 @@ spec 用户故事 84），没有 `inbox`：
   只有 title 或什么都没改的修订同样推进版本号。
 - 权限：创建者本人及其任意 Agent（其他成员 `403 not_brief_owner`，用回复补充内容）；
   持「可填写说明」链接的访客（工单需开启；无权限的链接 `403 link_cannot_edit_brief`，
-  关闭后 `409 ticket_closed`）。反馈入口提交者在 #35 加入。修订不再做必填校验，
+  关闭后 `409 ticket_closed`）；反馈入口的提交者视同创建者，靠提交响应里那条带
+  「可填写说明」的访客链接行使这项权限（入口在 #35 落地）。修订不再做必填校验，
   但标题改成空白返回 `422 title_required`。访客修订可自报 `author_name`/`via_agent`
   （记在修订事件的作者上）。
 - 成功 `200`：`{"revision": N}`；每次修订记一条 `brief_revised` 事件（带 `revision`）。
@@ -208,7 +209,7 @@ spec 用户故事 84），没有 `inbox`：
 ## 幂等（#30）
 
 对所有会产生新内容的请求（建单、回复、说明修订——成员与访客凭证都一样；
-反馈提交与附件上传随后续工单接入）支持 `Idempotency-Key` 请求头：
+反馈入口提交在 #35 起支持；附件上传随后续工单接入）支持 `Idempotency-Key` 请求头：
 
 - 记录按（key、凭证、端点）隔离：同一 key 换了凭证（另一成员、另一个 Agent）
   或换了端点，都是新请求。
@@ -404,5 +405,57 @@ spec 用户故事 84），没有 `inbox`：
   不自报时 `访客（经「检验科-张三」链接）`。
 - 修订标题/说明：只有持「可填写说明」权限链接的访客可以（`can.edit_brief`），
   乐观锁同样生效；无权限 403 `link_cannot_edit_brief`，工单关闭后 409 `ticket_closed`。
-- 仅成员的接口（建单、标签全套、关闭、重开、访客链接管理）对访客统一
-  403 `members_only`（决议 4）。
+- 仅成员的接口（建单、标签全套、关闭、重开、访客链接管理，以及 #35 起的反馈入口
+  管理）对访客统一 403 `members_only`（决议 4）。
+
+## 反馈入口（#35）
+
+反馈入口是部门级的长期地址 `/i/<slug>`：内网任何人（或其 Agent）不用账号、不用
+访客链接，凭入口地址就能自助提交一张反馈，提交成功当场拿到这张反馈的专属访客
+链接（30 天、「可填写说明」权限）——之后完全按访客的方式参与（读、修订说明、
+回复，密钥直接作 Bearer）。每个入口绑定一个**反馈类型**的模板，始终使用该模板的
+**最新版本**；入口不能查看其他工单（匿名端点只读入口本身）。
+
+### 端点
+
+| 方法与路径 | 说明 |
+|---|---|
+| `POST /api/v1/intakes` | 创建（任何成员）：`{"slug", "name", "template"}`。 |
+| `GET /api/v1/intakes` | 列表（任何成员，含已停用，各项带 `active`）。 |
+| `GET /api/v1/intakes/{slug}` | **匿名**读取：入口信息 + 绑定模板的当前版本（维度字段带字典候选值和「不确定」）。 |
+| `GET /api/v1/intakes/{slug}?format=markdown` | **匿名**读取给 Agent 的填写指南（`text/markdown`，与 `GET /api/v1/templates/{key}?format=markdown` 同一份）。 |
+| `POST /api/v1/intakes/{slug}/tickets` | **匿名**提交：`{"title", "fields", "author_name?"}`。 |
+| `POST /api/v1/intakes/{slug}/deactivate` | 停用（任何成员；幂等 200）。 |
+| `POST /api/v1/intakes/{slug}/rotate` | 轮换 slug（任何成员）：`{"slug": "新 slug"}`；旧 slug 立即失效。 |
+
+- 创建：`slug` 只用小写字母、数字和连字符（`422 slug_required` / `invalid_slug`），
+  且不能与已有入口重复（`409 slug_taken`）；`name` 会显示在提交页上（`422 name_required`）；
+  `template` 必须存在（`404 template_not_found`）、在用（`422 template_inactive`）且
+  类型为反馈（`422 template_not_report`）。响应 `201` 是入口的管理视图
+  `{slug, name, template, active, url: "/i/<slug>", created_by, created_at}`。
+- 匿名读取：不存在或已停用的入口一律 `404 intake_not_found`（轮换后的旧 slug 同样，
+  与「不存在」不可区分，防枚举）。响应 `{slug, name, url, kind, template}`，其中
+  `template` 是当前版本 `{key, name, version, kind, preset_labels, agent_note, fields}`
+  （字段结构与 `GET /api/v1/templates/{key}` 相同）。
+- 提交（严格校验，与成员建单的 warnings 相反）：
+  - 缺必填项直接拦下：`422 missing_fields`，`fields` 附加数组逐项给出
+    `{field, hint, example?}`（引导说明、维度字段的「不确定」、单选字段的选项），
+    `hint` 汇总逐项说明缺什么、怎么填。**「不确定」算已填**（不打该维度的标签）。
+  - 结构错误与成员建单同码：空标题 `422 title_required`、未知字段键
+    `422 unknown_field`、单选值不在选项里 `422 invalid_field_option`、维度值不在
+    字典里 `422 unknown_label_value`（附 `suggestions`）。
+  - 提交**不要求**维度标签（GLOSSARY：入口提交是「至少一个维度标签」的唯一例外）；
+    模板预设标签与维度字段选中的值自动打上。
+  - 成功 `201`：`{ticket: {number, seq, title, url}, guest_link: {url: "/g/<密钥>",
+    note, expires_at, can_edit_brief: true}, next}`。密钥只在提交响应里出现一次。
+    工单类型由模板决定（恒为 `report`）；编号与序号的分配同建单。
+- 提交者**视同说明的创建者**：工单的创建者记录为访客（带链接备注
+  `反馈入口「<名称>」提交人` 与自报的 `author_name`）；`viewer.role` 为 `creator`，
+    用返回的链接即可读工单、修订说明（带「可填写说明」权限）和回复。时间线记
+    `created`（访客作者）与 `guest_link_created` 两条事件；等待方推导照常
+    （反馈：成员回复轮到访客，访客回复轮回本部门）。
+- 停用与轮换：停用后匿名读写都按不存在处理；轮换把入口换到新 slug，旧 slug 立即
+  失效（`404 intake_not_found`）。两者都不影响已提交的工单和提交者手里的访客链接
+  （链接独立于入口存在，见「访客链接（#32）」）。
+- 入口提交同样支持 `Idempotency-Key`（匿名凭证按同一 key 去重，重放返回首次结果）。
+- 管理端点仅限成员；访客 403 `members_only`（hint 指向入口地址），匿名 401。

@@ -523,6 +523,7 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer) markdownview
 		BriefRevision:   full.BriefRevision,
 		ViewerName:      viewerName,
 		ViewerRole:      roleOf(viewer, full),
+		ViewerIsGuest:   isGuest,
 		YourTurn:        yourTurnOf(viewer, waitingOn),
 		APIPath:         "/api/v1/tickets/" + full.Number,
 	}
@@ -559,8 +560,12 @@ func yourTurnOf(viewer identity.Viewer, waitingOn tickets.WaitingOn) bool {
 }
 
 // roleOf 判定当前凭证在这张工单里的角色：指派人 / 发起人（创建者一方）/ 成员 / 访客。
+// 通过反馈入口提交的访客视同创建者（#35）：持有创建者链接的访客角色是 creator。
 func roleOf(viewer identity.Viewer, full tickets.Full) string {
 	if viewer.Kind == identity.ViewerGuest {
+		if full.CreatorLinkID != 0 && viewer.GuestLink != nil && viewer.GuestLink.ID == full.CreatorLinkID {
+			return "creator" // 入口提交者视同创建者
+		}
 		return "guest"
 	}
 	if viewer.Member.ID == full.Creator.MemberID {

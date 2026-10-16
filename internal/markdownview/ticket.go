@@ -43,6 +43,7 @@ type Input struct {
 	Timeline        []Event
 	ViewerName      string // 已按 ADR 0003 拼好的署名
 	ViewerRole      string // assignee | creator | member | guest
+	ViewerIsGuest   bool   // 访客凭证（#35：入口提交者的角色是 creator，指引仍按访客给）
 	YourTurn        bool
 	APIPath         string // /api/v1/tickets/<编号>，「下一步」引用
 	TemplateName    string // 模板工单的模板名（不用模板为空）
@@ -106,7 +107,7 @@ func nextStep(in Input) []string {
 		L = append(L, name+"给 Agent 的说明："+in.AgentNote, "")
 	}
 
-	if in.ViewerRole == "guest" {
+	if in.ViewerIsGuest {
 		if in.YourTurn {
 			L = append(L, "现在轮到你（访客）回复：", "",
 				"```http",

@@ -78,6 +78,14 @@ const (
 	CodeLinkNotExtendable   = "link_not_extendable"    // 已撤销或已过期的链接不能延期
 	CodeLinkCannotEditBrief = "link_cannot_edit_brief" // 链接没有「可填写说明」权限
 	CodeTicketClosed        = "ticket_closed"          // 工单已关闭，访客链接只读
+
+	// #35：反馈入口。
+	CodeIntakeNotFound    = "intake_not_found"    // 入口不存在或已停用（含轮换后的旧 slug）
+	CodeSlugRequired      = "slug_required"       // 创建/轮换入口时没写 slug
+	CodeInvalidSlug       = "invalid_slug"        // slug 里有不适合 URL 的字符
+	CodeSlugTaken         = "slug_taken"          // slug 已被另一个入口占用
+	CodeTemplateNotReport = "template_not_report" // 入口只能绑定反馈类型的模板
+	CodeMissingFields     = "missing_fields"      // 入口提交缺必填项（严格校验，逐项提示）
 )
 
 // ErrorBody 是统一错误格式 {error:{code, message, hint?}} 的内层；

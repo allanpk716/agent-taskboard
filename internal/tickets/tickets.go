@@ -121,6 +121,11 @@ type Ticket struct {
 	TemplateKey string
 	TemplateDef *template.Snapshot
 	Fields      map[string]string
+
+	// 通过反馈入口提交的工单（#35）：创建者是访客（Creator.MemberID == 0，带链接
+	// 备注与自报署名），经哪条链接（返回给提交者的那条）、从哪个入口提交。
+	CreatorLinkID   int64
+	CreatorIntakeID int64
 }
 
 // Event 是时间线上的一条事件，只追加不修改。
@@ -386,27 +391,32 @@ func snapshotVersion(s *template.Snapshot) any {
 func (m *Manager) ByRef(ctx context.Context, ref string) (Full, error) {
 	ref = strings.TrimPrefix(ref, "#")
 	var (
-		t              Ticket
-		at             string
-		closeReason    sql.NullString
-		duplicateOfSeq sql.NullInt64
-		memberID       sql.NullInt64
-		memberName     sql.NullString
-		agentID        sql.NullInt64
-		agentName      sql.NullString
-		templateKey    sql.NullString
-		snapshotJSON   sql.NullString
-		fieldsJSON     sql.NullString
-		err            error
+		t               Ticket
+		at              string
+		closeReason     sql.NullString
+		duplicateOfSeq  sql.NullInt64
+		memberID        sql.NullInt64
+		memberName      sql.NullString
+		agentID         sql.NullInt64
+		agentName       sql.NullString
+		creatorLinkID   sql.NullInt64
+		creatorIntakeID sql.NullInt64
+		creatorName     sql.NullString
+		templateKey     sql.NullString
+		snapshotJSON    sql.NullString
+		fieldsJSON      sql.NullString
+		err             error
 	)
 	scan := func(row *sql.Row) error {
 		return row.Scan(&t.Seq, &t.Number, &t.Kind, &t.Title, &t.Status, &closeReason, &duplicateOfSeq,
 			&t.BriefMD, &t.BriefRevision, &memberID, &memberName, &agentID, &agentName,
+			&creatorLinkID, &creatorIntakeID, &creatorName,
 			&at, &t.LastChange, &templateKey, &snapshotJSON, &fieldsJSON)
 	}
 	const cols = `t.seq, t.number, t.kind, t.title, t.status, t.close_reason, t.duplicate_of_seq,
 		t.brief_md, t.brief_revision,
 		t.creator_member_id, cm.name, t.creator_agent_id, ca.name,
+		t.creator_link_id, t.creator_intake_id, t.creator_author_name,
 		t.created_at, t.last_change, t.template_key, t.template_snapshot, t.fields_json`
 	from := ` FROM tickets t
 		LEFT JOIN members cm ON cm.id = t.creator_member_id
@@ -435,6 +445,18 @@ func (m *Manager) ByRef(ctx context.Context, ref string) (Full, error) {
 		MemberName: memberName.String,
 		AgentID:    agentID.Int64,
 		AgentName:  agentName.String,
+	}
+	// 入口提交的工单：创建者是访客，带返回链接的备注与提交者的自报署名（#35）。
+	t.CreatorLinkID = creatorLinkID.Int64
+	t.CreatorIntakeID = creatorIntakeID.Int64
+	if t.CreatorLinkID != 0 {
+		note, err := m.creatorLinkNote(ctx, t.CreatorLinkID)
+		if err != nil {
+			return Full{}, err
+		}
+		t.Creator.LinkID = t.CreatorLinkID
+		t.Creator.LinkNote = note
+		t.Creator.AuthorName = creatorName.String
 	}
 	t.CreatedAt, err = time.ParseInLocation(time.RFC3339Nano, at, clock.Beijing)
 	if err != nil {
@@ -471,6 +493,17 @@ func (m *Manager) ByRef(ctx context.Context, ref string) (Full, error) {
 		return Full{}, err
 	}
 	return full, nil
+}
+
+// creatorLinkNote 读创建者链接的备注（备注在链接创建时写下、不变更）。
+func (m *Manager) creatorLinkNote(ctx context.Context, linkID int64) (string, error) {
+	var note string
+	err := m.db.QueryRowContext(ctx,
+		`SELECT note FROM guest_links WHERE id = ?`, linkID).Scan(&note)
+	if err != nil {
+		return "", fmt.Errorf("读创建者链接 %d 失败：%w", linkID, err)
+	}
+	return note, nil
 }
 
 func (m *Manager) ticketLabels(ctx context.Context, seq int64) ([]string, error) {
