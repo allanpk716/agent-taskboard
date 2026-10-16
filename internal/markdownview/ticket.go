@@ -86,13 +86,32 @@ func Ticket(in Input) string {
 	return strings.Join(L, "\n")
 }
 
-// nextStep 生成末尾的「下一步」。完整的按角色×轮次的指引（含交付、验收的请求示例）
-// 随 #30/#36 的回复与指派加入；#29 只写身份、轮次和可用的读取方式。
+// nextStep 生成末尾的「下一步」。访客（#32）按轮次给回复或增量读取的示例；
+// 完整的按角色×轮次的成员指引（含交付、验收的请求示例）随 #36 的回复与指派加入。
 func nextStep(in Input) []string {
 	L := []string{
 		"## 下一步（给 Agent 的操作指引）", "",
 		"你是 **" + in.ViewerName + "**，在这张工单里的角色是 **" + roleText(in.ViewerRole) +
 			"**；现在轮到：**" + in.WaitingOnText + "**。", "",
+	}
+	if in.ViewerRole == "guest" {
+		if in.YourTurn {
+			L = append(L, "现在轮到你（访客）回复：", "",
+				"```http",
+				"POST "+in.APIPath+"/replies",
+				"Authorization: Bearer <访客链接密钥>",
+				"Content-Type: application/json",
+				"",
+				`{"body_md": "……", "author_name": "你的署名", "via_agent": false}`,
+				"```", "")
+		} else {
+			L = append(L, "现在不需要你行动；等成员回复后再来看增量：", "",
+				"```http",
+				"GET "+in.APIPath+"/timeline?after=<上次响应里的 cursor>",
+				"Authorization: Bearer <访客链接密钥>",
+				"```", "")
+		}
+		return L
 	}
 	if in.YourTurn {
 		L = append(L, "现在轮到你行动；先重读这张工单，按说明行事：", "")
@@ -145,6 +164,12 @@ func eventText(e Event) string {
 		return "打上标签 " + e.Label
 	case "label_removed":
 		return "摘掉标签 " + e.Label
+	case "guest_link_created":
+		return "创建访客链接「" + e.Note + "」"
+	case "guest_link_revoked":
+		return "撤销访客链接「" + e.Note + "」"
+	case "guest_link_extended":
+		return "延期访客链接「" + e.Note + "」至 " + e.LinkExpiresAt
 	case "brief_revised":
 		return "修订说明（第 " + strconv.FormatInt(e.Revision, 10) + " 版）"
 	case "closed":

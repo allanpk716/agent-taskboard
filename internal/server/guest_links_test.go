@@ -446,3 +446,212 @@ func Test访客调用仅成员接口返回membersOnly(t *testing.T) {
 		}
 	}
 }
+
+// 访客回复：记录链接备注与自报的 author_name / via_agent，署名与成员 Agent 在
+// 结构上区分开（actor.member/agent 为 null，另带 link_note/author_name/via_agent）。
+// Markdown 里写成「张三（经「检验科-张三」链接）」「检验科-张三（访客）的 Agent（自报）」。
+func Test访客回复记录链接备注与自报信息(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	number := mustCreateTicket(t, s, web, "BH-7600CS 质控结果偏高")
+	link := mustCreateGuestLink(t, s, web, number, map[string]any{"note": "检验科-张三"})
+	guest := s.GuestClient(guestKeyOf(t, link))
+
+	// 访客本人回复（自报署名，不自称 Agent）。
+	res := s.Do(t, guest, http.MethodPost, "/api/v1/tickets/"+number+"/replies",
+		map[string]any{"body_md": "附上近一个月的质控数据。", "author_name": "张三"}, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("访客回复状态码 = %d, 想 201", res.StatusCode)
+	}
+	var first replyBody
+	tbtest.DecodeJSON(t, res, &first)
+	if first.Author != "张三（经「检验科-张三」链接）" {
+		t.Errorf("author = %q, 想 张三（经「检验科-张三」链接）", first.Author)
+	}
+	// 访客回复后轮到指派人；未指派时轮到本部门，原因「访客回复了」。
+	if first.WaitingOn.Party != "department" || first.WaitingOn.Reason != "访客回复了" {
+		t.Errorf("waiting_on 不对：%+v", first.WaitingOn)
+	}
+
+	// 访客的 Agent 用同一条链接回复（自报 via_agent）。
+	res = s.Do(t, guest, http.MethodPost, "/api/v1/tickets/"+number+"/replies",
+		map[string]any{"body_md": "已按模板补全字段。", "author_name": "张三", "via_agent": true}, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("访客 Agent 回复状态码 = %d, 想 201", res.StatusCode)
+	}
+	var second replyBody
+	tbtest.DecodeJSON(t, res, &second)
+	if second.Author != "检验科-张三（访客）的 Agent（自报）" {
+		t.Errorf("author = %q, 想 检验科-张三（访客）的 Agent（自报）", second.Author)
+	}
+
+	// 不自报署名的访客：写「访客（经「…」链接）」。
+	res = s.Do(t, guest, http.MethodPost, "/api/v1/tickets/"+number+"/replies",
+		map[string]any{"body_md": "收到。"}, nil)
+	var third replyBody
+	tbtest.DecodeJSON(t, res, &third)
+	if third.Author != "访客（经「检验科-张三」链接）" {
+		t.Errorf("author = %q, 想 访客（经「检验科-张三」链接）", third.Author)
+	}
+
+	// 成员看时间线：访客回复的 actor 结构与成员、成员 Agent 都不同。
+	var view ticketResponseBody
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number, nil, &view)
+	if len(view.Timeline) != 5 { // created + guest_link_created + 三条访客回复
+		t.Fatalf("时间线有 %d 条, 想 5", len(view.Timeline))
+	}
+	g := view.Timeline[2]
+	if g.Type != "reply" || g.Actor.Member != nil || g.Actor.Agent != nil {
+		t.Errorf("访客回复的 actor 不应带成员或 Agent：%+v", g.Actor)
+	}
+	if g.Actor.LinkNote == nil || *g.Actor.LinkNote != "检验科-张三" {
+		t.Errorf("actor.link_note 不对：%+v", g.Actor.LinkNote)
+	}
+	if g.Actor.AuthorName == nil || *g.Actor.AuthorName != "张三" {
+		t.Errorf("actor.author_name 不对：%+v", g.Actor.AuthorName)
+	}
+	if g.Actor.ViaAgent == nil || *g.Actor.ViaAgent {
+		t.Errorf("actor.via_agent 应为 false（本人回复）：%+v", g.Actor.ViaAgent)
+	}
+	if view.Timeline[3].Actor.ViaAgent == nil || !*view.Timeline[3].Actor.ViaAgent {
+		t.Errorf("自报 via_agent 的回复应记 true：%+v", view.Timeline[3].Actor.ViaAgent)
+	}
+
+	// 成员的 Agent 回复一条作对照：actor.agent 是平台认证的具名 Agent。
+	_, token := s.IssueAgentToken(t, web, "笔记本")
+	reply(t, s, s.AgentClient(token), number, "收到，正在处理。")
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number, nil, &view)
+	agentReply := view.Timeline[5]
+	if agentReply.Actor.Agent == nil || agentReply.Actor.Agent.Name != "笔记本" ||
+		agentReply.Actor.Member == nil || agentReply.Actor.Member.Name != "陈工" {
+		t.Errorf("成员 Agent 回复的 actor 应带平台认证的成员与 Agent：%+v", agentReply.Actor)
+	}
+	if agentReply.Actor.LinkNote != nil || agentReply.Actor.ViaAgent != nil {
+		t.Errorf("成员回复的 actor 不应带访客字段：%+v", agentReply.Actor)
+	}
+
+	// 成员的 author_name / via_agent 自报不生效（署名由凭证决定，ADR 0003）。
+	res = s.Do(t, web, http.MethodPost, "/api/v1/tickets/"+number+"/replies",
+		map[string]any{"body_md": "本人回复。", "author_name": "假冒的署名", "via_agent": true}, nil)
+	var mine replyBody
+	tbtest.DecodeJSON(t, res, &mine)
+	if mine.Author != "陈工" {
+		t.Errorf("成员自报署名不应生效：author = %q, 想 陈工", mine.Author)
+	}
+
+	// Markdown 视图：访客署名按上面的写法；轮到访客时「下一步」给回复示例。
+	res = s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number+"?format=markdown", nil, nil)
+	md := string(readAll(t, res))
+	if !strings.Contains(md, "张三（经「检验科-张三」链接） 回复") {
+		t.Errorf("Markdown 缺访客署名：\n%s", md)
+	}
+	if !strings.Contains(md, "检验科-张三（访客）的 Agent（自报） 回复") {
+		t.Errorf("Markdown 缺访客 Agent 署名：\n%s", md)
+	}
+}
+
+// 反馈单（无对手）成员回复后轮到访客：访客视角 your_turn 为 true；访客的
+// Markdown「下一步」给带 author_name 的回复示例。任务单创建者回复则轮到本部门。
+func Test轮到访客时访客视角的你的回合与下一步(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	number := mustCreateReport(t, s, web, "LIS 导出报错")
+	link := mustCreateGuestLink(t, s, web, number, map[string]any{"note": "检验科-张三"})
+	guest := s.GuestClient(guestKeyOf(t, link))
+
+	var before ticketResponseBody
+	s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+number, nil, &before)
+	if before.Viewer.YourTurn {
+		t.Error("尚无回复时未指派的反馈单轮到本部门，不是访客")
+	}
+
+	reply(t, s, web, number, "请补充出现时间。")
+	var after ticketResponseBody
+	s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+number, nil, &after)
+	if after.WaitingOn.Party != "guest" || after.WaitingOn.Text != "访客" {
+		t.Errorf("waiting_on 不对：%+v", after.WaitingOn)
+	}
+	if !after.Viewer.YourTurn {
+		t.Error("轮到访客时访客的 your_turn 应为 true")
+	}
+	// 成员视角同一张单不是他的轮次。
+	var member ticketResponseBody
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number, nil, &member)
+	if member.Viewer.YourTurn {
+		t.Error("未指派的反馈单不应轮到创建者本人")
+	}
+
+	res := s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+number+"?format=markdown", nil, nil)
+	md := string(readAll(t, res))
+	if !strings.Contains(md, "角色是 **访客**") || !strings.Contains(md, `"author_name"`) {
+		t.Errorf("访客 Markdown 的「下一步」应给带 author_name 的回复示例：\n%s", md)
+	}
+}
+
+// 工单关闭后访客链接只读：回复与修订说明都被拒（409 ticket_closed）；
+// 重新开启后恢复可回复。成员在关闭的工单上仍可回复。
+func Test工单关闭后访客链接只读重开后恢复(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	number := mustCreateTicket(t, s, web, "整理 Q3 质控规则说明")
+	editLink := mustCreateGuestLink(t, s, web, number,
+		map[string]any{"note": "检验科-张三", "can_edit_brief": true})
+	guest := s.GuestClient(guestKeyOf(t, editLink))
+
+	closeTicket(t, s, web, number, closeBody{Reason: "done"})
+
+	res := s.Do(t, guest, http.MethodPost, "/api/v1/tickets/"+number+"/replies",
+		map[string]any{"body_md": "关闭后还想补充"}, nil)
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("关闭后访客回复状态码 = %d, 想 409", res.StatusCode)
+	}
+	var got errorBody
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "ticket_closed" {
+		t.Errorf("错误码 = %q, 想 ticket_closed", got.Error.Code)
+	}
+	res = revise(t, s, guest, number, map[string]any{"brief_md": "关闭后修订", "base_revision": 1})
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("关闭后访客修订状态码 = %d, 想 409", res.StatusCode)
+	}
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "ticket_closed" {
+		t.Errorf("错误码 = %q, 想 ticket_closed", got.Error.Code)
+	}
+
+	// 只读但可看；能力表全灭。
+	var view ticketResponseBody
+	s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+number, nil, &view)
+	if view.Status != "closed" || view.Viewer.Can.Reply || view.Viewer.Can.EditBrief {
+		t.Errorf("关闭后的访客视角不对：status=%q can=%+v", view.Status, view.Viewer.Can)
+	}
+
+	// 成员在关闭的工单上仍可回复（不重开工单）。
+	if res := reply(t, s, web, number, "成员补充。"); res.StatusCode != http.StatusCreated {
+		t.Errorf("成员在关闭工单上回复状态码 = %d, 想 201", res.StatusCode)
+	}
+
+	// 重新开启后链接恢复可回复、可修订。
+	s.Do(t, web, http.MethodPost, "/api/v1/tickets/"+number+"/reopen", nil, nil)
+	res = s.Do(t, guest, http.MethodPost, "/api/v1/tickets/"+number+"/replies",
+		map[string]any{"body_md": "重开后补充", "author_name": "张三"}, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("重开后访客回复状态码 = %d, 想 201", res.StatusCode)
+	}
+}
+
+// mustCreateReport 建一张反馈（report）工单并返回编号：反馈单没有对手，
+// 成员回复后轮到访客。
+func mustCreateReport(t testing.TB, s *tbtest.Server, c *http.Client, title string) string {
+	t.Helper()
+	res := createTicket(t, s, c, createTicketBody{Kind: "report", Title: title, Labels: []string{"系统:LIS"}})
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("建反馈 %q 状态码 = %d, 想 201", title, res.StatusCode)
+	}
+	var created createTicketResponse
+	tbtest.DecodeJSON(t, res, &created)
+	return created.Number
+}
