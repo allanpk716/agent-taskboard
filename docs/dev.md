@@ -34,6 +34,11 @@ npm run dev     # Vite 开发服务器，/api 代理到 127.0.0.1:8080（后端�
 npm run build   # 产物输出到 ../web/
 ```
 
+注意：`serve` 启动后会把 `web/` 转成指向某个版本目录的 junction（Windows）/
+符号链接（Linux），自己不再持有文件。Git Bash 里的 `rm -rf web/` 会**顺着链接
+删掉目标目录里的构建产物**——想删链接本身用 `cmd //c rmdir web`（或先停服务
+再处理）。
+
 ## 端到端（Playwright）
 
 一条命令完成：编译后端二进制到 `bin/`、构建前端到 `web/`、在临时 `data_dir` 上启动真实服务（先 `create-admin`），再对 `http://127.0.0.1:8901` 跑浏览器用例：
