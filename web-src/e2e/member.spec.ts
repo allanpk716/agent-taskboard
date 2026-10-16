@@ -1,24 +1,9 @@
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
+import { test, expect, type APIRequestContext } from '@playwright/test'
+import { ADMIN, WANG, login, loginAdmin } from './helpers'
 
 // 成员网页（#41）：收件箱、列表、详情、建单。对真实服务 + 构建好的前端跑用例，
 // 造数据（成员、工单、回复、访客链接）全部通过 HTTP API 完成；成员由
 // e2e/start-server.mjs 预先创建（admin / 管理员 与 wang / 王工）。
-
-export const ADMIN = { username: 'admin', password: 'admin-pass-123' }
-export const WANG = { username: 'wang', password: 'wang-pass-123' }
-
-export async function login(page: Page, who: { username: string; password: string }) {
-  await page.goto('/login')
-  await page.getByLabel('用户名').fill(who.username)
-  await page.getByLabel('密码').fill(who.password)
-  await page.getByRole('button', { name: '登录' }).click()
-  await page.waitForURL((u) => !u.pathname.endsWith('/login'))
-}
-
-export async function loginAdmin(request: APIRequestContext) {
-  const res = await request.post('/api/v1/session', { data: ADMIN })
-  expect(res.ok(), '管理员登录失败').toBeTruthy()
-}
 
 /** 用管理员会话建一张自由格式工单（可指派），返回编号。 */
 export async function createTicket(

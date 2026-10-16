@@ -1,5 +1,7 @@
 // 我的（#42）：账号信息与登出；Agent token 的签发与撤销在 #42 加入。
+// 管理员另有系统状态面板（#45：备份状态与版本更新）。
 import { logout, type Me } from './memberApi'
+import { SystemPanel } from './admin/SystemPanel'
 
 export function MePage({ me }: { me: Me }) {
   return (
@@ -27,6 +29,7 @@ export function MePage({ me }: { me: Me }) {
         </div>
         <div className="hint">为名下的 Agent 签发具名 token、分别撤销（#42 加入）。</div>
       </div>
+      {me.is_admin && <SystemPanel />}
     </div>
   )
 }
