@@ -30,9 +30,10 @@ func (a *API) handleTemplatesRoot(w http.ResponseWriter, r *http.Request) {
 
 // handleTemplateRef 处理单个模板：
 //
-//	GET   /api/v1/templates/{key}[?format=markdown]  读取（JSON 或填写指南）
-//	PATCH /api/v1/templates/{key}                    修改（产生新版本）
-//	POST  /api/v1/templates/{key}/deactivate         停用（只能停用，不能删除）
+//	GET   /api/v1/templates/{key}[?format=markdown]        读取（JSON 或填写指南）
+//	GET   /api/v1/templates/{key}/versions                历史版本（#42 模板维护页）
+//	PATCH /api/v1/templates/{key}                          修改（产生新版本）
+//	POST  /api/v1/templates/{key}/deactivate               停用（只能停用，不能删除）
 func (a *API) handleTemplateRef(w http.ResponseWriter, r *http.Request) {
 	key, sub, hasSub := templateRefAndSub(r.URL.Path)
 	if !hasSub {
@@ -44,6 +45,14 @@ func (a *API) handleTemplateRef(w http.ResponseWriter, r *http.Request) {
 		default:
 			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
 		}
+		return
+	}
+	if sub == "versions" {
+		if r.Method != http.MethodGet {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "版本列表用 GET 读取")
+			return
+		}
+		a.listTemplateVersions(w, r, key)
 		return
 	}
 	if sub == "deactivate" {
@@ -214,6 +223,42 @@ func (a *API) guide(r *http.Request, t templates.Template) string {
 		candidates[f.Dimension] = values
 	}
 	return template.Guide(t.Key, t.Definition, t.Version, candidates)
+}
+
+// listTemplateVersions 处理 GET /api/v1/templates/{key}/versions：列出历史版本
+// （新→旧），每版带修改人、时间与模板原文（#42 模板维护页）。
+type templateVersionView struct {
+	Version   int64       `json:"version"`
+	Name      string      `json:"name"`
+	Markdown  string      `json:"markdown"`
+	UpdatedBy *authorView `json:"updated_by"`
+	UpdatedAt string      `json:"updated_at"`
+}
+
+func (a *API) listTemplateVersions(w http.ResponseWriter, r *http.Request, key string) {
+	if _, ok := a.memberFromRequest(w, r); !ok {
+		return
+	}
+	versions, err := a.templates.Versions(r.Context(), key)
+	if err != nil {
+		a.writeTemplatesError(w, err)
+		return
+	}
+	out := struct {
+		Versions []templateVersionView `json:"versions"`
+	}{Versions: []templateVersionView{}}
+	for _, v := range versions {
+		vv := templateVersionView{
+			Version: v.Version, Name: v.Name, Markdown: v.Markdown,
+			UpdatedAt: v.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		}
+		if v.UpdatedBy.MemberID != 0 {
+			av := newAuthorView(authorOfUpdater(v.UpdatedBy))
+			vv.UpdatedBy = &av
+		}
+		out.Versions = append(out.Versions, vv)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // templateWriteRequest 是 POST /api/v1/templates 与 PATCH /api/v1/templates/{key}

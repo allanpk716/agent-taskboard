@@ -202,6 +202,58 @@ func (m *Manager) Get(ctx context.Context, key string) (Template, error) {
 	return t, err
 }
 
+// VersionInfo 是模板历史版本的一项（#42 模板维护页：查看历史版本）。
+type VersionInfo struct {
+	Version   int64
+	Name      string
+	Markdown  string
+	UpdatedBy Updater
+	UpdatedAt time.Time
+}
+
+// Versions 列出一份模板的全部历史版本（新→旧，含当前版本），每版带修改人
+// 与模板原文；模板不存在时返回 ErrNotFound。
+func (m *Manager) Versions(ctx context.Context, key string) ([]VersionInfo, error) {
+	var exists int
+	if err := m.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM templates WHERE key = ?`, key).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if exists == 0 {
+		return nil, ErrNotFound
+	}
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT v.version, v.name, v.markdown, v.updated_by_member_id, um.name, v.updated_by_agent_id, ua.name, v.updated_at
+		FROM template_versions v
+		LEFT JOIN members um ON um.id = v.updated_by_member_id
+		LEFT JOIN agent_tokens ua ON ua.id = v.updated_by_agent_id
+		WHERE v.template_key = ?
+		ORDER BY version DESC`, key)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []VersionInfo{}
+	for rows.Next() {
+		var (
+			v         VersionInfo
+			updatedAt string
+			memberID  sql.NullInt64
+			member    sql.NullString
+			agentID   sql.NullInt64
+			agent     sql.NullString
+		)
+		if err := rows.Scan(&v.Version, &v.Name, &v.Markdown, &memberID, &member, &agentID, &agent, &updatedAt); err != nil {
+			return nil, err
+		}
+		v.UpdatedBy = Updater{MemberID: memberID.Int64, MemberName: member.String, AgentID: agentID.Int64, AgentName: agent.String}
+		if v.UpdatedAt, err = time.ParseInLocation(time.RFC3339Nano, updatedAt, time.Local); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 // scanner 兼容 *sql.Row 与 *sql.Rows。
 type scanner interface{ Scan(dest ...any) error }
 

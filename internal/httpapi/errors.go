@@ -102,6 +102,14 @@ const (
 	CodeTemplateNotReport = "template_not_report" // 入口只能绑定反馈类型的模板
 	CodeMissingFields     = "missing_fields"      // 入口提交缺必填项（严格校验，逐项提示）
 
+	// #42：成员账号管理（网页上创建与停用，仅管理员）。
+	CodeUsernameRequired     = "username_required"      // 创建成员时登录名为空
+	CodeInvalidUsername      = "invalid_username"       // 登录名里有不适合的字符
+	CodeUsernameTaken        = "username_taken"         // 登录名已存在（409）
+	CodeMemberNotFound       = "member_not_found"       // 没有这位成员（404）
+	CodeMemberDeactivated    = "member_deactivated"     // 账号已停用（登录 401）
+	CodeCannotDeactivateSelf = "cannot_deactivate_self" // 不能停用自己的账号
+
 	// #37：查询与计数。
 	CodeUnknownParameter = "unknown_parameter"  // 不认识的查询参数（附可用参数列表）
 	CodeInvalidStatus    = "invalid_status"     // status 只能是 open/closed/all
