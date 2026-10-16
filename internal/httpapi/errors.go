@@ -8,9 +8,14 @@ import (
 
 // 错误码。/api/v1 内只做增量修改：只增不改；后续工单的错误码在使用处再加。
 const (
-	CodeUnauthenticated    = "unauthenticated"     // 未登录或凭证失效
-	CodeInvalidCredentials = "invalid_credentials" // 用户名或密码不正确
-	CodeInvalidJSON        = "invalid_json"        // 请求体不是合法 JSON
+	CodeUnauthenticated    = "unauthenticated"      // 未登录或凭证失效
+	CodeInvalidCredentials = "invalid_credentials"  // 用户名或密码不正确
+	CodeInvalidJSON        = "invalid_json"         // 请求体不是合法 JSON
+	CodeInvalidToken       = "invalid_token"        // Agent token 无效或已撤销
+	CodeWebSessionRequired = "web_session_required" // 只接受网页会话发起的请求（ADR 0003）
+	CodeNameRequired       = "name_required"        // Agent 名字为空
+	CodeAgentNameTaken     = "agent_name_taken"     // 同名未撤销的 Agent 已存在
+	CodeAgentTokenNotFound = "agent_token_not_found"
 	CodeNotFound           = "not_found"
 	CodeMethodNotAllowed   = "method_not_allowed"
 	CodeInternal           = "internal_error"
