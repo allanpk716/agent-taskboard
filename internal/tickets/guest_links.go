@@ -52,12 +52,8 @@ type GuestLinkSpec struct {
 	CanEditBrief bool
 }
 
-// validate 校验并算出到期时刻。
+// validate 校验并算出到期时刻（不检查备注：延期请求不带备注）。
 func (spec GuestLinkSpec) validate(now time.Time) (time.Time, error) {
-	spec.Note = strings.TrimSpace(spec.Note)
-	if spec.Note == "" {
-		return time.Time{}, ErrNoteRequired
-	}
 	if spec.ValidDays != 0 && spec.ExpiresAt != nil {
 		return time.Time{}, ErrInvalidValidDays // 二选一
 	}
@@ -94,6 +90,9 @@ func (m *Manager) CreateGuestLink(ctx context.Context, viewer identity.Viewer, r
 		return GuestLinkCreated{}, err
 	}
 	spec.Note = strings.TrimSpace(spec.Note)
+	if spec.Note == "" {
+		return GuestLinkCreated{}, ErrNoteRequired
+	}
 	expiresAt, err := spec.validate(m.clk.Now())
 	if err != nil {
 		return GuestLinkCreated{}, err
@@ -246,8 +245,8 @@ func (m *Manager) ExtendGuestLink(ctx context.Context, viewer identity.Viewer, r
 		return GuestLinkInfo{}, err
 	}
 	now := m.clk.Now()
-	expiresAt, err := GuestLinkSpec{ValidDays: spec.ValidDays, ExpiresAt: spec.ExpiresAt}.validate(now)
-	if err != nil && !errors.Is(err, ErrNoteRequired) {
+	expiresAt, err := spec.validate(now)
+	if err != nil {
 		return GuestLinkInfo{}, err
 	}
 	tx, err := m.db.BeginTx(ctx, nil)

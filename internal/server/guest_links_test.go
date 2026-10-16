@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -11,11 +12,12 @@ import (
 
 // guestLinkResponse 是 POST …/guest-links 创建成功的响应（201）。
 type guestLinkResponse struct {
-	ID           int64  `json:"id"`
-	URL          string `json:"url"`
-	Note         string `json:"note"`
-	ExpiresAt    string `json:"expires_at"`
-	CanEditBrief bool   `json:"can_edit_brief"`
+	ID           int64   `json:"id"`
+	URL          string  `json:"url"`
+	Note         string  `json:"note"`
+	ExpiresAt    string  `json:"expires_at"`
+	RevokedAt    *string `json:"revoked_at"`
+	CanEditBrief bool    `json:"can_edit_brief"`
 }
 
 // createGuestLink 发一个创建访客链接的请求，返回原始响应。
@@ -654,4 +656,283 @@ func mustCreateReport(t testing.TB, s *tbtest.Server, c *http.Client, title stri
 	var created createTicketResponse
 	tbtest.DecodeJSON(t, res, &created)
 	return created.Number
+}
+
+// 「可填写说明」权限：没有权限的链接修订被拒（403 link_cannot_edit_brief）；
+// 有权限的访客可修订标题和说明，记一条 brief_revised 事件（作者带链接备注）。
+func Test可填写说明的访客链接能修订标题和说明(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	s.CreateMember("李工", "secret-pass")
+	owner := s.Login("陈工", "secret-pass")
+	other := s.Login("李工", "secret-pass")
+	number := mustCreateTicket(t, s, owner, "质控结果偏高，请补充信息")
+
+	noEdit := s.GuestClient(guestKeyOf(t, mustCreateGuestLink(t, s, owner, number,
+		map[string]any{"note": "检验科-张三"})))
+	res := revise(t, s, noEdit, number, map[string]any{"brief_md": "越权修订", "base_revision": 1})
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("无权限链接修订状态码 = %d, 想 403", res.StatusCode)
+	}
+	var got errorBody
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "link_cannot_edit_brief" {
+		t.Errorf("错误码 = %q, 想 link_cannot_edit_brief", got.Error.Code)
+	}
+
+	// 有权限的链接：修订标题与说明，版本推进，事件记入时间线。
+	edit := s.GuestClient(guestKeyOf(t, mustCreateGuestLink(t, s, owner, number,
+		map[string]any{"note": "检验科-张三", "valid_days": 90, "can_edit_brief": true})))
+	res = revise(t, s, edit, number, map[string]any{
+		"title":         "BH-7600CS 质控结果偏高（已补全）",
+		"brief_md":      "机型：BH-7600CS\n现象：ALT 质控连续偏高",
+		"base_revision": 1,
+		"author_name":   "张三",
+	})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("有权限链接修订状态码 = %d, 想 200", res.StatusCode)
+	}
+	var revised struct {
+		Revision int64 `json:"revision"`
+	}
+	tbtest.DecodeJSON(t, res, &revised)
+	if revised.Revision != 2 {
+		t.Errorf("revision = %d, 想 2", revised.Revision)
+	}
+
+	var view ticketResponseBody
+	s.Do(t, owner, http.MethodGet, "/api/v1/tickets/"+number, nil, &view)
+	if view.Title != "BH-7600CS 质控结果偏高（已补全）" || view.Brief.Markdown != "机型：BH-7600CS\n现象：ALT 质控连续偏高" {
+		t.Errorf("修订后的标题/说明不对：%q %q", view.Title, view.Brief.Markdown)
+	}
+	var briefEvent *timelineEventBody
+	for i := range view.Timeline {
+		if view.Timeline[i].Type == "brief_revised" {
+			briefEvent = &view.Timeline[i]
+		}
+	}
+	if briefEvent == nil {
+		t.Fatal("没有 brief_revised 事件")
+	}
+	if briefEvent.Revision != 2 {
+		t.Errorf("事件 revision = %d, 想 2", briefEvent.Revision)
+	}
+	if briefEvent.Actor.Member != nil || briefEvent.Actor.LinkNote == nil || *briefEvent.Actor.LinkNote != "检验科-张三" {
+		t.Errorf("修订事件的作者应是访客（带链接备注）：%+v", briefEvent.Actor)
+	}
+
+	// 乐观锁对访客同样生效。
+	res = revise(t, s, edit, number, map[string]any{"brief_md": "旧版本再改", "base_revision": 1})
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("过期 base_revision 状态码 = %d, 想 409", res.StatusCode)
+	}
+
+	// 其他成员仍然不能修订（访客链接的权限只属于链接持有者）。
+	res = revise(t, s, other, number, map[string]any{"brief_md": "成员修订", "base_revision": 2})
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("其他成员修订状态码 = %d, 想 403", res.StatusCode)
+	}
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "not_brief_owner" {
+		t.Errorf("错误码 = %q, 想 not_brief_owner", got.Error.Code)
+	}
+
+	// 访客视角的能力表：有权限的链接 edit_brief 为 true。
+	var guest ticketResponseBody
+	s.Do(t, edit, http.MethodGet, "/api/v1/tickets/"+number, nil, &guest)
+	if !guest.Viewer.Can.EditBrief {
+		t.Error("带「可填写说明」权限的链接 edit_brief 应为 true")
+	}
+}
+
+// 撤销与延期：都记入时间线（guest_link_revoked / guest_link_extended 带备注与
+// 新到期时刻）；撤销立即生效（401 link_revoked）；已撤销或已过期的链接不能延期；
+// 列表不含密钥。
+func Test访客链接的撤销延期与列表(t *testing.T) {
+	s := tbtest.Start(t) // 2026-10-16 09:00
+	s.CreateAdmin("陈工", "secret-pass")
+	s.CreateMember("李工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	other := s.Login("李工", "secret-pass") // 任何成员都能撤销/延期
+	number := mustCreateTicket(t, s, web, "整理 Q3 质控规则说明")
+	otherTicket := mustCreateTicket(t, s, web, "另一张工单")
+
+	link := mustCreateGuestLink(t, s, web, number, map[string]any{"note": "检验科-张三", "valid_days": 7})
+	guest := s.GuestClient(guestKeyOf(t, link))
+
+	// 延期到 90 天：记事件，新到期时刻生效。
+	res := s.Do(t, other, http.MethodPost,
+		"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(link.ID, 10)+"/extend",
+		map[string]any{"valid_days": 90}, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("延期状态码 = %d, 想 200", res.StatusCode)
+	}
+	var extended guestLinkResponse
+	tbtest.DecodeJSON(t, res, &extended)
+	if want := "2027-01-14T09:00:00+08:00"; extended.ExpiresAt != want {
+		t.Errorf("延期后 expires_at = %q, 想 %q", extended.ExpiresAt, want)
+	}
+	// 原有效期过了之后链接仍可用（已延到 90 天）。
+	s.Clock().Advance(8 * 24 * time.Hour)
+	if res := s.Do(t, guest, http.MethodGet, "/api/v1/session", nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("延期后链接应仍有效，状态码 = %d", res.StatusCode)
+	}
+	// 推进了 8 天，网页会话过期，重新登录。
+	web = s.Login("陈工", "secret-pass")
+	other = s.Login("李工", "secret-pass")
+
+	var view ticketResponseBody
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number, nil, &view)
+	found := 0
+	for _, ev := range view.Timeline {
+		if ev.Type == "guest_link_extended" {
+			found++
+			if ev.Note != "检验科-张三" {
+				t.Errorf("事件 note = %q", ev.Note)
+			}
+			if ev.ExpiresAt != "2027-01-14T09:00:00+08:00" {
+				t.Errorf("事件 expires_at = %q", ev.ExpiresAt)
+			}
+		}
+	}
+	if found != 1 {
+		t.Fatalf("guest_link_extended 事件有 %d 条, 想 1", found)
+	}
+
+	// 撤销：立即生效（401 link_revoked），记事件，幂等。
+	res = s.Do(t, other, http.MethodDelete,
+		"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(link.ID, 10), nil, nil)
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("撤销状态码 = %d, 想 204", res.StatusCode)
+	}
+	res = s.Do(t, guest, http.MethodGet, "/api/v1/session", nil, nil)
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("撤销后状态码 = %d, 想 401", res.StatusCode)
+	}
+	var got errorBody
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "link_revoked" {
+		t.Errorf("撤销后错误码 = %q, 想 link_revoked", got.Error.Code)
+	}
+	// 再撤销一次：幂等成功，不重复记事件。
+	res = s.Do(t, web, http.MethodDelete,
+		"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(link.ID, 10), nil, nil)
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("重复撤销状态码 = %d, 想 204", res.StatusCode)
+	}
+
+	// 已撤销的链接不能延期；已过期的也不能。
+	res = s.Do(t, web, http.MethodPost,
+		"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(link.ID, 10)+"/extend",
+		map[string]any{"valid_days": 30}, nil)
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("撤销后延期状态码 = %d, 想 409", res.StatusCode)
+	}
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "link_not_extendable" {
+		t.Errorf("错误码 = %q, 想 link_not_extendable", got.Error.Code)
+	}
+	expired := mustCreateGuestLink(t, s, web, number, map[string]any{"note": "短期", "valid_days": 7})
+	s.Clock().Advance(8 * 24 * time.Hour)
+	web = s.Login("陈工", "secret-pass")
+	res = s.Do(t, web, http.MethodPost,
+		"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(expired.ID, 10)+"/extend",
+		map[string]any{"valid_days": 30}, nil)
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("过期后延期状态码 = %d, 想 409", res.StatusCode)
+	}
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "link_not_extendable" {
+		t.Errorf("错误码 = %q, 想 link_not_extendable", got.Error.Code)
+	}
+
+	// 列表：这个工单的全部链接，含备注、到期、撤销时刻与创建者；不含密钥。
+	var list struct {
+		Links []guestLinkResponse `json:"links"`
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number+"/guest-links", nil, &list)
+	if len(list.Links) != 2 {
+		t.Fatalf("列表有 %d 条, 想 2", len(list.Links))
+	}
+	for _, l := range list.Links {
+		if l.URL != "" {
+			t.Errorf("列表不应回显密钥：url = %q", l.URL)
+		}
+	}
+	if list.Links[0].Note != "检验科-张三" || list.Links[0].RevokedAt == nil {
+		t.Errorf("第一条（已撤销）不对：%+v", list.Links[0])
+	}
+
+	// 不属于这张工单的链接 id：404（防跨工单误操作）。
+	res = s.Do(t, web, http.MethodDelete,
+		"/api/v1/tickets/"+otherTicket+"/guest-links/"+strconv.FormatInt(link.ID, 10), nil, nil)
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("跨工单撤销状态码 = %d, 想 404", res.StatusCode)
+	}
+	res = s.Do(t, web, http.MethodDelete,
+		"/api/v1/tickets/"+number+"/guest-links/999", nil, nil)
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("不存在的链接撤销状态码 = %d, 想 404", res.StatusCode)
+	}
+	var nf errorBody
+	tbtest.DecodeJSON(t, res, &nf)
+	if nf.Error.Code != "guest_link_not_found" {
+		t.Errorf("错误码 = %q, 想 guest_link_not_found", nf.Error.Code)
+	}
+
+	// 撤销与延期事件在时间线上（成员可见，访客也可见——可见性只隐藏标签）。
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number, nil, &view)
+	revoked := 0
+	for _, ev := range view.Timeline {
+		if ev.Type == "guest_link_revoked" {
+			revoked++
+		}
+	}
+	if revoked != 1 { // 第二次撤销幂等，不重复记
+		t.Errorf("guest_link_revoked 事件有 %d 条, 想 1", revoked)
+	}
+}
+
+// 访客的幂等键按凭证隔离：同一 key 重放返回首次结果、不产生新回复；
+// 成员拿同一个 key 回复是另一个凭证，正常执行。
+func Test访客回复的幂等键按凭证隔离(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	number := mustCreateTicket(t, s, web, "BH-7600CS 质控结果偏高")
+	link := mustCreateGuestLink(t, s, web, number, map[string]any{"note": "检验科-张三"})
+	guest := s.GuestClient(guestKeyOf(t, link))
+
+	headers := map[string]string{"Idempotency-Key": "guest-reply-001"}
+	path := "/api/v1/tickets/" + number + "/replies"
+	first := s.DoWithHeaders(t, guest, http.MethodPost, path, headers,
+		map[string]any{"body_md": "网络闪断后重试。", "author_name": "张三"}, nil)
+	if first.StatusCode != http.StatusCreated {
+		t.Fatalf("首次回复状态码 = %d, 想 201", first.StatusCode)
+	}
+	firstBody := readAll(t, first)
+	second := s.DoWithHeaders(t, guest, http.MethodPost, path, headers,
+		map[string]any{"body_md": "网络闪断后重试。", "author_name": "张三"}, nil)
+	if second.StatusCode != http.StatusCreated || string(firstBody) != string(readAll(t, second)) {
+		t.Errorf("重放应返回首次结果：%d %s", second.StatusCode, readAll(t, second))
+	}
+
+	// 成员用同一个 key：凭证不同，是新的请求。
+	res := s.DoWithHeaders(t, web, http.MethodPost, path, headers,
+		map[string]string{"body_md": "成员回复。"}, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("成员同 key 回复状态码 = %d, 想 201（按凭证隔离）", res.StatusCode)
+	}
+
+	var view ticketResponseBody
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number, nil, &view)
+	replies := 0
+	for _, ev := range view.Timeline {
+		if ev.Type == "reply" {
+			replies++
+		}
+	}
+	if replies != 2 {
+		t.Errorf("回复有 %d 条, 想 2（访客重放不产生新内容）", replies)
+	}
 }
