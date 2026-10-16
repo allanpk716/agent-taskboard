@@ -397,3 +397,40 @@ test('访客链接支持指定日期创建与延期', async ({ page, request }) 
   await expect(row.getByRole('button', { name: '延期 30 天' })).toHaveCount(0)
   await expect(row.getByRole('button', { name: '延期到该日' })).toHaveCount(0)
 })
+
+// 10. 更多筛选（评审 P2-11）：按标签（别名可用）与创建时间范围筛出目标工单。
+test('工单列表更多筛选：标签（别名）与时间范围', async ({ page, request }) => {
+  const a = await createTicket(request, { title: '要按标签筛中的工单', labels: ['机型:UD-2300'] })
+  const b = await createTicket(request, { title: '不该出现的工单', labels: ['机型:US-1680'] })
+
+  // 给 UD-2300 挂一个别名，筛别名也应命中（服务端解析成标准值）。
+  await loginAdmin(request)
+  const alias = await request.post('/api/v1/labels/aliases', {
+    data: { label: '机型:UD-2300', alias: '优典两千三' },
+  })
+  expect(alias.ok(), await alias.text()).toBeTruthy()
+
+  await login(page, ADMIN)
+  await page.locator('.b-tabs').getByRole('link', { name: '工单' }).click()
+  await page.getByRole('button', { name: /更多筛选/ }).click()
+
+  // 标签：填别名 → 只有 A（标准值 机型:UD-2300）
+  await page.getByRole('combobox', { name: '标签' }).fill('优典两千三')
+  await page.getByRole('combobox', { name: '标签' }).blur()
+  await expect(page.locator('.tcard', { hasText: a })).toBeVisible()
+  await expect(page.locator('.tcard', { hasText: b })).toHaveCount(0)
+
+  // 时间范围：创建于「明天起」→ 一张都没有
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const tomorrow = new Date(Date.now() + 86400_000)
+  await page.getByLabel('时间字段').selectOption('created')
+  await page.getByLabel('从（含当天）').fill(`${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}`)
+  await expect(page.getByText('没有符合条件的工单')).toBeVisible()
+  await expect(page.locator('.tcard', { hasText: a })).toHaveCount(0)
+
+  // 改回「今天起」→ A 又出现（时间条件与标签条件同时生效）
+  const today = new Date()
+  await page.getByLabel('从（含当天）').fill(`${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`)
+  await expect(page.locator('.tcard', { hasText: a })).toBeVisible()
+  await expect(page.locator('.tcard', { hasText: b })).toHaveCount(0)
+})
