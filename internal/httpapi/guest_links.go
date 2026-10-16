@@ -15,7 +15,7 @@ import (
 // guestLinkRequest 是 POST …/guest-links 与 …/guest-links/{id}/extend 的请求体：
 // valid_days 与 expires_at 二选一（都不填时创建默认 30 天，延期必填其一）。
 // ValidDays 用指针区分「没写」与「写了 0」——写了 0 或其他非法值都是 422
-//（没有永久有效的选项）。
+// （没有永久有效的选项）。
 type guestLinkRequest struct {
 	Note         string `json:"note"`
 	ValidDays    *int   `json:"valid_days"`

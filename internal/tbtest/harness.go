@@ -38,8 +38,9 @@ type Server struct {
 type Option func(*options)
 
 type options struct {
-	webDir     string
-	clockStart time.Time
+	webDir      string
+	clockStart  time.Time
+	attachments config.Attachments
 }
 
 // WithWebDir 指定前端目录（默认用临时目录里的一页 index.html 占位）。
@@ -47,6 +48,17 @@ func WithWebDir(dir string) Option { return func(o *options) { o.webDir = dir } 
 
 // WithClockStart 指定假时钟的起点（默认 2026-10-16 09:00 北京时间）。
 func WithClockStart(t time.Time) Option { return func(o *options) { o.clockStart = t } }
+
+// WithAttachments 指定附件上限（默认 5MB 单文件、每帖 5 个附件 10 张插图、
+// 整单 50MB）。测试里用小上限触发 413，不必打真实大小的载荷（#33）。
+func WithAttachments(maxFileMB, maxFilesPerPost, maxImagesPerPost, maxTicketMB int) Option {
+	return func(o *options) {
+		o.attachments = config.Attachments{
+			MaxFileMB: maxFileMB, MaxFilesPerPost: maxFilesPerPost,
+			MaxImagesPerPost: maxImagesPerPost, MaxTicketMB: maxTicketMB,
+		}
+	}
+}
 
 // defaultClockStart 是假时钟默认起点：一个工作日的上午。
 var defaultClockStart = time.Date(2026, 10, 16, 9, 0, 0, 0, clock.Beijing)
@@ -76,6 +88,10 @@ func Start(t testing.TB, opts ...Option) *Server {
 	t.Cleanup(func() { st.Close() })
 
 	cfg := config.Config{DataDir: dataDir, WebDir: webDir}
+	config.ApplyDefaults(&cfg) // 与 config.Load 一致：端口、附件上限等补默认值
+	if o.attachments != (config.Attachments{}) {
+		cfg.Attachments = o.attachments
+	}
 	clk := clock.NewFake(o.clockStart)
 	srv, err := server.New(cfg, st, clk)
 	if err != nil {

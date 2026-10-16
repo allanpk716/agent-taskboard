@@ -94,6 +94,8 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 		a.setTicketLabels(w, r, ref)
 	case "guest-links":
 		a.handleGuestLinks(w, r, ref, rest)
+	case "attachments":
+		a.handleTicketAttachments(w, r, ref)
 	default:
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
 			"读工单用 /api/v1/tickets/{编号或序号}；回复、关闭、时间线等子资源见 docs/api.md")
@@ -166,7 +168,13 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		_, _ = w.Write([]byte(md))
 		return
 	}
-	writeJSON(w, http.StatusOK, newTicketView(full, viewer))
+	v := newTicketView(full, viewer)
+	if atts, usage, err := a.attachmentProjection(r.Context(), full, viewer); err != nil {
+		panic(err)
+	} else {
+		v.Attachments, v.Usage = atts, usage
+	}
+	writeJSON(w, http.StatusOK, v)
 }
 
 // loadTicketForViewer 读取 ref 指向的工单并套上访客作用域：访客链接指向
@@ -402,8 +410,30 @@ type ticketView struct {
 	WaitingOn   waitingOnView    `json:"waiting_on"`
 	Labels      *[]string        `json:"labels,omitempty"` // 访客视角无此字段（#32）
 	Brief       briefView        `json:"brief"`
+	Attachments []attachmentView `json:"attachments"`      // 已挂上的（#33）
+	Usage       attachmentUsage  `json:"attachment_usage"` // 含待用附件（#33）
 	Viewer      ticketViewerView `json:"viewer"`
 	Timeline    []eventView      `json:"timeline"`
+}
+
+// attachmentView 是附件列表项（#33）：id 是 att: 引用，url 是下载地址
+// （访客拿到的是与链接绑定的短时效签名地址）。
+type attachmentView struct {
+	ID         string `json:"id"`
+	Filename   string `json:"filename"`
+	Size       int64  `json:"size"` // 字节数
+	URL        string `json:"url"`
+	AttachedTo string `json:"attached_to"` // 「说明」或「回复 N」
+}
+
+// attachmentUsage 是附件用量回显（#33）：待用附件也计入 used。
+type attachmentUsage struct {
+	UsedBytes        int64   `json:"used_bytes"`
+	UsedMB           float64 `json:"used_mb"`
+	TicketLimitMB    int     `json:"ticket_limit_mb"`
+	FileLimitMB      int     `json:"file_limit_mb"`
+	MaxFilesPerPost  int     `json:"max_files_per_post"`
+	MaxImagesPerPost int     `json:"max_images_per_post"`
 }
 
 // newTicketView 把工单投影 + 当前凭证组装成 GET 响应。访客可见性过滤（#32）：
@@ -412,14 +442,15 @@ func newTicketView(full tickets.Full, viewer identity.Viewer) ticketView {
 	waitingOn := tickets.WaitingOnOf(full)
 	isGuest := viewer.Kind == identity.ViewerGuest
 	v := ticketView{
-		Number:  full.Number,
-		Seq:     full.Seq,
-		URL:     "/t/" + full.Number,
-		Kind:    full.Kind,
-		Title:   full.Title,
-		Status:  full.Status,
-		Creator: newAuthorView(full.Creator),
-		Brief:   briefView{Markdown: full.BriefMD, Revision: full.BriefRevision},
+		Number:      full.Number,
+		Seq:         full.Seq,
+		URL:         "/t/" + full.Number,
+		Kind:        full.Kind,
+		Title:       full.Title,
+		Status:      full.Status,
+		Creator:     newAuthorView(full.Creator),
+		Brief:       briefView{Markdown: full.BriefMD, Revision: full.BriefRevision},
+		Attachments: []attachmentView{},
 	}
 	if !isGuest {
 		labels := full.Labels

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/httpapi"
@@ -25,6 +26,7 @@ type Server struct {
 	cfg   config.Config
 	Ident *identity.Manager
 	Store *store.Store
+	Atts  *attachments.Manager
 
 	handler  http.Handler
 	web      *webapp.Handler
@@ -40,7 +42,13 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	if err := labelDict.SeedIfEmpty(context.Background()); err != nil {
 		return nil, fmt.Errorf("导入标签字典种子失败：%w", err)
 	}
-	api := httpapi.NewAPI(ident, tickets.NewManager(st.DB, c, labelDict), idempotency.NewManager(st.DB))
+	atts, err := attachments.NewManager(st.DB, cfg.DataDir, c, attachments.LimitsOf(
+		cfg.Attachments.MaxFileMB, cfg.Attachments.MaxFilesPerPost,
+		cfg.Attachments.MaxImagesPerPost, cfg.Attachments.MaxTicketMB))
+	if err != nil {
+		return nil, err
+	}
+	api := httpapi.NewAPI(ident, tickets.NewManager(st.DB, c, labelDict, atts), idempotency.NewManager(st.DB), atts)
 	web, err := webapp.New(cfg.WebDir)
 	if err != nil {
 		return nil, err
@@ -54,6 +62,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 		cfg:     cfg,
 		Ident:   ident,
 		Store:   st,
+		Atts:    atts,
 		handler: mux,
 		web:     web,
 	}, nil

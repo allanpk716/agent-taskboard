@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/labels"
@@ -115,10 +116,11 @@ type Manager struct {
 	db     *sql.DB
 	clk    clock.Clock
 	labels *labels.Manager
+	atts   *attachments.Manager // 附件认领在回复/说明修订的同一事务里（#33）
 }
 
-func NewManager(db *sql.DB, c clock.Clock, lm *labels.Manager) *Manager {
-	return &Manager{db: db, clk: c, labels: lm}
+func NewManager(db *sql.DB, c clock.Clock, lm *labels.Manager, am *attachments.Manager) *Manager {
+	return &Manager{db: db, clk: c, labels: lm, atts: am}
 }
 
 // Labels 返回标签字典模块（HTTP 层组 hint 用；完整字典接口在 #31）。

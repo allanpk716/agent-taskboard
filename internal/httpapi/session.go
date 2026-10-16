@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
@@ -20,10 +21,11 @@ type API struct {
 	ident   *identity.Manager
 	tickets *tickets.Manager
 	idem    *idempotency.Manager
+	atts    *attachments.Manager
 }
 
-func NewAPI(ident *identity.Manager, tk *tickets.Manager, idem *idempotency.Manager) *API {
-	return &API{ident: ident, tickets: tk, idem: idem}
+func NewAPI(ident *identity.Manager, tk *tickets.Manager, idem *idempotency.Manager, atts *attachments.Manager) *API {
+	return &API{ident: ident, tickets: tk, idem: idem, atts: atts}
 }
 
 // Handler 返回 /api/v1 前缀的 http.Handler（带 panic 恢复，统一错误格式）。
@@ -36,6 +38,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/tickets/", a.handleTicketRef)
 	mux.HandleFunc("/api/v1/labels", a.handleLabelsRoot)
 	mux.HandleFunc("/api/v1/labels/", a.handleLabelsSub)
+	mux.HandleFunc("/api/v1/attachments/", a.handleAttachmentDownload)
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "接口都在 /api/v1 之下，检查路径拼写")
 	})
