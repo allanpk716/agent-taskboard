@@ -43,8 +43,9 @@ func (a *API) handleTicketsRoot(w http.ResponseWriter, r *http.Request) {
 //	POST   …/replies                       回复（#30；访客 #32）
 //	POST   …/close  …/reopen               关闭与重开（#30，仅成员）
 //	POST   …/labels                        打标签 / 摘标签（#31，仅成员）
+//	POST   …/assign                        改派（#36，仅成员）
 //	POST/GET …/guest-links[/… ]            访客链接的创建/列表/撤销/延期（#32，仅成员）
-//	（attachments 在 #33、assign 在 #36）
+//	（attachments 在 #33）
 //
 // 工单引用接受 YYYYMMDD-NNN 工单编号或全局序号（可带 # 前缀）。
 func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
@@ -93,6 +94,12 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.setTicketLabels(w, r, ref)
+	case "assign":
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "改派用 POST")
+			return
+		}
+		a.assignTicket(w, r, ref)
 	case "guest-links":
 		a.handleGuestLinks(w, r, ref, rest)
 	default:
@@ -103,7 +110,7 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 
 // createTicketRequest 是 POST /api/v1/tickets 的请求体。
 // 用模板创建时带 template 与 fields（类型由模板决定、缺必填只 warnings）；
-// assignee（建单时指派与 share_text）预留给 #36，本工单先忽略。
+// assignee 可写成员 id 或姓名，写成成员 Agent → 422 assignee_must_be_member（#36）。
 type createTicketRequest struct {
 	Kind     string            `json:"kind"`
 	Template string            `json:"template"`
@@ -115,12 +122,16 @@ type createTicketRequest struct {
 }
 
 // createTicketResponse 是建单成功的响应（201）。用模板建单缺必填项时
-// 工单照常创建，warnings 逐项列出（选「不确定」算已填）。
+// 工单照常创建，warnings 逐项列出（选「不确定」算已填）；指派给他人时
+// 另带 assignee、waiting_on 和一句可直接转发的 share_text（#36）。
 type createTicketResponse struct {
-	Number   string                 `json:"number"`
-	Seq      int64                  `json:"seq"`
-	URL      string                 `json:"url"`
-	Warnings []tickets.FieldWarning `json:"warnings"`
+	Number    string                 `json:"number"`
+	Seq       int64                  `json:"seq"`
+	URL       string                 `json:"url"`
+	Warnings  []tickets.FieldWarning `json:"warnings"`
+	Assignee  *memberRef             `json:"assignee"`
+	WaitingOn waitingOnView          `json:"waiting_on"`
+	ShareText *string                `json:"share_text"`
 }
 
 func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
@@ -130,30 +141,52 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createTicketRequest
-	if !decodeJSON(w, r, &req, `{"template": "bug-report", "title": "…", "fields": {"问句？": "…"}, "labels": []}`) {
+	if !decodeJSON(w, r, &req, `{"kind?": "task|report", "template?": "模板 key", "title": "…", "brief_md?": "…", "fields?": {"问句？": "…"}, "labels": ["维度:值"], "assignee?": "成员 id 或姓名"}`) {
 		return
 	}
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
-		t, warnings, err := a.tickets.Create(r.Context(), tickets.CreateInput{
+		full, warnings, err := a.tickets.Create(r.Context(), tickets.CreateInput{
 			Kind:        req.Kind,
 			Title:       req.Title,
 			BriefMD:     req.BriefMD,
 			Labels:      req.Labels,
 			TemplateKey: req.Template,
 			Fields:      req.Fields,
+			Assignee:    req.Assignee,
 			Creator:     viewer,
 		})
 		if err != nil {
 			a.writeTicketError(w, r, err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, createTicketResponse{
-			Number:   t.Number,
-			Seq:      t.Seq,
-			URL:      "/t/" + t.Number,
-			Warnings: warnings,
-		})
+		res := createTicketResponse{
+			Number:    full.Number,
+			Seq:       full.Seq,
+			URL:       "/t/" + full.Number,
+			Warnings:  warnings,
+			WaitingOn: newWaitingOnView(tickets.WaitingOnOf(full)),
+		}
+		if full.AssigneeID != 0 {
+			res.Assignee = &memberRef{ID: full.AssigneeID, Name: full.AssigneeName}
+			// 指派给他人时才附一句可转发的 share_text（自派自不需要通知自己）。
+			if full.AssigneeID != full.Creator.MemberID {
+				share := createShareText(full.AssigneeName, full.Title, full.Number)
+				res.ShareText = &share
+			}
+		}
+		writeJSON(w, http.StatusCreated, res)
 	})
+}
+
+// createShareText 是建单指派时的可转发文案（原型的句子）。
+func createShareText(assigneeName, title, number string) string {
+	return assigneeName + "：给你派了一张工单「" + title + "」，让你的 Agent 读一下 /t/" +
+		number + "（它也会出现在你的收件箱里）"
+}
+
+// reassignShareText 是改派时的可转发文案。
+func reassignShareText(assigneeName, title, number string) string {
+	return assigneeName + "：工单「" + title + "」转给你了，让你的 Agent 读一下 /t/" + number
 }
 
 // readTicket 处理 GET /api/v1/tickets/{id}[?format=markdown]。访客链接只能
@@ -223,6 +256,17 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, err error
 	case errors.Is(err, tickets.ErrNotFound):
 		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
 			"用工单编号（YYYYMMDD-NNN）或全局序号引用；编号按北京时间分配")
+	case isAssigneeMustBeMember(err):
+		e := err.(*tickets.AssigneeMustBeMemberError)
+		WriteError(w, http.StatusUnprocessableEntity, CodeAssigneeMustBeMember, e.Error(),
+			a.memberNamesHint(r, "指派给它所属的成员"))
+	case isUnknownMember(err):
+		e := err.(*tickets.UnknownMemberError)
+		WriteError(w, http.StatusUnprocessableEntity, CodeUnknownMember, e.Error(),
+			a.memberNamesHint(r, "可选成员"))
+	case isAlreadyAssigned(err):
+		e := err.(*tickets.AlreadyAssignedError)
+		WriteError(w, http.StatusUnprocessableEntity, CodeAlreadyAssigned, e.Error(), "改派时换一位成员")
 	case errors.Is(err, templates.ErrNotFound):
 		WriteError(w, http.StatusNotFound, CodeTemplateNotFound, "没有这个模板",
 			"模板列表见 GET /api/v1/templates")
@@ -262,8 +306,13 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, err error
 		WriteError(w, http.StatusConflict, CodeAlreadyClosed, err.Error(), "需要重新处理时先 POST …/reopen")
 	case errors.Is(err, tickets.ErrNotClosed):
 		WriteError(w, http.StatusConflict, CodeNotClosed, err.Error(), "")
-	case errors.Is(err, tickets.ErrDeliverAssigneeOnly):
-		WriteError(w, http.StatusForbidden, CodeDeliverAssigneeOnly, err.Error(), "去掉 deliver 作为普通回复；该你做就请发起人改派（指派在 #36 提供）")
+	case isDeliverAssigneeOnly(err):
+		e := err.(*tickets.DeliverAssigneeOnlyError)
+		hint := "去掉 deliver 作为普通回复；如果这活该你做，请发起人先改派给你"
+		if e.Closed {
+			hint = "工单已关闭；去掉 deliver 作为普通回复，需要返工流程时先重新开启工单"
+		}
+		WriteError(w, http.StatusForbidden, CodeDeliverAssigneeOnly, e.Error(), hint)
 	case errors.Is(err, tickets.ErrNoteRequired):
 		WriteError(w, http.StatusUnprocessableEntity, CodeNoteRequired, err.Error(), "备注写对方是谁，如「检验科-张三」；链接创建后凭备注区分多条链接")
 	case errors.Is(err, tickets.ErrInvalidValidDays):
@@ -297,6 +346,35 @@ func isInvalidFieldOption(err error) bool {
 func isUnknownLabelValue(err error) bool {
 	var e *labels.UnknownValueError
 	return errors.As(err, &e)
+}
+
+func isAssigneeMustBeMember(err error) bool {
+	var e *tickets.AssigneeMustBeMemberError
+	return errors.As(err, &e)
+}
+
+func isUnknownMember(err error) bool {
+	var e *tickets.UnknownMemberError
+	return errors.As(err, &e)
+}
+
+func isAlreadyAssigned(err error) bool {
+	var e *tickets.AlreadyAssignedError
+	return errors.As(err, &e)
+}
+
+func isDeliverAssigneeOnly(err error) bool {
+	var e *tickets.DeliverAssigneeOnlyError
+	return errors.As(err, &e)
+}
+
+// memberNamesHint 拼出「<前缀>：王工、李工」形式的 hint（成员列表供 Agent 自纠）。
+func (a *API) memberNamesHint(r *http.Request, prefix string) string {
+	names := a.tickets.MemberNames(r.Context())
+	if len(names) == 0 {
+		return ""
+	}
+	return prefix + "：" + strings.Join(names, "、")
 }
 
 func isLinkNotExtendable(err error) bool {
@@ -409,6 +487,8 @@ type eventView struct {
 	Reason      string `json:"reason,omitempty"`
 	DuplicateOf string `json:"duplicate_of,omitempty"`
 	ExpiresAt   string `json:"expires_at,omitempty"` // guest_link_extended 的新到期时刻（#32）
+	From        string `json:"from,omitempty"`       // assigned 事件的改派前指派人；空 = 创建时指派（#36）
+	To          string `json:"to,omitempty"`         // assigned 事件的指派对象（#36）
 }
 
 // newEventView 把时间线事件转成对外结构。
@@ -417,6 +497,7 @@ func newEventView(e tickets.Event) eventView {
 		Seq: e.Seq, Change: e.Change, At: e.At, Actor: newAuthorView(e.Actor), Type: e.Type,
 		Label: e.Label, Note: e.Note, ReplyNo: e.ReplyNo, BodyMD: e.BodyMD, Deliver: e.Deliver,
 		Revision: e.Revision, Reason: e.Reason, DuplicateOf: e.DuplicateOf, ExpiresAt: e.LinkExpires,
+		From: e.AssignFrom, To: e.AssignTo,
 	}
 }
 
@@ -459,6 +540,9 @@ func newTicketView(full tickets.Full, viewer identity.Viewer) ticketView {
 		Creator: newAuthorView(full.Creator),
 		Brief:   briefView{Markdown: full.BriefMD, Revision: full.BriefRevision},
 	}
+	if full.AssigneeID != 0 {
+		v.Assignee = &authorView{Member: &memberRef{ID: full.AssigneeID, Name: full.AssigneeName}}
+	}
 	if full.TemplateKey != "" {
 		key := full.TemplateKey
 		v.Template = &key
@@ -476,13 +560,12 @@ func newTicketView(full tickets.Full, viewer identity.Viewer) ticketView {
 		v.CloseReason = &c
 	}
 	v.WaitingOn = newWaitingOnView(waitingOn)
-	tv := ticketViewerView{Kind: string(viewer.Kind), Role: roleOf(viewer, full)}
+	tv := ticketViewerView{Kind: string(viewer.Kind), Role: roleOf(viewer, full), YourTurn: yourTurnOf(viewer, waitingOn)}
 	if isGuest {
 		note := viewer.GuestLink.Note
 		expiresAt := viewer.GuestLink.ExpiresAt.Format(time.RFC3339Nano)
 		tv.LinkNote = &note
 		tv.LinkExpiresAt = &expiresAt
-		tv.YourTurn = yourTurnOf(viewer, waitingOn)
 	} else {
 		tv.Member = &memberRef{ID: viewer.Member.ID, Name: viewer.Member.Name}
 		if viewer.Agent != nil {
@@ -517,8 +600,11 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer) markdownview
 		Kind:            full.Kind,
 		Status:          full.Status,
 		CreatorName:     full.Creator.DisplayName(),
+		AssigneeName:    full.AssigneeName,
 		WaitingOnText:   waitingOn.Text,
 		WaitingOnReason: waitingOn.Reason,
+		WaitingOnWhy:    waitingOn.Why,
+		SinceSeq:        waitingOn.SinceSeq,
 		BriefMarkdown:   full.BriefMD,
 		BriefRevision:   full.BriefRevision,
 		ViewerName:      viewerName,
@@ -530,6 +616,22 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer) markdownview
 	if full.TemplateDef != nil {
 		in.AgentNote = full.TemplateDef.AgentNote
 		in.TemplateName = full.TemplateDef.Name
+	}
+	in.CanReopen = capsOf(viewer, full).Reopen
+	// 重开提示（spec 已接受边界）：工单开启且最后一条事件是重开、重开者就是
+	// 当前凭证一方（成员本人或其 Agent；访客不能重开）。
+	if full.Status == "open" && len(full.Timeline) > 0 {
+		last := full.Timeline[len(full.Timeline)-1]
+		if last.Type == "reopened" && last.Actor.MemberID != 0 &&
+			last.Actor.MemberID == viewer.Member.ID {
+			in.ReopenedByViewer = true
+		}
+	}
+	for _, e := range full.Timeline {
+		if isGuest && !visibleToGuest(e) {
+			continue
+		}
+		in.LastSeq = e.Seq
 	}
 	if !isGuest {
 		labels := full.Labels
@@ -546,6 +648,7 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer) markdownview
 			Seq: e.Seq, At: e.At, AuthorName: e.Actor.DisplayName(), Type: e.Type,
 			Label: e.Label, BodyMD: e.BodyMD, Deliver: e.Deliver, Revision: e.Revision,
 			Reason: e.Reason, DuplicateOf: e.DuplicateOf, Note: e.Note, LinkExpiresAt: e.LinkExpires,
+			AssignFrom: e.AssignFrom, AssignTo: e.AssignTo,
 		})
 	}
 	return in
@@ -560,6 +663,7 @@ func yourTurnOf(viewer identity.Viewer, waitingOn tickets.WaitingOn) bool {
 }
 
 // roleOf 判定当前凭证在这张工单里的角色：指派人 / 发起人（创建者一方）/ 成员 / 访客。
+// 自派自时创建者同时也是指派人，按指派人算（照抄原型 roleOf 的优先级）；
 // 通过反馈入口提交的访客视同创建者（#35）：持有创建者链接的访客角色是 creator。
 func roleOf(viewer identity.Viewer, full tickets.Full) string {
 	if viewer.Kind == identity.ViewerGuest {
@@ -568,15 +672,18 @@ func roleOf(viewer identity.Viewer, full tickets.Full) string {
 		}
 		return "guest"
 	}
+	if full.AssigneeID != 0 && viewer.Member.ID == full.AssigneeID {
+		return "assignee"
+	}
 	if viewer.Member.ID == full.Creator.MemberID {
 		return "creator" // 创建者本人及其任意 Agent 都算创建者一方
 	}
-	return "member" // assignee 在 #36 加入
+	return "member" // 第三位成员
 }
 
 // capsOf 判定当前凭证能做什么（spec「读取」里 viewer.can 的完整集合）。
 // 成员：reply/upload/label/manage_guest_links/assign 恒 true；close 需开启；
-// reopen 需已关闭；deliver 需开启且本人是指派人（#36 起）；edit_brief 需是创建者一方。
+// reopen 需已关闭；deliver 需开启且本人是指派人（#36）；edit_brief 需是创建者一方。
 // 访客（#32）：reply/upload 需工单开启；edit_brief 需开启且链接带「可填写说明」；
 // 其余恒 false（工单关闭后链接只读，重开后恢复）。
 func capsOf(viewer identity.Viewer, full tickets.Full) canView {
@@ -595,7 +702,7 @@ func capsOf(viewer identity.Viewer, full tickets.Full) canView {
 		Close:            open,
 		Reopen:           !open,
 		ManageGuestLinks: true,
-		Deliver:          false, // 需要本人是指派人；指派在 #36 加入
+		Deliver:          open && full.AssigneeID != 0 && viewer.Member.ID == full.AssigneeID,
 		Assign:           true,
 		EditBrief:        viewer.Member.ID == full.Creator.MemberID,
 	}
