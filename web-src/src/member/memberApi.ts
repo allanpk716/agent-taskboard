@@ -364,7 +364,7 @@ export async function fetchGuestLinks(number: string): Promise<GuestLink[]> {
 
 export async function createGuestLink(
   number: string,
-  body: { note: string; valid_days?: number; can_edit_brief?: boolean },
+  body: { note: string; valid_days?: number; expires_at?: string; can_edit_brief?: boolean },
 ): Promise<CreatedGuestLink> {
   return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links`, {
     method: 'POST',
@@ -376,10 +376,15 @@ export async function revokeGuestLink(number: string, id: number): Promise<void>
   await api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}`, { method: 'DELETE' })
 }
 
-export async function extendGuestLink(number: string, id: number, validDays: number): Promise<void> {
+/** 延期：valid_days（7/30/90）或 expires_at（YYYY-MM-DD，管满该日全天）二选一。 */
+export async function extendGuestLink(
+  number: string,
+  id: number,
+  body: { valid_days?: number; expires_at?: string },
+): Promise<void> {
   await api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}/extend`, {
     method: 'POST',
-    body: JSON.stringify({ valid_days: validDays }),
+    body: JSON.stringify(body),
   })
 }
 

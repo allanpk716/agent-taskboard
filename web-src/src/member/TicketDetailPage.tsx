@@ -24,7 +24,7 @@ import {
 } from './memberApi'
 import { BriefBubble, EventLine, ReplyBubble } from '../shared/conversation'
 import { Lightbox } from '../shared/widgets'
-import { absoluteUrl, authorName, closeReasonText, fmtDateCN } from '../shared/format'
+import { absoluteUrl, authorName, closeReasonText, fmtLinkExpiry, linkExpired } from '../shared/format'
 import { Confirm, Modal, copyText, invalidate, nav, toast } from './ui'
 import { LabelChips, chipClass } from './TicketsPage'
 
@@ -251,9 +251,11 @@ function LinksDialog({
   const [links, setLinks] = useState<GuestLink[] | null>(null)
   const [note, setNote] = useState('')
   const [days, setDays] = useState('30')
+  const [date, setDate] = useState('') // 「指定日期」写法的到期日（YYYY-MM-DD，管满该日全天）
   const [canEdit, setCanEdit] = useState(false)
   const [created, setCreated] = useState<{ url: string } | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [extendDates, setExtendDates] = useState<Record<number, string>>({}) // 每条链接「延期到该日」的日期
 
   const reload = useCallback(async () => {
     try {
@@ -272,11 +274,18 @@ function LinksDialog({
       return
     }
     try {
-      const link = await createGuestLink(ticket.number, {
-        note: note.trim(),
-        valid_days: Number(days),
-        can_edit_brief: canEdit,
-      })
+      const link =
+        days === 'date'
+          ? await createGuestLink(ticket.number, {
+              note: note.trim(),
+              expires_at: date,
+              can_edit_brief: canEdit,
+            })
+          : await createGuestLink(ticket.number, {
+              note: note.trim(),
+              valid_days: Number(days),
+              can_edit_brief: canEdit,
+            })
       setCreated({ url: link.url })
       setErr(null)
       setNote('')
@@ -300,54 +309,81 @@ function LinksDialog({
               <td className="hint">还没有访客链接</td>
             </tr>
           ) : (
-            links.map((g) => (
-              <tr key={g.id}>
-                <td>
-                  {g.note}
-                  {g.can_edit_brief && <span className="mini">可填写说明</span>}
-                </td>
-                <td>
-                  {fmtDateCN(g.expires_at)}到期
-                  {g.revoked_at ? ' · 已撤销' : ''}
-                </td>
-                <td>
-                  {g.revoked_at ? (
-                    <span className="hint">已失效，不能延期</span>
-                  ) : (
-                    <>
-                      <button
-                        className="btn sm ghost"
-                        onClick={() => {
-                          void extendGuestLink(ticket.number, g.id, 30)
-                            .then(() => {
-                              toast('✓ 已延期 30 天')
-                              void reload()
-                              onChanged()
-                            })
-                            .catch((e) => toast(e instanceof ApiError ? e.message : '延期失败'))
-                        }}
-                      >
-                        延期 30 天
-                      </button>{' '}
-                      <button
-                        className="btn sm ghost"
-                        onClick={() => {
-                          void revokeGuestLink(ticket.number, g.id)
-                            .then(() => {
-                              toast('已撤销，对方再打开会看到链接失效页')
-                              void reload()
-                              onChanged()
-                            })
-                            .catch((e) => toast(e instanceof ApiError ? e.message : '撤销失败'))
-                        }}
-                      >
-                        撤销
-                      </button>
-                    </>
-                  )}
-                </td>
-              </tr>
-            ))
+            links.map((g) => {
+              const dead = !!g.revoked_at || linkExpired(g.expires_at)
+              return (
+                <tr key={g.id}>
+                  <td>
+                    {g.note}
+                    {g.can_edit_brief && <span className="mini">可填写说明</span>}
+                  </td>
+                  <td>
+                    {fmtLinkExpiry(g.expires_at)}
+                    {g.revoked_at ? ' · 已撤销' : ''}
+                    {!g.revoked_at && linkExpired(g.expires_at) ? ' · 已过期' : ''}
+                  </td>
+                  <td>
+                    {dead ? (
+                      <span className="hint">{g.revoked_at ? '已失效，不能延期' : '已过期，不能延期'}</span>
+                    ) : (
+                      <>
+                        <button
+                          className="btn sm ghost"
+                          onClick={() => {
+                            void extendGuestLink(ticket.number, g.id, { valid_days: 30 })
+                              .then(() => {
+                                toast('✓ 已延期 30 天')
+                                void reload()
+                                onChanged()
+                              })
+                              .catch((e) => toast(e instanceof ApiError ? e.message : '延期失败'))
+                          }}
+                        >
+                          延期 30 天
+                        </button>{' '}
+                        <input
+                          type="date"
+                          aria-label={`指定日期 ${g.note}`}
+                          value={extendDates[g.id] ?? ''}
+                          onChange={(e) => setExtendDates((m) => ({ ...m, [g.id]: e.target.value }))}
+                        />{' '}
+                        <button
+                          className="btn sm ghost"
+                          disabled={!extendDates[g.id]}
+                          onClick={() => {
+                            const until = extendDates[g.id] ?? ''
+                            void extendGuestLink(ticket.number, g.id, { expires_at: until })
+                              .then(() => {
+                                toast(`✓ 已延期到 ${until}（当天有效）`)
+                                setExtendDates((m) => ({ ...m, [g.id]: '' }))
+                                void reload()
+                                onChanged()
+                              })
+                              .catch((e) => toast(e instanceof ApiError ? e.message : '延期失败'))
+                          }}
+                        >
+                          延期到该日
+                        </button>{' '}
+                        <button
+                          className="btn sm ghost"
+                          onClick={() => {
+                            void revokeGuestLink(ticket.number, g.id)
+                              .then(() => {
+                                toast('已撤销，对方再打开会看到链接失效页')
+                                void reload()
+                                onChanged()
+                              })
+                              .catch((e) => toast(e instanceof ApiError ? e.message : '撤销失败'))
+                          }}
+                        >
+                          撤销
+                        </button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              )
+            })
           )}
         </tbody>
       </table>
@@ -365,7 +401,11 @@ function LinksDialog({
           <option value="7">7 天</option>
           <option value="30">30 天（默认）</option>
           <option value="90">90 天</option>
+          <option value="date">指定日期（当天有效）</option>
         </select>
+        {days === 'date' && (
+          <input type="date" aria-label="到期日期" value={date} onChange={(e) => setDate(e.target.value)} />
+        )}
         <label className="ckrow" style={{ margin: 0 }}>
           <input type="checkbox" checked={canEdit} onChange={(e) => setCanEdit(e.target.checked)} /> 可填写说明
         </label>

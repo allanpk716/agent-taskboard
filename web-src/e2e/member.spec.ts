@@ -358,3 +358,42 @@ test('建单（模板）：缺必填项弹出确认，仍创建后逐项提示',
   await expect(page.getByText('（未填写）').first()).toBeVisible()
   await expect(page.locator('[data-bubble="brief"]')).toContainText('现场日志.log')
 })
+
+// 9. 访客链接的「指定日期」：创建与延期都能选日期（当天有效，评审 P2-9）；
+//    撤销后链接行不再提供延期。
+test('访客链接支持指定日期创建与延期', async ({ page, request }) => {
+  const number = await createTicket(request, { title: '指定日期访客链接的工单' })
+  await login(page, ADMIN)
+  await page.goto(`/t/${number}`)
+  await page.getByRole('button', { name: '访客链接' }).click()
+
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const fmt = (iso: string) => `${parseInt(iso.slice(5, 7), 10)}月${parseInt(iso.slice(8, 10), 10)}日`
+  const pickDate = new Date(Date.now() + 45 * 86400_000) // 今天 +45 天
+  const pickStr = `${pickDate.getFullYear()}-${pad(pickDate.getMonth() + 1)}-${pad(pickDate.getDate())}`
+  const pickLabel = `${fmt(pickStr)}为止` // 日期写法当天有效：展示为所选那天「为止」
+
+  // 创建：有效期选「指定日期」，到期日按当天有效展示
+  await page.getByLabel('备注').fill('外包-赵')
+  await page.getByLabel('有效期').selectOption('date')
+  await page.getByLabel('到期日期').fill(pickStr)
+  await page.getByRole('button', { name: '创建', exact: true }).click()
+  await expect(page.getByText('✓ 已创建（完整链接只在创建时出现一次）')).toBeVisible()
+  const row = page.locator('.mini-tbl tr', { hasText: '外包-赵' })
+  await expect(row).toContainText(pickLabel)
+
+  // 延期到另一个日期（今天 +60 天）：行内日期输入 + 延期到该日
+  const laterDate = new Date(Date.now() + 60 * 86400_000)
+  const laterStr = `${laterDate.getFullYear()}-${pad(laterDate.getMonth() + 1)}-${pad(laterDate.getDate())}`
+  const laterLabel = `${fmt(laterStr)}为止`
+  await row.getByLabel('指定日期 外包-赵').fill(laterStr)
+  await row.getByRole('button', { name: '延期到该日' }).click()
+  await expect(page.getByText(`✓ 已延期到 ${laterStr}（当天有效）`)).toBeVisible()
+  await expect(row).toContainText(laterLabel)
+
+  // 撤销后不再提供延期（已失效，不能延期）
+  await row.getByRole('button', { name: '撤销', exact: true }).click()
+  await expect(row).toContainText('已失效，不能延期')
+  await expect(row.getByRole('button', { name: '延期 30 天' })).toHaveCount(0)
+  await expect(row.getByRole('button', { name: '延期到该日' })).toHaveCount(0)
+})

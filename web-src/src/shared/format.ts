@@ -23,6 +23,25 @@ export function absoluteUrl(path: string): string {
   return new URL(path, window.location.origin).href
 }
 
+/** 访客链接到期展示：时刻到期的显示「X月X日到期」；恰好在某日 00:00 到期
+ *  （日期写法，管满前一天全天，评审 P2-8）的显示「X月X日为止」，不让人误读。
+ *  日历运算直接在字符串上做（服务端固定回北京时间），不经过本地时区。 */
+export function fmtLinkExpiry(iso: string): string {
+  if (iso.slice(11, 19) === '00:00:00') {
+    const y = parseInt(iso.slice(0, 4), 10)
+    const m = parseInt(iso.slice(5, 7), 10)
+    const d = parseInt(iso.slice(8, 10), 10)
+    const prev = new Date(Date.UTC(y, m - 1, d) - 86400_000) // 前一天
+    return `${prev.getUTCMonth() + 1}月${prev.getUTCDate()}日为止`
+  }
+  return `${fmtDateCN(iso)}到期`
+}
+
+/** 访客链接是否已过期（已撤销另算）。 */
+export function linkExpired(iso: string): boolean {
+  return new Date(iso).getTime() <= Date.now()
+}
+
 /** 关闭原因文案。 */
 export function closeReasonText(reason?: string | null): string {
   switch (reason) {
