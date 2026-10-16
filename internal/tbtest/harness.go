@@ -120,6 +120,10 @@ func (s *Server) WebDir() string { return s.webDir }
 // Identity 暴露身份模块（后续工单造数据用，如建成员、发 Agent token）。
 func (s *Server) Identity() *identity.Manager { return s.srv.Ident }
 
+// Store 暴露数据库（测试造数据的快路径，如给「第 1000 张」编号测试预置占位工单；
+// 断言外部行为仍应走 HTTP 接口）。
+func (s *Server) Store() *store.Store { return s.srv.Store }
+
 // CreateAdmin 造一位管理员（等价于 taskboard create-admin 子命令做的事）。
 func (s *Server) CreateAdmin(username, password string) {
 	s.TB.Helper()

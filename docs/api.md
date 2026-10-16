@@ -62,3 +62,39 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
   - `422 name_required`：名字为空。
   - `409 agent_name_taken`：该成员名下已有同名、未撤销的 Agent。
   - `404 agent_token_not_found`：id 不存在、不属于当前成员，或路径不是数字（`/me/` 下只看自己的资源，防枚举）。
+
+## 工单（#29：建单与读取，不用模板）
+
+工单引用 `{id}` 接受两种写法：工单编号 `YYYYMMDD-NNN`（北京时间每天从 001 起，
+超 999 自动变 4 位）或全局序号（可带 `#` 前缀，URL 里需写成 `%23`）。网页和 Agent
+都用 `/t/<编号>` 引用工单（成员网页路由在后续工单实现）。工单不能删除。
+
+| 方法与路径 | 说明 |
+|---|---|
+| `POST /api/v1/tickets` | 建单（成员/成员 Agent）。 |
+| `GET /api/v1/tickets/{id}` | 读一张工单；`?format=markdown` 返回给 Agent 读的 Markdown。 |
+
+- 建单请求体 `{"kind", "title", "brief_md", "labels"}`：
+  - `kind` 可省（默认 `task`），只能是 `task`（任务）或 `report`（反馈）；用模板创建时由模板决定（#34）。
+  - `title` 必填；`brief_md` 是不用模板时的一整块说明（可空）。
+  - `labels` 至少要有一个 `维度:值` 形式的维度标签；且每个标签（含不带维度的）
+    必须是字典中已有的值（种子维度：产品线、系统、机型、部门、算法、立项、子项目；
+    初始值见 `internal/labels/seeds.go`）。完整的标签操作（allow_new、别名）在 #31。
+  - `assignee`（建单时指派与 `share_text`）预留给 #36，本版忽略。
+- 建单响应 `201`：`{number, seq, url}`（`url` 即 `/t/<编号>`）。
+- 建单错误码：`422 title_required`、`422 invalid_kind`、
+  `422 dimension_label_required`（hint 给出字典里的维度标签示例）、
+  `422 unknown_label_value`（附 `suggestions`：同维度里规范化后相等或互相包含的值，
+  规范化 = 忽略大小写、空格、连字符和下划线）。
+- 工单编号与全局序号在同一事务内分配；建单同时写入一条 `created` 时间线事件，
+  并推进全局变更序号（事件里的 `change` 字段，与事件写入同事务）。
+- `GET` 响应（成员视角）：`number, seq, url, kind, title, status, close_reason,
+  template, creator, assignee, waiting_on, labels, brief, viewer, timeline`；
+  - 作者结构统一 `{member: {id, name}, agent: {id, name}|null}`，本人操作 `agent` 为 `null`；
+    时间线事件带 `seq`（单内递增）、`change`、`at`、`actor`、`type`。
+  - `viewer`：`{kind, member, agent, role(assignee|creator|member|guest), your_turn, can}`；
+    `can` 是完整能力表 `reply/upload/edit_brief/label/close/reopen/manage_guest_links/deliver/assign`。
+  - `waiting_on` 由时间线推导（尚无回复且未指派 → `department`/尚未指派；回复参与推导在 #30，指派在 #36）。
+  - 访客视角的可见性过滤（无 `labels`、跳过标签事件）在 #32 加入。
+- `?format=markdown` 返回 `text/markdown`：头部信息、说明、附件（占位）、时间线和
+  「下一步」；署名按 ADR 0003：成员 `陈某`，成员 Agent `陈某 的 Agent · 名字`。
