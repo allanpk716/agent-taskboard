@@ -179,7 +179,7 @@ func Apply(ctx context.Context, opt Options) (*Result, error) {
 	var webZip []byte
 	if needWeb {
 		for _, fe := range latest.Web.Manifest.Files {
-			if stringsHasSuffix(fe.Name, ".zip") {
+			if strings.HasSuffix(fe.Name, ".zip") {
 				data, err := latest.Web.File(ctx, fe.Name)
 				if err != nil {
 					return nil, err
@@ -228,10 +228,6 @@ func (o *Options) preupdate(ctx context.Context) (string, error) {
 		return o.Preupdate(ctx)
 	}
 	return defaultPreupdate(ctx, o)
-}
-
-func stringsHasSuffix(s, suffix string) bool {
-	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
 }
 
 // serverExeFile 返回当前平台应下载的后端产物名（发布产物里 Windows 主部署，
