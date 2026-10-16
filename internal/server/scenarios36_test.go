@@ -341,3 +341,42 @@ func Test收件箱仅限成员且不含未指派工单(t *testing.T) {
 		t.Errorf("李工信箱 = %v, 想包含已指派的 %s", got, assigned)
 	}
 }
+
+// 已接受边界（spec「等待方与收件箱」）：重新开启后按最后一条相关回复推导
+// 轮次；Markdown「下一步」提示重开的人回复说明原因。
+func Test重开后按最后一条相关回复推导并提示重开者(t *testing.T) {
+	w := newHandoffWorld(t)
+	number := w.createHandoffTicket(t, w.wangA, "整理对照表", "李工").Number
+
+	// 李工提问、王工答复后轮到李工；王工直接关闭再重开。
+	w.s.Do(t, w.liA, http.MethodPost, "/api/v1/tickets/"+number+"/replies",
+		map[string]string{"body_md": "要写到机型吗？"}, nil)
+	w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets/"+number+"/replies",
+		map[string]string{"body_md": "写到机型即可。"}, nil)
+	w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets/"+number+"/close",
+		map[string]string{"reason": "wontfix"}, nil)
+	res := w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets/"+number+"/reopen", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("重开状态码 = %d, 想 200", res.StatusCode)
+	}
+
+	// 重开后轮次回到最后一条相关回复推导的结果：王工（发起人）答复过 → 轮到李工。
+	assertWaitingOn(t, w.waitOf(t, w.webWang, number),
+		waitingOnBody{Party: "assignee", Member: strp("李工"), Reason: "发起人回复了"}, "重开后")
+	// 李工（轮到他但不是重开者）没有重开提示。
+	md := w.readMarkdown(t, w.liA, "/api/v1/tickets/"+number+"?format=markdown")
+	if strings.Contains(md, "重新开启") && strings.Contains(md, "说明重开原因") {
+		t.Errorf("非重开者不应收到重开提示：\n%s", md)
+	}
+	// 王工（重开者，即使不轮到他）被提示回复说明原因。
+	md = w.readMarkdown(t, w.wangA, "/api/v1/tickets/"+number+"?format=markdown")
+	for _, want := range []string{
+		"这张工单刚由你重新开启",
+		"先回复说明重开原因：",
+		"POST /api/v1/tickets/" + number + "/replies",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("重开者的 Markdown 缺少 %q：\n%s", want, md)
+		}
+	}
+}

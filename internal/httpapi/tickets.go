@@ -449,8 +449,8 @@ type eventView struct {
 	Reason      string `json:"reason,omitempty"`
 	DuplicateOf string `json:"duplicate_of,omitempty"`
 	ExpiresAt   string `json:"expires_at,omitempty"` // guest_link_extended 的新到期时刻（#32）
-	From        string `json:"from"`                 // assigned 事件的改派前指派人；空 = 创建时指派（#36）
-	To          string `json:"to"`                   // assigned 事件的指派对象（#36）
+	From        string `json:"from,omitempty"`       // assigned 事件的改派前指派人；空 = 创建时指派（#36）
+	To          string `json:"to,omitempty"`         // assigned 事件的指派对象（#36）
 }
 
 // newEventView 把时间线事件转成对外结构。
@@ -567,6 +567,15 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer) markdownview
 		APIPath:         "/api/v1/tickets/" + full.Number,
 	}
 	in.CanReopen = capsOf(viewer, full).Reopen
+	// 重开提示（spec 已接受边界）：工单开启且最后一条事件是重开、重开者就是
+	// 当前凭证一方（成员本人或其 Agent；访客不能重开）。
+	if full.Status == "open" && len(full.Timeline) > 0 {
+		last := full.Timeline[len(full.Timeline)-1]
+		if last.Type == "reopened" && last.Actor.MemberID != 0 &&
+			last.Actor.MemberID == viewer.Member.ID {
+			in.ReopenedByViewer = true
+		}
+	}
 	for _, e := range full.Timeline {
 		if isGuest && !visibleToGuest(e) {
 			continue

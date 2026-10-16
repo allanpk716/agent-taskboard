@@ -50,11 +50,11 @@ type Input struct {
 	APIPath         string // /api/v1/tickets/<编号>，「下一步」引用
 
 	// #36：按 角色×轮次 生成「下一步」所需。
-	WaitingOnWhy string // 原因码：new|guest_replied|delivered|assignee_replied|sent_back|creator_replied
-	SinceSeq     int64  // 推导所依据的回复事件 seq
-	CanReopen    bool   // 已关闭时是否可重新开启（成员恒可）
-	CanReply     bool   // 访客在关闭工单上不能回复
-	LastSeq      int64  // 时间线最后一条（可见）事件的 seq，增量读取用
+	WaitingOnWhy     string // 原因码：new|guest_replied|delivered|assignee_replied|sent_back|creator_replied
+	SinceSeq         int64  // 推导所依据的回复事件 seq
+	CanReopen        bool   // 已关闭时是否可重新开启（成员恒可）
+	LastSeq          int64  // 时间线最后一条（可见）事件的 seq，增量读取用
+	ReopenedByViewer bool   // 工单开启且最后一条事件是重开、重开者就是当前凭证一方（spec 已接受边界）
 }
 
 // Ticket 渲染单张工单的 Markdown：头部信息、说明、附件（占位）、时间线和「下一步」。
@@ -115,6 +115,12 @@ func nextStep(in Input) []string {
 	}
 	since := func(prefix string) string {
 		return prefix + "在 [" + strconv.FormatInt(in.SinceSeq, 10) + "] "
+	}
+
+	if in.ReopenedByViewer {
+		L = append(L, "这张工单刚由你重新开启。先回复说明重开原因：", "")
+		L = append(L, req("POST", in.APIPath+"/replies", `{"body_md": "重开原因：……"}`)...)
+		L = append(L, "")
 	}
 
 	switch {

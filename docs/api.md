@@ -39,7 +39,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 
 - 网页会话（本人）：`viewer.agent` 为 `null`。
 - Agent token：`viewer.agent` 为该具名 Agent `{id, name}`，`viewer.member` 是其所属成员。
-- `inbox` 是成员收件箱地址（端点在后续工单实现）。
+- `inbox` 是成员收件箱地址 `GET /api/v1/inbox`（#36 起已实现，见「等待方与收件箱」）。
 
 凭证是访客链接密钥时（#32），`GET /api/v1/session` 返回链接指向的工单（贴一条链接就能干活，
 spec 用户故事 84），没有 `inbox`：
@@ -91,21 +91,29 @@ spec 用户故事 84），没有 `inbox`：
 | `POST /api/v1/tickets` | 建单（成员/成员 Agent；访客 403 `members_only`，访客建单走反馈入口 #35）。 |
 | `GET /api/v1/tickets/{id}` | 读一张工单；`?format=markdown` 返回给 Agent 读的 Markdown。 |
 | `PATCH /api/v1/tickets/{id}` | 修订标题/说明（创建者一方；持「可填写说明」链接的访客；乐观锁）。 |
-| `POST /api/v1/tickets/{id}/replies` | 回复（成员、成员 Agent、访客）。 |
+| `POST /api/v1/tickets/{id}/replies` | 回复（成员、成员 Agent、访客）；`deliver: true` 仅指派人一方（#36）。 |
 | `POST /api/v1/tickets/{id}/close` | 关闭（任何成员；访客 403 `members_only`）。 |
 | `POST /api/v1/tickets/{id}/reopen` | 重新开启（任何成员；访客 403 `members_only`）。 |
+| `POST /api/v1/tickets/{id}/assign` | 改派（#36，仅成员；记 `assigned` 事件，附改派版 `share_text`）。 |
 | `GET /api/v1/tickets/{id}/timeline?after=N` | 时间线增量读取。 |
+| `GET /api/v1/inbox` | 收件箱（#36，仅成员）：轮到我的开启工单 + 原因 + `read_new`。 |
 
-（labels 在 #31、attachments 在 #33、assign 在 #36 加入；guest-links 见下。）
+（labels 在 #31、attachments 在 #33；guest-links 见下。）
 
-- 建单请求体 `{"kind", "title", "brief_md", "labels"}`：
+- 建单请求体 `{"kind", "title", "brief_md", "labels", "assignee?"}`：
   - `kind` 可省（默认 `task`），只能是 `task`（任务）或 `report`（反馈）；用模板创建时由模板决定（#34）。
   - `title` 必填；`brief_md` 是不用模板时的一整块说明（可空）。
   - `labels` 至少要有一个 `维度:值` 形式的维度标签；且每个标签（含不带维度的）
     必须是字典中在用的标准值（种子维度：产品线、系统、机型、部门、算法、立项、子项目；
     初始值见 `internal/labels/seeds.go`）。别名与 allow_new 见下面的「标签、字典与别名（#31）」。
-  - `assignee`（建单时指派与 `share_text`）预留给 #36，本版忽略。
-- 建单响应 `201`：`{number, seq, url}`（`url` 即 `/t/<编号>`）。
+  - `assignee`（#36）可写成员 id 或姓名；写成成员 Agent（署名写法或 Agent 名字）
+    返回 `422 assignee_must_be_member`（成员 Agent 不能被指派，hint 列出可选成员）；
+    查无此人返回 `422 unknown_member`。建单时指派会在 `created` 事件后记一条
+    `assigned{from: null, to}` 事件。
+- 建单响应 `201`：`{number, seq, url, assignee, waiting_on, share_text}`
+  （`url` 即 `/t/<编号>`；`assignee` 为成员或 null；`share_text` 只在指派给**他人**时
+  非空，可直接转发：`李工：给你派了一张工单「整理对照表」，让你的 Agent 读一下
+  /t/20261016-001（它也会出现在你的收件箱里）`）。
 - 建单错误码：`422 title_required`、`422 invalid_kind`、
   `422 dimension_label_required`（hint 给出字典里的维度标签示例）、
   `422 unknown_label_value`（附 `suggestions`：同维度里规范化后相等或互相包含的值，
@@ -118,22 +126,28 @@ spec 用户故事 84），没有 `inbox`：
     时间线事件带 `seq`（单内递增）、`change`、`at`、`actor`、`type`。
   - `viewer`：`{kind, member, agent, role(assignee|creator|member|guest), your_turn, can}`；
     `can` 是完整能力表 `reply/upload/edit_brief/label/close/reopen/manage_guest_links/deliver/assign`。
-    访客：`member`/`agent` 为 `null`，另带 `link_note`/`link_expires_at`；`your_turn` 看
-    等待方是不是访客；能力表：`reply`/`upload` 需工单开启，`edit_brief` 需开启且链接带
-    「可填写说明」，其余恒 false。
-  - `waiting_on` 由时间线推导（规则见下「时间线增量读取」；指派在 #36 加入）。
+    `role`：本人是指派人 → `assignee`（自派自时优先算指派人），否则创建者一方 → `creator`，
+    其他成员 → `member`，访客 → `guest`（#36）。`your_turn` = 等待方轮到的成员是不是本人
+    （成员按成员 id，访客看等待方是不是访客）。
+    访客：`member`/`agent` 为 `null`，另带 `link_note`/`link_expires_at`；能力表：`reply`/`upload` 需工单开启，
+    `edit_brief` 需开启且链接带「可填写说明」，其余恒 false。
+  - `waiting_on` 由时间线推导（规则见下「等待方与收件箱（#36）」），不单独存储。
   - 访客视角的可见性过滤（#32）：响应里没有 `labels` 字段，时间线跳过标签事件
    （事件序号会跳号，这是已接受的）；访客访问其他工单一律 404 `ticket_not_found`
    （防枚举）。`?format=markdown` 同样过滤（无标签行、无标签事件）。
-- `?format=markdown` 返回 `text/markdown`：头部信息、说明、附件（占位）、时间线和
-  「下一步」；署名按 ADR 0003：成员 `陈某`，成员 Agent `陈某 的 Agent · 名字`。
-  时间线里回复单独成节（`### [seq] 时间 · 作者 回复` + 正文），
+- `?format=markdown` 返回 `text/markdown`：头部信息（含指派人，#36）、说明、附件（占位）、
+  时间线和「下一步」；署名按 ADR 0003：成员 `陈某`，成员 Agent `陈某 的 Agent · 名字`。
+  时间线里回复单独成节（`### [seq] 时间 · 作者 回复|**交付**` + 正文），
   说明修订/关闭/重开等事件写成 `- [seq] 时间 · 作者 事件文案`（如
-  `修订说明（第 2 版）`、`关闭工单（重复：与 20261016-001 重复）`）；
-  标签事件写成「打上标签 X」「摘掉标签 Y」。
-  时间线里回复单独成节（`### [seq] 时间 · 作者 回复` + 正文），
-  说明修订/关闭/重开等事件写成 `- [seq] 时间 · 作者 事件文案`（如
-  `修订说明（第 2 版）`、`关闭工单（重复：与 20261016-001 重复）`）。
+  `修订说明（第 2 版）`、`关闭工单（重复：与 20261016-001 重复）`、
+  `指派给 李工` / `改派：李工 → 赵工`）；标签事件写成「打上标签 X」「摘掉标签 Y」。
+- 末尾「下一步（给 Agent 的操作指引）」（#36，照原型 `guidance()`）按
+  角色×轮次生成，代码块可直接复制执行：已关闭（可重开时给 reopen 请求）；
+  指派人且轮到我（退回/提问/访客回复时先读 [seq]；提问、交文件、
+  `deliver: true` 交付三种请求，交付后不关闭工单）；发起人且轮到我
+  （已交付 → 验收通过 `close{done}` / 不通过普通回复两种；否则答复）；
+  访客且轮到我（回复 + `author_name`）；其余成员查 `GET /api/v1/inbox`
+  或增量时间线。
 
 ### 回复（#30）
 
@@ -144,7 +158,11 @@ spec 用户故事 84），没有 `inbox`：
   （署名由凭证决定，ADR 0003）。
 - 成员（含成员 Agent）在已关闭的工单上仍可回复——那不会重开工单；重新开启是显式
   动作。访客链接在关闭的工单上只读：回复返回 `409 ticket_closed`，重新开启后恢复。
-  `deliver: true` 目前一律返回 `403 deliver_assignee_only`（指派与交付在 #36 加入）。
+  `deliver: true`（#36）是「做完了，请验收」的标记，只限指派人一方（本人或其
+  Agent，且工单需开启），其他人用返回 `403 deliver_assignee_only`（hint：去掉
+  deliver 作为普通回复；该你做就请发起人改派）。**交付不改变工单状态**，由
+  发起人验收：通过就 `close{done}`，不通过就普通回复写明问题，工单自动退回
+  指派人（等待方推导）。
 - 成功 `201`：`{reply_no, timeline_seq, deliver, author, waiting_on}`；
   `author` 是展示名（`陈工` / `陈工 的 Agent · 笔记本`），
   `waiting_on` 结构同 GET（由时间线推导，见下）。
@@ -186,14 +204,61 @@ spec 用户故事 84），没有 `inbox`：
 - `after` 不是非负整数 → `422 invalid_cursor`。
 - 事件结构：`{seq, change, at, actor, type}` + 按类型出现的附加字段
   （`reply` 带 `reply_no`/`body_md`/`deliver`，`brief_revised` 带 `revision`，
-  `closed` 带 `reason`/`duplicate_of`，`guest_link_created`/`guest_link_revoked` 带
+  `closed` 带 `reason`/`duplicate_of`，`assigned` 带 `from`/`to`（from 为 null 表示
+  创建时指派，否则是改派），`guest_link_created`/`guest_link_revoked` 带
   `note`，`guest_link_extended` 带 `note` 与 `expires_at`）。时间线只追加：每条都记录
   作者与时间，旧事件永不改动。访客可见性过滤（跳过标签事件）在 #32 已生效；
   访客的 `cursor` 是它可见的最后一条事件 `seq`（跳过的序号不会当作增量重发）。
-- `waiting_on` 的推导（#36 指派加入前的规则）：已关闭 → `none`；任务单创建者一方
-  回复或尚无回复 → `department`（原因「尚未指派」；访客回复后是「访客回复了」，
-  访客在 #32 起）；反馈单成员回复 → `guest`。指派后按 prototype/member-handoff 的
-  turnOf 规则推导（对手、交付、退回），收件箱在 #36。
+- `waiting_on` 的推导见下「等待方与收件箱（#36）」。
+
+## 指派与改派（#36）
+
+- `POST /api/v1/tickets/{id}/assign {"assignee": "成员 id 或姓名"}`（仅成员；
+  访客 403 `members_only`）。改派给当前指派人 → `422 already_assigned`；
+  写成成员 Agent → `422 assignee_must_be_member`；查无此人 → `422 unknown_member`
+  （hint 列出可选成员）。
+- 成功 `200`：`{assignee, waiting_on, share_text}`；`share_text` 只在改派给**他人**时
+  非空：`赵工：工单「整理对照表」转给你了，让你的 Agent 读一下 /t/20261016-001`。
+- 记一条 `assigned{from, to}` 事件（文案「指派给 X」/「改派：X → Y」）并推进变更序号。
+  改派后，原指派人的回复不再参与等待方推导，工单随推导从原指派人的收件箱移到
+  新指派人的收件箱。
+
+## 等待方与收件箱（#36）
+
+等待方与收件箱原因都从时间线推导，不存会漂移的状态；唯一真相在时间线
+（实现：`tickets.WaitingOnOf`，#37 的查询同样复用）。规则照 prototype/member-handoff
+的 `turnOf`：
+
+```
+已关闭                        → 无等待方（party=none）
+尚无回复 或 最后是访客回复     → 指派人（未指派 → department）
+任务 且 创建者是成员 且 创建者≠指派人（“有对手”）：
+    指派人一方回复             → 创建者（原因：已交付待验收 若带 deliver，否则 指派人回复了）
+    创建者一方回复             → 指派人（原因：此前有交付则 发起人退回修改，否则 发起人回复了）
+    第三位成员回复             → 不改变轮次（不参与相关回复集）
+其余情况（反馈、自派自）成员回复 → 访客
+成员 Agent 的回复算其所属成员一方；改派后按当前指派人重算，原指派人的回复不再参与
+```
+
+- `waiting_on = {party, member, text, reason}`；`text` 示例：`李工（指派人）`、
+  `王工（发起人）`、`访客`、`本部门（未指派）`、`无（已关闭）`。未指派时原因只写
+  「尚未指派」或「访客回复了」（ticket-query 原型的修正：不能写「新指派给你」）。
+- 已接受边界：任务同时发了访客链接时，指派人的回复一律算作交给创建者；
+  重新开启后按最后一条相关回复推导，Markdown「下一步」提示重开者回复说明原因。
+
+### GET /api/v1/inbox（仅成员）
+
+- 访客 403 `members_only`（决议 4），匿名 401。
+- 列出「现在轮到我」的**开启**工单，按工单序号；同一成员名下所有 Agent 共用一份
+  （Agent 定时轮询它即可，不靠人口头转告）；未指派的工单不出现在任何人的收件箱里
+  （要用查询接口找，#37）。响应：`{member, count, items}`，每项：
+  - `{number, title, role(assignee|creator), reason, since_seq, read_new, read_full}`。
+  - `reason` 文案：新指派给你 / 已交付，待你验收 / 指派人回复了，待你答复 /
+    发起人退回修改 / 发起人回复了 / 访客回复了。
+  - `since_seq` 是推导所依据的那条回复的事件 seq（无相关回复时为 null，即新指派）。
+  - `read_new` = `/api/v1/tickets/<编号>/timeline?after=<我在该单最后一条任意事件的 seq>`
+    （不只回复——要读的是「上次我看过之后别人做了什么」）；`read_full` =
+    `/api/v1/tickets/<编号>?format=markdown`。
 
 ## 幂等（#30）
 
