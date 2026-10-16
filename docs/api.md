@@ -163,7 +163,9 @@ spec 用户故事 84），没有 `inbox`：
   并推进全局变更序号（事件里的 `change` 字段，与事件写入同事务）。
 - `GET` 响应（成员视角）：`number, seq, url, kind, title, status, close_reason,
   template, creator, assignee, waiting_on, labels, brief, viewer, timeline`；
-  - 作者结构统一 `{member: {id, name}, agent: {id, name}|null}`，本人操作 `agent` 为 `null`；
+  - 作者结构统一 `{member: {id, name}, agent: {id, name, revoked}|null}`，本人操作
+    `agent` 为 `null`；`agent.revoked` 为 `true` 表示这个具名 Agent 已被撤销——
+    历史署名照实标注「（已停用）」（#28 评审修正：撤销不删历史，展示反映现状）。
     时间线事件带 `seq`（单内递增）、`change`、`at`、`actor`、`type`。
   - `viewer`：`{kind, member, agent, role(assignee|creator|member|guest), your_turn, can}`；
     `can` 是完整能力表 `reply/upload/edit_brief/label/close/reopen/manage_guest_links/deliver/assign`。

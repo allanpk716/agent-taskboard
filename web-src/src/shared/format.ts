@@ -56,11 +56,15 @@ export function closeReasonText(reason?: string | null): string {
   }
 }
 
-/** 作者的展示署名（成员 / 成员 Agent / 访客及其自报，ADR 0003 与 docs/api.md）。 */
+/** 作者的展示署名（成员 / 成员 Agent / 访客及其自报，ADR 0003 与 docs/api.md）。
+ * 已撤销的成员 Agent 追加「（已停用）」（评审 P2-10）。 */
 export function authorName(a: Author | undefined | null): string {
   if (!a) return '访客'
   if (a.member) {
-    return a.agent ? `${a.member.name} 的 Agent · ${a.agent.name}` : a.member.name
+    if (!a.agent) return a.member.name
+    return a.agent.revoked
+      ? `${a.member.name} 的 Agent · ${a.agent.name}（已停用）`
+      : `${a.member.name} 的 Agent · ${a.agent.name}`
   }
   const name = a.author_name?.trim()
   if (name) return a.via_agent ? `${name} 的 Agent（自报）` : name

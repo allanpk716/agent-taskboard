@@ -9,6 +9,7 @@ export interface MemberRef {
 export interface AgentRef {
   id: number
   name: string
+  revoked?: boolean // 已撤销的具名 Agent（历史署名标注「已停用」，评审 P2-10）
 }
 
 export interface Author {

@@ -3,6 +3,7 @@ package server_test
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
@@ -294,4 +295,76 @@ func Test未登录签发AgentToken返回401(t *testing.T) {
 			t.Errorf("%s %s 状态码 = %d, 想 401", method, path, res.StatusCode)
 		}
 	}
+}
+
+// 撤销的 Agent 在历史署名里标注「已停用」（评审 P2-10，#28）：时间线与创建者
+// 视图带 agent.revoked: true（增量字段），署名文案与 Markdown 追加（已停用）。
+func Test撤销的Agent历史署名标注已停用(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("chen", "secret-pass")
+	web := s.Login("chen", "secret-pass")
+	id, token := s.IssueAgentToken(t, web, "笔记本")
+	agent := s.AgentClient(token)
+
+	// Agent 建单并回复，然后撤销它。
+	var created createTicketResponse
+	res := s.Do(t, agent, http.MethodPost, "/api/v1/tickets",
+		createTicketBody{Title: "Agent 建的工单", Labels: []string{"机型:UD-2300"}}, &created)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("Agent 建单状态码 = %d", res.StatusCode)
+	}
+	if res := s.Do(t, agent, http.MethodPost, "/api/v1/tickets/"+created.Number+"/replies",
+		map[string]string{"body_md": "Agent 的回复"}, nil); res.StatusCode != http.StatusCreated {
+		t.Fatalf("Agent 回复状态码 = %d", res.StatusCode)
+	}
+	if res := s.Do(t, web, http.MethodDelete, "/api/v1/me/agent-tokens/"+strconv.FormatInt(id, 10), nil, nil); res.StatusCode != http.StatusNoContent {
+		t.Fatalf("撤销 Agent token 状态码 = %d", res.StatusCode)
+	}
+
+	// 成员视角：创建者与回复事件的 agent 带 revoked: true。
+	var got struct {
+		Creator struct {
+			Agent struct {
+				Revoked bool `json:"revoked"`
+			} `json:"agent"`
+		} `json:"creator"`
+		Timeline []struct {
+			Type   string `json:"type"`
+			Actor  struct {
+				Agent struct {
+					Revoked bool `json:"revoked"`
+				} `json:"agent"`
+			} `json:"actor"`
+		} `json:"timeline"`
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+created.Number, nil, &got)
+	if !got.Creator.Agent.Revoked {
+		t.Errorf("创建者的 agent.revoked 应为 true")
+	}
+	replyFound := false
+	for _, ev := range got.Timeline {
+		if ev.Type == "reply" {
+			replyFound = true
+			if !ev.Actor.Agent.Revoked {
+				t.Errorf("回复事件的 agent.revoked 应为 true")
+			}
+		}
+	}
+	if !replyFound {
+		t.Fatal("时间线上没有回复事件")
+	}
+
+	// Markdown 视图同样标注（历史事件不可变，展示照实反映状态）。
+	res = s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+created.Number+"?format=markdown", nil, nil)
+	body := string(readAll(t, res))
+	if !strings.Contains(body, "（已停用）") {
+		t.Errorf("Markdown 里应出现「（已停用）」署名：\n%s", truncateForTest(body))
+	}
+}
+
+func truncateForTest(s string) string {
+	if len(s) > 400 {
+		return s[:400] + "…"
+	}
+	return s
 }

@@ -449,10 +449,12 @@ type memberRef struct {
 	Name string `json:"name"`
 }
 
-// agentRef 是具名 Agent 的对外结构。
+// agentRef 是具名 Agent 的对外结构。revoked 表示这个 Agent 已被撤销
+//（历史署名照实标注「已停用」，#28 评审修正；活动会话的 viewer 恒为 false）。
 type agentRef struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	Revoked bool   `json:"revoked"`
 }
 
 // authorView 是作者结构 {member, agent}：本人操作 agent 为 null；访客作者
@@ -471,7 +473,7 @@ func newAuthorView(a tickets.Author) authorView {
 	if a.MemberID != 0 {
 		v.Member = &memberRef{ID: a.MemberID, Name: a.MemberName}
 		if a.AgentID != 0 {
-			v.Agent = &agentRef{ID: a.AgentID, Name: a.AgentName}
+			v.Agent = &agentRef{ID: a.AgentID, Name: a.AgentName, Revoked: a.AgentRevoked}
 		}
 		return v
 	}
