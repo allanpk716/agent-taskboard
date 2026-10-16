@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/templates"
@@ -22,10 +23,11 @@ type API struct {
 	tickets   *tickets.Manager
 	templates *templates.Manager
 	idem      *idempotency.Manager
+	atts      *attachments.Manager
 }
 
-func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager) *API {
-	return &API{ident: ident, tickets: tk, templates: tpl, idem: idem}
+func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager) *API {
+	return &API{ident: ident, tickets: tk, templates: tpl, idem: idem, atts: atts}
 }
 
 // Handler 返回 /api/v1 前缀的 http.Handler（带 panic 恢复，统一错误格式）。
@@ -39,6 +41,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/inbox", a.handleInbox)
 	mux.HandleFunc("/api/v1/labels", a.handleLabelsRoot)
 	mux.HandleFunc("/api/v1/labels/", a.handleLabelsSub)
+	mux.HandleFunc("/api/v1/attachments/", a.handleAttachmentDownload)
 	mux.HandleFunc("/api/v1/templates", a.handleTemplatesRoot)
 	mux.HandleFunc("/api/v1/templates/", a.handleTemplateRef)
 	mux.HandleFunc("/api/v1/intakes", a.handleIntakesRoot)
@@ -101,9 +104,10 @@ func (a *API) current(w http.ResponseWriter, r *http.Request) {
 	}
 	view := newSessionView(viewer)
 	if viewer.Kind == identity.ViewerGuest {
-		full, err := a.tickets.ByRef(r.Context(), strconv.FormatInt(viewer.GuestLink.TicketSeq, 10))
+		seq := strconv.FormatInt(viewer.GuestLink.TicketSeq, 10)
+		full, err := a.tickets.ByRef(r.Context(), seq)
 		if err != nil {
-			a.writeTicketError(w, r, err)
+			a.writeTicketError(w, r, seq, err)
 			return
 		}
 		view.Ticket = &sessionTicketView{

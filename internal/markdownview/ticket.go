@@ -19,14 +19,24 @@ type Event struct {
 	Note       string // guest_link_created / guest_link_revoked 的备注（#32）
 
 	// 附加字段，按事件类型出现。
-	BodyMD        string // reply 的正文
-	Deliver       bool   // reply 带「交付」标记（#36 启用）
-	Revision      int64  // brief_revised 修订后的版本号
-	Reason        string // closed 的原因：done | wontfix | duplicate
-	DuplicateOf   string // closed=重复时另一张工单的编号
-	LinkExpiresAt string // guest_link_extended 的新到期时刻（RFC3339，#32）
-	AssignFrom    string // assigned 事件的改派前指派人；空 = 创建时指派（#36）
-	AssignTo      string // assigned 事件的指派对象（#36）
+	BodyMD        string   // reply 的正文
+	Deliver       bool     // reply 带「交付」标记（#36 启用）
+	Revision      int64    // brief_revised 修订后的版本号
+	Reason        string   // closed 的原因：done | wontfix | duplicate
+	DuplicateOf   string   // closed=重复时另一张工单的编号
+	LinkExpiresAt string   // guest_link_extended 的新到期时刻（RFC3339，#32）
+	AttachmentIDs []string // reply 引用的附件（#33）
+	AssignFrom    string   // assigned 事件的改派前指派人；空 = 创建时指派（#36）
+	AssignTo      string   // assigned 事件的指派对象（#36）
+}
+
+// Attachment 是附件小节里的一项（#33）：URL 由 HTTP 层按当前凭证生成
+// （访客拿到的是与链接绑定的短时效签名地址）。
+type Attachment struct {
+	Filename   string
+	URL        string
+	SizeLabel  string // 如「1.2 MB」
+	AttachedTo string // 「说明」或「回复 N」
 }
 
 // Input 是单张工单 Markdown 视图的输入（纯数据，由 HTTP 层从投影填充）。
@@ -44,9 +54,11 @@ type Input struct {
 	BriefMarkdown   string
 	BriefRevision   int64
 	Timeline        []Event
-	ViewerName      string // 已按 ADR 0003 拼好的署名
-	ViewerRole      string // assignee | creator | member | guest
-	ViewerIsGuest   bool   // 访客凭证（#35：入口提交者的角色是 creator，指引仍按访客给）
+	Attachments     []Attachment // 附件小节（#33）；空时写（无）
+	Usage           string       // 附件用量一行，如「12.3 / 50 MB」；空时省略
+	ViewerName      string       // 已按 ADR 0003 拼好的署名
+	ViewerRole      string       // assignee | creator | member | guest
+	ViewerIsGuest   bool         // 访客凭证（#35：入口提交者的角色是 creator，指引仍按访客给）
 	YourTurn        bool
 	APIPath         string // /api/v1/tickets/<编号>，「下一步」引用
 
@@ -78,20 +90,32 @@ func Ticket(in Input) string {
 		"",
 		"## 说明（第 "+strconv.FormatInt(in.BriefRevision, 10)+" 版）", "",
 		in.BriefMarkdown, "",
-		"## 附件", "",
-		"（无）",
-		"",
-		"## 时间线", "")
+		"## 附件", "")
+	if in.Usage != "" {
+		L = append(L, "- 用量："+in.Usage)
+	}
+	if len(in.Attachments) == 0 {
+		L = append(L, "（无）")
+	} else {
+		for _, att := range in.Attachments {
+			L = append(L, "- ["+att.Filename+"]("+att.URL+")（"+att.SizeLabel+"，附于"+att.AttachedTo+"）")
+		}
+	}
+	L = append(L, "", "## 时间线", "")
 	for _, e := range in.Timeline {
 		if e.Type == "reply" {
-			// 回复是正文主体，单独成节（附件引用在 #33 起跟在正文后）。
+			// 回复是正文主体，单独成节；引用的附件跟在正文后（#33）。
 			head := e.AuthorName + " 回复"
 			if e.Deliver {
 				head = e.AuthorName + " **交付**"
 			}
 			L = append(L,
 				"### ["+strconv.FormatInt(e.Seq, 10)+"] "+e.At.Format("2006-01-02 15:04")+" · "+head, "",
-				e.BodyMD, "")
+				e.BodyMD)
+			if len(e.AttachmentIDs) > 0 {
+				L = append(L, "", "附件："+strings.Join(e.AttachmentIDs, "、"))
+			}
+			L = append(L, "")
 			continue
 		}
 		L = append(L, "- ["+strconv.FormatInt(e.Seq, 10)+"] "+e.At.Format("2006-01-02 15:04")+" · "+e.AuthorName+" "+eventText(e))

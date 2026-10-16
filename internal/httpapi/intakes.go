@@ -324,6 +324,7 @@ func (a *API) writeIntakesError(w http.ResponseWriter, r *http.Request, err erro
 		WriteErrorExtra(w, http.StatusUnprocessableEntity, CodeMissingFields,
 			missing.Error(), "逐项补充后再提交：\n"+strings.Join(hints, "\n"), extra)
 	default:
-		a.writeTicketError(w, r, err)
+		// 入口提交还没有工单引用可填（建单在提交内部完成）。
+		a.writeTicketError(w, r, "", err)
 	}
 }

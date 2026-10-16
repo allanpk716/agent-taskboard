@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/template"
 )
@@ -37,7 +38,7 @@ var (
 )
 
 // DeliverAssigneeOnlyError 是回复带了交付标记但当前凭证不是指派人一方
-//（403 deliver_assignee_only；工单已关闭时同样不能交付）。
+// （403 deliver_assignee_only；工单已关闭时同样不能交付）。
 type DeliverAssigneeOnlyError struct {
 	Closed   bool
 	Assignee string // 当前指派人姓名；空 = 未指派
@@ -64,14 +65,15 @@ func (e *RevisionConflictError) Error() string {
 	return fmt.Sprintf("说明已被改到第 %d 版，你基于的是第 %d 版", e.CurrentRevision, e.BaseRevision)
 }
 
-// ReplyInput 是回复的输入。附件引用（attachment_ids 与正文里的 att:）在 #33 加入；
-// AuthorName / ViaAgent 是访客的自报信息（#32，仅访客凭证采纳）；
-// Deliver 是交付标记，仅指派人一方可用（#36）。
+// ReplyInput 是回复的输入。附件引用（attachment_ids 与正文里的 att:）在 #33：
+// 两步上传的第二步，在写回复的同一事务里认领；AuthorName / ViaAgent 是访客的
+// 自报信息（#32，仅访客凭证采纳）；Deliver 是交付标记，仅指派人一方可用（#36）。
 type ReplyInput struct {
-	BodyMD     string
-	Deliver    bool   // 交付标记，仅指派人一方可用（#36）
-	AuthorName string // 访客自报的署名
-	ViaAgent   bool   // 访客自报「由其 Agent 写成」
+	BodyMD        string
+	AttachmentIDs []string // 显式挂的附件（与正文 att: 引用合并去重）
+	Deliver       bool     // 交付标记，仅指派人一方可用（#36）
+	AuthorName    string   // 访客自报的署名
+	ViaAgent      bool     // 访客自报「由其 Agent 写成」
 }
 
 // ReplyResult 是回复成功后的投影。
@@ -108,7 +110,9 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 			}
 		}
 	}
-	if strings.TrimSpace(in.BodyMD) == "" {
+	// 附件引用：attachment_ids 与正文 att: 合并去重（插图语法单独标记）。
+	refs := attachments.ParsePostRefs(in.BodyMD, in.AttachmentIDs)
+	if strings.TrimSpace(in.BodyMD) == "" && len(refs) == 0 {
 		return ReplyResult{}, ErrEmptyReply
 	}
 
@@ -130,13 +134,18 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 		return ReplyResult{}, err
 	}
 	replyNo := int64(replies) + 1
+	// 认领附件（两步上传的第二步）：引用的必须存在、待用、且是本次凭证上传的。
+	if err := m.atts.ClaimTx(ctx, tx, full.Seq, attachments.PrincipalOf(viewer), refs,
+		attachments.ClaimAllPending, "回复 "+strconv.FormatInt(replyNo, 10), now); err != nil {
+		return ReplyResult{}, err
+	}
 	eventSeq, change, err := m.appendEvent(ctx, tx, full.Seq, now, author, "reply")
 	if err != nil {
 		return ReplyResult{}, err
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE timeline_events SET body_md = ?, reply_no = ?, deliver = ? WHERE ticket_seq = ? AND seq = ?`,
-		in.BodyMD, replyNo, boolToInt(in.Deliver), full.Seq, eventSeq); err != nil {
+		`UPDATE timeline_events SET body_md = ?, reply_no = ?, deliver = ?, attachment_ids = ? WHERE ticket_seq = ? AND seq = ?`,
+		in.BodyMD, replyNo, boolToInt(in.Deliver), attachmentIDsJSON(refs), full.Seq, eventSeq); err != nil {
 		return ReplyResult{}, fmt.Errorf("写入回复失败：%w", err)
 	}
 	if err := touchLastChange(ctx, tx, full.Seq, change); err != nil {
@@ -248,6 +257,9 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 		}
 		brief = template.RenderBrief(fields, full.TemplateDef.Fields)
 	}
+	// 说明修订同样认领正文里的 att: 引用（挂到「说明」上）：只认领其中待用的，
+	// 已挂在别处的可以重复引用；计数对全部引用做（插图与附件分开）。
+	briefRefs := attachments.ParsePostRefs(brief, nil)
 
 	now := m.clk.Now()
 	tx, err := m.db.BeginTx(ctx, nil)
@@ -273,6 +285,10 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 		`UPDATE tickets SET title = ?, brief_md = ?, brief_revision = ? WHERE seq = ?`,
 		title, brief, revision, full.Seq); err != nil {
 		return Ticket{}, fmt.Errorf("写入修订失败：%w", err)
+	}
+	if err := m.atts.ClaimTx(ctx, tx, full.Seq, attachments.PrincipalOf(viewer), briefRefs,
+		attachments.ClaimOnlyPending, "说明", now); err != nil {
+		return Ticket{}, err
 	}
 	eventSeq, change, err := m.appendEvent(ctx, tx, full.Seq, now, author, "brief_revised")
 	if err != nil {
@@ -521,4 +537,20 @@ func guestScope(viewer identity.Viewer, ticketSeq int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// attachmentIDsJSON 把引用序列化成事件附加列的 JSON 数组文本。
+func attachmentIDsJSON(refs []attachments.PostRef) string {
+	if len(refs) == 0 {
+		return "[]"
+	}
+	ids := make([]string, 0, len(refs))
+	for _, r := range refs {
+		ids = append(ids, r.ID)
+	}
+	b, err := json.Marshal(ids)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
 }

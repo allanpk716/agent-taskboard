@@ -197,10 +197,10 @@ func Test用分配任务模板建单并指派(t *testing.T) {
 	var created createAssignedResponse
 	res := w.s.Do(t, w.wangA, http.MethodPost, "/api/v1/tickets", map[string]any{
 		"template": "assign-task", "title": "BH-5100 质控模块回归测试", "assignee": "李工",
-		"labels":  []string{"机型:UD-2300", "部门:研发部"},
+		"labels": []string{"机型:UD-2300", "部门:研发部"},
 		"fields": map[string]string{
-			"要达成什么目标？":        "验证 v3.2 的质控模块在 BH-5100 上没有回归。",
-			"交付什么？":            "一份测试报告（Markdown 即可），附失败用例截图。",
+			"要达成什么目标？":     "验证 v3.2 的质控模块在 BH-5100 上没有回归。",
+			"交付什么？":        "一份测试报告（Markdown 即可），附失败用例截图。",
 			"怎样算完成（验收标准）？": "Westgard 6 条规则全部覆盖；失败用例写清复现步骤。",
 		},
 	}, &created)

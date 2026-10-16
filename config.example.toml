@@ -9,3 +9,11 @@ port = 8080
 
 # 前端静态文件目录（web-src 执行 npm run build 的产物）。
 web_dir = 'web'
+
+# 附件上限（#33）。服务端只检查上限，不压缩图片（压缩在前端做）；超过上限
+# 的文件改用 NAS 外部文件引用，把路径写在说明或回复里。
+[attachments]
+max_file_mb         = 5    # 单个文件，超过返回 413 attachment_too_large
+max_files_per_post  = 5    # 每条说明或回复的附件个数（插图另计）
+max_images_per_post = 10   # 每条说明或回复的插图张数
+max_ticket_mb       = 50   # 整张工单合计（待用附件也计入）

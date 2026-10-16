@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/labels"
@@ -139,17 +140,18 @@ type Event struct {
 	Type   string // created | reply | brief_revised | closed | reopened | label_added | …
 	Label  string // label_added / label_removed 的标签（#31）
 
-	// 附加字段，按事件类型出现（写入端点在 #30；guest_link 在 #32）。
-	BodyMD      string // reply 的正文
-	ReplyNo     int64  // reply 在单内的序号
-	Deliver     bool   // reply 带「交付」标记（#36 启用）
-	Revision    int64  // brief_revised 修订后的版本号
-	Reason      string // closed 的原因：done | wontfix | duplicate
-	DuplicateOf string // closed=重复时另一张工单的编号（"" = 无）
-	Note        string // guest_link_created / guest_link_revoked 的备注（#32）
-	LinkExpires string // guest_link_extended 的新到期时刻（RFC3339，#32）
-	AssignFrom  string // assigned 事件的改派前指派人；空 = 创建时指派（#36）
-	AssignTo    string // assigned 事件的指派对象（#36）
+	// 附加字段，按事件类型出现（写入端点在 #30；assigned 在 #36）。
+	BodyMD        string   // reply 的正文
+	ReplyNo       int64    // reply 在单内的序号
+	Deliver       bool     // reply 带「交付」标记（#36 启用）
+	Revision      int64    // brief_revised 修订后的版本号
+	Reason        string   // closed 的原因：done | wontfix | duplicate
+	DuplicateOf   string   // closed=重复时另一张工单的编号（"" = 无）
+	Note          string   // guest_link_created / guest_link_revoked 的备注（#32）
+	LinkExpires   string   // guest_link_extended 的新到期时刻（RFC3339，#32）
+	AttachmentIDs []string // reply 引用的附件（attachment_ids 与正文 att: 合并去重，#33）
+	AssignFrom    string   // assigned 事件的改派前指派人；空 = 创建时指派（#36）
+	AssignTo      string   // assigned 事件的指派对象（#36）
 }
 
 // Full 是读取一张工单时的完整投影：核心字段 + 标签 + 完整时间线。
@@ -165,10 +167,11 @@ type Manager struct {
 	clk       clock.Clock
 	labels    *labels.Manager
 	templates *templates.Manager
+	atts      *attachments.Manager // 附件认领在回复/说明修订的同一事务里（#33）
 }
 
-func NewManager(db *sql.DB, c clock.Clock, lm *labels.Manager, tm *templates.Manager) *Manager {
-	return &Manager{db: db, clk: c, labels: lm, templates: tm}
+func NewManager(db *sql.DB, c clock.Clock, lm *labels.Manager, tm *templates.Manager, am *attachments.Manager) *Manager {
+	return &Manager{db: db, clk: c, labels: lm, templates: tm, atts: am}
 }
 
 // Labels 返回标签字典模块（HTTP 层组 hint 用；完整字典接口在 #31）。
@@ -195,7 +198,7 @@ type CreateInput struct {
 //
 // 用模板创建时：类型由模板决定（忽略请求里的 kind）；预设标签自动打上；
 // 维度字段选中的值同时成为标签并写进说明；缺必填项只产生 warnings
-//（「不确定」算已填、不打该维度的标签）；工单保存创建时版本的字段定义快照。
+// （「不确定」算已填、不打该维度的标签）；工单保存创建时版本的字段定义快照。
 func (m *Manager) Create(ctx context.Context, in CreateInput) (Full, []FieldWarning, error) {
 	in.Title = strings.TrimSpace(in.Title)
 	if in.Title == "" {
@@ -565,7 +568,7 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT e.seq, e.change_seq, e.at, e.type, e.actor_member_id, mm.name, e.actor_agent_id, aa.name,
 		       e.body_md, e.reply_no, e.deliver, e.revision, e.reason, e.duplicate_of, e.label,
-		       e.note, e.link_expires_at, e.assign_from, e.assign_to,
+		       e.note, e.link_expires_at, e.attachment_ids, e.assign_from, e.assign_to,
 		       e.actor_link_id, e.actor_link_note, e.actor_author_name, e.actor_via_agent
 		FROM timeline_events e
 		LEFT JOIN members mm ON mm.id = e.actor_member_id
@@ -593,6 +596,7 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 			label           sql.NullString
 			note            sql.NullString
 			linkExpiresAt   sql.NullString
+			attachmentIDs   sql.NullString
 			assignFrom      sql.NullString
 			assignTo        sql.NullString
 			actorLinkID     sql.NullInt64
@@ -603,7 +607,7 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 		if err := rows.Scan(&e.Seq, &e.Change, &at, &e.Type,
 			&actorMemberID, &actorMemberName, &actorAgentID, &actorAgentName,
 			&bodyMD, &replyNo, &deliver, &revision, &reason, &duplicateOf, &label,
-			&note, &linkExpiresAt, &assignFrom, &assignTo,
+			&note, &linkExpiresAt, &attachmentIDs, &assignFrom, &assignTo,
 			&actorLinkID, &actorLinkNote, &actorAuthorName, &actorViaAgent); err != nil {
 			return nil, err
 		}
@@ -626,6 +630,9 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 		e.Label = label.String
 		e.Note = note.String
 		e.LinkExpires = linkExpiresAt.String
+		if attachmentIDs.Valid && attachmentIDs.String != "" {
+			_ = json.Unmarshal([]byte(attachmentIDs.String), &e.AttachmentIDs)
+		}
 		e.AssignFrom = assignFrom.String
 		e.AssignTo = assignTo.String
 		if e.At, err = time.ParseInLocation(time.RFC3339Nano, at, clock.Beijing); err != nil {
@@ -677,7 +684,7 @@ func WhyText(why string) string {
 }
 
 // WaitingOnOf 推导当前轮到谁。规则照抄 prototype/member-handoff 的 turnOf
-//（spec「等待方与收件箱」，#37 的查询也复用这一个函数）：
+// （spec「等待方与收件箱」，#37 的查询也复用这一个函数）：
 //
 //	已关闭                     → 无等待方
 //	尚无回复 或 最后是访客回复    → 指派人（未指派 → department）
