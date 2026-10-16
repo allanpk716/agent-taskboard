@@ -1,6 +1,7 @@
 // 后端更新（#45）：更新前备份 → 把当前 exe 改名 .prev → 放入新 exe。
 // 进程退出由调用方决定（管理 API 触发时写完响应即退出，由 NSSM 拉起新版本；
-// 命令行触发时提示重启）。回滚见 rollback.go。
+// 命令行触发时提示重启）。回滚是命令行 taskboard rollback（把 .prev 换回来，
+// 见 cmd/taskboard）。
 package updater
 
 import (

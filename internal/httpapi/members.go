@@ -13,10 +13,8 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 )
 
-// handleMembersRoot 处理成员集合：
-//
-//	GET  /api/v1/members  成员名单（仅成员可读，#41 指派下拉用）
-//	POST /api/v1/members  创建成员账号（管理员网页会话；初始密码只回显一次）
+// adminWebSessionFromRequest 要求凭证是管理员的本人网页会话（创建与停用成员
+// 账号；成员 → 网页会话 → 管理员逐层检查，共用 viewer.go 旁的帮手）。
 func (a *API) adminWebSessionFromRequest(w http.ResponseWriter, r *http.Request, adminHint string) (identity.Viewer, bool) {
 	viewer, ok := a.memberFromRequestFor(w, r, "访客不能管理成员账号")
 	if !ok {
