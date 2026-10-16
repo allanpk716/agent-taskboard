@@ -38,6 +38,11 @@ const (
 	CodeDeliverAssigneeOnly  = "deliver_assignee_only"  // 交付标记只限指派人（#36）
 	CodeInvalidCursor        = "invalid_cursor"         // after 等游标参数不是整数
 
+	// #36：成员间交接与收件箱。
+	CodeAssigneeMustBeMember = "assignee_must_be_member" // 指派对象是成员 Agent
+	CodeUnknownMember        = "unknown_member"          // 指派对象不是成员
+	CodeAlreadyAssigned      = "already_assigned"        // 改派给当前指派人
+
 	// #31：标签、字典与别名。
 	CodeMembersOnly        = "members_only"         // 仅成员可用（访客 403）
 	CodeAdminRequired      = "admin_required"       // 标签治理仅管理员

@@ -9,7 +9,7 @@ import (
 )
 
 // Event 是时间线上一条事件的输入（#29 只有 created；#30 起有回复、说明修订、
-// 关闭与重开；#31 标签；#32 访客链接；assigned 等随后续工单扩展）。
+// 关闭与重开；#31 标签；#32 访客链接；#36 assigned）。
 type Event struct {
 	Seq        int64
 	At         time.Time
@@ -25,6 +25,8 @@ type Event struct {
 	Reason        string // closed 的原因：done | wontfix | duplicate
 	DuplicateOf   string // closed=重复时另一张工单的编号
 	LinkExpiresAt string // guest_link_extended 的新到期时刻（RFC3339，#32）
+	AssignFrom    string // assigned 事件的改派前指派人；空 = 创建时指派（#36）
+	AssignTo      string // assigned 事件的指派对象（#36）
 }
 
 // Input 是单张工单 Markdown 视图的输入（纯数据，由 HTTP 层从投影填充）。
@@ -35,8 +37,9 @@ type Input struct {
 	Status          string    // open | closed
 	CloseReasonText string    // 已关闭时的原因文案（如「完成」）
 	CreatorName     string    // 已按 ADR 0003 拼好的署名
-	WaitingOnText   string    // 如「本部门（未指派）」
-	WaitingOnReason string    // 如「尚未指派」
+	AssigneeName    string    // 指派人姓名；空 = 未指派（#36）
+	WaitingOnText   string    // 如「李工（指派人）」
+	WaitingOnReason string    // 如「已交付，待你验收」
 	Labels          *[]string // nil = 访客视角（#32）：不输出标签行
 	BriefMarkdown   string
 	BriefRevision   int64
@@ -53,7 +56,7 @@ func Ticket(in Input) string {
 	L = append(L,
 		"# 工单 "+in.Number+"："+in.Title, "",
 		"- 类型："+kindText(in.Kind)+" · 状态："+statusText(in),
-		"- 发起人："+in.CreatorName+" · 指派人：未指派",
+		"- 发起人："+in.CreatorName+" · 指派人："+assigneeText(in.AssigneeName),
 		"- 现在轮到："+in.WaitingOnText+reasonSuffix(in.WaitingOnReason),
 	)
 	if in.Labels != nil {
@@ -133,6 +136,14 @@ func kindText(kind string) string {
 	return "任务"
 }
 
+// assigneeText 把指派人姓名转成 Markdown 头部文案；空 = 未指派。
+func assigneeText(name string) string {
+	if name == "" {
+		return "未指派"
+	}
+	return name
+}
+
 func statusText(in Input) string {
 	if in.Status == "closed" {
 		if in.CloseReasonText != "" {
@@ -160,6 +171,11 @@ func eventText(e Event) string {
 	switch e.Type {
 	case "created":
 		return "创建工单"
+	case "assigned":
+		if e.AssignFrom == "" {
+			return "指派给 " + e.AssignTo
+		}
+		return "改派：" + e.AssignFrom + " → " + e.AssignTo
 	case "label_added":
 		return "打上标签 " + e.Label
 	case "label_removed":

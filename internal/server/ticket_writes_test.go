@@ -282,6 +282,8 @@ type timelineEventBody struct {
 	Label       string     `json:"label"`      // label_added / label_removed（#31）
 	Note        string     `json:"note"`       // guest_link_created / guest_link_revoked（#32）
 	ExpiresAt   string     `json:"expires_at"` // guest_link_extended 的新到期时刻（#32）
+	From        string     `json:"from"`       // assigned 事件的改派前指派人（空 = 创建时指派，#36）
+	To          string     `json:"to"`         // assigned 事件的指派对象（#36）
 }
 
 // timelineBody 是 GET …/timeline?after=N 的响应结构。
