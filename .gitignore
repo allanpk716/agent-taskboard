@@ -15,3 +15,6 @@ test-results/
 playwright-report/
 .blob-report/
 .playwright/
+
+# publish-updatehub 的本地产物目录
+/publish-out/

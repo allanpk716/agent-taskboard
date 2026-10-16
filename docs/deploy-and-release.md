@@ -105,6 +105,8 @@ proxy  = ""                         # http:// 或 socks5://；为空时读取 HT
 
 ## 发布
 
+仓库里的实现：`.github/workflows/release-server.yml` 和 `release-web.yml`（CI）；`cmd/release`（manifest 和 latest 子命令，CI 与本地演练共用）；`cmd/publish-updatehub`（开发机转发脚本）；`web-src/server-compat.json`（前端声明的 `min_server`）。
+
 ### GitHub Release（唯一构建来源）
 
 - 后端打 `server/vX.Y.Z` tag，前端打 `web/vX.Y.Z` tag，各自触发 GitHub Actions 构建并发布 Release。
@@ -122,6 +124,36 @@ proxy  = ""                         # http:// 或 socks5://；为空时读取 HT
 
   因此可以直接在地址前面加镜像前缀。不管经由哪个镜像下载，都按 `manifest.json` 里的 SHA256 校验。
 
+CI 更新 `latest.json` 的方式是读改写：下载现有文件，用 `release latest` 只替换本组件的条目（另一组件原样保留），再 `--clobber` 上传。前后端同时打 tag 的极端情况下，两个工作流可能同时尝试创建 `channel-stable` Release，失败的那个重跑一次即可。
+
+### 演练（不碰 GitHub 和 UpdateHub）
+
+在开发机上就能把发布逻辑全部走一遍（不依赖 `act`）：
+
+```bash
+# 后端：构建产物 + 清单
+mkdir -p dist
+go build -trimpath -ldflags='-s -w' -o dist/taskboard.exe ./cmd/taskboard
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/taskboard-linux-amd64 ./cmd/taskboard
+go run ./cmd/release manifest -component server -version 0.1.0 -dir dist
+
+# latest.json：先发后端再发前端，互不覆盖
+go run ./cmd/release latest -component server -version 0.1.0 -tag server/v0.1.0 -repo OWNER/REPO -file latest.json
+go run ./cmd/release latest -component web -version 0.2.0 -tag web/v0.2.0 -repo OWNER/REPO -file latest.json
+
+# 前端：构建 + 打包 + 清单（min_server 来自 web-src/server-compat.json）
+cd web-src && npm ci && npm run build && cd ..
+(cd web && zip -r ../dist/taskboard-web-0.2.0.zip .)
+go run ./cmd/release manifest -component web -version 0.2.0 -min-server $(jq -r .min_server web-src/server-compat.json) -dir dist
+
+# 转发脚本：-dry-run 只下载打包不上传；-download-base 指向任意提供固定下载地址的服务
+python -m http.server 8931 --directory dist &
+go run ./cmd/publish-updatehub -tag server/v0.1.0 \
+  -download-base http://127.0.0.1:8931/ -dry-run
+```
+
+`go test ./internal/updatehub/ ./cmd/publish-updatehub/` 里用本地假 HTTP 服务按 UpdateHub 上传接口的校验逻辑（Bearer、multipart、PackageId 与 appId 一致）完整走一遍上传，不需要真的连内网。
+
 ### UpdateHub（内网，转发同一份产物）
 
 UpdateHub 是部门已有的内网更新服务，实现了 Velopack 协议。GitHub Actions 的构建机访问不到内网，所以由开发机上的 `publish-updatehub` 脚本完成：下载指定 Release 的产物，包装成 nupkg，上传到 UpdateHub。
@@ -132,6 +164,24 @@ UpdateHub 是部门已有的内网更新服务，实现了 Velopack 协议。Git
 - 查询：`GET /{appId}/{channel}/releases.win.json`，不需要认证。返回格式为 `{"Assets":[{PackageId,Version,Type,FileName,SHA1,Size}]}`，再按 `FileName` 下载。
 - 只有 `.nupkg` 能登记成版本。nupkg 就是一个 zip，里面加一个 `.nuspec`。我们自己生成，不依赖 .NET 的 `vpk` 工具。原始的 `manifest.json` 一起打进包里。
 - 走这个源时，按 feed 里的 SHA1 校验，解包后再按 manifest 里的 SHA256 校验一次。
+
+开发机上执行（地址和 token 只从环境变量读，不写入任何文件）：
+
+```bash
+# 需要：UPDATEHUB_BASE_URL、UPDATEHUB_TOKEN；可选：GITHUB_TOKEN、GITHUB_MIRROR（镜像前缀）
+go run ./cmd/publish-updatehub -tag server/v1.2.3            # 或 web/v1.4.0
+go run ./cmd/publish-updatehub -tag web/v1.4.0 -notes "修复访客链接过期提示"
+```
+
+脚本流程：下载该 Release 的 `manifest.json` 和全部产物，逐一校验 SHA256；生成 `.nuspec`（id 与 appId 一致）后把产物和 `manifest.json` 一起打成 nupkg，布局为：
+
+```
+{appId}.nuspec        # id、version、title、authors、description
+manifest.json         # Release 上的清单原样带入
+payload/{name}        # 产物本身（后端是两个二进制，前端是 web zip）
+```
+
+然后生成 `releases.win.json`（`PackageId` 与 appId 一致，SHA1 和 Size 对应 nupkg）一起上传，最后读公开 feed 确认版本已登记。下载的产物、nupkg 和 feed 留在 `-out` 目录（默认 `publish-out/`，记得不要提交）便于复核。UpdateHub 会整份替换 feed，所以每次只写最新一条 Full 记录是预期行为。
 
 ## 首次部署（手动）
 
