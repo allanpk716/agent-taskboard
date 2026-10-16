@@ -71,11 +71,11 @@ func List(in ListInput) string {
 		if assignee == "" {
 			assignee = "未指派"
 		}
-		L = append(L, strings.Join([]string{
-			"", r.Number, title, r.statusText(), assignee,
+		L = append(L, "| "+strings.Join([]string{
+			r.Number, title, r.statusText(), assignee,
 			r.WaitingOnText, strings.Join(r.Labels, "、"),
-			r.UpdatedAt.Format("2006-01-02 15:04"), "",
-		}, "| "))
+			r.UpdatedAt.Format("2006-01-02 15:04"),
+		}, " | ")+" |")
 	}
 	if len(in.Rows) == 0 {
 		L = append(L, "| （没有符合条件的工单） | | | | | | |")

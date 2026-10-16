@@ -7,6 +7,7 @@ package server_test
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -745,4 +746,319 @@ func Test变更序号增量拉取(t *testing.T) {
 // urlEncode 编码查询参数里的中文（测试里手拼查询串用）。
 func urlEncode(s string) string {
 	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
+}
+
+// 排序：-updated/-created/created/-closed/change；limit 默认 50、最大 200；
+// 翻页用 page_token（偏移量），跟着 next 走。
+func Test排序与翻页(t *testing.T) {
+	w := newQueryWorld(t)
+
+	// sort=created：按创建时间正序 → 完整拉取靠它。
+	got := w.list(t, w.zhaoA, "?status=all&sort=created")
+	if !equalStrings(numbers(got), []string{w.old, w.doc, w.wont, w.fb, w.q3, w.n1, w.n2}) {
+		t.Errorf("sort=created = %v", numbers(got))
+	}
+	// sort=-created：倒序。
+	got = w.list(t, w.zhaoA, "?status=all&sort=-created")
+	if !equalStrings(numbers(got), []string{w.n2, w.n1, w.q3, w.fb, w.wont, w.doc, w.old}) {
+		t.Errorf("sort=-created = %v", numbers(got))
+	}
+	// sort=-closed：关闭时间倒序（只有两张关闭单）。
+	got = w.list(t, w.zhaoA, "?status=closed&sort=-closed")
+	if !equalStrings(numbers(got), []string{w.wont, w.old}) {
+		t.Errorf("sort=-closed = %v, 想 [WONT OLD]", numbers(got))
+	}
+	// 每页 3 张，跟着 next 翻到第 2 页。
+	page1 := w.list(t, w.zhaoA, "?status=all&sort=created&limit=3")
+	if page1.Total != 7 || page1.Count != 3 || !equalStrings(numbers(page1), []string{w.old, w.doc, w.wont}) {
+		t.Fatalf("第 1 页 = %v（total %d）", numbers(page1), page1.Total)
+	}
+	if page1.Next == nil || !strings.Contains(*page1.Next, "/api/v1/tickets?") ||
+		!strings.Contains(*page1.Next, "page_token=p3") {
+		t.Fatalf("next = %v, 想带 page_token=p3 的完整地址", page1.Next)
+	}
+	res := w.s.Do(t, w.zhaoA, http.MethodGet, *page1.Next, nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET next 状态码 = %d", res.StatusCode)
+	}
+	var page2 listBody
+	tbtest.DecodeJSON(t, res, &page2)
+	if !equalStrings(numbers(page2), []string{w.fb, w.q3, w.n1}) {
+		t.Errorf("第 2 页 = %v, 想 [FB Q3 N1]", numbers(page2))
+	}
+	if page2.Next == nil || !strings.Contains(*page2.Next, "page_token=p6") {
+		t.Errorf("第 2 页 next = %v", page2.Next)
+	}
+	// 最后一页：只有 1 张、next 为 null。
+	var page3 listBody
+	w.s.Do(t, w.zhaoA, http.MethodGet, *page2.Next, nil, &page3)
+	if !equalStrings(numbers(page3), []string{w.n2}) || page3.Next != nil {
+		t.Errorf("第 3 页 = %v next %v", numbers(page3), page3.Next)
+	}
+	// 手写 page_token 也可以（就是偏移量）。
+	got = w.list(t, w.zhaoA, "?status=all&sort=created&limit=3&page_token=p3")
+	if !equalStrings(numbers(got), []string{w.fb, w.q3, w.n1}) {
+		t.Errorf("手写 page_token = %v", numbers(got))
+	}
+}
+
+// 参数校验：unknown_parameter（含可用参数列表）、limit 超界、page_token/sort 拼错。
+func Test查询参数校验(t *testing.T) {
+	w := newQueryWorld(t)
+
+	res := w.listRaw(t, w.wangA, "?lable="+urlEncode("待初筛"))
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("拼错参数状态码 = %d, 想 422", res.StatusCode)
+	}
+	var e errorBodyWithExtra
+	tbtest.DecodeJSON(t, res, &e)
+	if e.Error.Code != "unknown_parameter" {
+		t.Errorf("拼错参数错误码 = %q, 想 unknown_parameter", e.Error.Code)
+	}
+	if !strings.Contains(e.Error.Message, "lable") || !strings.Contains(e.Error.Hint, "label") {
+		t.Errorf("unknown_parameter 应说明哪个参数、可用哪些：%+v", e.Error)
+	}
+	for _, bad := range []struct{ query, code string }{
+		{"?limit=500", "invalid_limit"},
+		{"?limit=0", "invalid_limit"},
+		{"?limit=abc", "invalid_limit"},
+		{"?page_token=x", "invalid_page_token"},
+		{"?sort=updated_desc", "invalid_sort"},
+		{"?status=OPEN", "invalid_status"},
+		{"?kind=bug", "invalid_kind"},
+		{"?include=full", "invalid_include"},
+	} {
+		res := w.listRaw(t, w.wangA, bad.query)
+		if res.StatusCode != http.StatusUnprocessableEntity {
+			t.Errorf("%s 状态码 = %d, 想 422", bad.query, res.StatusCode)
+			continue
+		}
+		var e errorBody
+		tbtest.DecodeJSON(t, res, &e)
+		if e.Error.Code != bad.code {
+			t.Errorf("%s 错误码 = %q, 想 %q", bad.query, e.Error.Code, bad.code)
+		}
+	}
+}
+
+// include=brief 附带说明（拼好的 Markdown 与按字段的 fields）；format=markdown
+// 返回一张表格，末尾附「下一步」。
+func Test附带说明与markdown表格(t *testing.T) {
+	w := newQueryWorld(t)
+
+	got := w.list(t, w.liA, "?label="+urlEncode("待初筛")+"&waiting_on=department&include=brief")
+	if !equalStrings(numbers(got), []string{w.n2, w.n1}) {
+		t.Fatalf("初筛队列（带说明）= %v, 想 [%s %s]", numbers(got), w.n2, w.n1)
+	}
+	brief := got.Items[1].Brief // N1
+	if brief == nil {
+		t.Fatal("include=brief 应附带说明")
+	}
+	if !strings.Contains(brief.Markdown, "做质控的时候报警，屏幕显示 E203") {
+		t.Errorf("N1 说明 Markdown = %q, 想包含字段内容", brief.Markdown)
+	}
+	if brief.Fields == nil {
+		t.Error("模板工单的 brief 应带 fields")
+	} else if brief.Fields["哪台仪器？"] != "不确定" {
+		t.Errorf("fields[哪台仪器？] = %q", brief.Fields["哪台仪器？"])
+	}
+	if brief.Template == nil || *brief.Template != "bug-report" {
+		t.Errorf("brief.template = %v", brief.Template)
+	}
+	if brief.Revision != 1 {
+		t.Errorf("brief.revision = %d, 想 1", brief.Revision)
+	}
+
+	// format=markdown：表格 + 下一步。
+	res := w.s.Do(t, w.zhaoA, http.MethodGet, "/api/v1/tickets?status=all&format=markdown", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("markdown 列表状态码 = %d", res.StatusCode)
+	}
+	if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/markdown") {
+		t.Errorf("Content-Type = %q, 想 text/markdown", ct)
+	}
+	body, _ := io.ReadAll(res.Body)
+	md := string(body)
+	for _, want := range []string{
+		"# 工单列表（共 7 张，本页 7 张）",
+		"| 编号 | 标题 | 状态 | 指派人 | 轮到 | 标签 | 更新 |",
+		"| " + w.old + " | UD-2300 开机自检报 E-203 | 已关闭（完成） | 李工 | 无（已关闭） |",
+		"| " + w.n2 + " | 打印报告乱码 | 开启 | 未指派 | 本部门（未指派） | 待初筛 |",
+		"## 下一步",
+		"changed_after=",
+		"读某一张的全文",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("列表 Markdown 缺少 %q：\n%s", want, md)
+		}
+	}
+	// 空结果也有占位行。
+	res = w.s.Do(t, w.zhaoA, http.MethodGet, "/api/v1/tickets?q=不存在词&format=markdown", nil, nil)
+	body, _ = io.ReadAll(res.Body)
+	if !strings.Contains(string(body), "（没有符合条件的工单）") {
+		t.Errorf("空结果 Markdown 应有占位行：\n%s", string(body))
+	}
+	// 带 q 的行内联命中信息。
+	res = w.s.Do(t, w.zhaoA, http.MethodGet, "/api/v1/tickets?q=E203&status=all&format=markdown", nil, nil)
+	body, _ = io.ReadAll(res.Body)
+	if !strings.Contains(string(body), "…命中标题、说明：") {
+		t.Errorf("q 命中的行应带 matched_in/snippet：\n%s", string(body))
+	}
+}
+
+// 计数：按一个维度分组；筛选条件与列表相同；多值各算一次；没有该维度计入
+// (无)；assignee 无 → (未指派)、close_reason 无 → (未关闭)；按 count 降序。
+func Test计数按维度分组(t *testing.T) {
+	w := newQueryWorld(t)
+
+	got := w.counts(t, w.zhaoA, "?group_by="+urlEncode("产品线")+"&status=all")
+	if got.Total != 7 {
+		t.Fatalf("total = %d, 想 7", got.Total)
+	}
+	wantGroups := []countGroup{
+		{Value: "血液", Count: 3},  // OLD、DOC、FB
+		{Value: "(无)", Count: 3}, // Q3、N1、N2
+		{Value: "尿液", Count: 1},  // WONT
+	}
+	if !equalGroups(got.Groups, wantGroups) {
+		t.Errorf("group_by=产品线 = %v, 想 %v（按 count 降序，同数按首现顺序）", got.Groups, wantGroups)
+	}
+	if got.Note == nil || !strings.Contains(*got.Note, "各组之和可能大于 total") {
+		t.Errorf("标签维度分组的 note = %v", got.Note)
+	}
+	// 一张工单在同一维度有多个值时各算一次。
+	if code, _ := setLabels(t, w.s, w.webWang, w.old, setLabelsBody{Add: []string{"产品线:尿液"}}); code != http.StatusOK {
+		t.Fatalf("给 OLD 补第二个产品线标签状态码 = %d", code)
+	}
+	got = w.counts(t, w.zhaoA, "?group_by="+urlEncode("产品线")+"&status=all")
+	wantGroups = []countGroup{
+		{Value: "血液", Count: 3},
+		{Value: "(无)", Count: 3},
+		{Value: "尿液", Count: 2}, // WONT + OLD（OLD 两个值各算一次，但数量仍按次数）
+	}
+	if !equalGroups(got.Groups, wantGroups) {
+		t.Errorf("多值各算一次 = %v, 想 %v", got.Groups, wantGroups)
+	}
+	if got.Total != 7 {
+		t.Errorf("total 仍是工单数 = %d, 想 7", got.Total)
+	}
+}
+
+// 计数与内建维度：close_reason（时间范围筛选同列表）、assignee、waiting_on。
+func Test计数内建维度(t *testing.T) {
+	w := newQueryWorld(t)
+
+	got := w.counts(t, w.zhaoA, "?group_by=close_reason&status=closed&closed_after=2026-10-01&closed_before=2026-11-01")
+	if !equalGroups(got.Groups, []countGroup{
+		{Value: "完成", Count: 1}, {Value: "不处理", Count: 1}, // OLD 先关闭，先出现
+	}) {
+		t.Errorf("10 月关闭按原因 = %v", got.Groups)
+	}
+	got = w.counts(t, w.zhaoA, "?group_by=close_reason")
+	if !equalGroups(got.Groups, []countGroup{{Value: "(未关闭)", Count: 5}}) {
+		t.Errorf("默认只看开启单，未关闭 = %v", got.Groups)
+	}
+	got = w.counts(t, w.zhaoA, "?group_by=assignee")
+	want := []countGroup{
+		{Value: "(未指派)", Count: 2},
+		{Value: "赵工", Count: 1}, // DOC 先建先出现
+		{Value: "王工", Count: 1},
+		{Value: "李工", Count: 1},
+	}
+	if !equalGroups(got.Groups, want) {
+		t.Errorf("assignee = %v, 想 %v", got.Groups, want)
+	}
+	got = w.counts(t, w.zhaoA, "?group_by=waiting_on")
+	want = []countGroup{
+		{Value: "本部门（未指派）", Count: 2},
+		{Value: "赵工（指派人）", Count: 1},
+		{Value: "访客", Count: 1},
+		{Value: "李工（指派人）", Count: 1},
+	}
+	if !equalGroups(got.Groups, want) {
+		t.Errorf("waiting_on = %v, 想 %v", got.Groups, want)
+	}
+	// 标签筛选与别名换算在计数里同样生效（resolved_aliases 回显）。
+	got = w.counts(t, w.zhaoA, "?group_by="+urlEncode("机型")+"&status=all&label="+urlEncode("部门:检验科"))
+	if got.Total != 2 || !equalGroups(got.Groups, []countGroup{
+		{Value: "UD-2300", Count: 1}, {Value: "(无)", Count: 1},
+	}) {
+		t.Errorf("检验科提的按机型 = total %d, %v", got.Total, got.Groups)
+	}
+	got = w.counts(t, w.zhaoA, "?group_by="+urlEncode("机型")+"&status=closed&label=2300")
+	if !equalGroups(got.Groups, []countGroup{{Value: "UD-2300", Count: 1}}) {
+		t.Errorf("别名筛选 + 计数 = %v", got.Groups)
+	}
+	if len(got.ResolvedAliases) != 1 || got.ResolvedAliases[0] != "2300 → 机型:UD-2300" {
+		t.Errorf("counts 的 resolved_aliases = %v", got.ResolvedAliases)
+	}
+	// status / kind 原值分组。
+	got = w.counts(t, w.zhaoA, "?group_by=status")
+	if !equalGroups(got.Groups, []countGroup{{Value: "open", Count: 5}}) {
+		t.Errorf("status = %v", got.Groups)
+	}
+}
+
+// 计数的错误与限制：缺 group_by、非法 group_by、不接受 sort/limit/翻页、
+// 仅成员可用。
+func Test计数校验(t *testing.T) {
+	w := newQueryWorld(t)
+
+	res := w.s.Do(t, w.zhaoA, http.MethodGet, "/api/v1/tickets/counts", nil, nil)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("缺 group_by 状态码 = %d", res.StatusCode)
+	}
+	var e errorBody
+	tbtest.DecodeJSON(t, res, &e)
+	if e.Error.Code != "group_by_required" {
+		t.Errorf("缺 group_by 错误码 = %q", e.Error.Code)
+	}
+	res = w.s.Do(t, w.zhaoA, http.MethodGet, "/api/v1/tickets/counts?group_by=标题", nil, nil)
+	tbtest.DecodeJSON(t, res, &e)
+	if res.StatusCode != http.StatusUnprocessableEntity || e.Error.Code != "invalid_group_by" {
+		t.Errorf("非法 group_by = %d/%q, 想 422/invalid_group_by", res.StatusCode, e.Error.Code)
+	}
+	for _, q := range []string{"?group_by=status&sort=created", "?group_by=status&limit=10",
+		"?group_by=status&page_token=p1", "?group_by=status&include=brief", "?group_by=status&format=markdown"} {
+		res := w.s.Do(t, w.zhaoA, http.MethodGet, "/api/v1/tickets/counts"+q, nil, nil)
+		if res.StatusCode != http.StatusUnprocessableEntity {
+			t.Errorf("%s 状态码 = %d, 想 422", q, res.StatusCode)
+			continue
+		}
+		tbtest.DecodeJSON(t, res, &e)
+		if e.Error.Code != "unknown_parameter" {
+			t.Errorf("%s 错误码 = %q, 想 unknown_parameter", q, e.Error.Code)
+		}
+	}
+	// 列表接口反过来不接受 group_by。
+	res = w.s.Do(t, w.zhaoA, http.MethodGet, "/api/v1/tickets?group_by=status", nil, nil)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("列表带 group_by 状态码 = %d, 想 422", res.StatusCode)
+	}
+	tbtest.DecodeJSON(t, res, &e)
+	if e.Error.Code != "unknown_parameter" {
+		t.Errorf("列表带 group_by 错误码 = %q", e.Error.Code)
+	}
+	// 仅成员。
+	res = w.s.Do(t, w.s.GuestClient(w.fbKey), http.MethodGet, "/api/v1/tickets/counts?group_by=status", nil, nil)
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("访客计数状态码 = %d, 想 403", res.StatusCode)
+	}
+	tbtest.DecodeJSON(t, res, &e)
+	if e.Error.Code != "members_only" {
+		t.Errorf("访客计数错误码 = %q, 想 members_only", e.Error.Code)
+	}
+}
+
+// equalGroups 比较计数分组（值与数量都一致）。
+func equalGroups(a, b []countGroup) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
