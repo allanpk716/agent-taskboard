@@ -279,7 +279,9 @@ type timelineEventBody struct {
 	Revision    int64      `json:"revision"`
 	Reason      string     `json:"reason"`
 	DuplicateOf string     `json:"duplicate_of"`
-	Label       string     `json:"label"` // label_added / label_removed（#31）
+	Label       string     `json:"label"`      // label_added / label_removed（#31）
+	Note        string     `json:"note"`       // guest_link_created / guest_link_revoked（#32）
+	ExpiresAt   string     `json:"expires_at"` // guest_link_extended 的新到期时刻（#32）
 }
 
 // timelineBody 是 GET …/timeline?after=N 的响应结构。

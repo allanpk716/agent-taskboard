@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/identity"
@@ -36,17 +37,19 @@ func (a *API) handleTicketsRoot(w http.ResponseWriter, r *http.Request) {
 // handleTicketRef 处理单张工单及其子资源：
 //
 //	GET    /api/v1/tickets/{编号或序号}[?format=markdown]
-//	PATCH  /api/v1/tickets/{编号或序号}      修订标题/说明（#30）
-//	GET    …/timeline[?after=N]            增量读取（#30）
-//	POST   …/replies                       回复（#30）
-//	POST   …/close  …/reopen               关闭与重开（#30）
-//	POST   …/labels                        打标签 / 摘标签（#31）
-//	（attachments 在 #33、guest-links 在 #32、assign 在 #36）
+//	PATCH  /api/v1/tickets/{编号或序号}      修订标题/说明（#30；访客 #32）
+//	GET    …/timeline[?after=N]            增量读取（#30；访客看不到标签事件）
+//	POST   …/replies                       回复（#30；访客 #32）
+//	POST   …/close  …/reopen               关闭与重开（#30，仅成员）
+//	POST   …/labels                        打标签 / 摘标签（#31，仅成员）
+//	POST/GET …/guest-links[/… ]            访客链接的创建/列表/撤销/延期（#32，仅成员）
+//	（attachments 在 #33、assign 在 #36）
 //
 // 工单引用接受 YYYYMMDD-NNN 工单编号或全局序号（可带 # 前缀）。
 func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
-	ref, sub, hasSub := ticketRefAndSub(r.URL.Path)
-	if !hasSub {
+	segs := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/tickets/"), "/")
+	ref := segs[0]
+	if len(segs) == 1 {
 		switch r.Method {
 		case http.MethodGet:
 			a.readTicket(w, r, ref)
@@ -57,6 +60,7 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	sub, rest := segs[1], segs[2:]
 	switch sub {
 	case "timeline":
 		if r.Method != http.MethodGet {
@@ -88,6 +92,8 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.setTicketLabels(w, r, ref)
+	case "guest-links":
+		a.handleGuestLinks(w, r, ref, rest)
 	default:
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
 			"读工单用 /api/v1/tickets/{编号或序号}；回复、关闭、时间线等子资源见 docs/api.md")
@@ -112,7 +118,8 @@ type createTicketResponse struct {
 }
 
 func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
-	viewer, ok := a.viewerFromRequest(w, r)
+	// 建单仅限成员（含成员 Agent）；访客建单走反馈入口（#35）。
+	viewer, ok := a.memberFromRequest(w, r)
 	if !ok {
 		return
 	}
@@ -140,14 +147,16 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// readTicket 处理 GET /api/v1/tickets/{id}[?format=markdown]。访客链接只能
+// 访问它指向的那张工单（其他一律 404，防枚举）；访客看不到 labels 字段与
+// 标签事件（事件序号因此跳号，已接受）。
 func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	viewer, ok := a.viewerFromRequest(w, r)
 	if !ok {
 		return
 	}
-	full, err := a.tickets.ByRef(r.Context(), ref)
-	if err != nil {
-		a.writeTicketError(w, r, err)
+	full, ok := a.loadTicketForViewer(w, r, viewer, ref)
+	if !ok {
 		return
 	}
 	if r.URL.Query().Get("format") == "markdown" {
@@ -158,6 +167,22 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		return
 	}
 	writeJSON(w, http.StatusOK, newTicketView(full, viewer))
+}
+
+// loadTicketForViewer 读取 ref 指向的工单并套上访客作用域：访客链接指向
+// 其他工单时写 404 ticket_not_found（与「不存在」不可区分）。
+func (a *API) loadTicketForViewer(w http.ResponseWriter, r *http.Request, viewer identity.Viewer, ref string) (tickets.Full, bool) {
+	full, err := a.tickets.ByRef(r.Context(), ref)
+	if err != nil {
+		a.writeTicketError(w, r, err)
+		return tickets.Full{}, false
+	}
+	if viewer.Kind == identity.ViewerGuest && viewer.GuestLink.TicketSeq != full.Seq {
+		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
+			"访客链接只能访问它所指向的那张工单")
+		return tickets.Full{}, false
+	}
+	return full, true
 }
 
 // writeTicketError 把工单模块的错误映射成 HTTP 错误。
@@ -211,6 +236,21 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, err error
 		WriteError(w, http.StatusConflict, CodeNotClosed, err.Error(), "")
 	case errors.Is(err, tickets.ErrDeliverAssigneeOnly):
 		WriteError(w, http.StatusForbidden, CodeDeliverAssigneeOnly, err.Error(), "去掉 deliver 作为普通回复；该你做就请发起人改派（指派在 #36 提供）")
+	case errors.Is(err, tickets.ErrNoteRequired):
+		WriteError(w, http.StatusUnprocessableEntity, CodeNoteRequired, err.Error(), "备注写对方是谁，如「检验科-张三」；链接创建后凭备注区分多条链接")
+	case errors.Is(err, tickets.ErrInvalidValidDays):
+		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidValidDays, err.Error(), "valid_days 只能是 7、30 或 90；或改用 expires_at 指定日期，两者二选一")
+	case errors.Is(err, tickets.ErrInvalidExpiresAt):
+		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidExpiresAt, err.Error(), "写成日期（2026-12-01）或时刻（2026-12-01T18:00:00+08:00）")
+	case errors.Is(err, tickets.ErrGuestLinkNotFound):
+		WriteError(w, http.StatusNotFound, CodeGuestLinkNotFound, err.Error(), "链接 id 是创建响应里的数字 id；列表见 GET /api/v1/tickets/{id}/guest-links")
+	case isLinkNotExtendable(err):
+		WriteError(w, http.StatusConflict, CodeLinkNotExtendable, err.Error(),
+			"需要对方继续参与时创建一条新的访客链接，并重新发给对方")
+	case errors.Is(err, tickets.ErrLinkCannotEditBrief):
+		WriteError(w, http.StatusForbidden, CodeLinkCannotEditBrief, err.Error(), "用回复补充内容；需要访客能改说明时由成员创建带「可填写说明」权限的链接")
+	case errors.Is(err, tickets.ErrTicketClosed):
+		WriteError(w, http.StatusConflict, CodeTicketClosed, err.Error(), "如需继续，请联系成员重新开启工单（成员回复不会重开工单）")
 	default:
 		panic(err)
 	}
@@ -218,6 +258,11 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, err error
 
 func isUnknownLabelValue(err error) bool {
 	var e *labels.UnknownValueError
+	return errors.As(err, &e)
+}
+
+func isLinkNotExtendable(err error) bool {
+	var e *tickets.LinkNotExtendableError
 	return errors.As(err, &e)
 }
 
@@ -238,17 +283,35 @@ type agentRef struct {
 	Name string `json:"name"`
 }
 
-// authorView 是作者结构 {member, agent}：本人操作 agent 为 null。
+// authorView 是作者结构 {member, agent}：本人操作 agent 为 null；访客作者
+// （#32）member 与 agent 为 null，另带 link_note（链接备注）、author_name 与
+// via_agent（都是自报、未经平台核实的信息，与成员 Agent 的平台认证署名区分）。
 type authorView struct {
-	Member memberRef `json:"member"`
-	Agent  *agentRef `json:"agent"`
+	Member     *memberRef `json:"member"`
+	Agent      *agentRef  `json:"agent"`
+	LinkNote   *string    `json:"link_note,omitempty"`
+	AuthorName *string    `json:"author_name,omitempty"`
+	ViaAgent   *bool      `json:"via_agent,omitempty"`
 }
 
 func newAuthorView(a tickets.Author) authorView {
-	v := authorView{Member: memberRef{ID: a.MemberID, Name: a.MemberName}}
-	if a.AgentID != 0 {
-		v.Agent = &agentRef{ID: a.AgentID, Name: a.AgentName}
+	v := authorView{}
+	if a.MemberID != 0 {
+		v.Member = &memberRef{ID: a.MemberID, Name: a.MemberName}
+		if a.AgentID != 0 {
+			v.Agent = &agentRef{ID: a.AgentID, Name: a.AgentName}
+		}
+		return v
 	}
+	// 访客作者：带链接备注与自报信息。
+	note := a.LinkNote
+	v.LinkNote = &note
+	if a.AuthorName != "" {
+		name := a.AuthorName
+		v.AuthorName = &name
+	}
+	via := a.ViaAgent
+	v.ViaAgent = &via
 	return v
 }
 
@@ -279,12 +342,16 @@ type canView struct {
 }
 
 type ticketViewerView struct {
-	Kind     string    `json:"kind"`
-	Member   memberRef `json:"member"`
-	Agent    *agentRef `json:"agent"`
-	Role     string    `json:"role"`
-	YourTurn bool      `json:"your_turn"`
-	Can      canView   `json:"can"`
+	Kind     string     `json:"kind"`
+	Member   *memberRef `json:"member"`
+	Agent    *agentRef  `json:"agent"`
+	Role     string     `json:"role"`
+	YourTurn bool       `json:"your_turn"`
+	Can      canView    `json:"can"`
+
+	// 访客凭证（#32）：链接备注与到期时刻（can_edit_brief 即 can.edit_brief）。
+	LinkNote      *string `json:"link_note,omitempty"`
+	LinkExpiresAt *string `json:"link_expires_at,omitempty"`
 }
 
 type eventView struct {
@@ -294,6 +361,7 @@ type eventView struct {
 	Actor  authorView `json:"actor"`
 	Type   string     `json:"type"`
 	Label  string     `json:"label,omitempty"` // label_added / label_removed 事件带（#31）
+	Note   string     `json:"note,omitempty"`  // guest_link_created / guest_link_revoked 的备注（#32）
 
 	// 附加字段按事件类型出现（只追加）。
 	ReplyNo     int64  `json:"reply_no,omitempty"`
@@ -302,15 +370,22 @@ type eventView struct {
 	Revision    int64  `json:"revision,omitempty"`
 	Reason      string `json:"reason,omitempty"`
 	DuplicateOf string `json:"duplicate_of,omitempty"`
+	ExpiresAt   string `json:"expires_at,omitempty"` // guest_link_extended 的新到期时刻（#32）
 }
 
 // newEventView 把时间线事件转成对外结构。
 func newEventView(e tickets.Event) eventView {
 	return eventView{
 		Seq: e.Seq, Change: e.Change, At: e.At, Actor: newAuthorView(e.Actor), Type: e.Type,
-		Label: e.Label, ReplyNo: e.ReplyNo, BodyMD: e.BodyMD, Deliver: e.Deliver,
-		Revision: e.Revision, Reason: e.Reason, DuplicateOf: e.DuplicateOf,
+		Label: e.Label, Note: e.Note, ReplyNo: e.ReplyNo, BodyMD: e.BodyMD, Deliver: e.Deliver,
+		Revision: e.Revision, Reason: e.Reason, DuplicateOf: e.DuplicateOf, ExpiresAt: e.LinkExpires,
 	}
+}
+
+// visibleToGuest 报告事件对访客是否可见：标签事件不可见（其余事件——回复、
+// 状态变更、说明修订、访客链接、指派——都可见，spec「凭证与访问」）。
+func visibleToGuest(e tickets.Event) bool {
+	return e.Type != "label_added" && e.Type != "label_removed"
 }
 
 type ticketView struct {
@@ -325,16 +400,17 @@ type ticketView struct {
 	Creator     authorView       `json:"creator"`
 	Assignee    *authorView      `json:"assignee"`
 	WaitingOn   waitingOnView    `json:"waiting_on"`
-	Labels      []string         `json:"labels"`
+	Labels      *[]string        `json:"labels,omitempty"` // 访客视角无此字段（#32）
 	Brief       briefView        `json:"brief"`
 	Viewer      ticketViewerView `json:"viewer"`
 	Timeline    []eventView      `json:"timeline"`
 }
 
-// newTicketView 把工单投影 + 当前凭证组装成 GET 响应。
-// 访客可见性过滤（无 labels、跳过标签事件）在访客链接工单 #32 加入。
+// newTicketView 把工单投影 + 当前凭证组装成 GET 响应。访客可见性过滤（#32）：
+// 无 labels 字段、时间线跳过标签事件（事件序号会跳号，这是已接受的）。
 func newTicketView(full tickets.Full, viewer identity.Viewer) ticketView {
 	waitingOn := tickets.WaitingOnOf(full)
+	isGuest := viewer.Kind == identity.ViewerGuest
 	v := ticketView{
 		Number:  full.Number,
 		Seq:     full.Seq,
@@ -343,36 +419,50 @@ func newTicketView(full tickets.Full, viewer identity.Viewer) ticketView {
 		Title:   full.Title,
 		Status:  full.Status,
 		Creator: newAuthorView(full.Creator),
-		Labels:  full.Labels,
 		Brief:   briefView{Markdown: full.BriefMD, Revision: full.BriefRevision},
+	}
+	if !isGuest {
+		labels := full.Labels
+		v.Labels = &labels
 	}
 	if full.CloseReason != "" {
 		c := full.CloseReason
 		v.CloseReason = &c
 	}
 	v.WaitingOn = newWaitingOnView(waitingOn)
-	tv := ticketViewerView{
-		Kind:   string(viewer.Kind),
-		Member: memberRef{ID: viewer.Member.ID, Name: viewer.Member.Name},
-		Role:   roleOf(viewer, full),
+	tv := ticketViewerView{Kind: string(viewer.Kind), Role: roleOf(viewer, full)}
+	if isGuest {
+		note := viewer.GuestLink.Note
+		expiresAt := viewer.GuestLink.ExpiresAt.Format(time.RFC3339Nano)
+		tv.LinkNote = &note
+		tv.LinkExpiresAt = &expiresAt
+		tv.YourTurn = yourTurnOf(viewer, waitingOn)
+	} else {
+		tv.Member = &memberRef{ID: viewer.Member.ID, Name: viewer.Member.Name}
+		if viewer.Agent != nil {
+			tv.Agent = &agentRef{ID: viewer.Agent.ID, Name: viewer.Agent.Name}
+		}
 	}
-	if viewer.Agent != nil {
-		tv.Agent = &agentRef{ID: viewer.Agent.ID, Name: viewer.Agent.Name}
-	}
-	tv.YourTurn = viewer.Kind == identity.ViewerMember && waitingOn.MemberID == viewer.Member.ID
 	tv.Can = capsOf(viewer, full)
 	v.Viewer = tv
 	for _, e := range full.Timeline {
+		if isGuest && !visibleToGuest(e) {
+			continue
+		}
 		v.Timeline = append(v.Timeline, newEventView(e))
 	}
 	return v
 }
 
 // ticketMarkdownInput 把投影 + 当前凭证组装成 Markdown 视图的输入。
+// 访客（#32）：无标签行、时间线跳过标签事件，署名按访客写法。
 func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer) markdownview.Input {
 	waitingOn := tickets.WaitingOnOf(full)
+	isGuest := viewer.Kind == identity.ViewerGuest
 	viewerName := viewer.Member.Name
-	if viewer.Agent != nil {
+	if isGuest {
+		viewerName = "访客（经「" + viewer.GuestLink.Note + "」链接）"
+	} else if viewer.Agent != nil {
 		viewerName = viewer.Member.Name + " 的 Agent · " + viewer.Agent.Name
 	}
 	in := markdownview.Input{
@@ -383,28 +473,42 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer) markdownview
 		CreatorName:     full.Creator.DisplayName(),
 		WaitingOnText:   waitingOn.Text,
 		WaitingOnReason: waitingOn.Reason,
-		Labels:          full.Labels,
 		BriefMarkdown:   full.BriefMD,
 		BriefRevision:   full.BriefRevision,
 		ViewerName:      viewerName,
 		ViewerRole:      roleOf(viewer, full),
-		YourTurn:        viewer.Kind == identity.ViewerMember && waitingOn.MemberID == viewer.Member.ID,
+		YourTurn:        yourTurnOf(viewer, waitingOn),
 		APIPath:         "/api/v1/tickets/" + full.Number,
+	}
+	if !isGuest {
+		labels := full.Labels
+		in.Labels = &labels
 	}
 	if full.CloseReason != "" {
 		in.CloseReasonText = closeReasonText(full.CloseReason)
 	}
 	for _, e := range full.Timeline {
+		if isGuest && !visibleToGuest(e) {
+			continue
+		}
 		in.Timeline = append(in.Timeline, markdownview.Event{
 			Seq: e.Seq, At: e.At, AuthorName: e.Actor.DisplayName(), Type: e.Type,
 			Label: e.Label, BodyMD: e.BodyMD, Deliver: e.Deliver, Revision: e.Revision,
-			Reason: e.Reason, DuplicateOf: e.DuplicateOf,
+			Reason: e.Reason, DuplicateOf: e.DuplicateOf, Note: e.Note, LinkExpiresAt: e.LinkExpires,
 		})
 	}
 	return in
 }
 
-// roleOf 判定当前凭证在这张工单里的角色：指派人 / 发起人（创建者一方）/ 成员。
+// yourTurnOf 判定是否轮到当前凭证：成员按推导出的成员，访客按等待方是不是访客。
+func yourTurnOf(viewer identity.Viewer, waitingOn tickets.WaitingOn) bool {
+	if viewer.Kind == identity.ViewerGuest {
+		return waitingOn.Party == "guest"
+	}
+	return waitingOn.MemberID == viewer.Member.ID
+}
+
+// roleOf 判定当前凭证在这张工单里的角色：指派人 / 发起人（创建者一方）/ 成员 / 访客。
 func roleOf(viewer identity.Viewer, full tickets.Full) string {
 	if viewer.Kind == identity.ViewerGuest {
 		return "guest"
@@ -418,12 +522,17 @@ func roleOf(viewer identity.Viewer, full tickets.Full) string {
 // capsOf 判定当前凭证能做什么（spec「读取」里 viewer.can 的完整集合）。
 // 成员：reply/upload/label/manage_guest_links/assign 恒 true；close 需开启；
 // reopen 需已关闭；deliver 需开启且本人是指派人（#36 起）；edit_brief 需是创建者一方。
-// 访客的能力表随访客链接工单 #32 加入。
+// 访客（#32）：reply/upload 需工单开启；edit_brief 需开启且链接带「可填写说明」；
+// 其余恒 false（工单关闭后链接只读，重开后恢复）。
 func capsOf(viewer identity.Viewer, full tickets.Full) canView {
-	if viewer.Kind != identity.ViewerMember {
-		return canView{}
-	}
 	open := full.Status == "open"
+	if viewer.Kind == identity.ViewerGuest {
+		return canView{
+			Reply:     open,
+			Upload:    open,
+			EditBrief: open && viewer.GuestLink.CanEditBrief,
+		}
+	}
 	return canView{
 		Reply:            true,
 		Upload:           true,

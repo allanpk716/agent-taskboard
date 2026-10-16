@@ -897,7 +897,7 @@ func Test停用与加维度(t *testing.T) {
 }
 
 // 标签事件在 Markdown 视图里有中文文案；成员 Agent 打标签时事件署名是具名 Agent
-//（ADR 0003）；不带维度的标签在 resolve 里按 exact 命中。
+// （ADR 0003）；不带维度的标签在 resolve 里按 exact 命中。
 func Test标签事件的Markdown文案与Agent署名(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")
@@ -962,7 +962,7 @@ func Test标签事件的Markdown文案与Agent署名(t *testing.T) {
 }
 
 // 两个不同维度的值认领同一个裸别名时多义不换：打标签报 422 并给两个候选
-//（ticket-query 原型 resolveLabel 的语义）。
+// （ticket-query 原型 resolveLabel 的语义）。
 func Test裸别名多义不换(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")

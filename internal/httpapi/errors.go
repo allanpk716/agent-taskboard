@@ -54,6 +54,17 @@ const (
 	CodeDimensionMismatch  = "dimension_mismatch"   // 改名/合并两端维度不一致
 	CodeQRequired          = "q_required"           // resolve 缺少 q
 	CodeLabelRequired      = "label_required"       // 请求里的标签为空
+
+	// #32：访客链接与访客视角。
+	CodeLinkRevoked         = "link_revoked"           // 访客链接已被撤销（401，即时生效）
+	CodeLinkExpired         = "link_expired"           // 访客链接已过期（401，即时生效）
+	CodeNoteRequired        = "note_required"          // 创建访客链接缺备注
+	CodeInvalidValidDays    = "invalid_valid_days"     // 有效期不是 7/30/90 或与 expires_at 并存
+	CodeInvalidExpiresAt    = "invalid_expires_at"     // expires_at 不是合法的将来时刻
+	CodeGuestLinkNotFound   = "guest_link_not_found"   // 这个工单下没有这条访客链接
+	CodeLinkNotExtendable   = "link_not_extendable"    // 已撤销或已过期的链接不能延期
+	CodeLinkCannotEditBrief = "link_cannot_edit_brief" // 链接没有「可填写说明」权限
+	CodeTicketClosed        = "ticket_closed"          // 工单已关闭，访客链接只读
 )
 
 // ErrorBody 是统一错误格式 {error:{code, message, hint?}} 的内层；

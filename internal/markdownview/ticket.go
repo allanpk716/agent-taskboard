@@ -9,33 +9,35 @@ import (
 )
 
 // Event 是时间线上一条事件的输入（#29 只有 created；#30 起有回复、说明修订、
-// 关闭与重开；assigned/label 等随后续工单扩展）。
+// 关闭与重开；#31 标签；#32 访客链接；assigned 等随后续工单扩展）。
 type Event struct {
 	Seq        int64
 	At         time.Time
-	AuthorName string // 已按 ADR 0003 拼好的署名
+	AuthorName string // 已按 ADR 0003 拼好的署名（访客写法见 tickets.Author.DisplayName）
 	Type       string
 	Label      string // label_added / label_removed 的标签（#31）
+	Note       string // guest_link_created / guest_link_revoked 的备注（#32）
 
 	// 附加字段，按事件类型出现。
-	BodyMD      string // reply 的正文
-	Deliver     bool   // reply 带「交付」标记（#36 启用）
-	Revision    int64  // brief_revised 修订后的版本号
-	Reason      string // closed 的原因：done | wontfix | duplicate
-	DuplicateOf string // closed=重复时另一张工单的编号
+	BodyMD        string // reply 的正文
+	Deliver       bool   // reply 带「交付」标记（#36 启用）
+	Revision      int64  // brief_revised 修订后的版本号
+	Reason        string // closed 的原因：done | wontfix | duplicate
+	DuplicateOf   string // closed=重复时另一张工单的编号
+	LinkExpiresAt string // guest_link_extended 的新到期时刻（RFC3339，#32）
 }
 
 // Input 是单张工单 Markdown 视图的输入（纯数据，由 HTTP 层从投影填充）。
 type Input struct {
 	Number          string
 	Title           string
-	Kind            string // task | report
-	Status          string // open | closed
-	CloseReasonText string // 已关闭时的原因文案（如「完成」）
-	CreatorName     string // 已按 ADR 0003 拼好的署名
-	WaitingOnText   string // 如「本部门（未指派）」
-	WaitingOnReason string // 如「尚未指派」
-	Labels          []string
+	Kind            string    // task | report
+	Status          string    // open | closed
+	CloseReasonText string    // 已关闭时的原因文案（如「完成」）
+	CreatorName     string    // 已按 ADR 0003 拼好的署名
+	WaitingOnText   string    // 如「本部门（未指派）」
+	WaitingOnReason string    // 如「尚未指派」
+	Labels          *[]string // nil = 访客视角（#32）：不输出标签行
 	BriefMarkdown   string
 	BriefRevision   int64
 	Timeline        []Event
@@ -53,7 +55,11 @@ func Ticket(in Input) string {
 		"- 类型："+kindText(in.Kind)+" · 状态："+statusText(in),
 		"- 发起人："+in.CreatorName+" · 指派人：未指派",
 		"- 现在轮到："+in.WaitingOnText+reasonSuffix(in.WaitingOnReason),
-		"- 标签："+strings.Join(in.Labels, "、"),
+	)
+	if in.Labels != nil {
+		L = append(L, "- 标签："+strings.Join(*in.Labels, "、"))
+	}
+	L = append(L,
 		"",
 		"## 说明（第 "+strconv.FormatInt(in.BriefRevision, 10)+" 版）", "",
 		in.BriefMarkdown, "",

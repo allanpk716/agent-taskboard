@@ -290,7 +290,7 @@ func Test建单请求体不是JSON时返回400(t *testing.T) {
 
 // authorBody 是作者结构 {member, agent}，本人操作时 agent 为 null（data-model）。
 type authorBody struct {
-	Member struct {
+	Member *struct {
 		ID   int64  `json:"id"`
 		Name string `json:"name"`
 	} `json:"member"`
@@ -298,6 +298,9 @@ type authorBody struct {
 		ID   int64  `json:"id"`
 		Name string `json:"name"`
 	} `json:"agent"`
+	LinkNote   *string `json:"link_note"`
+	AuthorName *string `json:"author_name"`
+	ViaAgent   *bool   `json:"via_agent"`
 }
 
 // ticketResponseBody 是 GET /api/v1/tickets/{编号或序号} 的响应结构。
