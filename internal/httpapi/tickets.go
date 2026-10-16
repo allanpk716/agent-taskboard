@@ -9,6 +9,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/labels"
 	"github.com/allanpk716/agent-taskboard/internal/markdownview"
+	"github.com/allanpk716/agent-taskboard/internal/templates"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
 
@@ -95,20 +96,25 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 }
 
 // createTicketRequest 是 POST /api/v1/tickets 的请求体。
+// 用模板创建时带 template 与 fields（类型由模板决定、缺必填只 warnings）；
 // assignee（建单时指派与 share_text）预留给 #36，本工单先忽略。
 type createTicketRequest struct {
-	Kind     string   `json:"kind"`
-	Title    string   `json:"title"`
-	BriefMD  string   `json:"brief_md"`
-	Labels   []string `json:"labels"`
-	Assignee string   `json:"assignee"`
+	Kind     string            `json:"kind"`
+	Template string            `json:"template"`
+	Title    string            `json:"title"`
+	BriefMD  string            `json:"brief_md"`
+	Fields   map[string]string `json:"fields"`
+	Labels   []string          `json:"labels"`
+	Assignee string            `json:"assignee"`
 }
 
-// createTicketResponse 是建单成功的响应（201）。
+// createTicketResponse 是建单成功的响应（201）。用模板建单缺必填项时
+// 工单照常创建，warnings 逐项列出（选「不确定」算已填）。
 type createTicketResponse struct {
-	Number string `json:"number"`
-	Seq    int64  `json:"seq"`
-	URL    string `json:"url"`
+	Number   string                  `json:"number"`
+	Seq      int64                   `json:"seq"`
+	URL      string                  `json:"url"`
+	Warnings []tickets.FieldWarning `json:"warnings"`
 }
 
 func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
@@ -117,25 +123,28 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createTicketRequest
-	if !decodeJSON(w, r, &req, `{"kind": "task|report", "title": "…", "brief_md": "…", "labels": ["维度:值"]}`) {
+	if !decodeJSON(w, r, &req, `{"template": "bug-report", "title": "…", "fields": {"问句？": "…"}, "labels": []}`) {
 		return
 	}
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
-		t, err := a.tickets.Create(r.Context(), tickets.CreateInput{
-			Kind:    req.Kind,
-			Title:   req.Title,
-			BriefMD: req.BriefMD,
-			Labels:  req.Labels,
-			Creator: viewer,
+		t, warnings, err := a.tickets.Create(r.Context(), tickets.CreateInput{
+			Kind:        req.Kind,
+			Title:       req.Title,
+			BriefMD:     req.BriefMD,
+			Labels:      req.Labels,
+			TemplateKey: req.Template,
+			Fields:      req.Fields,
+			Creator:     viewer,
 		})
 		if err != nil {
 			a.writeTicketError(w, r, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, createTicketResponse{
-			Number: t.Number,
-			Seq:    t.Seq,
-			URL:    "/t/" + t.Number,
+			Number:   t.Number,
+			Seq:      t.Seq,
+			URL:      "/t/" + t.Number,
+			Warnings: warnings,
 		})
 	})
 }
@@ -189,6 +198,25 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, err error
 	case errors.Is(err, tickets.ErrNotFound):
 		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
 			"用工单编号（YYYYMMDD-NNN）或全局序号引用；编号按北京时间分配")
+	case errors.Is(err, templates.ErrNotFound):
+		WriteError(w, http.StatusNotFound, CodeTemplateNotFound, "没有这个模板",
+			"模板列表见 GET /api/v1/templates")
+	case errors.Is(err, tickets.ErrTemplateInactive):
+		WriteError(w, http.StatusUnprocessableEntity, CodeTemplateInactive, err.Error(),
+			"已停用的模板不能再用来建单；换用其他模板或新建一份")
+	case isUnknownField(err):
+		e := err.(*tickets.UnknownFieldError)
+		WriteError(w, http.StatusUnprocessableEntity, CodeUnknownField, e.Error(),
+			"fields 的键要用模板里的小节标题（问句）原文；字段定义见 GET /api/v1/templates/{key}")
+	case isInvalidFieldOption(err):
+		e := err.(*tickets.InvalidFieldOptionError)
+		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidFieldOption, e.Error(),
+			"维度字段从字典候选值里选，选「不确定」也算已填")
+	case errors.Is(err, tickets.ErrFieldsWithoutTemplate):
+		WriteError(w, http.StatusUnprocessableEntity, CodeFieldsWithoutTemplate, err.Error(), "")
+	case errors.Is(err, tickets.ErrBriefMDWithTemplate):
+		WriteError(w, http.StatusUnprocessableEntity, CodeBriefMDWithTemplate, err.Error(),
+			"fields 里只需传改动的字段，并带上 base_revision")
 	case errors.As(err, &conflict):
 		WriteErrorExtra(w, http.StatusConflict, CodeRevisionConflict,
 			conflict.Error(), "重新读取工单，合并修改后再提交",
@@ -214,6 +242,16 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, err error
 	default:
 		panic(err)
 	}
+}
+
+func isUnknownField(err error) bool {
+	var e *tickets.UnknownFieldError
+	return errors.As(err, &e)
+}
+
+func isInvalidFieldOption(err error) bool {
+	var e *tickets.InvalidFieldOptionError
+	return errors.As(err, &e)
 }
 
 func isUnknownLabelValue(err error) bool {
@@ -346,6 +384,14 @@ func newTicketView(full tickets.Full, viewer identity.Viewer) ticketView {
 		Labels:  full.Labels,
 		Brief:   briefView{Markdown: full.BriefMD, Revision: full.BriefRevision},
 	}
+	if full.TemplateKey != "" {
+		key := full.TemplateKey
+		v.Template = &key
+		v.Brief.Template = &key
+		// 读取同时返回 fields 和拼好的 brief_md（说明由创建时版本的字段定义拼出）。
+		fields := full.Fields
+		v.Brief.Fields = &fields
+	}
 	if full.CloseReason != "" {
 		c := full.CloseReason
 		v.CloseReason = &c
@@ -390,6 +436,10 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer) markdownview
 		ViewerRole:      roleOf(viewer, full),
 		YourTurn:        viewer.Kind == identity.ViewerMember && waitingOn.MemberID == viewer.Member.ID,
 		APIPath:         "/api/v1/tickets/" + full.Number,
+	}
+	if full.TemplateDef != nil {
+		in.AgentNote = full.TemplateDef.AgentNote
+		in.TemplateName = full.TemplateDef.Name
 	}
 	if full.CloseReason != "" {
 		in.CloseReasonText = closeReasonText(full.CloseReason)

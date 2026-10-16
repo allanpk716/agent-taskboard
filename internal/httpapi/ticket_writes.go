@@ -62,11 +62,13 @@ func (a *API) replyTicket(w http.ResponseWriter, r *http.Request, ref string) {
 }
 
 // reviseTicketRequest 是 PATCH /api/v1/tickets/{id} 的请求体。
-// 只需传改动的字段；模板工单按字段修订（fields）在 #34 加入。
+// 只需传改动的部分：title、brief_md（非模板工单）或 fields（模板工单，
+// 只传改动的字段）；base_revision 必带（乐观锁）。
 type reviseTicketRequest struct {
-	Title        *string `json:"title"`
-	BriefMD      *string `json:"brief_md"`
-	BaseRevision int64   `json:"base_revision"`
+	Title        *string           `json:"title"`
+	BriefMD      *string           `json:"brief_md"`
+	Fields       map[string]string `json:"fields"`
+	BaseRevision int64             `json:"base_revision"`
 }
 
 func (a *API) reviseTicket(w http.ResponseWriter, r *http.Request, ref string) {
@@ -82,6 +84,7 @@ func (a *API) reviseTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		t, err := a.tickets.Revise(r.Context(), viewer, ref, tickets.ReviseInput{
 			Title:        req.Title,
 			BriefMD:      req.BriefMD,
+			Fields:       req.Fields,
 			BaseRevision: req.BaseRevision,
 		})
 		if err != nil {

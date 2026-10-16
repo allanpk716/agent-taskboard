@@ -5,8 +5,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
+	"github.com/allanpk716/agent-taskboard/internal/identity"
+	"github.com/allanpk716/agent-taskboard/internal/templates"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
 
@@ -15,13 +16,14 @@ const SessionCookieName = "tb_session"
 
 // API 挂载 /api/v1 下的接口。
 type API struct {
-	ident   *identity.Manager
-	tickets *tickets.Manager
-	idem    *idempotency.Manager
+	ident     *identity.Manager
+	tickets   *tickets.Manager
+	templates *templates.Manager
+	idem      *idempotency.Manager
 }
 
-func NewAPI(ident *identity.Manager, tk *tickets.Manager, idem *idempotency.Manager) *API {
-	return &API{ident: ident, tickets: tk, idem: idem}
+func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager) *API {
+	return &API{ident: ident, tickets: tk, templates: tpl, idem: idem}
 }
 
 // Handler 返回 /api/v1 前缀的 http.Handler（带 panic 恢复，统一错误格式）。
@@ -34,6 +36,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/tickets/", a.handleTicketRef)
 	mux.HandleFunc("/api/v1/labels", a.handleLabelsRoot)
 	mux.HandleFunc("/api/v1/labels/", a.handleLabelsSub)
+	mux.HandleFunc("/api/v1/templates", a.handleTemplatesRoot)
+	mux.HandleFunc("/api/v1/templates/", a.handleTemplateRef)
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "接口都在 /api/v1 之下，检查路径拼写")
 	})

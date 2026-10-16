@@ -5,6 +5,7 @@ package tickets
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/identity"
+	"github.com/allanpk716/agent-taskboard/internal/template"
 )
 
 // 写操作的校验与冲突错误；HTTP 层把它们映射成 4xx 错误码。
@@ -120,12 +122,14 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 	}, nil
 }
 
-// ReviseInput 是修订说明的输入。只需传改动的部分；title 与 brief_md 都可省（空修订
-// 也推进版本，行为与 title-only 修订一致）。模板工单按字段修订（fields）在 #34 加入。
+// ReviseInput 是修订说明的输入。只需传改动的部分；title、brief_md（非模板工单）
+// 与 fields（模板工单，只传改动的字段）都可省（空修订也推进版本，行为与
+// title-only 修订一致）。修订不做必填校验。
 type ReviseInput struct {
 	Title        *string
 	BriefMD      *string
-	BaseRevision int64 // 缺省时为 0，视为没带
+	Fields       map[string]string // 模板工单：只需传改动的字段
+	BaseRevision int64             // 缺省时为 0，视为没带
 }
 
 // Revise 以 viewer 的身份修订标题/说明：校验 base_revision 乐观锁、推进版本号、
@@ -155,7 +159,43 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 	}
 	brief := full.BriefMD
 	if in.BriefMD != nil {
+		// 模板工单的说明由字段拼成，不接受整块 brief_md（反过来非模板工单
+		// 不接受 fields），两类修订按工单类型互斥。
+		if full.TemplateDef != nil {
+			return Ticket{}, ErrBriefMDWithTemplate
+		}
 		brief = *in.BriefMD
+	}
+	fields := full.Fields
+	if in.Fields != nil {
+		if full.TemplateDef == nil {
+			return Ticket{}, ErrFieldsWithoutTemplate
+		}
+		// 按创建时版本的字段定义校验（模板改版不影响已有工单）；
+		// 维度字段的值仍须是字典里在用的值（「不确定」除外）。
+		if err := validateFieldsAgainst(full.TemplateDef.Fields, in.Fields); err != nil {
+			return Ticket{}, err
+		}
+		for _, f := range full.TemplateDef.Fields {
+			if f.Type != template.TypeDimension {
+				continue
+			}
+			v := strings.TrimSpace(in.Fields[f.Key])
+			if v == "" || v == template.UnsureOption {
+				continue
+			}
+			if err := m.labels.Validate(ctx, []string{f.Dimension + ":" + v}); err != nil {
+				return Ticket{}, err
+			}
+		}
+		fields = make(map[string]string, len(full.Fields)+len(in.Fields))
+		for k, v := range full.Fields {
+			fields[k] = v
+		}
+		for k, v := range in.Fields {
+			fields[k] = v
+		}
+		brief = template.RenderBrief(fields, full.TemplateDef.Fields)
 	}
 
 	now := m.clk.Now()
@@ -166,7 +206,19 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 	defer tx.Rollback()
 
 	revision := full.BriefRevision + 1
-	if _, err := tx.ExecContext(ctx,
+	var fieldsJSON any
+	if in.Fields != nil {
+		if buf, err := json.Marshal(fields); err != nil {
+			return Ticket{}, fmt.Errorf("序列化字段值失败：%w", err)
+		} else {
+			fieldsJSON = string(buf)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE tickets SET title = ?, brief_md = ?, fields_json = ?, brief_revision = ? WHERE seq = ?`,
+			title, brief, fieldsJSON, revision, full.Seq); err != nil {
+			return Ticket{}, fmt.Errorf("写入修订失败：%w", err)
+		}
+	} else if _, err := tx.ExecContext(ctx,
 		`UPDATE tickets SET title = ?, brief_md = ?, brief_revision = ? WHERE seq = ?`,
 		title, brief, revision, full.Seq); err != nil {
 		return Ticket{}, fmt.Errorf("写入修订失败：%w", err)
@@ -189,6 +241,7 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 
 	full.Title = title
 	full.BriefMD = brief
+	full.Fields = fields
 	full.BriefRevision = revision
 	full.LastChange = change
 	return full.Ticket, nil

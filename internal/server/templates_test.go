@@ -1,0 +1,253 @@
+package server_test
+
+import (
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/allanpk716/agent-taskboard/internal/tbtest"
+)
+
+// templateSummary 是 GET /api/v1/templates 列表项的解码结构。
+type templateSummary struct {
+	Key          string   `json:"key"`
+	Name         string   `json:"name"`
+	Kind         string   `json:"kind"`
+	Version      int64    `json:"version"`
+	Active       bool     `json:"active"`
+	PresetLabels []string `json:"preset_labels"`
+	URL          string   `json:"url"`
+}
+
+type templateFieldBody struct {
+	Key       string   `json:"key"`
+	Title     string   `json:"title"`
+	Guide     string   `json:"guide"`
+	Example   string   `json:"example"`
+	Required  bool     `json:"required"`
+	Type      string   `json:"type"`
+	Options   []string `json:"options"`
+	Dimension string   `json:"dimension"`
+}
+
+// templateBody 是 GET /api/v1/templates/{key} 的解码结构。
+type templateBody struct {
+	Key          string              `json:"key"`
+	Name         string              `json:"name"`
+	Kind         string              `json:"kind"`
+	Version      int64               `json:"version"`
+	Active       bool                `json:"active"`
+	PresetLabels []string            `json:"preset_labels"`
+	AgentNote    string              `json:"agent_note"`
+	Fields       []templateFieldBody `json:"fields"`
+	Markdown     string              `json:"markdown"`
+	UpdatedBy    *authorBody         `json:"updated_by"`
+}
+
+// 上线时预置三份模板（spec 用户故事 36）：Bug 反馈（预设 待初筛）、分配任务、
+// 问题咨询。列表对成员和成员 Agent 都开放。
+func Test预置三份模板(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+
+	var list struct {
+		Templates []templateSummary `json:"templates"`
+	}
+	res := s.Do(t, web, http.MethodGet, "/api/v1/templates", nil, &list)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("列表状态码 = %d, 想 200", res.StatusCode)
+	}
+	if len(list.Templates) != 3 {
+		t.Fatalf("预置模板数 = %d, 想 3：%+v", len(list.Templates), list.Templates)
+	}
+	byKey := map[string]templateSummary{}
+	for _, tpl := range list.Templates {
+		byKey[tpl.Key] = tpl
+	}
+	bug := byKey["bug-report"]
+	if bug.Name != "Bug 反馈" || bug.Kind != "report" || !bug.Active || bug.Version != 1 {
+		t.Errorf("bug-report 不对：%+v", bug)
+	}
+	if len(bug.PresetLabels) != 1 || bug.PresetLabels[0] != "待初筛" {
+		t.Errorf("bug-report 预设标签 = %v, 想 [待初筛]", bug.PresetLabels)
+	}
+	if bug.URL != "/api/v1/templates/bug-report" {
+		t.Errorf("bug-report url = %q", bug.URL)
+	}
+	if assign := byKey["assign-task"]; assign.Name != "分配任务" || assign.Kind != "task" {
+		t.Errorf("assign-task 不对：%+v", assign)
+	}
+	if q := byKey["question"]; q.Name != "问题咨询" || q.Kind != "task" {
+		t.Errorf("question 不对：%+v", q)
+	}
+
+	// 成员 Agent 也能读模板（spec 用户故事 51）。
+	_, token := s.IssueAgentToken(t, web, "笔记本")
+	res = s.Do(t, s.AgentClient(token), http.MethodGet, "/api/v1/templates", nil, &list)
+	if res.StatusCode != http.StatusOK || len(list.Templates) != 3 {
+		t.Fatalf("Agent 读模板列表状态码 = %d, 数量 = %d, 想 200 / 3", res.StatusCode, len(list.Templates))
+	}
+}
+
+// 读一份模板：字段定义齐全；维度字段带上字典里的候选值和「不确定」选项。
+func Test读模板维度字段带候选值和不确定(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+
+	var got templateBody
+	res := s.Do(t, web, http.MethodGet, "/api/v1/templates/bug-report", nil, &got)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("读模板状态码 = %d, 想 200", res.StatusCode)
+	}
+	if got.Name != "Bug 反馈" || got.Kind != "report" {
+		t.Errorf("模板头不对：%+v", got)
+	}
+	fields := map[string]templateFieldBody{}
+	for _, f := range got.Fields {
+		fields[f.Key] = f
+	}
+	model, ok := fields["哪台仪器？"]
+	if !ok {
+		t.Fatalf("Bug 反馈应有「哪台仪器？」字段：%+v", got.Fields)
+	}
+	if model.Type != "dimension" || model.Dimension != "机型" || !model.Required {
+		t.Errorf("机型字段不对：%+v", model)
+	}
+	// 候选值来自字典（种子里的机型），末尾带「不确定」。
+	assertContains(t, model.Options, "UD-2300")
+	assertContains(t, model.Options, "BM-10vet")
+	if model.Options[len(model.Options)-1] != "不确定" {
+		t.Errorf("候选值末尾应是 不确定：%v", model.Options)
+	}
+	freq, ok := fields["出现得频繁吗？"]
+	if !ok {
+		t.Fatalf("Bug 反馈应有「出现得频繁吗？」字段：%+v", got.Fields)
+	}
+	if freq.Type != "radio" || !freq.Required {
+		t.Errorf("频率字段不对：%+v", freq)
+	}
+	assertContains(t, freq.Options, "每次")
+	assertContains(t, freq.Options, "仅一次")
+	// 必填/选填、引导与示例都在字段定义里。
+	steps, _ := fields["你做了哪些操作？"]
+	if !steps.Required || steps.Guide == "" || steps.Example == "" {
+		t.Errorf("操作步骤字段不对：%+v", steps)
+	}
+	ver, _ := fields["序列号和软件版本是多少？"]
+	if ver.Required {
+		t.Errorf("序列号/版本应为选填：%+v", ver)
+	}
+	if got.AgentNote == "" {
+		t.Error("Bug 反馈应预置「给 Agent 的说明」")
+	}
+	if !strings.Contains(got.Markdown, "名称: Bug 反馈") {
+		t.Errorf("响应应带回模板原文 markdown：%q", got.Markdown)
+	}
+
+	// 分配任务模板：member-handoff 原型的六字段 + 给 Agent 的说明。
+	var assign templateBody
+	s.Do(t, web, http.MethodGet, "/api/v1/templates/assign-task", nil, &assign)
+	assignFields := map[string]bool{}
+	for _, f := range assign.Fields {
+		assignFields[f.Key] = true
+	}
+	for _, want := range []string{"要达成什么目标？", "为什么要做？有什么背景？", "交付什么？", "怎样算完成（验收标准）？", "期限？", "相关资料在哪里？"} {
+		if !assignFields[want] {
+			t.Errorf("分配任务缺少字段 %q：%v", want, assignFields)
+		}
+	}
+	if assign.AgentNote == "" {
+		t.Error("分配任务应预置「给 Agent 的说明」")
+	}
+
+	// 问题咨询模板：想问什么/背景/已经试过什么/期望回复时间。
+	var question templateBody
+	s.Do(t, web, http.MethodGet, "/api/v1/templates/question", nil, &question)
+	questionFields := map[string]bool{}
+	for _, f := range question.Fields {
+		questionFields[f.Key] = true
+	}
+	for _, want := range []string{"想问什么？", "有什么背景？", "已经试过什么？", "期望什么时候得到回复？"} {
+		if !questionFields[want] {
+			t.Errorf("问题咨询缺少字段 %q：%v", want, questionFields)
+		}
+	}
+
+	// 不存在的模板：404 template_not_found。
+	res = s.Do(t, web, http.MethodGet, "/api/v1/templates/no-such", nil, nil)
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("未知模板状态码 = %d, 想 404", res.StatusCode)
+	}
+	var errBody errorBody
+	tbtest.DecodeJSON(t, res, &errBody)
+	if errBody.Error.Code != "template_not_found" {
+		t.Errorf("错误码 = %q, 想 template_not_found", errBody.Error.Code)
+	}
+}
+
+// ?format=markdown 给 Agent 的填写指南：问句、引导、示例、候选值，
+// 以及「给 Agent 的说明」（验收标准）。
+func Test模板填写指南包含给Agent的说明(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	_, token := s.IssueAgentToken(t, web, "笔记本")
+	agent := s.AgentClient(token)
+
+	read := func(c *http.Client) string {
+		t.Helper()
+		res := s.Do(t, c, http.MethodGet, "/api/v1/templates/bug-report?format=markdown", nil, nil)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("指南状态码 = %d, 想 200", res.StatusCode)
+		}
+		if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/markdown") {
+			t.Fatalf("Content-Type = %q, 想 text/markdown", ct)
+		}
+		body, err := io.ReadAll(res.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+
+	md := read(agent)
+	for _, want := range []string{
+		"# 模板 Bug 反馈（bug-report）",
+		"- 类型：反馈 · 版本：1",
+		"- 预设标签：待初筛",
+		`{"template": "bug-report"`,
+		"## 哪台仪器？ {维度:机型 必填}",
+		"在仪器背面铭牌上可以看到型号",
+		"- 候选值（维度 机型）：",
+		"不确定",
+		"## 你做了哪些操作？ {必填}",
+		"> 示例：",
+		"## 出现得频繁吗？ {单选: 每次 | 经常 | 偶尔 | 仅一次 必填}",
+		"## 给 Agent 的说明",
+		"POST /api/v1/tickets",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("填写指南缺少 %q：\n%s", want, md)
+		}
+	}
+	// 成员本人也能读同一份指南。
+	if md2 := read(web); md2 != md {
+		t.Errorf("成员与 Agent 读到的指南应相同")
+	}
+}
+
+// 未登录不能读模板。
+func Test未登录读模板返回401(t *testing.T) {
+	s := tbtest.Start(t)
+	res := s.Do(t, s.NewClient(), http.MethodGet, "/api/v1/templates", nil, nil)
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("未登录列表状态码 = %d, 想 401", res.StatusCode)
+	}
+	res = s.Do(t, s.NewClient(), http.MethodGet, "/api/v1/templates/bug-report", nil, nil)
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("未登录读模板状态码 = %d, 想 401", res.StatusCode)
+	}
+}

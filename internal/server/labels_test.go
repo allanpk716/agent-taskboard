@@ -246,20 +246,20 @@ func Test值不在字典时给suggestions带allowNew后新建(t *testing.T) {
 
 	// 带 allow_new：维度值与不带维度的标签都新建成功。
 	code, out := setLabels(t, s, web, "20261016-001", setLabelsBody{
-		Add:      []string{"机型:BH-9999", "待初筛"},
+		Add:      []string{"机型:BH-9999", "待复测"},
 		AllowNew: true,
 	})
 	if code != http.StatusOK {
 		t.Fatalf("allow_new 打标签状态码 = %d, 想 200", code)
 	}
 	assertContains(t, out.Labels, "机型:BH-9999")
-	assertContains(t, out.Labels, "待初筛")
+	assertContains(t, out.Labels, "待复测")
 	assertContains(t, out.CreatedDictionaryValues, "机型:BH-9999")
-	assertContains(t, out.CreatedDictionaryValues, "待初筛")
+	assertContains(t, out.CreatedDictionaryValues, "待复测")
 
 	// 新建的值进了字典：第二张工单直接建单就能用。
 	if res := createTicket(t, s, web, createTicketBody{
-		Title: "另一件事", Labels: []string{"机型:BH-9999", "待初筛"},
+		Title: "另一件事", Labels: []string{"机型:BH-9999", "待复测"},
 	}); res.StatusCode != http.StatusCreated {
 		t.Fatalf("用新建值建单状态码 = %d, 想 201", res.StatusCode)
 	}
