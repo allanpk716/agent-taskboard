@@ -52,3 +52,13 @@ npm run e2e
 - **Go 黑盒测试**：`tbtest.Start(t)` 在临时 `data_dir` 上启动真实服务（随机回环端口），从外部发 HTTP 请求；`s.Clock()` 拿可注入的假时钟（北京时间）；`s.CreateAdmin` / `s.Login` 是造数据辅助，`s.IssueAgentToken` / `s.AgentClient` 造成员 Agent 的凭证；`s.Store()` 暴露数据库，供「第 1000 张编号」这类测试直连造数（断言外部行为仍走 HTTP）。见 `internal/tbtest/harness.go` 和 `internal/server/*_test.go` 里的用例。
 - **CLI 测试**：`cmd/taskboard/main_test.go` 编译真实二进制后走 `create-admin` → `serve` → HTTP 登录。
 - **Playwright**：对“真实服务 + 构建好的前端”跑用例，见 `web-src/e2e/`。
+
+## 发布
+
+前后端独立打 tag 自动发布（细节和演练步骤见 `docs/deploy-and-release.md` 的「发布」）：
+
+- `server/vX.Y.Z` → `.github/workflows/release-server.yml`：构建 Windows 与 `linux/amd64` 后端，附 `manifest.json`，更新 `channel-stable` 的 `latest.json`。
+- `web/vX.Y.Z` → `.github/workflows/release-web.yml`：构建前端 zip，同样附 `manifest.json` 并更新 `latest.json`；前端要求的最低后端版本写在 `web-src/server-compat.json` 的 `min_server`，开始依赖新后端接口时记得改它。
+- 本地工具：`go run ./cmd/release manifest|latest`（生成清单、读改写 latest.json）；`go run ./cmd/publish-updatehub`（转发到内网 UpdateHub，需要环境变量 `UPDATEHUB_BASE_URL` 和 `UPDATEHUB_TOKEN`，可选 `GITHUB_TOKEN`、`GITHUB_MIRROR`）。
+
+不碰 GitHub 和 UpdateHub 的演练命令在 `docs/deploy-and-release.md` 的「演练」小节；`internal/release`、`internal/updatehub` 和两个 `cmd/` 的测试就是发布逻辑的回归底座。
