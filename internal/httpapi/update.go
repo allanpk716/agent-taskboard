@@ -11,7 +11,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/updater"
 )
 
@@ -39,7 +38,8 @@ func (a *API) updateOptions() updater.Options {
 //	GET   /api/v1/admin/update  检查更新（仅管理员）
 //	POST  /api/v1/admin/update  执行更新（仅管理员）
 func (a *API) handleAdminUpdate(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
+	if _, ok := a.adminFromRequestFor(w, r, "更新由管理员在管理页或命令行触发（taskboard update）；访客请联系管理员",
+		"更新由管理员在管理页或命令行触发（taskboard update）"); !ok {
 		return
 	}
 	switch r.Method {
@@ -88,19 +88,6 @@ func (a *API) handleAdminUpdate(w http.ResponseWriter, r *http.Request) {
 	default:
 		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
 	}
-}
-
-// requireAdmin 要求网页会话的成员凭证是管理员（更新入口只对管理员开放）。
-func (a *API) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
-	viewer, ok := a.viewerFromRequest(w, r)
-	if !ok {
-		return false
-	}
-	if viewer.Kind != identity.ViewerMember || !viewer.Member.IsAdmin {
-		WriteError(w, http.StatusForbidden, CodeAdminRequired, "管理接口只对管理员开放", "更新由管理员在管理页或命令行触发（taskboard update）")
-		return false
-	}
-	return true
 }
 
 // writeUpdateError 区分更新源问题（502，可稍后重试）与更新本身的失败

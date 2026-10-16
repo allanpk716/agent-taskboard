@@ -705,7 +705,7 @@ spec 用户故事 84），没有 `inbox`：
 
 | 方法与路径 | 说明 |
 |---|---|
-| `GET /api/v1/admin/backups` | 备份状态（仅管理员；访客/普通成员 403 `admin_required`，匿名 401）。 |
+| `GET /api/v1/admin/backups` | 备份状态（仅管理员；访客 403 `members_only`，普通成员 403 `admin_required`，匿名 401）。 |
 
 响应结构：
 
@@ -741,7 +741,7 @@ spec 用户故事 84），没有 `inbox`：
 
 | 方法与路径 | 说明 |
 |---|---|
-| `GET /api/v1/admin/update` | 检查更新（仅管理员；访客/普通成员 403 `admin_required`，匿名 401）。 |
+| `GET /api/v1/admin/update` | 检查更新（仅管理员；访客 403 `members_only`，普通成员 403 `admin_required`，匿名 401）。 |
 | `POST /api/v1/admin/update` | 执行更新（仅管理员）。 |
 | `GET /api/v1/health` | 健康检查（公开，不需要登录）：`{"status":"ok","server_version":"…","web_version":"…"}`。更新流程里新版本启动时对它自检；也可作 Caddy/NSSM 的探活地址。 |
 

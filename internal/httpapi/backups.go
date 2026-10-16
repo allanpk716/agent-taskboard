@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
 )
 
@@ -20,16 +19,8 @@ func (a *API) handleAdminBackups(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
 		return
 	}
-	viewer, ok := a.viewerFromRequest(w, r)
-	if !ok {
-		return
-	}
-	if viewer.Kind != identity.ViewerMember || !viewer.Member.IsAdmin {
-		hint := "备份状态与恢复演练见 docs/deploy-and-release.md「备份与恢复」"
-		if viewer.Kind != identity.ViewerMember {
-			hint = "备份状态只对管理员开放；访客请通过成员处理工单"
-		}
-		WriteError(w, http.StatusForbidden, CodeAdminRequired, "管理接口只对管理员开放", hint)
+	if _, ok := a.adminFromRequestFor(w, r, "备份状态只对管理员开放；访客请通过成员处理工单",
+		"备份状态与恢复演练见 docs/deploy-and-release.md「备份与恢复」"); !ok {
 		return
 	}
 	status := a.backups.Status(r.Context())

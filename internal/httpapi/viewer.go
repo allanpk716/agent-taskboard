@@ -61,13 +61,65 @@ func (a *API) webSessionFromRequest(w http.ResponseWriter, r *http.Request) (ide
 	if !ok {
 		return identity.Viewer{}, false
 	}
-	if !viewer.IsWebSession() {
-		WriteError(w, http.StatusForbidden, CodeWebSessionRequired,
-			"这个操作只接受网页会话发起的请求",
-			"Agent token 不能签发或撤销凭证；请在网页上登录后操作（ADR 0003）")
+	if !webSessionFromRequest(w, viewer) {
 		return identity.Viewer{}, false
 	}
 	return viewer, true
+}
+
+// memberFromRequest 要求凭证是成员（本人网页会话或成员 Agent）；访客 403 members_only。
+func (a *API) memberFromRequest(w http.ResponseWriter, r *http.Request) (identity.Viewer, bool) {
+	return a.memberFromRequestFor(w, r, "访客不能查看或维护标签")
+}
+
+// memberFromRequestFor 同 memberFromRequest，但用传入的 hint 提示访客该模块的
+// 正确用法（反馈入口 #35 等：同一错误码、不同的指引）。
+func (a *API) memberFromRequestFor(w http.ResponseWriter, r *http.Request, guestHint string) (identity.Viewer, bool) {
+	viewer, ok := a.viewerFromRequest(w, r)
+	if !ok {
+		return identity.Viewer{}, false
+	}
+	if viewer.Kind != identity.ViewerMember {
+		WriteError(w, http.StatusForbidden, CodeMembersOnly, "这个接口只对成员开放", guestHint)
+		return identity.Viewer{}, false
+	}
+	return viewer, true
+}
+
+// adminFromRequestFor 要求凭证是管理员的成员（本人网页会话或管理员的 Agent
+// token；标签治理、更新、备份状态都走这里）。访客 403 members_only（决议 4：
+// 仅成员的接口对访客统一这一个码），普通成员 403 admin_required，adminHint
+// 告诉成员这个模块有哪些对成员开放的入口。
+func (a *API) adminFromRequestFor(w http.ResponseWriter, r *http.Request, guestHint, adminHint string) (identity.Viewer, bool) {
+	viewer, ok := a.memberFromRequestFor(w, r, guestHint)
+	if !ok {
+		return identity.Viewer{}, false
+	}
+	if !adminViewerOr403(w, viewer, adminHint) {
+		return identity.Viewer{}, false
+	}
+	return viewer, true
+}
+
+// adminViewerOr403 检查成员凭证是否管理员，不是则写 403 admin_required。
+func adminViewerOr403(w http.ResponseWriter, viewer identity.Viewer, adminHint string) bool {
+	if !viewer.Member.IsAdmin {
+		WriteError(w, http.StatusForbidden, CodeAdminRequired, "这个接口只对管理员开放", adminHint)
+		return false
+	}
+	return true
+}
+
+// webSessionFromRequest 要求成员凭证是本人的网页会话（创建和撤销 Agent token、
+// 创建成员账号只接受这种凭证，ADR 0003）。
+func webSessionFromRequest(w http.ResponseWriter, viewer identity.Viewer) bool {
+	if !viewer.IsWebSession() {
+		WriteError(w, http.StatusForbidden, CodeWebSessionRequired,
+			"这个操作只接受网页会话发起的请求",
+			"Agent token 不能做这个操作；请在网页上登录后操作（ADR 0003）")
+		return false
+	}
+	return true
 }
 
 // bearerToken 取出 Authorization: Bearer <token> 里的 token。

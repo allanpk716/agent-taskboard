@@ -18,22 +18,14 @@ import (
 //	GET  /api/v1/members  成员名单（仅成员可读，#41 指派下拉用）
 //	POST /api/v1/members  创建成员账号（管理员网页会话；初始密码只回显一次）
 func (a *API) adminWebSessionFromRequest(w http.ResponseWriter, r *http.Request, adminHint string) (identity.Viewer, bool) {
-	viewer, ok := a.viewerFromRequest(w, r)
+	viewer, ok := a.memberFromRequestFor(w, r, "访客不能管理成员账号")
 	if !ok {
 		return identity.Viewer{}, false
 	}
-	if viewer.Kind != identity.ViewerMember {
-		WriteError(w, http.StatusForbidden, CodeMembersOnly, "这个接口只对成员开放", "访客不能管理成员账号")
+	if !webSessionFromRequest(w, viewer) {
 		return identity.Viewer{}, false
 	}
-	if !viewer.IsWebSession() {
-		WriteError(w, http.StatusForbidden, CodeWebSessionRequired,
-			"这个操作只接受网页会话发起的请求",
-			"Agent token 不能创建或停用账号（ADR 0003）；请在网页上登录后操作")
-		return identity.Viewer{}, false
-	}
-	if !viewer.Member.IsAdmin {
-		WriteError(w, http.StatusForbidden, CodeAdminRequired, "成员账号管理只能由管理员执行", adminHint)
+	if !adminViewerOr403(w, viewer, adminHint) {
 		return identity.Viewer{}, false
 	}
 	return viewer, true

@@ -286,3 +286,41 @@ func Test健康检查公开可用(t *testing.T) {
 		t.Errorf("status = %q, 想 ok", body.Status)
 	}
 }
+
+// 访客调用管理接口（更新、备份状态）得 403 members_only（决议 4：仅成员的
+// 接口对访客统一这一个错误码，评审 P1-5）；管理员的 Agent token 与本人会话
+// 一样可以查看更新状态（与标签治理一致）。
+func Test管理接口对访客是membersOnly(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("admin", "pass-word")
+	admin := s.Login("admin", "pass-word")
+	_, token := s.IssueAgentToken(t, admin, "秘书")
+	adminAgent := s.AgentClient(token)
+	guest := s.GuestClient(tbguestKey(t, s, admin))
+
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"更新状态", "/api/v1/admin/update"},
+		{"备份状态", "/api/v1/admin/backups"},
+	}
+	for _, tc := range cases {
+		res := s.Do(t, guest, http.MethodGet, tc.path, nil, nil)
+		if res.StatusCode != http.StatusForbidden {
+			t.Fatalf("%s：访客状态码 = %d, 想 403", tc.name, res.StatusCode)
+		}
+		var got errorBody
+		tbtest.DecodeJSON(t, res, &got)
+		if got.Error.Code != "members_only" {
+			t.Errorf("%s：访客错误码 = %q, 想 members_only", tc.name, got.Error.Code)
+		}
+
+		// 管理员的 Agent token 同样可以（没有配置更新源时是 502 update_source_unreachable，
+		// 说明已过了权限检查，仅限成员本人的入口不在此列）。
+		res = s.Do(t, adminAgent, http.MethodGet, tc.path, nil, nil)
+		if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
+			t.Errorf("%s：管理员 Agent 不应被权限挡住（%d：%s）", tc.name, res.StatusCode, readAll(t, res))
+		}
+	}
+}
