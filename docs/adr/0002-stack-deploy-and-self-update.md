@@ -32,6 +32,12 @@
 
 ## Consequences
 
-- MVP 只走 HTTP。访客链接的密钥就是 Bearer token，在内网里有被嗅探的风险。等公司有了内部 CA 或者有了能签证书的域名，再在前面加 Caddy 提供 HTTPS。
+- 首次部署就启用 HTTPS，做法参照日报系统：
+  - 用公网域名（如 `taskboard.urithub.com`），在阿里云 DNS 上把它解析到内网 IP；
+  - Caddy（带 alidns 插件）用 NSSM 托管，通过 DNS-01 方式向 Let's Encrypt 申请证书，自动签发、自动续期；
+  - Caddy 反代到只监听 `127.0.0.1` 的 taskboard 服务；
+  - 阿里云 AccessKey 用这个服务单独的 RAM 子账号，只授予 DNS 权限。
+
+  这样访客链接的密钥（Bearer token）不会明文传输，浏览器端也不用导入证书。前提是 VM 能访问公网，签发和续期证书都要用到。
 - 新版本起不来时，网页上的按钮也就用不了，回滚只能在服务器上执行命令行。
 - 「Agent 访问协议原型」已定的协议补充一条：所有会产生新内容的请求都支持 `Idempotency-Key`。
