@@ -2,6 +2,8 @@ package server_test
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -71,6 +73,11 @@ func Test登录请求体不是JSON时返回400(t *testing.T) {
 func Test创建管理员后可以登录查身份并登出(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("admin", "secret-pass")
+
+	// 数据库是 WAL 模式：写入后 data_dir 里能看到 -wal 文件。
+	if _, err := os.Stat(filepath.Join(s.DataDir(), "taskboard.db-wal")); err != nil {
+		t.Errorf("没看到 taskboard.db-wal（WAL 未生效？）：%v", err)
+	}
 
 	// 登录：换到会话 cookie。
 	loginRes := s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/session",

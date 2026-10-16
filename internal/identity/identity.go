@@ -141,7 +141,7 @@ func (m *Manager) SessionByID(ctx context.Context, id string) (Session, error) {
 	if err != nil {
 		return Session{}, err
 	}
-	// Member.IsAdmin 是 bool，上面 Scan 进 bool：is_admin 存 0/1，driver 转换。
+	// is_admin 在库里存 0/1，driver 会转成 bool。
 	expiry, err := time.ParseInLocation(time.RFC3339Nano, expiresAt, clock.Beijing)
 	if err != nil {
 		return Session{}, fmt.Errorf("解析会话过期时间失败：%w", err)
