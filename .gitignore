@@ -1,6 +1,8 @@
 # 构建产物
 /bin/
 /web/
+/web-initial/
+/web-*/
 *.exe
 
 # 本地运行数据
