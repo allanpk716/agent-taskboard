@@ -113,6 +113,9 @@ const (
 	CodeMemberDeactivated    = "member_deactivated"     // 账号已停用（登录 401）
 	CodeCannotDeactivateSelf = "cannot_deactivate_self" // 不能停用自己的账号
 
+	// 幂等（评审修正）：同键并发重放。
+	CodeIdempotencyInProgress = "idempotency_in_progress" // 同一个 Idempotency-Key 的请求正在执行（409）
+
 	// #37：查询与计数。
 	CodeUnknownParameter = "unknown_parameter"  // 不认识的查询参数（附可用参数列表）
 	CodeInvalidStatus    = "invalid_status"     // status 只能是 open/closed/all

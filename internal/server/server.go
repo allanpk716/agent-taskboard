@@ -32,6 +32,7 @@ type Server struct {
 	Store   *store.Store
 	Atts    *attachments.Manager
 	Backups *ops.Backups
+	Idem    *idempotency.Manager
 
 	handler  http.Handler
 	web      *webapp.Handler
@@ -65,8 +66,9 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	idem := idempotency.NewManager(st.DB, c)
 	api := httpapi.NewAPI(ident, tickets.NewManager(st.DB, c, labelDict, templateDict, atts),
-		templateDict, idempotency.NewManager(st.DB), atts, backups, cfg)
+		templateDict, idem, atts, backups, cfg)
 	web, err := webapp.New(cfg.WebDir)
 	if err != nil {
 		return nil, err
@@ -82,6 +84,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 		Store:   st,
 		Atts:    atts,
 		Backups: backups,
+		Idem:    idem,
 		handler: mux,
 		web:     web,
 	}, nil
@@ -98,8 +101,11 @@ func (s *Server) Serve(ln net.Listener) error {
 	s.httpSrv = &http.Server{Handler: s.handler}
 	janitorDone := make(chan struct{})
 	backupDone := make(chan struct{})
+	idemDone := make(chan struct{})
 	go s.runAttachmentJanitor(janitorDone)
 	go s.Backups.RunSchedule(backupDone, ops.DefaultScheduleTick)
+	go s.runIdempotencyJanitor(idemDone)
+	defer func() { close(idemDone) }()
 	defer func() { close(backupDone) }()
 	defer func() { close(janitorDone) }()
 	defer s.web.Close()
@@ -125,6 +131,25 @@ func (s *Server) runAttachmentJanitor(done <-chan struct{}) {
 			return
 		case <-ticker.C:
 			_, _ = s.Atts.CleanupUnreferenced(context.Background())
+		}
+	}
+}
+
+// idempotencyJanitorInterval 是幂等记录清除任务的运行间隔（真实时钟；24 小时
+// 的判定用注入时钟，测试里直接调 PurgeExpired，不睡真实时间）。
+const idempotencyJanitorInterval = 10 * time.Minute
+
+// runIdempotencyJanitor 周期清除超过保留时长（24 小时）的幂等记录：快照里
+// 可能带着访客链接密钥，不能无限期留在库里（评审修正）。
+func (s *Server) runIdempotencyJanitor(done <-chan struct{}) {
+	ticker := time.NewTicker(idempotencyJanitorInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			_, _ = s.Idem.PurgeExpired(context.Background())
 		}
 	}
 }
