@@ -56,3 +56,47 @@ export function saveAuthor(name: string) {
     localStorage.setItem(AUTHOR_KEY, name)
   } catch {}
 }
+
+// #39：补全说明与反馈入口的表单草稿也是实时写入 localStorage（同一个“键 =
+// 凭证/入口 + 工单”思路）；文本字段值里的 att: 引用随字段值一并保存。
+export interface FormDraft {
+  title?: string
+  fields: Record<string, string>
+  author?: string
+  idemKey?: string
+  pending?: boolean
+}
+
+export function loadFormDraft(key: string): FormDraft | null {
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    const d = JSON.parse(raw)
+    if (typeof d?.fields !== 'object' || d.fields === null) return null
+    return d
+  } catch {
+    return null
+  }
+}
+
+export function saveFormDraft(key: string, draft: FormDraft) {
+  try {
+    localStorage.setItem(key, JSON.stringify(draft))
+  } catch {}
+}
+
+export function clearFormDraft(key: string) {
+  try {
+    localStorage.removeItem(key)
+  } catch {}
+}
+
+/** 补全说明的草稿键（对话回复草稿的键再加 :brief 后缀，互不覆盖）。 */
+export function briefDraftKey(linkKey: string, ticketNumber: string): string {
+  return `${draftKey(linkKey, ticketNumber)}:brief`
+}
+
+/** 反馈入口提交页的草稿键（还没有链接，以入口为单位）。 */
+export function intakeDraftKey(slug: string): string {
+  return `tb:guest:intake:${slug}`
+}

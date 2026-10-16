@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '../api'
 import { Conversation } from './Conversation'
 import { Composer } from './Composer'
+import { BriefForm } from './BriefForm'
 import { guestApi } from './guestApi'
 import { fmtDateCN } from './format'
 import type { GuestSession, TicketView } from './types'
@@ -36,6 +37,8 @@ function LinkInvalidPage({ code, expiresAt }: { code: string; expiresAt?: string
 export function GuestPage({ linkKey }: { linkKey: string }) {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' })
   const [expiresAt, setExpiresAt] = useState<string | undefined>()
+  // #39：✏ 补全说明进入字段表单，保存后回到对话。
+  const [mode, setMode] = useState<'talk' | 'fill'>('talk')
 
   const load = useCallback(async () => {
     try {
@@ -80,6 +83,23 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
       ? ticket.assignee.member.name
       : '给你发链接的同事'
 
+  if (mode === 'fill') {
+    return (
+      <main className="guest-root">
+        <BriefForm
+          linkKey={linkKey}
+          ticket={ticket}
+          onSaved={() => {
+            setMode('talk')
+            void load()
+          }}
+          onBack={() => setMode('talk')}
+          onLinkDead={(code) => setPhase({ kind: 'invalid', code })}
+        />
+      </main>
+    )
+  }
+
   return (
     <main className={`guest-root${closed || !ticket.viewer.can.reply ? ' readonly' : ''}`}>
       <Conversation ticket={ticket} />
@@ -92,6 +112,7 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
           onSent={load}
           onTicketClosed={load}
           onLinkDead={(code) => setPhase({ kind: 'invalid', code })}
+          onEditBrief={ticket.viewer.can.edit_brief ? () => setMode('fill') : undefined}
         />
       )}
     </main>
