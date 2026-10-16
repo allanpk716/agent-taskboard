@@ -20,6 +20,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
+	"github.com/allanpk716/agent-taskboard/internal/ops"
 	"github.com/allanpk716/agent-taskboard/internal/server"
 	"github.com/allanpk716/agent-taskboard/internal/store"
 )
@@ -42,6 +43,7 @@ type options struct {
 	webDir      string
 	clockStart  time.Time
 	attachments config.Attachments
+	backup      config.Backup
 }
 
 // WithWebDir 指定前端目录（默认用临时目录里的一页 index.html 占位）。
@@ -60,6 +62,10 @@ func WithAttachments(maxFileMB, maxFilesPerPost, maxImagesPerPost, maxTicketMB i
 		}
 	}
 }
+
+// WithBackup 指定备份配置（#43；默认无目标，即 data_dir\backups\ + local_only）。
+// 测试里用临时目录充当备份目标，或用“文件下的子路径”模拟连不上的目标。
+func WithBackup(b config.Backup) Option { return func(o *options) { o.backup = b } }
 
 // defaultClockStart 是假时钟默认起点：一个工作日的上午。
 var defaultClockStart = time.Date(2026, 10, 16, 9, 0, 0, 0, clock.Beijing)
@@ -89,10 +95,14 @@ func Start(t testing.TB, opts ...Option) *Server {
 	t.Cleanup(func() { st.Close() })
 
 	cfg := config.Config{DataDir: dataDir, WebDir: webDir}
-	config.ApplyDefaults(&cfg) // 与 config.Load 一致：端口、附件上限等补默认值
+	// 先叠加测试指定的覆盖项，再补默认值（部分覆盖也能拿到默认上限）。
 	if o.attachments != (config.Attachments{}) {
 		cfg.Attachments = o.attachments
 	}
+	if o.backup != (config.Backup{}) {
+		cfg.Backup = o.backup
+	}
+	config.ApplyDefaults(&cfg) // 与 config.Load 一致：端口、附件上限等补默认值
 	clk := clock.NewFake(o.clockStart)
 	srv, err := server.New(cfg, st, clk)
 	if err != nil {
@@ -144,6 +154,10 @@ func (s *Server) Store() *store.Store { return s.srv.Store }
 // Attachments 暴露附件模块（#33）：测试里直接触发 24 小时清除任务
 // （服务里由定时器周期调用；测试不睡真实时间，用注入时钟推进后手动跑）。
 func (s *Server) Attachments() *attachments.Manager { return s.srv.Atts }
+
+// Backups 暴露备份模块（#43）：测试里直接做一次备份或触发调度检查
+// （服务里由定时器周期调用；备份时刻由注入时钟决定）。
+func (s *Server) Backups() *ops.Backups { return s.srv.Backups }
 
 // CreateAdmin 造一位管理员（等价于 taskboard create-admin 子命令做的事）。
 func (s *Server) CreateAdmin(username, password string) {
