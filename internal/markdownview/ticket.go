@@ -9,33 +9,35 @@ import (
 )
 
 // Event 是时间线上一条事件的输入（#29 只有 created；#30 起有回复、说明修订、
-// 关闭与重开；assigned/label 等随后续工单扩展）。
+// 关闭与重开；#31 标签；#32 访客链接；assigned 等随后续工单扩展）。
 type Event struct {
 	Seq        int64
 	At         time.Time
-	AuthorName string // 已按 ADR 0003 拼好的署名
+	AuthorName string // 已按 ADR 0003 拼好的署名（访客写法见 tickets.Author.DisplayName）
 	Type       string
 	Label      string // label_added / label_removed 的标签（#31）
+	Note       string // guest_link_created / guest_link_revoked 的备注（#32）
 
 	// 附加字段，按事件类型出现。
-	BodyMD      string // reply 的正文
-	Deliver     bool   // reply 带「交付」标记（#36 启用）
-	Revision    int64  // brief_revised 修订后的版本号
-	Reason      string // closed 的原因：done | wontfix | duplicate
-	DuplicateOf string // closed=重复时另一张工单的编号
+	BodyMD        string // reply 的正文
+	Deliver       bool   // reply 带「交付」标记（#36 启用）
+	Revision      int64  // brief_revised 修订后的版本号
+	Reason        string // closed 的原因：done | wontfix | duplicate
+	DuplicateOf   string // closed=重复时另一张工单的编号
+	LinkExpiresAt string // guest_link_extended 的新到期时刻（RFC3339，#32）
 }
 
 // Input 是单张工单 Markdown 视图的输入（纯数据，由 HTTP 层从投影填充）。
 type Input struct {
 	Number          string
 	Title           string
-	Kind            string // task | report
-	Status          string // open | closed
-	CloseReasonText string // 已关闭时的原因文案（如「完成」）
-	CreatorName     string // 已按 ADR 0003 拼好的署名
-	WaitingOnText   string // 如「本部门（未指派）」
-	WaitingOnReason string // 如「尚未指派」
-	Labels          []string
+	Kind            string    // task | report
+	Status          string    // open | closed
+	CloseReasonText string    // 已关闭时的原因文案（如「完成」）
+	CreatorName     string    // 已按 ADR 0003 拼好的署名
+	WaitingOnText   string    // 如「本部门（未指派）」
+	WaitingOnReason string    // 如「尚未指派」
+	Labels          *[]string // nil = 访客视角（#32）：不输出标签行
 	BriefMarkdown   string
 	BriefRevision   int64
 	Timeline        []Event
@@ -55,7 +57,11 @@ func Ticket(in Input) string {
 		"- 类型："+kindText(in.Kind)+" · 状态："+statusText(in),
 		"- 发起人："+in.CreatorName+" · 指派人：未指派",
 		"- 现在轮到："+in.WaitingOnText+reasonSuffix(in.WaitingOnReason),
-		"- 标签："+strings.Join(in.Labels, "、"),
+	)
+	if in.Labels != nil {
+		L = append(L, "- 标签："+strings.Join(*in.Labels, "、"))
+	}
+	L = append(L,
 		"",
 		"## 说明（第 "+strconv.FormatInt(in.BriefRevision, 10)+" 版）", "",
 		in.BriefMarkdown, "",
@@ -82,14 +88,15 @@ func Ticket(in Input) string {
 	return strings.Join(L, "\n")
 }
 
-// nextStep 生成末尾的「下一步」。完整的按角色×轮次的指引（含交付、验收的请求示例）
-// 随 #30/#36 的回复与指派加入；#29 只写身份、轮次和可用的读取方式。
+// nextStep 生成末尾的「下一步」。访客（#32）按轮次给回复或增量读取的示例；
+// 完整的按角色×轮次的成员指引（含交付、验收的请求示例）随 #36 的回复与指派加入。
 func nextStep(in Input) []string {
 	L := []string{
 		"## 下一步（给 Agent 的操作指引）", "",
 		"你是 **" + in.ViewerName + "**，在这张工单里的角色是 **" + roleText(in.ViewerRole) +
 			"**；现在轮到：**" + in.WaitingOnText + "**。", "",
 	}
+
 	// 模板里写给 Agent 的说明出现在工单 Markdown 的「下一步」里（spec 用户故事 35）。
 	if in.AgentNote != "" {
 		name := "模板"
@@ -97,6 +104,26 @@ func nextStep(in Input) []string {
 			name = in.TemplateName + " 模板"
 		}
 		L = append(L, name+"给 Agent 的说明："+in.AgentNote, "")
+	}
+
+	if in.ViewerRole == "guest" {
+		if in.YourTurn {
+			L = append(L, "现在轮到你（访客）回复：", "",
+				"```http",
+				"POST "+in.APIPath+"/replies",
+				"Authorization: Bearer <访客链接密钥>",
+				"Content-Type: application/json",
+				"",
+				`{"body_md": "……", "author_name": "你的署名", "via_agent": false}`,
+				"```", "")
+		} else {
+			L = append(L, "现在不需要你行动；等成员回复后再来看增量：", "",
+				"```http",
+				"GET "+in.APIPath+"/timeline?after=<上次响应里的 cursor>",
+				"Authorization: Bearer <访客链接密钥>",
+				"```", "")
+		}
+		return L
 	}
 	if in.YourTurn {
 		L = append(L, "现在轮到你行动；先重读这张工单，按说明行事：", "")
@@ -149,6 +176,12 @@ func eventText(e Event) string {
 		return "打上标签 " + e.Label
 	case "label_removed":
 		return "摘掉标签 " + e.Label
+	case "guest_link_created":
+		return "创建访客链接「" + e.Note + "」"
+	case "guest_link_revoked":
+		return "撤销访客链接「" + e.Note + "」"
+	case "guest_link_extended":
+		return "延期访客链接「" + e.Note + "」至 " + e.LinkExpiresAt
 	case "brief_revised":
 		return "修订说明（第 " + strconv.FormatInt(e.Revision, 10) + " 版）"
 	case "closed":

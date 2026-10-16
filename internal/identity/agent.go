@@ -44,9 +44,10 @@ const (
 // Viewer 是把请求上的凭证（网页会话 cookie / Agent token / 访客链接密钥）
 // 统一解析后的身份。其余模块只认 Viewer，不碰原始凭证。
 type Viewer struct {
-	Kind   ViewerKind
-	Member Member // kind == member 时的成员；Agent 凭证指向其所属成员
-	Agent  *Agent // 凭证是 Agent token 时非 nil；本人（网页会话）为 nil
+	Kind      ViewerKind
+	Member    Member     // kind == member 时的成员；Agent 凭证指向其所属成员
+	Agent     *Agent     // 凭证是 Agent token 时非 nil；本人（网页会话）为 nil
+	GuestLink *GuestLink // 凭证是访客链接密钥时非 nil（#32）
 }
 
 // IsWebSession 报告 v 是否为成员本人在网页会话下的操作。

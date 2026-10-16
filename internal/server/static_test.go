@@ -15,10 +15,10 @@ func writeWebDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	files := map[string]string{
-		"index.html":               "<!doctype html><html><body>app-shell</body></html>",
-		"assets/index-AbC123.js":   "console.log('app')",
-		"assets/index-AbC123.css":  "body{}",
-		"favicon.svg":              "<svg/>",
+		"index.html":              "<!doctype html><html><body>app-shell</body></html>",
+		"assets/index-AbC123.js":  "console.log('app')",
+		"assets/index-AbC123.css": "body{}",
+		"favicon.svg":             "<svg/>",
 	}
 	for name, content := range files {
 		full := filepath.Join(dir, filepath.FromSlash(name))
@@ -37,9 +37,9 @@ func Test静态文件缓存策略(t *testing.T) {
 	s := tbtest.Start(t, tbtest.WithWebDir(writeWebDir(t)))
 
 	cases := []struct {
-		name       string
-		path       string
-		wantCache  string
+		name      string
+		path      string
+		wantCache string
 	}{
 		{"根路径是 index.html", "/", "no-cache"},
 		{"index.html 本身", "/index.html", "no-cache"},

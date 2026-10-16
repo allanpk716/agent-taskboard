@@ -8,18 +8,32 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 )
 
-// viewerFromRequest 把请求上的凭证（网页会话 cookie 或 Agent token）解析成 Viewer。
-// 凭证缺失或失效时写出错误并返回 ok=false。带 Authorization: Bearer 时按 token 解析，
-// 且不回退到 cookie——凭证坏了应当报错，而不是悄悄当作本人。
+// viewerFromRequest 把请求上的凭证（网页会话 cookie、Agent token 或访客链接密钥）
+// 解析成 Viewer。凭证缺失或失效时写出错误并返回 ok=false。带 Authorization: Bearer
+// 时按凭证解析（先试 Agent token，再试访客链接密钥），且不回退到 cookie——
+// 凭证坏了应当报错，而不是悄悄当作本人。访客链接的撤销与过期即时生效：
+// 每个请求都实时查库判定，分别返回 401 link_revoked / link_expired。
 func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identity.Viewer, bool) {
 	if token, ok := bearerToken(r); ok {
 		viewer, err := a.ident.ViewerFromAgentToken(r.Context(), token)
+		if errors.Is(err, identity.ErrInvalidCredentials) {
+			viewer, err = a.ident.ViewerFromGuestKey(r.Context(), token)
+		}
 		if err != nil {
-			if errors.Is(err, identity.ErrInvalidCredentials) {
-				WriteError(w, http.StatusUnauthorized, CodeInvalidToken, "Agent token 无效或已撤销", "")
-				return identity.Viewer{}, false
+			switch {
+			case errors.Is(err, identity.ErrInvalidCredentials):
+				WriteError(w, http.StatusUnauthorized, CodeInvalidToken, "凭证无效或已撤销",
+					"检查 token 是否完整；访客可以把整条访客链接的密钥传进来")
+			case errors.Is(err, identity.ErrLinkRevoked):
+				WriteError(w, http.StatusUnauthorized, CodeLinkRevoked, "访客链接已被撤销",
+					"请联系发链接的成员重新获取一条新链接")
+			case errors.Is(err, identity.ErrLinkExpired):
+				WriteError(w, http.StatusUnauthorized, CodeLinkExpired, "访客链接已过期",
+					"请联系发链接的成员延期，或重新获取一条新链接")
+			default:
+				panic(err)
 			}
-			panic(err)
+			return identity.Viewer{}, false
 		}
 		return viewer, true
 	}

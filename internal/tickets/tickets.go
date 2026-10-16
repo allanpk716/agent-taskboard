@@ -65,19 +65,40 @@ type FieldWarning struct {
 
 // Author 是统一的作者结构 {member, agent}：本人操作 agent 为空（nil 语义用
 // AgentID==0 表示），成员 Agent 的操作带具名 Agent（data-model「作者结构」）。
+// 访客作者（MemberID == 0）带链接备注与自报信息（#32）：author_name 与
+// via_agent 都是访客自报的、未经平台核实的信息（ADR 0003）。
 type Author struct {
 	MemberID   int64
 	MemberName string
 	AgentID    int64
 	AgentName  string
+
+	// 访客作者（#32）：经哪条链接操作、链接备注（存当时的原文）、自报署名与
+	// 自报「由 Agent 写成」。成员作者的这些字段为零值。
+	LinkID     int64
+	LinkNote   string
+	AuthorName string
+	ViaAgent   bool
 }
 
-// DisplayName 返回署名：成员「陈某」，成员 Agent「陈某 的 Agent · 名字」（ADR 0003）。
+// DisplayName 返回署名：成员「陈某」；成员 Agent「陈某 的 Agent · 名字」（ADR 0003）；
+// 访客「张三（经「检验科-张三」链接）」；访客自报由 Agent 写成时写
+// 「检验科-张三（访客）的 Agent（自报）」——与平台认证的成员 Agent 明确区分。
 func (a Author) DisplayName() string {
-	if a.AgentID != 0 {
-		return a.MemberName + " 的 Agent · " + a.AgentName
+	if a.MemberID != 0 {
+		if a.AgentID != 0 {
+			return a.MemberName + " 的 Agent · " + a.AgentName
+		}
+		return a.MemberName
 	}
-	return a.MemberName
+	if a.ViaAgent {
+		return a.LinkNote + "（访客）的 Agent（自报）"
+	}
+	name := a.AuthorName
+	if name == "" {
+		name = "访客"
+	}
+	return name + "（经「" + a.LinkNote + "」链接）"
 }
 
 // Ticket 是一张工单的核心字段。
@@ -118,6 +139,8 @@ type Event struct {
 	Revision    int64  // brief_revised 修订后的版本号
 	Reason      string // closed 的原因：done | wontfix | duplicate
 	DuplicateOf string // closed=重复时另一张工单的编号（"" = 无）
+	Note        string // guest_link_created / guest_link_revoked 的备注（#32）
+	LinkExpires string // guest_link_extended 的新到期时刻（RFC3339，#32）
 }
 
 // Full 是读取一张工单时的完整投影：核心字段 + 标签 + 完整时间线。
@@ -470,7 +493,9 @@ func (m *Manager) ticketLabels(ctx context.Context, seq int64) ([]string, error)
 func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT e.seq, e.change_seq, e.at, e.type, e.actor_member_id, mm.name, e.actor_agent_id, aa.name,
-		       e.body_md, e.reply_no, e.deliver, e.revision, e.reason, e.duplicate_of, e.label
+		       e.body_md, e.reply_no, e.deliver, e.revision, e.reason, e.duplicate_of, e.label,
+		       e.note, e.link_expires_at,
+		       e.actor_link_id, e.actor_link_note, e.actor_author_name, e.actor_via_agent
 		FROM timeline_events e
 		LEFT JOIN members mm ON mm.id = e.actor_member_id
 		LEFT JOIN agent_tokens aa ON aa.id = e.actor_agent_id
@@ -495,10 +520,17 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 			reason          sql.NullString
 			duplicateOf     sql.NullString
 			label           sql.NullString
+			note            sql.NullString
+			linkExpiresAt   sql.NullString
+			actorLinkID     sql.NullInt64
+			actorLinkNote   sql.NullString
+			actorAuthorName sql.NullString
+			actorViaAgent   int
 		)
 		if err := rows.Scan(&e.Seq, &e.Change, &at, &e.Type,
 			&actorMemberID, &actorMemberName, &actorAgentID, &actorAgentName,
-			&bodyMD, &replyNo, &deliver, &revision, &reason, &duplicateOf, &label); err != nil {
+			&bodyMD, &replyNo, &deliver, &revision, &reason, &duplicateOf, &label,
+			&note, &linkExpiresAt, &actorLinkID, &actorLinkNote, &actorAuthorName, &actorViaAgent); err != nil {
 			return nil, err
 		}
 		e.Actor = Author{
@@ -506,6 +538,10 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 			MemberName: actorMemberName.String,
 			AgentID:    actorAgentID.Int64,
 			AgentName:  actorAgentName.String,
+			LinkID:     actorLinkID.Int64,
+			LinkNote:   actorLinkNote.String,
+			AuthorName: actorAuthorName.String,
+			ViaAgent:   actorViaAgent == 1,
 		}
 		e.BodyMD = bodyMD.String
 		e.ReplyNo = replyNo.Int64
@@ -514,6 +550,8 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 		e.Reason = reason.String
 		e.DuplicateOf = duplicateOf.String
 		e.Label = label.String
+		e.Note = note.String
+		e.LinkExpires = linkExpiresAt.String
 		if e.At, err = time.ParseInLocation(time.RFC3339Nano, at, clock.Beijing); err != nil {
 			return nil, fmt.Errorf("解析事件时间 %q 失败：%w", at, err)
 		}

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
@@ -82,17 +84,31 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		panic(err) // 由 recoverMiddleware 统一转成 500
 	}
 	http.SetCookie(w, sessionCookie(sess, sess.ExpiresAt))
-	writeJSON(w, http.StatusOK, sessionView{Viewer: viewerView{Kind: "member", Member: sess.Member}})
+	member := sess.Member
+	writeJSON(w, http.StatusOK, sessionView{Viewer: viewerView{Kind: "member", Member: &member}})
 }
 
-// current 返回当前凭证的身份；未登录、会话过期或 token 失效时 401。
-// 凭证是 Agent token 时，viewer.agent 指向那个具名 Agent。
+// current 返回当前凭证的身份；未登录、会话过期或凭证失效时 401。
+// 凭证是 Agent token 时，viewer.agent 指向那个具名 Agent；凭证是访客链接
+// 密钥时，另返回链接指向的工单（spec 用户故事 84：贴一条链接就能干活）。
 func (a *API) current(w http.ResponseWriter, r *http.Request) {
 	viewer, ok := a.viewerFromRequest(w, r)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, newSessionView(viewer))
+	view := newSessionView(viewer)
+	if viewer.Kind == identity.ViewerGuest {
+		full, err := a.tickets.ByRef(r.Context(), strconv.FormatInt(viewer.GuestLink.TicketSeq, 10))
+		if err != nil {
+			a.writeTicketError(w, r, err)
+			return
+		}
+		view.Ticket = &sessionTicketView{
+			Number: full.Number, Seq: full.Seq, Title: full.Title,
+			API: "/api/v1/tickets/" + full.Number,
+		}
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (a *API) logout(w http.ResponseWriter, r *http.Request) {
@@ -129,21 +145,46 @@ type agentView struct {
 	Name string `json:"name"`
 }
 
-// viewerView 是 viewer 的对外结构。
+// viewerView 是 viewer 的对外结构：成员带 member/agent；访客（#32）member 与
+// agent 为 null，另带 link_note / link_expires_at / can_edit_brief。
 type viewerView struct {
-	Kind   string          `json:"kind"`
-	Member identity.Member `json:"member"`
-	Agent  *agentView      `json:"agent"`
+	Kind          string           `json:"kind"`
+	Member        *identity.Member `json:"member"`
+	Agent         *agentView       `json:"agent"`
+	LinkNote      *string          `json:"link_note,omitempty"`
+	LinkExpiresAt *string          `json:"link_expires_at,omitempty"`
+	CanEditBrief  *bool            `json:"can_edit_brief,omitempty"`
 }
 
-// sessionView 是 GET /api/v1/session 和登录响应的结构。
+// sessionTicketView 是 GET /api/v1/session 里链接指向的工单（仅访客凭证）。
+type sessionTicketView struct {
+	Number string `json:"number"`
+	Seq    int64  `json:"seq"`
+	Title  string `json:"title"`
+	API    string `json:"api"`
+}
+
+// sessionView 是 GET /api/v1/session 和登录响应的结构：成员带 inbox，
+// 访客（#32）改带链接指向的工单。
 type sessionView struct {
-	Viewer viewerView `json:"viewer"`
-	Inbox  string     `json:"inbox"`
+	Viewer viewerView         `json:"viewer"`
+	Inbox  string             `json:"inbox,omitempty"`
+	Ticket *sessionTicketView `json:"ticket,omitempty"`
 }
 
 func newSessionView(v identity.Viewer) sessionView {
-	vv := viewerView{Kind: string(v.Kind), Member: v.Member}
+	vv := viewerView{Kind: string(v.Kind)}
+	if v.Kind == identity.ViewerGuest {
+		note := v.GuestLink.Note
+		expiresAt := v.GuestLink.ExpiresAt.Format(time.RFC3339Nano)
+		canEdit := v.GuestLink.CanEditBrief
+		vv.LinkNote = &note
+		vv.LinkExpiresAt = &expiresAt
+		vv.CanEditBrief = &canEdit
+		return sessionView{Viewer: vv}
+	}
+	member := v.Member
+	vv.Member = &member
 	if v.Agent != nil {
 		vv.Agent = &agentView{ID: v.Agent.ID, Name: v.Agent.Name}
 	}

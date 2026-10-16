@@ -170,6 +170,43 @@ func (s *Server) AgentClient(token string) *http.Client {
 	return &http.Client{Transport: bearerTransport{token: token}}
 }
 
+// GuestClient 返回带 Bearer 访客链接密钥的 HTTP 客户端（模拟访客及其 Agent；
+// 访客链接 /g/<密钥> 的密钥直接作 Bearer token，#32）。
+func (s *Server) GuestClient(key string) *http.Client {
+	return &http.Client{Transport: bearerTransport{token: key}}
+}
+
+// CreateGuestLink 用成员凭证为 ref 指向的工单创建一条访客链接，返回响应结构
+// （含只出现一次的完整地址 /g/<密钥>）。造数据辅助，等价于走 HTTP 接口。
+func (s *Server) CreateGuestLink(t testing.TB, c *http.Client, ref string, body map[string]any) GuestLink {
+	s.TB.Helper()
+	res := s.Do(t, c, http.MethodPost, "/api/v1/tickets/"+ref+"/guest-links", body, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("创建访客链接失败：状态码 %d", res.StatusCode)
+	}
+	var link GuestLink
+	DecodeJSON(t, res, &link)
+	return link
+}
+
+// GuestLink 是访客链接的对外结构（测试侧）。
+type GuestLink struct {
+	ID           int64  `json:"id"`
+	URL          string `json:"url"`
+	Note         string `json:"note"`
+	ExpiresAt    string `json:"expires_at"`
+	CanEditBrief bool   `json:"can_edit_brief"`
+}
+
+// Key 返回链接密钥（从 /g/<密钥> 地址里取出，直接作 Bearer token）。
+func (l GuestLink) Key(t testing.TB) string {
+	t.Helper()
+	if !strings.HasPrefix(l.URL, "/g/") {
+		t.Fatalf("访客链接地址 = %q, 想以 /g/ 开头", l.URL)
+	}
+	return strings.TrimPrefix(l.URL, "/g/")
+}
+
 // IssueAgentToken 用网页会话为当前成员签发一个具名 Agent token，返回 (id, 明文 token)。
 // 明文只在签发响应里出现一次。
 func (s *Server) IssueAgentToken(t testing.TB, c *http.Client, name string) (int64, string) {

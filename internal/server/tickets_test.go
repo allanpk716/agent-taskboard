@@ -297,7 +297,7 @@ func Test建单请求体不是JSON时返回400(t *testing.T) {
 
 // authorBody 是作者结构 {member, agent}，本人操作时 agent 为 null（data-model）。
 type authorBody struct {
-	Member struct {
+	Member *struct {
 		ID   int64  `json:"id"`
 		Name string `json:"name"`
 	} `json:"member"`
@@ -305,6 +305,9 @@ type authorBody struct {
 		ID   int64  `json:"id"`
 		Name string `json:"name"`
 	} `json:"agent"`
+	LinkNote   *string `json:"link_note"`
+	AuthorName *string `json:"author_name"`
+	ViaAgent   *bool   `json:"via_agent"`
 }
 
 // ticketResponseBody 是 GET /api/v1/tickets/{编号或序号} 的响应结构。
@@ -325,7 +328,7 @@ type ticketResponseBody struct {
 		Text   string  `json:"text"`
 		Reason string  `json:"reason"`
 	} `json:"waiting_on"`
-	Labels []string `json:"labels"`
+	Labels []string `json:"labels"` // 访客视角没有这个字段（解码为 nil；另用原始 JSON 断言字段不存在）
 	Brief  struct {
 		Fields   *map[string]string `json:"fields"`
 		Markdown string             `json:"markdown"`
@@ -334,7 +337,7 @@ type ticketResponseBody struct {
 	} `json:"brief"`
 	Viewer struct {
 		Kind   string `json:"kind"`
-		Member struct {
+		Member *struct {
 			ID   int64  `json:"id"`
 			Name string `json:"name"`
 		} `json:"member"`
@@ -342,9 +345,11 @@ type ticketResponseBody struct {
 			ID   int64  `json:"id"`
 			Name string `json:"name"`
 		} `json:"agent"`
-		Role     string `json:"role"`
-		YourTurn bool   `json:"your_turn"`
-		Can      struct {
+		LinkNote      *string `json:"link_note"`
+		LinkExpiresAt *string `json:"link_expires_at"`
+		Role          string  `json:"role"`
+		YourTurn      bool    `json:"your_turn"`
+		Can           struct {
 			Reply            bool `json:"reply"`
 			Upload           bool `json:"upload"`
 			EditBrief        bool `json:"edit_brief"`
