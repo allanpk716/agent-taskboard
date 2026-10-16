@@ -30,10 +30,11 @@ type createTicketResponse struct {
 // errorBodyWithExtra 是可能带附加字段（如 suggestions）的错误结构。
 type errorBodyWithExtra struct {
 	Error struct {
-		Code        string   `json:"code"`
-		Message     string   `json:"message"`
-		Hint        string   `json:"hint"`
-		Suggestions []string `json:"suggestions"`
+		Code            string   `json:"code"`
+		Message         string   `json:"message"`
+		Hint            string   `json:"hint"`
+		Suggestions     []string `json:"suggestions"`
+		CurrentRevision int64    `json:"current_revision"`
 	} `json:"error"`
 }
 
@@ -301,19 +302,17 @@ type authorBody struct {
 
 // ticketResponseBody 是 GET /api/v1/tickets/{编号或序号} 的响应结构。
 type ticketResponseBody struct {
-	Number      string `json:"number"`
-	Seq         int64  `json:"seq"`
-	URL         string `json:"url"`
-	Kind        string `json:"kind"`
-	Title       string `json:"title"`
-	Status      string `json:"status"`
-	CloseReason *struct {
-		Reason string `json:"reason"`
-	} `json:"close_reason"`
-	Template  *string     `json:"template"`
-	Creator   authorBody  `json:"creator"`
-	Assignee  *authorBody `json:"assignee"`
-	WaitingOn struct {
+	Number      string      `json:"number"`
+	Seq         int64       `json:"seq"`
+	URL         string      `json:"url"`
+	Kind        string      `json:"kind"`
+	Title       string      `json:"title"`
+	Status      string      `json:"status"`
+	CloseReason *string     `json:"close_reason"`
+	Template    *string     `json:"template"`
+	Creator     authorBody  `json:"creator"`
+	Assignee    *authorBody `json:"assignee"`
+	WaitingOn   struct {
 		Party  string  `json:"party"`
 		Member *string `json:"member"`
 		Text   string  `json:"text"`
@@ -350,14 +349,7 @@ type ticketResponseBody struct {
 			Assign           bool `json:"assign"`
 		} `json:"can"`
 	} `json:"viewer"`
-	Timeline []struct {
-		Seq    int64      `json:"seq"`
-		Change int64      `json:"change"`
-		At     string     `json:"at"`
-		Actor  authorBody `json:"actor"`
-		Type   string     `json:"type"`
-		Label  string     `json:"label"`
-	} `json:"timeline"`
+	Timeline []timelineEventBody `json:"timeline"`
 }
 
 // 用工单编号和用序号读到的是同一张工单；响应里标题、类型、状态、创建者、标签、

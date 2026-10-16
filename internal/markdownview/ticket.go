@@ -8,13 +8,21 @@ import (
 	"time"
 )
 
-// Event 是时间线上一条事件的输入（#29 只有 created；#30 起扩展回复等类型）。
+// Event 是时间线上一条事件的输入（#29 只有 created；#30 起有回复、说明修订、
+// 关闭与重开；assigned/label 等随后续工单扩展）。
 type Event struct {
 	Seq        int64
 	At         time.Time
 	AuthorName string // 已按 ADR 0003 拼好的署名
 	Type       string
-	Label      string // label_added / label_removed 的标签
+	Label      string // label_added / label_removed 的标签（#31）
+
+	// 附加字段，按事件类型出现。
+	BodyMD      string // reply 的正文
+	Deliver     bool   // reply 带「交付」标记（#36 启用）
+	Revision    int64  // brief_revised 修订后的版本号
+	Reason      string // closed 的原因：done | wontfix | duplicate
+	DuplicateOf string // closed=重复时另一张工单的编号
 }
 
 // Input 是单张工单 Markdown 视图的输入（纯数据，由 HTTP 层从投影填充）。
@@ -54,6 +62,17 @@ func Ticket(in Input) string {
 		"",
 		"## 时间线", "")
 	for _, e := range in.Timeline {
+		if e.Type == "reply" {
+			// 回复是正文主体，单独成节（附件引用在 #33 起跟在正文后）。
+			head := e.AuthorName + " 回复"
+			if e.Deliver {
+				head = e.AuthorName + " **交付**"
+			}
+			L = append(L,
+				"### ["+strconv.FormatInt(e.Seq, 10)+"] "+e.At.Format("2006-01-02 15:04")+" · "+head, "",
+				e.BodyMD, "")
+			continue
+		}
 		L = append(L, "- ["+strconv.FormatInt(e.Seq, 10)+"] "+e.At.Format("2006-01-02 15:04")+" · "+e.AuthorName+" "+eventText(e))
 	}
 	L = append(L, "")
@@ -120,8 +139,30 @@ func eventText(e Event) string {
 		return "打上标签 " + e.Label
 	case "label_removed":
 		return "摘掉标签 " + e.Label
+	case "brief_revised":
+		return "修订说明（第 " + strconv.FormatInt(e.Revision, 10) + " 版）"
+	case "closed":
+		if e.Reason == "duplicate" && e.DuplicateOf != "" {
+			return "关闭工单（重复：与 " + e.DuplicateOf + " 重复）"
+		}
+		return "关闭工单（" + closeReasonText(e.Reason) + "）"
+	case "reopened":
+		return "重新开启工单"
 	}
 	return e.Type
+}
+
+// closeReasonText 把关闭原因码翻成中文。
+func closeReasonText(reason string) string {
+	switch reason {
+	case "done":
+		return "完成"
+	case "wontfix":
+		return "不处理"
+	case "duplicate":
+		return "重复"
+	}
+	return reason
 }
 
 func reasonSuffix(reason string) string {

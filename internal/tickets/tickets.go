@@ -6,7 +6,6 @@ package tickets
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -49,17 +48,18 @@ func (a Author) DisplayName() string {
 
 // Ticket 是一张工单的核心字段。
 type Ticket struct {
-	Seq           int64
-	Number        string
-	Kind          string // task | report
-	Title         string
-	Status        string // open | closed
-	CloseReason   string // "" | done | wontfix | duplicate
-	BriefMD       string
-	BriefRevision int64
-	Creator       Author
-	CreatedAt     time.Time
-	LastChange    int64
+	Seq            int64
+	Number         string
+	Kind           string // task | report
+	Title          string
+	Status         string // open | closed
+	CloseReason    string // "" | done | wontfix | duplicate
+	DuplicateOfSeq int64  // close_reason == duplicate 时另一张工单的序号（0 = 无）
+	BriefMD        string
+	BriefRevision  int64
+	Creator        Author
+	CreatedAt      time.Time
+	LastChange     int64
 }
 
 // Event 是时间线上的一条事件，只追加不修改。
@@ -68,8 +68,16 @@ type Event struct {
 	Change int64 // 全局变更序号（与事件写入同事务推进）
 	At     time.Time
 	Actor  Author
-	Type   string // created | reply | assigned | label_added | …（后续工单扩展）
-	Label  string // label_added / label_removed 的标签（附加字段，其余类型为空）
+	Type   string // created | reply | brief_revised | closed | reopened | label_added | …
+	Label  string // label_added / label_removed 的标签（#31）
+
+	// 附加字段，按事件类型出现（写入端点在 #30；assigned 等随后续工单扩展）。
+	BodyMD      string // reply 的正文
+	ReplyNo     int64  // reply 在单内的序号
+	Deliver     bool   // reply 带「交付」标记（#36 启用）
+	Revision    int64  // brief_revised 修订后的版本号
+	Reason      string // closed 的原因：done | wontfix | duplicate
+	DuplicateOf string // closed=重复时另一张工单的编号（"" = 无）
 }
 
 // Full 是读取一张工单时的完整投影：核心字段 + 标签 + 完整时间线。
@@ -221,21 +229,22 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (Ticket, error) {
 func (m *Manager) ByRef(ctx context.Context, ref string) (Full, error) {
 	ref = strings.TrimPrefix(ref, "#")
 	var (
-		t           Ticket
-		at          string
-		closeReason sql.NullString
-		memberID    sql.NullInt64
-		memberName  sql.NullString
-		agentID     sql.NullInt64
-		agentName   sql.NullString
-		err         error
+		t              Ticket
+		at             string
+		closeReason    sql.NullString
+		duplicateOfSeq sql.NullInt64
+		memberID       sql.NullInt64
+		memberName     sql.NullString
+		agentID        sql.NullInt64
+		agentName      sql.NullString
+		err            error
 	)
 	scan := func(row *sql.Row) error {
-		return row.Scan(&t.Seq, &t.Number, &t.Kind, &t.Title, &t.Status, &closeReason,
+		return row.Scan(&t.Seq, &t.Number, &t.Kind, &t.Title, &t.Status, &closeReason, &duplicateOfSeq,
 			&t.BriefMD, &t.BriefRevision, &memberID, &memberName, &agentID, &agentName,
 			&at, &t.LastChange)
 	}
-	const cols = `t.seq, t.number, t.kind, t.title, t.status, t.close_reason,
+	const cols = `t.seq, t.number, t.kind, t.title, t.status, t.close_reason, t.duplicate_of_seq,
 		t.brief_md, t.brief_revision,
 		t.creator_member_id, cm.name, t.creator_agent_id, ca.name,
 		t.created_at, t.last_change`
@@ -260,6 +269,7 @@ func (m *Manager) ByRef(ctx context.Context, ref string) (Full, error) {
 	if closeReason.Valid {
 		t.CloseReason = closeReason.String
 	}
+	t.DuplicateOfSeq = duplicateOfSeq.Int64
 	t.Creator = Author{
 		MemberID:   memberID.Int64,
 		MemberName: memberName.String,
@@ -303,7 +313,8 @@ func (m *Manager) ticketLabels(ctx context.Context, seq int64) ([]string, error)
 
 func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT e.seq, e.change_seq, e.at, e.type, e.actor_member_id, mm.name, e.actor_agent_id, aa.name, e.payload
+		SELECT e.seq, e.change_seq, e.at, e.type, e.actor_member_id, mm.name, e.actor_agent_id, aa.name,
+		       e.body_md, e.reply_no, e.deliver, e.revision, e.reason, e.duplicate_of, e.label
 		FROM timeline_events e
 		LEFT JOIN members mm ON mm.id = e.actor_member_id
 		LEFT JOIN agent_tokens aa ON aa.id = e.actor_agent_id
@@ -321,10 +332,17 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 			actorMemberName sql.NullString
 			actorAgentID    sql.NullInt64
 			actorAgentName  sql.NullString
-			payload         sql.NullString
+			bodyMD          sql.NullString
+			replyNo         sql.NullInt64
+			deliver         int
+			revision        sql.NullInt64
+			reason          sql.NullString
+			duplicateOf     sql.NullString
+			label           sql.NullString
 		)
 		if err := rows.Scan(&e.Seq, &e.Change, &at, &e.Type,
-			&actorMemberID, &actorMemberName, &actorAgentID, &actorAgentName, &payload); err != nil {
+			&actorMemberID, &actorMemberName, &actorAgentID, &actorAgentName,
+			&bodyMD, &replyNo, &deliver, &revision, &reason, &duplicateOf, &label); err != nil {
 			return nil, err
 		}
 		e.Actor = Author{
@@ -333,18 +351,15 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 			AgentID:    actorAgentID.Int64,
 			AgentName:  actorAgentName.String,
 		}
+		e.BodyMD = bodyMD.String
+		e.ReplyNo = replyNo.Int64
+		e.Deliver = deliver == 1
+		e.Revision = revision.Int64
+		e.Reason = reason.String
+		e.DuplicateOf = duplicateOf.String
+		e.Label = label.String
 		if e.At, err = time.ParseInLocation(time.RFC3339Nano, at, clock.Beijing); err != nil {
 			return nil, fmt.Errorf("解析事件时间 %q 失败：%w", at, err)
-		}
-		switch e.Type {
-		case "label_added", "label_removed":
-			var p struct {
-				Label string `json:"label"`
-			}
-			if payload.Valid {
-				_ = json.Unmarshal([]byte(payload.String), &p)
-			}
-			e.Label = p.Label
 		}
 		events = append(events, e)
 	}
@@ -360,17 +375,46 @@ type WaitingOn struct {
 	Reason   string // 收件箱原因文案，如「尚未指派」
 }
 
-// WaitingOnOf 推导当前轮到谁。规则见 spec「等待方与收件箱」：
-// 尚无回复或最后是访客回复 → 指派人（未指派 → 本部门）。
-// #29 里还没有回复（#30 加入）也没有指派（#36 加入），所以开启工单总是
-// 轮到本部门、原因是尚未指派；已关闭的工单没有等待方。
+// WaitingOnOf 推导当前轮到谁，规则照抄 prototype/member-handoff 的 turnOf
+// （spec「等待方与收件箱」，也是后续 #36 收件箱的依据）：
+//
+//	已关闭                    → 无等待方
+//	尚无回复                  → 指派人（未指派 → 本部门；#36 起才有指派）
+//	最后是访客回复             → 指派人（未指派 → 本部门，原因「访客回复了」）
+//	无对手（反馈、自派自）成员回复 → 访客
+//	任务且创建者是成员：创建者一方回复 → 指派人（未指派 → 本部门）；
+//	第三位成员的回复不改变轮次（不参与相关回复集）
+//
+// 未指派轮到本部门时原因只写「尚未指派」或「访客回复了」（prototype/ticket-query 的修正：
+// 不能写「新指派给你」）。指派人参与推导在 #36 加入（届时对手与相关回复集按指派人计算）。
 func WaitingOnOf(t Full) WaitingOn {
 	if t.Status == "closed" {
 		return WaitingOn{Party: "none", Text: "无（已关闭）"}
 	}
-	// 有指派时：WaitingOn{Party: "assignee", Member: 指派人名, Text: 名字（指派人）, Reason: …}。
-	// 未指派且尚无回复：
-	return WaitingOn{Party: "department", Text: "本部门（未指派）", Reason: "尚未指派"}
+	// 对手：任务且创建者是成员时，创建者一方就是对手（#30 尚无指派，创建者≠指派人恒成立）。
+	hasCounterpart := t.Kind == "task" && t.Creator.MemberID != 0
+	var lastReply *Event
+	for i := range t.Timeline {
+		e := &t.Timeline[i]
+		if e.Type != "reply" {
+			continue
+		}
+		isGuest := e.Actor.MemberID == 0 // 访客作者（#32 起出现）不带成员
+		if isGuest || !hasCounterpart || e.Actor.MemberID == t.Creator.MemberID {
+			lastReply = e
+		}
+	}
+	switch {
+	case lastReply == nil:
+		return WaitingOn{Party: "department", Text: "本部门（未指派）", Reason: "尚未指派"}
+	case lastReply.Actor.MemberID == 0:
+		return WaitingOn{Party: "department", Text: "本部门（未指派）", Reason: "访客回复了"}
+	case !hasCounterpart:
+		return WaitingOn{Party: "guest", Text: "访客"}
+	default:
+		// 创建者一方回复：轮到指派人；未指派时轮到本部门，原因仍写「尚未指派」。
+		return WaitingOn{Party: "department", Text: "本部门（未指派）"}
+	}
 }
 
 // dedupe 去重并保持顺序。

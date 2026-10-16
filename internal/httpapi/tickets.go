@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/identity"
@@ -34,23 +33,55 @@ func (a *API) handleTicketsRoot(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleTicketRef 处理单张工单：
+// handleTicketRef 处理单张工单及其子资源：
 //
-//	GET  /api/v1/tickets/{编号或序号}[?format=markdown]
-//	POST /api/v1/tickets/{编号或序号}/labels  打标签 / 摘标签（#31）
+//	GET    /api/v1/tickets/{编号或序号}[?format=markdown]
+//	PATCH  /api/v1/tickets/{编号或序号}      修订标题/说明（#30）
+//	GET    …/timeline[?after=N]            增量读取（#30）
+//	POST   …/replies                       回复（#30）
+//	POST   …/close  …/reopen               关闭与重开（#30）
+//	POST   …/labels                        打标签 / 摘标签（#31）
+//	（attachments 在 #33、guest-links 在 #32、assign 在 #36）
 //
-// 工单引用接受 YYYYMMDD-NNN 工单编号或全局序号（可带 # 前缀）；
-// 其余子资源（replies、timeline 等）由后续工单实现。
+// 工单引用接受 YYYYMMDD-NNN 工单编号或全局序号（可带 # 前缀）。
 func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
-	ref, sub, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/v1/tickets/"), "/")
-	switch sub {
-	case "":
+	ref, sub, hasSub := ticketRefAndSub(r.URL.Path)
+	if !hasSub {
 		switch r.Method {
 		case http.MethodGet:
 			a.readTicket(w, r, ref)
+		case http.MethodPatch:
+			a.reviseTicket(w, r, ref)
 		default:
 			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
 		}
+		return
+	}
+	switch sub {
+	case "timeline":
+		if r.Method != http.MethodGet {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
+			return
+		}
+		a.ticketTimeline(w, r, ref)
+	case "replies":
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
+			return
+		}
+		a.replyTicket(w, r, ref)
+	case "close":
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
+			return
+		}
+		a.closeTicket(w, r, ref)
+	case "reopen":
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
+			return
+		}
+		a.reopenTicket(w, r, ref)
 	case "labels":
 		if r.Method != http.MethodPost {
 			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "打标签用 POST")
@@ -58,7 +89,8 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 		}
 		a.setTicketLabels(w, r, ref)
 	default:
-		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "读工单用 /api/v1/tickets/{编号或序号}")
+		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
+			"读工单用 /api/v1/tickets/{编号或序号}；回复、关闭、时间线等子资源见 docs/api.md")
 	}
 }
 
@@ -88,21 +120,23 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req, `{"kind": "task|report", "title": "…", "brief_md": "…", "labels": ["维度:值"]}`) {
 		return
 	}
-	t, err := a.tickets.Create(r.Context(), tickets.CreateInput{
-		Kind:    req.Kind,
-		Title:   req.Title,
-		BriefMD: req.BriefMD,
-		Labels:  req.Labels,
-		Creator: viewer,
-	})
-	if err != nil {
-		a.writeTicketError(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, createTicketResponse{
-		Number: t.Number,
-		Seq:    t.Seq,
-		URL:    "/t/" + t.Number,
+	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
+		t, err := a.tickets.Create(r.Context(), tickets.CreateInput{
+			Kind:    req.Kind,
+			Title:   req.Title,
+			BriefMD: req.BriefMD,
+			Labels:  req.Labels,
+			Creator: viewer,
+		})
+		if err != nil {
+			a.writeTicketError(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, createTicketResponse{
+			Number: t.Number,
+			Seq:    t.Seq,
+			URL:    "/t/" + t.Number,
+		})
 	})
 }
 
@@ -128,9 +162,10 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 
 // writeTicketError 把工单模块的错误映射成 HTTP 错误。
 func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, err error) {
+	var conflict *tickets.RevisionConflictError
 	switch {
 	case errors.Is(err, tickets.ErrTitleRequired):
-		WriteError(w, http.StatusUnprocessableEntity, CodeTitleRequired, "标题必填", "")
+		WriteError(w, http.StatusUnprocessableEntity, CodeTitleRequired, "标题不能为空", "")
 	case errors.Is(err, tickets.ErrInvalidKind):
 		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidKind, "kind 必须是 task（任务）或 report（反馈）", "不传时默认 task；用模板创建时类型由模板决定")
 	case errors.Is(err, tickets.ErrDimensionLabelRequired):
@@ -154,6 +189,28 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, err error
 	case errors.Is(err, tickets.ErrNotFound):
 		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
 			"用工单编号（YYYYMMDD-NNN）或全局序号引用；编号按北京时间分配")
+	case errors.As(err, &conflict):
+		WriteErrorExtra(w, http.StatusConflict, CodeRevisionConflict,
+			conflict.Error(), "重新读取工单，合并修改后再提交",
+			map[string]any{"current_revision": conflict.CurrentRevision})
+	case errors.Is(err, tickets.ErrEmptyReply):
+		WriteError(w, http.StatusUnprocessableEntity, CodeEmptyReply, err.Error(), "写正文后重试；附件引用在 #33 提供")
+	case errors.Is(err, tickets.ErrNotBriefOwner):
+		WriteError(w, http.StatusForbidden, CodeNotBriefOwner, err.Error(), "只有创建者（本人或其 Agent）能修订说明；其他人用回复补充内容")
+	case errors.Is(err, tickets.ErrBaseRevisionRequired):
+		WriteError(w, http.StatusUnprocessableEntity, CodeBaseRevisionRequired, err.Error(), "先读取工单，取 brief.revision 作 base_revision")
+	case errors.Is(err, tickets.ErrInvalidCloseReason):
+		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidCloseReason, err.Error(), "完成用 done；不处理用 wontfix；重复用 duplicate 并带 duplicate_of")
+	case errors.Is(err, tickets.ErrDuplicateOfRequired):
+		WriteError(w, http.StatusUnprocessableEntity, CodeDuplicateOfRequired, err.Error(), "写重复的那张工单的编号或序号")
+	case errors.Is(err, tickets.ErrDuplicateNotFound):
+		WriteError(w, http.StatusNotFound, CodeTicketNotFound, err.Error(), "duplicate_of 要指向一张存在的工单（编号或序号）")
+	case errors.Is(err, tickets.ErrAlreadyClosed):
+		WriteError(w, http.StatusConflict, CodeAlreadyClosed, err.Error(), "需要重新处理时先 POST …/reopen")
+	case errors.Is(err, tickets.ErrNotClosed):
+		WriteError(w, http.StatusConflict, CodeNotClosed, err.Error(), "")
+	case errors.Is(err, tickets.ErrDeliverAssigneeOnly):
+		WriteError(w, http.StatusForbidden, CodeDeliverAssigneeOnly, err.Error(), "去掉 deliver 作为普通回复；该你做就请发起人改派（指派在 #36 提供）")
 	default:
 		panic(err)
 	}
@@ -236,7 +293,24 @@ type eventView struct {
 	At     time.Time  `json:"at"`
 	Actor  authorView `json:"actor"`
 	Type   string     `json:"type"`
-	Label  string     `json:"label,omitempty"` // label_added / label_removed 事件带
+	Label  string     `json:"label,omitempty"` // label_added / label_removed 事件带（#31）
+
+	// 附加字段按事件类型出现（只追加）。
+	ReplyNo     int64  `json:"reply_no,omitempty"`
+	BodyMD      string `json:"body_md,omitempty"`
+	Deliver     bool   `json:"deliver,omitempty"`
+	Revision    int64  `json:"revision,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	DuplicateOf string `json:"duplicate_of,omitempty"`
+}
+
+// newEventView 把时间线事件转成对外结构。
+func newEventView(e tickets.Event) eventView {
+	return eventView{
+		Seq: e.Seq, Change: e.Change, At: e.At, Actor: newAuthorView(e.Actor), Type: e.Type,
+		Label: e.Label, ReplyNo: e.ReplyNo, BodyMD: e.BodyMD, Deliver: e.Deliver,
+		Revision: e.Revision, Reason: e.Reason, DuplicateOf: e.DuplicateOf,
+	}
 }
 
 type ticketView struct {
@@ -276,12 +350,7 @@ func newTicketView(full tickets.Full, viewer identity.Viewer) ticketView {
 		c := full.CloseReason
 		v.CloseReason = &c
 	}
-	if waitingOn.Member != "" {
-		m := waitingOn.Member
-		v.WaitingOn = waitingOnView{Party: waitingOn.Party, Member: &m, Text: waitingOn.Text, Reason: waitingOn.Reason}
-	} else {
-		v.WaitingOn = waitingOnView{Party: waitingOn.Party, Text: waitingOn.Text, Reason: waitingOn.Reason}
-	}
+	v.WaitingOn = newWaitingOnView(waitingOn)
 	tv := ticketViewerView{
 		Kind:   string(viewer.Kind),
 		Member: memberRef{ID: viewer.Member.ID, Name: viewer.Member.Name},
@@ -294,9 +363,7 @@ func newTicketView(full tickets.Full, viewer identity.Viewer) ticketView {
 	tv.Can = capsOf(viewer, full)
 	v.Viewer = tv
 	for _, e := range full.Timeline {
-		v.Timeline = append(v.Timeline, eventView{
-			Seq: e.Seq, Change: e.Change, At: e.At, Actor: newAuthorView(e.Actor), Type: e.Type, Label: e.Label,
-		})
+		v.Timeline = append(v.Timeline, newEventView(e))
 	}
 	return v
 }
@@ -329,7 +396,9 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer) markdownview
 	}
 	for _, e := range full.Timeline {
 		in.Timeline = append(in.Timeline, markdownview.Event{
-			Seq: e.Seq, At: e.At, AuthorName: e.Actor.DisplayName(), Type: e.Type, Label: e.Label,
+			Seq: e.Seq, At: e.At, AuthorName: e.Actor.DisplayName(), Type: e.Type,
+			Label: e.Label, BodyMD: e.BodyMD, Deliver: e.Deliver, Revision: e.Revision,
+			Reason: e.Reason, DuplicateOf: e.DuplicateOf,
 		})
 	}
 	return in

@@ -3,7 +3,7 @@ package tickets
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -186,8 +186,7 @@ func (m *Manager) SetLabels(ctx context.Context, in SetLabelsInput) (SetLabelsRe
 		`SELECT COALESCE(MAX(change_seq), 0) FROM timeline_events`).Scan(&lastChange); err != nil {
 		return SetLabelsResult{}, err
 	}
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE tickets SET last_change = ? WHERE seq = ?`, lastChange, full.Seq); err != nil {
+	if err := touchLastChange(ctx, tx, full.Seq, lastChange); err != nil {
 		return SetLabelsResult{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -219,33 +218,19 @@ func ticketLabelsTx(ctx context.Context, tx *sql.Tx, seq int64) ([]string, error
 	return out, rows.Err()
 }
 
-// insertLabelEvent 写一条标签事件（label_added / label_removed，附加字段 label），
-// 并在同一个事务里推进全局变更序号。
+// insertLabelEvent 写一条标签事件（label_added / label_removed，附加列 label），
+// 复用 #30 的 appendEvent（单内 seq 与全局变更序号同事务分配），
+// 附加列随后用 UPDATE 补上（与回复等事件类型同一模式）。
 func (m *Manager) insertLabelEvent(ctx context.Context, tx *sql.Tx, ticketSeq int64,
 	eventType, label string, actor identity.Viewer, at time.Time) error {
-	payload, err := json.Marshal(map[string]string{"label": label})
+	eventSeq, _, err := m.appendEvent(ctx, tx, ticketSeq, at, authorOf(actor), eventType)
 	if err != nil {
 		return err
 	}
-	var agentID any
-	if actor.Agent != nil {
-		agentID = actor.Agent.ID
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE timeline_events SET label = ? WHERE ticket_seq = ? AND seq = ?`,
+		label, ticketSeq, eventSeq); err != nil {
+		return fmt.Errorf("写入 %s 事件的 label 失败：%w", eventType, err)
 	}
-	var nextSeq int64
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(seq), 0) + 1 FROM timeline_events WHERE ticket_seq = ?`, ticketSeq).
-		Scan(&nextSeq); err != nil {
-		return err
-	}
-	var maxChange int64
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(change_seq), 0) FROM timeline_events`).Scan(&maxChange); err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO timeline_events (ticket_seq, seq, change_seq, type, actor_member_id, actor_agent_id, at, payload)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		ticketSeq, nextSeq, maxChange+1, eventType, actor.Member.ID, agentID,
-		at.Format(time.RFC3339Nano), string(payload))
-	return err
+	return nil
 }
