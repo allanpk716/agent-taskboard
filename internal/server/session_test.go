@@ -16,7 +16,7 @@ func Test账号或密码错误返回统一错误格式(t *testing.T) {
 	s.CreateAdmin("admin", "secret-pass")
 
 	for name, body := range map[string]map[string]string{
-		"密码错误": {"username": "admin", "password": "wrong-pass"},
+		"密码错误":   {"username": "admin", "password": "wrong-pass"},
 		"用户名不存在": {"username": "nobody", "password": "secret-pass"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -107,26 +107,39 @@ func Test创建管理员后可以登录查身份并登出(t *testing.T) {
 		t.Errorf("会话 cookie Path = %q, 想 \"/\"", cookie.Path)
 	}
 
-	// 带会话查本人身份。
+	// 带会话查本人身份：agent 为 null（网页会话 = 本人操作）。
 	client := s.Login("admin", "secret-pass")
 	var me struct {
-		Kind   string `json:"kind"`
-		Member struct {
-			ID       int64  `json:"id"`
-			Username string `json:"username"`
-			Name     string `json:"name"`
-			IsAdmin  bool   `json:"is_admin"`
-		} `json:"member"`
+		Viewer struct {
+			Kind   string `json:"kind"`
+			Member struct {
+				ID       int64  `json:"id"`
+				Username string `json:"username"`
+				Name     string `json:"name"`
+				IsAdmin  bool   `json:"is_admin"`
+			} `json:"member"`
+			Agent *struct {
+				ID   int64  `json:"id"`
+				Name string `json:"name"`
+			} `json:"agent"`
+		} `json:"viewer"`
+		Inbox string `json:"inbox"`
 	}
 	res := s.Do(t, client, http.MethodGet, "/api/v1/session", nil, &me)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("查身份状态码 = %d, 想 200", res.StatusCode)
 	}
-	if me.Kind != "member" {
-		t.Errorf("kind = %q, 想 member", me.Kind)
+	if me.Viewer.Kind != "member" {
+		t.Errorf("kind = %q, 想 member", me.Viewer.Kind)
 	}
-	if me.Member.Username != "admin" || me.Member.Name != "admin" || !me.Member.IsAdmin {
-		t.Errorf("成员信息不对：%+v", me.Member)
+	if me.Viewer.Member.Username != "admin" || me.Viewer.Member.Name != "admin" || !me.Viewer.Member.IsAdmin {
+		t.Errorf("成员信息不对：%+v", me.Viewer.Member)
+	}
+	if me.Viewer.Agent != nil {
+		t.Errorf("网页会话的 agent 应为 null，得到 %+v", me.Viewer.Agent)
+	}
+	if me.Inbox != "/api/v1/inbox" {
+		t.Errorf("inbox = %q, 想 /api/v1/inbox", me.Inbox)
 	}
 
 	// 登出后再查身份 → 401。
