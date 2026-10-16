@@ -101,6 +101,19 @@ const (
 	CodeSlugTaken         = "slug_taken"          // slug 已被另一个入口占用
 	CodeTemplateNotReport = "template_not_report" // 入口只能绑定反馈类型的模板
 	CodeMissingFields     = "missing_fields"      // 入口提交缺必填项（严格校验，逐项提示）
+
+	// #37：查询与计数。
+	CodeUnknownParameter = "unknown_parameter"  // 不认识的查询参数（附可用参数列表）
+	CodeInvalidStatus    = "invalid_status"     // status 只能是 open/closed/all
+	CodeInvalidSort      = "invalid_sort"       // 不支持的排序键
+	CodeInvalidLimit     = "invalid_limit"      // limit 不是 1–200 的整数
+	CodeInvalidPageToken = "invalid_page_token" // page_token 无效
+	CodeInvalidTime      = "invalid_time"       // 时间筛选格式不对
+	CodeInvalidInclude   = "invalid_include"    // include 只支持 brief
+	CodeInvalidWaitingOn = "invalid_waiting_on" // waiting_on 只能是五者之一
+	CodeGroupByRequired  = "group_by_required"  // 计数缺 group_by
+	CodeInvalidGroupBy   = "invalid_group_by"   // 不能按这个维度分组
+	CodeInvalidActorKind = "invalid_actor_kind" // actor_kind 只能是 member/agent
 )
 
 // ErrorBody 是统一错误格式 {error:{code, message, hint?}} 的内层；
@@ -117,6 +130,7 @@ type Error struct {
 	Code    string
 	Message string
 	Hint    string
+	Extra   map[string]any // 附加字段（如 suggestions），平铺在 error 对象里
 }
 
 func (e *Error) Error() string { return e.Code + ": " + e.Message }
@@ -124,6 +138,11 @@ func (e *Error) Error() string { return e.Code + ": " + e.Message }
 // NewError 构造 API 错误，hint 可为空。
 func NewError(status int, code, message, hint string) *Error {
 	return &Error{Status: status, Code: code, Message: message, Hint: hint}
+}
+
+// NewErrorExtra 构造带附加字段（如 suggestions）的 API 错误。
+func NewErrorExtra(status int, code, message, hint string, extra map[string]any) *Error {
+	return &Error{Status: status, Code: code, Message: message, Hint: hint, Extra: extra}
 }
 
 // WriteError 按统一格式写出一个错误响应。
@@ -150,5 +169,5 @@ func WriteErrorExtra(w http.ResponseWriter, status int, code, message, hint stri
 }
 
 func writeAPIError(w http.ResponseWriter, err *Error) {
-	WriteError(w, err.Status, err.Code, err.Message, err.Hint)
+	WriteErrorExtra(w, err.Status, err.Code, err.Message, err.Hint, err.Extra)
 }
