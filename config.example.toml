@@ -29,3 +29,18 @@ daily_at       = "03:00"  # 每日定时备份时刻（北京时间）；每月 
 keep_daily     = 30       # 每日备份保留份数
 keep_monthly   = 12       # 每月备份（每月 1 日那份）保留份数
 keep_preupdate = 5        # 更新前备份保留份数（#45 的更新流程用）
+
+# 更新（#45，见 docs/deploy-and-release.md「更新」）。sources 留空（默认）
+# 不检查更新，避免开发/测试环境意外连真实源；生产建议按顺序回退：
+# updatehub = ["updatehub", "github"]
+[update]
+sources = []
+
+[update.updatehub]
+base_url = ""                    # 内网 UpdateHub 地址，如 https://updatehub.example.com
+channel  = "stable"
+
+[update.github]
+repo   = "allanpk716/agent-taskboard"
+mirror = []                      # 镜像前缀（形如 https://<镜像>/），按顺序尝试，最后直连
+proxy  = ""                      # http:// 或 socks5://；为空时读 HTTPS_PROXY 环境变量

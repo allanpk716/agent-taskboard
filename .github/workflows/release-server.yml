@@ -29,9 +29,11 @@ jobs:
       - name: 构建
         run: |
           set -euxo pipefail
+          VERSION="${GITHUB_REF_NAME#server/v}"
           mkdir -p dist
-          go build -trimpath -ldflags='-s -w' -o dist/taskboard.exe ./cmd/taskboard
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/taskboard-linux-amd64 ./cmd/taskboard
+          # 后端版本注入 internal/version.Server，更新器靠它对比当前版本。
+          go build -trimpath -ldflags="-s -w -X github.com/allanpk716/agent-taskboard/internal/version.Server=$VERSION" -o dist/taskboard.exe ./cmd/taskboard
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X github.com/allanpk716/agent-taskboard/internal/version.Server=$VERSION" -o dist/taskboard-linux-amd64 ./cmd/taskboard
 
       - name: 生成 manifest.json
         run: |
