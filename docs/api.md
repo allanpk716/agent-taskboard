@@ -560,7 +560,8 @@ spec 用户故事 84），没有 `inbox`：
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/extend` | 延期：`{"valid_days"|"expires_at"}`（二选一，必填其一）。 |
 
 - 创建：`note` 必填（422 `note_required`）；有效期 `valid_days: 7|30|90` 或
-  `expires_at`（`YYYY-MM-DD` 按北京时间当天 00:00 起算，或 RFC3339 时刻）**二选一**，
+  `expires_at`（`YYYY-MM-DD` 指「管满这一整天」：到 12-01 为止的链接在
+  12-02 00:00（北京时间）过期；也可写 RFC3339 时刻）**二选一**，
   都不填时默认 30 天，**没有永久有效的选项**（显式 `valid_days: 0`、非法天数、
   `expires_at` 不晚于现在或格式错误分别返回 422 `invalid_valid_days` /
   `invalid_expires_at`）。`can_edit_brief` 授予「可填写说明」权限（默认 false）。
