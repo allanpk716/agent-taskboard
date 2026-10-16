@@ -1,0 +1,11 @@
+# taskboard 配置示例。复制为 config.toml 后按需修改；config.toml 不入库。
+# 部署约定见 docs/deploy-and-release.md。
+
+# 数据目录：SQLite 库（taskboard.db）和附件都放在这里。
+data_dir = 'data'
+
+# 监听端口。服务只监听 127.0.0.1，HTTPS 由前面的 Caddy 反代提供。
+port = 8080
+
+# 前端静态文件目录（web-src 执行 npm run build 的产物）。
+web_dir = 'web'
