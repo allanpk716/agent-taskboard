@@ -43,7 +43,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/tickets", a.handleTicketsRoot)
 	mux.HandleFunc("/api/v1/tickets/", a.handleTicketRef)
 	mux.HandleFunc("/api/v1/inbox", a.handleInbox)
-	mux.HandleFunc("/api/v1/members", a.handleMembers)
+	mux.HandleFunc("/api/v1/members", a.handleMembersRoot)
+	mux.HandleFunc("/api/v1/members/", a.handleMembersRef)
 	mux.HandleFunc("/api/v1/labels", a.handleLabelsRoot)
 	mux.HandleFunc("/api/v1/labels/", a.handleLabelsSub)
 	mux.HandleFunc("/api/v1/attachments/", a.handleAttachmentDownload)
@@ -93,6 +94,10 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, identity.ErrInvalidCredentials) {
 			WriteError(w, http.StatusUnauthorized, CodeInvalidCredentials, "用户名或密码不正确", "")
+			return
+		}
+		if errors.Is(err, identity.ErrMemberDeactivated) {
+			WriteError(w, http.StatusUnauthorized, CodeMemberDeactivated, "账号已停用", "请联系管理员重新启用账号（管理员在网页的管理页停用与启用账号）")
 			return
 		}
 		panic(err) // 由 recoverMiddleware 统一转成 500

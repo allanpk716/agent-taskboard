@@ -1,27 +1,10 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
-import { ADMIN, WANG, login, loginAdmin } from './helpers'
+import { ADMIN, createTicket, login, loginAdmin, wang } from './helpers'
 
 // 成员网页（#41）：收件箱、列表、详情、建单。对真实服务 + 构建好的前端跑用例，
 // 造数据（成员、工单、回复、访客链接）全部通过 HTTP API 完成；成员由
-// e2e/start-server.mjs 预先创建（admin / 管理员 与 wang / 王工）。
-
-/** 用管理员会话建一张自由格式工单（可指派），返回编号。 */
-export async function createTicket(
-  request: APIRequestContext,
-  opts: { title: string; labels?: string[]; assignee?: string } = { title: '测试工单' },
-): Promise<string> {
-  await loginAdmin(request)
-  const res = await request.post('/api/v1/tickets', {
-    data: {
-      title: opts.title,
-      brief_md: `${opts.title} 的说明。`,
-      labels: opts.labels ?? ['机型:UD-2300'],
-      ...(opts.assignee ? { assignee: opts.assignee } : {}),
-    },
-  })
-  expect(res.status(), `建单失败：${await res.text()}`).toBe(201)
-  return (await res.json()).number
-}
+// e2e/start-server.mjs 预先创建（admin / 管理员 由命令行，wang / 王工 由
+// #42 的成员账号接口创建，见 helpers.ts）。
 
 // 1. 登录后进入成员网页：顶栏、底部标签栏（收件箱/工单/＋建单/工具/我的），
 //    收件箱按原因显示卡片（新指派给你）。
@@ -140,7 +123,7 @@ test('派活到验收：A建单指派B，B收件箱交付，A验收关闭', asyn
   const number = shareText.match(/\/t\/(\d{8}-\d+)/)![1]
 
   // B（王工）登录：收件箱出现「新指派给你」
-  await login(page, WANG)
+  await login(page, await wang())
   const card = page.locator('.tcard', { hasText: number })
   await expect(card).toBeVisible()
   await expect(card.locator('.badge.reason')).toHaveText('新指派给你')
@@ -243,7 +226,8 @@ test('详情页打标签改派关闭与重开', async ({ page, request }) => {
   const alias = await request.post('/api/v1/labels/aliases', {
     data: { label: '机型:US-1680', alias: '1680' },
   })
-  expect(alias.ok(), await alias.text()).toBeTruthy()
+  // 别名可能已被早先的用例加上（alias_exists）——同样满足本用例的前置。
+  expect(alias.ok() || (await alias.json()).error.code === 'alias_exists', await alias.text()).toBeTruthy()
   await login(page, ADMIN)
   await page.goto(`/t/${number}`)
 

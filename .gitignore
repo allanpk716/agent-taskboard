@@ -2,7 +2,7 @@
 /bin/
 /web/
 /web-initial/
-/web-*/
+/web-[0-9]*.*.*/
 *.exe
 
 # 本地运行数据

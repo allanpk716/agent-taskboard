@@ -1,13 +1,13 @@
 import { test, expect } from '@playwright/test'
 import { ADMIN, login } from './helpers'
 
-// 管理页系统状态面板（#45）：管理员在「我的」标签下看到备份状态（从未成功
-// 备份超过 36 小时时标红、未配置备份目标时提示「备份未离开本机」）和前后端
-// 版本。普通成员看不到该面板。
+// 管理页系统状态面板（#45）：管理员在「管理」页（成员账号、标签治理之外）
+// 看到备份状态（从未成功备份超过 36 小时时标红、未配置备份目标时提示
+// 「备份未离开本机」）和前后端版本。
 
-test('管理员在管理面板看到备份状态与版本', async ({ page }) => {
+test('管理员在管理页看到备份状态与版本', async ({ page }) => {
   await login(page, ADMIN)
-  await page.goto('/me')
+  await page.goto('/admin')
 
   const backupCard = page.getByTestId('backup-card')
   await expect(backupCard).toBeVisible()
@@ -26,6 +26,6 @@ test('管理员在管理面板看到备份状态与版本', async ({ page }) => 
   await expect(page.getByTestId('update-btn')).toBeDisabled()
 })
 
-// 普通成员看不到面板：e2e 环境的两个账号都是 create-admin 造的（都是管理员），
-// 这个场景由 internal/server 的黑盒测试覆盖（非管理员 403 admin_required）
-// 和 MePage 只在 me.is_admin 时渲染 SystemPanel 保证。
+// 普通成员看不到面板：e2e 环境里 wang 是普通成员但管理页入口对非管理员隐藏、
+// 后端 403 admin_required，这个场景由 internal/server 的黑盒测试覆盖
+// （Test管理员可检查更新）与 AdminPage 的 is_admin 判断保证。

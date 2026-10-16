@@ -11,13 +11,20 @@ export type Route =
   | { page: 'detail'; ref: string }
   | { page: 'tools' }
   | { page: 'me' }
+  | { page: 'templates' }
+  | { page: 'templateEdit'; key: string }
+  | { page: 'admin' }
 
 export function parseRoute(pathname: string): Route {
   if (pathname.startsWith('/t/')) return { page: 'detail', ref: decodeURIComponent(pathname.slice(3)) }
+  if (pathname.startsWith('/templates/'))
+    return { page: 'templateEdit', key: decodeURIComponent(pathname.slice('/templates/'.length)) }
+  if (pathname === '/templates') return { page: 'templates' }
   if (pathname === '/tickets') return { page: 'tickets' }
   if (pathname === '/new') return { page: 'new' }
   if (pathname === '/tools') return { page: 'tools' }
   if (pathname === '/me') return { page: 'me' }
+  if (pathname === '/admin') return { page: 'admin' }
   return { page: 'inbox' }
 }
 
