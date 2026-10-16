@@ -748,7 +748,7 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer, atts []attac
 		in.Labels = &labels
 	}
 	if full.CloseReason != "" {
-		in.CloseReasonText = closeReasonText(full.CloseReason)
+		in.CloseReasonText = markdownview.CloseReasonText(full.CloseReason)
 	}
 	for _, e := range full.Timeline {
 		if isGuest && !visibleToGuest(e) {
@@ -829,17 +829,4 @@ func sizeLabel(n int64) string {
 	default:
 		return strconv.FormatInt(n, 10) + " B"
 	}
-}
-
-// closeReasonText 把关闭原因码翻成中文（Markdown 视图用）。
-func closeReasonText(reason string) string {
-	switch reason {
-	case "done":
-		return "完成"
-	case "wontfix":
-		return "不处理"
-	case "duplicate":
-		return "重复"
-	}
-	return reason
 }

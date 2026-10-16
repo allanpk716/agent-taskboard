@@ -58,11 +58,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	if err := templateDict.SeedIfEmpty(context.Background()); err != nil {
 		return nil, fmt.Errorf("导入预置模板失败：%w", err)
 	}
-	backups, err := ops.NewBackups(st.DB, cfg.DataDir, ops.BackupOptions{
-		Target: cfg.Backup.Target, DailyAt: cfg.Backup.DailyAt,
-		KeepDaily: cfg.Backup.KeepDaily, KeepMonthly: cfg.Backup.KeepMonthly,
-		KeepPreupdate: cfg.Backup.KeepPreupdate,
-	}, c)
+	backups, err := ops.NewBackups(st.DB, cfg.DataDir, cfg.Backup.BackupOptions(), c)
 	if err != nil {
 		return nil, err
 	}

@@ -22,11 +22,7 @@ func defaultPreupdate(ctx context.Context, o *Options) (string, error) {
 		return "", fmt.Errorf("打开数据库做更新前备份：%w", err)
 	}
 	defer st.Close()
-	b, err := ops.NewBackups(st.DB, o.DataDir, ops.BackupOptions{
-		Target: o.Backup.Target, DailyAt: o.Backup.DailyAt,
-		KeepDaily: o.Backup.KeepDaily, KeepMonthly: o.Backup.KeepMonthly,
-		KeepPreupdate: o.Backup.KeepPreupdate,
-	}, clock.Real{})
+	b, err := ops.NewBackups(st.DB, o.DataDir, o.Backup.BackupOptions(), clock.Real{})
 	if err != nil {
 		return "", err
 	}

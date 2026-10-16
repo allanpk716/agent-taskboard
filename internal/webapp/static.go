@@ -87,14 +87,15 @@ func New(root string) (*Handler, error) {
 }
 
 // convertToLink 把普通目录挪成 web-initial 并把原路径变成指向它的链接；
-// 返回链接目标（失败返回空串）。
+// 返回链接目标（失败返回空串）。挪目录与 updater.SwitchWebDir 共用
+// fslink.MovePlainDirAside（评审 P3-16）。
 func convertToLink(webDir string) string {
 	for _, name := range []string{"web-initial", "web-initial-2", "web-initial-3"} {
 		target := filepath.Join(filepath.Dir(webDir), name)
 		if _, err := os.Stat(target); err == nil {
 			continue // 已有（上次转换留下的？）换下一个名字
 		}
-		if err := os.Rename(webDir, target); err != nil {
+		if moved, err := fslink.MovePlainDirAside(webDir, target); err != nil || !moved {
 			return ""
 		}
 		if err := fslink.Make(webDir, target); err != nil {

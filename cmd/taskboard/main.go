@@ -166,11 +166,7 @@ func cmdBackup(args []string) error {
 		return err
 	}
 	defer st.Close()
-	b, err := ops.NewBackups(st.DB, cfg.DataDir, ops.BackupOptions{
-		Target: cfg.Backup.Target, DailyAt: cfg.Backup.DailyAt,
-		KeepDaily: cfg.Backup.KeepDaily, KeepMonthly: cfg.Backup.KeepMonthly,
-		KeepPreupdate: cfg.Backup.KeepPreupdate,
-	}, clock.Real{})
+	b, err := ops.NewBackups(st.DB, cfg.DataDir, cfg.Backup.BackupOptions(), clock.Real{})
 	if err != nil {
 		return err
 	}

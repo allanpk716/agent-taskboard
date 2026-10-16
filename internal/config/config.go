@@ -6,6 +6,8 @@ import (
 	"os"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/allanpk716/agent-taskboard/internal/ops"
 )
 
 // Config 是 config.toml 的内容。后续工单会追加 [backup]、[update] 等小节。
@@ -95,6 +97,16 @@ type UpdateGitHub struct {
 	Mirror []string `toml:"mirror"`
 	// Proxy 是 http:// 或 socks5:// 代理；为空时读 HTTPS_PROXY 环境变量。
 	Proxy string `toml:"proxy"`
+}
+
+// BackupOptions 把 [backup] 配置换成 ops.BackupOptions（cmd/taskboard、
+// internal/server、internal/updater 三处的映射收口在这里，评审 P3-16）。
+func (b Backup) BackupOptions() ops.BackupOptions {
+	return ops.BackupOptions{
+		Target: b.Target, DailyAt: b.DailyAt,
+		KeepDaily: b.KeepDaily, KeepMonthly: b.KeepMonthly,
+		KeepPreupdate: b.KeepPreupdate,
+	}
 }
 
 // Load 从 path 读取配置并补默认值。

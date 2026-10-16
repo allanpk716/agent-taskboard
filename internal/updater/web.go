@@ -121,11 +121,12 @@ func SwitchWebDir(webDir, newDir string) error {
 		if err := os.Remove(webDir); err != nil {
 			return fmt.Errorf("移除旧的前端链接失败：%w", err)
 		}
-	} else if _, err := os.Stat(webDir); err == nil {
+	} else {
 		// web/ 还是普通目录（服务从未启动过、没做过启动时的链接化）：
-		// 挪到一边留档，再建链接。
+		// 挪到一边留档（与 webapp 首次链接化共用 fslink.MovePlainDirAside，
+		// 评审 P3-16），再建链接。
 		retired := filepath.Join(filepath.Dir(webDir), "web-retired-"+time.Now().Format("20060102-150405"))
-		if err := os.Rename(webDir, retired); err != nil {
+		if _, err := fslink.MovePlainDirAside(webDir, retired); err != nil {
 			return fmt.Errorf("挪开旧的前端目录失败（服务运行中会占用它，先停服务或用管理页更新）：%w", err)
 		}
 	}

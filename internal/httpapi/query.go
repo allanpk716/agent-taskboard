@@ -240,7 +240,7 @@ func (a *API) handleTicketCounts(w http.ResponseWriter, r *http.Request) {
 			if row.Full.CloseReason == "" {
 				bump("(未关闭)")
 			} else {
-				bump(closeReasonText(row.Full.CloseReason))
+				bump(markdownview.CloseReasonText(row.Full.CloseReason))
 			}
 		case "waiting_on":
 			bump(row.WaitingOn.Text)
