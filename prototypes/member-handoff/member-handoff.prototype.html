@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>原型（用完即弃）· 成员 Agent 之间的工单交接</title>
+<style>
+  :root { --accent:#2f6fde; --bg:#f7f7f8; --card:#fff; --fg:#1d1d1f; --mute:#6b6b70; --line:#e3e3e6; --bad:#c4372c; --ok:#1f8a4c; --new:#fff6d6; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif; }
+  .wrap { max-width:1440px; margin:0 auto; padding:28px 24px 60px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  h2 { font-size:15px; margin:0 0 12px; }
+  h3 { font-size:14px; margin:16px 0 8px; }
+  .tag { display:inline-block; font-size:12px; padding:1px 8px; border-radius:10px; background:#eef2fb; color:var(--accent); margin:0 4px 4px 0; }
+  .tag.gray { background:#f0f0f2; color:var(--mute); }
+  .tag.bad { background:#fbeceb; color:var(--bad); }
+  .tag.ok { background:#e8f5ee; color:var(--ok); }
+  .tag.turn { background:var(--accent); color:#fff; }
+  .mute { color:var(--mute); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:16px; }
+  .intro p { margin:6px 0; }
+  .grid { display:grid; grid-template-columns: 480px 1fr; gap:16px; align-items:start; }
+  button { font:inherit; border:1px solid var(--line); background:#fff; border-radius:6px; padding:5px 10px; cursor:pointer; margin:0 6px 6px 0; text-align:left; }
+  button:hover { border-color:var(--accent); color:var(--accent); }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  button.primary:hover { color:#fff; opacity:.9; }
+  button.done { background:#e8f5ee; border-color:#bfe3cd; color:var(--ok); }
+  button.next { border-color:var(--accent); box-shadow:0 0 0 2px #dfe8fa; }
+  select, input, textarea { font:inherit; border:1px solid var(--line); border-radius:6px; padding:5px 8px; width:100%; background:#fff; }
+  textarea { font-family:Consolas,"Cascadia Mono",monospace; font-size:12.5px; min-height:120px; }
+  .row { display:flex; gap:8px; margin-bottom:8px; align-items:center; }
+  .row > .method { width:96px; flex:none; }
+  label.small { font-size:12px; color:var(--mute); display:block; margin:6px 0 2px; }
+  pre { background:#f4f4f6; border-radius:6px; padding:10px 12px; overflow:auto; font:12.5px/1.5 Consolas,"Cascadia Mono",monospace; margin:6px 0; white-space:pre-wrap; word-break:break-all; }
+  .status { font-weight:600; }
+  .status.ok { color:var(--ok); } .status.bad { color:var(--bad); }
+  .tabs { display:flex; flex-wrap:wrap; gap:4px; border-bottom:1px solid var(--line); margin-bottom:10px; }
+  .tabs button { border:none; border-bottom:2px solid transparent; border-radius:0; margin:0; padding:6px 10px; }
+  .tabs button.active { border-bottom-color:var(--accent); color:var(--accent); }
+  .step { display:flex; gap:8px; align-items:flex-start; margin-bottom:4px; }
+  .step .who { font-size:12px; color:var(--mute); padding-top:6px; min-width:130px; }
+  .tickets { display:grid; grid-template-columns:repeat(auto-fill,minmax(440px,1fr)); gap:16px; }
+  .kv { display:grid; grid-template-columns:80px 1fr; gap:2px 10px; font-size:13px; }
+  .kv div:nth-child(odd) { color:var(--mute); }
+  .tl { font-size:13px; border-left:2px solid var(--line); padding-left:10px; margin-top:8px; }
+  .tl .ev { margin-bottom:6px; padding:2px 6px; border-radius:4px; }
+  .tl .ev.new { background:var(--new); }
+  .changed { background:var(--new); border-radius:6px; padding:6px 10px; font-size:13px; margin:6px 0; }
+  .inboxes { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+  .inbox { border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:13px; }
+  .inbox.new { background:var(--new); }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  td, th { border-bottom:1px solid var(--line); padding:4px 6px; text-align:left; vertical-align:top; }
+  ol.qs li { margin-bottom:6px; }
+  @media (max-width: 900px) {
+    .wrap { padding:12px 10px 40px; }
+    .grid { grid-template-columns:1fr; }
+    .tickets { grid-template-columns:1fr; }
+    .inboxes { grid-template-columns:1fr; }
+    .step { flex-direction:column; gap:0; }
+    .step .who { padding-top:0; }
+    table { display:block; overflow-x:auto; }
+  }
+  code { font-family:Consolas,"Cascadia Mono",monospace; font-size:12.5px; background:#f0f0f2; padding:0 4px; border-radius:3px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="card intro">
+  <span class="tag bad">原型 · 用完即弃，不是正式代码</span>
+  <h1>成员 Agent 之间的工单交接</h1>
+  <p><b>要回答的问题</b>（工单「成员 Agent 之间的工单交接」）：我用自己的 Agent 建一张工单、指派给同事；同事的 Agent <b>自己发现</b>这张工单，<b>只凭读到的内容</b>就知道要做什么、做完怎么交回；我的 Agent 再<b>得知交付并验收</b>。现有协议补上哪些东西，这条链路才能跑通？</p>
+  <p>在「Agent 访问协议原型」的基础上新增了四样东西：<b>轮到谁</b>（把“等待方”扩展到成员之间）、<b>收件箱</b> <code>GET /api/inbox</code>、回复上的<b>交付</b>标记 <code>deliver</code>，以及 Markdown 版末尾的<b>操作指引</b>。API token 一律代表某个具名的成员 Agent（ADR 0003）。</p>
+  <p class="mute">用法：先看「引导场景」，逐个点按钮。页面下方有<b>三个人的收件箱</b>和每张工单的“轮到谁”，每点一步都会刷新，刚发生的变化以黄色标出。平台是浏览器内存中的模拟，刷新即重置。</p>
+</div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h2>引导场景</h2>
+      <div class="tabs" id="tabs"></div>
+      <div id="scenario"></div>
+    </div>
+
+    <div class="card">
+      <h2>自由操作</h2>
+      <label class="small">以谁的身份（凭证）</label>
+      <select id="actor"></select>
+      <label class="small">目标工单</label>
+      <select id="target"></select>
+      <label class="small">选一个操作，填入下方请求</label>
+      <div id="ops"></div>
+      <div class="row" style="margin-top:6px">
+        <select id="method" class="method"><option>GET</option><option>POST</option><option>PATCH</option></select>
+        <input id="path">
+      </div>
+      <textarea id="body" placeholder="请求体（JSON）；GET 请求留空"></textarea>
+      <div style="margin-top:8px"><button class="primary" id="send">发送</button><button id="reset">重置平台</button></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>最近一次请求与响应</h2>
+      <div id="exchange" class="mute">还没有发送任何请求。</div>
+    </div>
+    <div class="card">
+      <h2>拿来讨论的设计选择</h2>
+      <ol class="qs">
+        <li><b>轮到谁（扩展“等待方”）</b>：工单上的“等待方”从“本部门 / 对方”扩展为具体的一方：<b>指派人</b>、<b>发起人</b>（任务的创建者）或<b>访客</b>，仍然只由最后一条回复推导，不能手动设置。规则：
+          <br>· 尚无回复、或最后是访客回复 → 轮到指派人；
+          <br>· <b>任务</b>的创建者和指派人是两位不同成员时：指派人一方回复 → 轮到发起人；发起人一方回复 → 轮到指派人；第三位成员的回复不改变轮次；
+          <br>· 其他情况（反馈，或自己派给自己）：成员回复 → 轮到访客，与原规则一致。
+          <br>成员 Agent 的回复算作它所属成员那一方。</li>
+        <li><b>收件箱</b> <code>GET /api/inbox</code>：列出“现在轮到我”的开启工单，并给出原因（新指派给你 / 已交付待你验收 / 对方提问 / 退回修改 / 访客回复了），以及从哪个事件序号开始读新内容。收件箱属于成员：同一成员名下的每个 Agent 看到的是同一份。Agent 定时调用它即可，不需要人口头转告。</li>
+        <li><b>交付</b>：回复可以带 <code>deliver: true</code>，表示“做完了，请验收”。只有指派人一方能交付。交付<b>不会关闭工单</b>，由发起人验收：通过就以“完成”关闭；不通过就普通回复写明问题，工单自动退回指派人。不新增任何状态。</li>
+        <li><b>操作指引</b>：<code>?format=markdown</code> 的末尾按“你是谁、现在轮到谁”生成一段“下一步”，写明要调用的 HTTP 请求和请求体。拿到工单地址的 Agent 不需要 CLI、MCP 或额外文档，照着做就行。JSON 版对应地给出 <code>viewer.role</code> 和 <code>viewer.your_turn</code>。</li>
+        <li><b>创建并指派</b>：<code>POST /api/tickets {template, title, fields, labels, assignee}</code>。指派人只能是成员，填成成员 Agent 会被拒绝（成员 Agent 不能被指派）。响应附带一句 <code>share_text</code>，成员可以直接转发给同事，告知对方“有活给你”。</li>
+        <li><b>改派</b>：<code>POST …/assign {assignee}</code>，记入时间线。改派后，原指派人的回复不再影响轮次，工单出现在新指派人的收件箱里，原指派人的收件箱里则不再有它。</li>
+        <li><b>验收可以由人来做</b>：发起人的 Agent 看到“已交付”后，可以先问发起人本人，再由 Agent 关闭，或者本人在网页上关闭。平台不区分这两种做法，时间线上的署名会如实记录是谁关闭的。</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>每个人的收件箱（GET /api/inbox 现在会返回什么）</h2>
+  <div class="inboxes" id="inboxes"></div>
+</div>
+
+<div class="card">
+  <h2>平台内部状态</h2>
+  <div id="changed"></div>
+  <div class="tickets" id="state"></div>
+</div>
+
+</div>
+
+<!-- ===================== 可移植的协议逻辑（纯函数，不碰 DOM） ===================== -->
+<script>
+const Taskboard = (() => {
+  const BASE = 'http://taskboard.lan';
+  const TODAY = '2026-10-16';
+  const FILE_LIMIT_MB = 50, TICKET_LIMIT_MB = 200;
+  const REASONS = { done: '完成', wontfix: '不处理', duplicate: '重复' };
+
+  function initialState() {
+    const ev = (seq, at, actor, type, extra = {}) => ({ seq, at, actor, type, ...extra });
+    const wang = { kind: 'member', id: 'wang', name: '王工', agent: null };
+    const wangA = { kind: 'member', id: 'wang', name: '王工', agent: '笔记本' };
+    const zhang = { kind: 'guest', link_note: '检验科-张三', author_name: '张三' };
+    return {
+      clock: 0, attSeq: 4, nextSeq: 1235, todayCount: 0,
+      members: { wang: '王工', li: '李工', zhao: '赵工' },
+      // 网页登录 = 本人；API token = 某个具名成员 Agent（ADR 0003）
+      tokens: {
+        tba_wang: { member: 'wang', agent: '笔记本' },
+        tba_li: { member: 'li', agent: '工位' },
+        tba_zhao: { member: 'zhao', agent: '工位' },
+        web_wang: { member: 'wang', agent: null },
+        web_li: { member: 'li', agent: null },
+      },
+      links: { tbg_zhang3: { ticket: 1234, note: '检验科-张三', expires_at: '2026-11-14', revoked: false } },
+      dictionary: {
+        '产品线': ['生化', '免疫', '血球'], '系统': ['LIS接口', '仪器控制'], '机型': ['BH-7600CS', 'BH-5100'],
+        '部门': ['检验科', '质量部'], '算法': ['质控规则', '结果审核'],
+      },
+      templates: {
+        'assign-task': {
+          name: '分配任务', kind: 'task', preset_labels: [],
+          agent_note: '交付时用 deliver: true；交付物是文件就先上传附件，超过 50MB 写 NAS 路径。',
+          fields: [
+            { key: 'goal', title: '要达成什么目标？', required: true },
+            { key: 'background', title: '为什么要做？有什么背景？', required: false },
+            { key: 'deliverables', title: '交付什么？', required: true },
+            { key: 'acceptance', title: '怎样算完成（验收标准）？', required: true },
+            { key: 'due', title: '期限？', required: false },
+            { key: 'refs', title: '相关资料在哪里？', required: false },
+          ],
+        },
+      },
+      tickets: [
+        {
+          seq: 1233, number: '20261015-006', kind: 'task', title: '整理 Q3 质控规则对照表',
+          template: 'assign-task',
+          fields: { goal: '把 Q3 新增的质控规则整理成一张对照表。', deliverables: '一份 Excel 对照表：规则名、触发条件、适用机型。', acceptance: '覆盖 Q3 发布说明里的全部新规则；每条注明适用机型。', due: '10-20 前' },
+          brief_revision: 1, creator: { kind: 'member', id: 'wang' }, assignee: 'li', status: 'open', close_reason: null,
+          labels: ['算法:质控规则', '部门:质量部'], attachments: [], replyCount: 0,
+          timeline: [ev(1, '2026-10-15 16:02', wangA, 'created'), ev(2, '2026-10-15 16:02', wangA, 'assigned', { from: null, to: 'li' })],
+        },
+        {
+          seq: 1234, number: '20261015-007', kind: 'report', title: 'BH-7600CS 质控结果偏高',
+          template: null, fields: null,
+          brief_md: '检验科反馈：BH-7600CS 从 10-14 起，ALT 质控连续 3 次偏高 2SD 以上。',
+          brief_revision: 1, creator: { kind: 'member', id: 'wang' }, assignee: 'wang', status: 'open', close_reason: null,
+          labels: ['产品线:生化', '机型:BH-7600CS'], attachments: [], replyCount: 2,
+          timeline: [
+            ev(1, '2026-10-15 09:00', wang, 'created'),
+            ev(2, '2026-10-15 09:00', wang, 'assigned', { from: null, to: 'wang' }),
+            ev(3, '2026-10-15 09:01', wang, 'guest_link_created', { note: '检验科-张三' }),
+            ev(4, '2026-10-15 09:40', zhang, 'reply', { reply_no: 1, body_md: '附上近一个月的质控数据。', attachment_ids: [] }),
+            ev(5, '2026-10-15 09:55', wang, 'reply', { reply_no: 2, body_md: '收到。请补充当前使用的试剂批号。', attachment_ids: [] }),
+          ],
+        },
+      ],
+    };
+  }
+
+  // ---- 内部工具 ----
+  class ApiError extends Error { constructor(status, code, message, hint, extra) { super(message); Object.assign(this, { status, code, hint, extra }); } }
+  const fail = (...a) => { throw new ApiError(...a); };
+  const now = s => { s.clock += 1; const t = 10 * 60 + s.clock * 3; return `${TODAY} ${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; };
+  const usedMb = t => Math.round(t.attachments.reduce((a, x) => a + x.size_mb, 0) * 10) / 10;
+  const isImage = f => /\.(png|jpe?g|gif|webp)$/i.test(f);
+  const name = (s, id) => s.members[id] ?? id;
+
+  function auth(s, token) {
+    if (!token) fail(401, 'unauthenticated', '需要凭证', '成员在网页个人设置里为自己的 Agent 创建 token；访客把访客链接整条传进来即可');
+    const tk = s.tokens[token];
+    if (tk) return { kind: 'member', token, id: tk.member, name: s.members[tk.member], agent: tk.agent };
+    const link = s.links[token];
+    if (!link) fail(401, 'invalid_token', '凭证无效', '检查 token 是否完整');
+    if (link.revoked) fail(401, 'link_revoked', `访客链接「${link.note}」已被撤销`, '请联系发链接的成员重新获取');
+    return { kind: 'guest', token, link };
+  }
+
+  function loadTicket(s, v, ref) {
+    const r = decodeURIComponent(ref).replace(/^#/, '');
+    const t = s.tickets.find(x => x.number === r || String(x.seq) === r);
+    if (!t || (v.kind === 'guest' && v.link.ticket !== t.seq))
+      fail(404, 'ticket_not_found', `找不到工单 ${r}`, v.kind === 'guest' ? '访客链接只能访问它所指向的那一张工单' : undefined);
+    return t;
+  }
+
+  const actorOf = (v, author_name) => v.kind === 'member'
+    ? { kind: 'member', id: v.id, name: v.name, agent: v.agent }
+    : { kind: 'guest', link_note: v.link.note, author_name: author_name || null };
+  const actorDisplay = a => a.kind === 'member' ? (a.agent ? `${a.name} 的 Agent · ${a.agent}` : a.name)
+                                                : `${a.author_name || '访客'}（经「${a.link_note}」链接）`;
+
+  function briefMd(s, t) {
+    if (!t.template) return t.brief_md;
+    return s.templates[t.template].fields.filter(f => t.fields[f.key]).map(f => `### ${f.title}\n\n${t.fields[f.key]}`).join('\n\n');
+  }
+
+  // ---- 轮到谁：由最后一条“相关”回复推导 ----
+  // 发起人参与轮次的条件：任务，且创建者是成员、与指派人不是同一人
+  function counterpartMember(t) {
+    return t.kind === 'task' && t.creator.kind === 'member' && t.creator.id !== t.assignee ? t.creator.id : null;
+  }
+  function turnOf(t) {
+    if (t.status === 'closed') return { party: 'none' };
+    const a = t.assignee, c = counterpartMember(t);
+    const relevant = e => e.type === 'reply' && (e.actor.kind === 'guest' || !c || e.actor.id === a || e.actor.id === c);
+    const rel = t.timeline.filter(relevant);
+    const last = rel[rel.length - 1];
+    const toAssignee = a ? { party: 'assignee', member: a } : { party: 'department' };
+    if (!last) return { ...toAssignee, why: 'new' };
+    if (last.actor.kind === 'guest') return { ...toAssignee, why: 'guest_replied', since: last.seq };
+    if (!c) return { party: 'guest', since: last.seq };
+    if (last.actor.id === a) return { party: 'creator', member: c, why: last.deliver ? 'delivered' : 'assignee_replied', since: last.seq };
+    const deliveredBefore = rel.slice(0, -1).some(e => e.deliver && e.actor.id === a);
+    return { ...toAssignee, why: deliveredBefore ? 'sent_back' : 'creator_replied', since: last.seq };
+  }
+  const WHY = {
+    new: '新指派给你', guest_replied: '访客回复了', delivered: '已交付，待你验收', assignee_replied: '指派人回复了，待你答复',
+    sent_back: '发起人退回修改', creator_replied: '发起人回复了',
+  };
+  function turnText(s, turn) {
+    switch (turn.party) {
+      case 'none': return '无（已关闭）';
+      case 'assignee': return `${name(s, turn.member)}（指派人）`;
+      case 'creator': return `${name(s, turn.member)}（发起人）`;
+      case 'guest': return '访客';
+      default: return '本部门（未指派）';
+    }
+  }
+
+  function roleOf(v, t) {
+    if (v.kind === 'guest') return 'guest';
+    if (v.id === t.assignee) return 'assignee';
+    if (t.creator.kind === 'member' && v.id === t.creator.id) return 'creator';
+    return 'member';
+  }
+
+  function caps(v, t) {
+    const open = t.status === 'open';
+    if (v.kind === 'member') return {
+      reply: true, deliver: open && v.id === t.assignee, upload: true,
+      edit_brief: t.creator.kind === 'member' && t.creator.id === v.id,
+      assign: true, close: open, reopen: !open,
+    };
+    return { reply: open, deliver: false, upload: open, edit_brief: false, assign: false, close: false, reopen: false };
+  }
+
+  function lastSeqBy(t, v) {
+    if (v.kind !== 'member') return 0;
+    const mine = t.timeline.filter(e => e.actor.kind === 'member' && e.actor.id === v.id);
+    return mine.length ? mine[mine.length - 1].seq : 0;
+  }
+
+  function project(s, v, t) {
+    const turn = turnOf(t);
+    const view = {
+      number: t.number, seq: t.seq, url: `${BASE}/t/${t.number}`, kind: t.kind, title: t.title,
+      status: t.status, close_reason: t.close_reason,
+      creator: t.creator.kind === 'member' ? name(s, t.creator.id) : '访客',
+      assignee: t.assignee ? name(s, t.assignee) : null,
+      waiting_on: { party: turn.party, member: turn.member ? name(s, turn.member) : null, text: turnText(s, turn), reason: WHY[turn.why] || null },
+    };
+    if (v.kind === 'member') view.labels = [...t.labels];
+    Object.assign(view, {
+      brief: { markdown: briefMd(s, t), revision: t.brief_revision, ...(t.template ? { template: t.template, fields: t.fields } : {}) },
+      attachments: t.attachments.filter(a => a.state === 'attached').map(a => ({ id: a.id, filename: a.filename, size_mb: a.size_mb, url: `${BASE}/a/${a.id}/${encodeURIComponent(a.filename)}`, attached_to: a.on })),
+      viewer: v.kind === 'member'
+        ? { kind: 'member', member: v.name, agent: v.agent, role: roleOf(v, t), your_turn: turn.member === v.id, can: caps(v, t) }
+        : { kind: 'guest', link_note: v.link.note, role: 'guest', your_turn: turn.party === 'guest', can: caps(v, t) },
+      timeline: t.timeline.filter(e => v.kind === 'member' || !e.type.startsWith('label_')).map(e => ({ ...e, actor: { ...e.actor, display: actorDisplay(e.actor) } })),
+    });
+    return view;
+  }
+
+  const eventText = (s, e) => ({
+    created: '创建工单', assigned: e.from ? `改派：${name(s, e.from)} → ${name(s, e.to)}` : `指派给 ${name(s, e.to)}`,
+    label_added: `添加标签 ${e.label}`, guest_link_created: `创建访客链接「${e.note}」`,
+    brief_revised: `修订说明（第 ${e.revision} 版）`, closed: `关闭工单（${REASONS[e.reason]}）`, reopened: '重新开启工单',
+  })[e.type] || e.type;
+
+  // ---- Markdown 末尾的“下一步”：按身份和轮次生成 ----
+  function guidance(s, v, t, view) {
+    const api = `${BASE}/api/tickets/${t.number}`;
+    const turn = turnOf(t);
+    const role = view.viewer.role;
+    const me = v.kind === 'member' ? `${v.name}${v.agent ? ` 的 Agent · ${v.agent}` : ''}` : '访客';
+    const L = ['## 下一步（给 Agent 的操作指引）', '', `你是 **${me}**，在这张工单里的角色是 **${({ assignee: '指派人', creator: '发起人', member: '旁观的成员', guest: '访客' })[role]}**；现在轮到：**${turnText(s, turn)}**。`, ''];
+    const req = (m, p, b) => ['```http', `${m} ${p}`, 'Authorization: Bearer <你的 token>', ...(b ? ['Content-Type: application/json', '', JSON.stringify(b)] : []), '```'];
+    const tpl = t.template ? s.templates[t.template] : null;
+    if (t.status === 'closed') {
+      L.push(`工单已关闭（${REASONS[t.close_reason]}），不需要再做什么。`);
+      if (view.viewer.can.reopen) L.push('', '确实还要继续时，先重新开启：', ...req('POST', `${api}/reopen`));
+    } else if (role === 'assignee' && turn.member === v.id) {
+      if (turn.why === 'sent_back') L.push(`发起人在 [${turn.since}] 退回了上次的交付，先读那条回复，按要求修改。`, '');
+      else if (turn.why === 'creator_replied') L.push(`发起人在 [${turn.since}] 回复了你，先读那条回复。`, '');
+      else if (turn.why === 'guest_replied') L.push(`访客在 [${turn.since}] 回复了，先读那条回复。`, '');
+      L.push('1. 按上面的说明完成工作' + (t.fields?.acceptance ? '，以「怎样算完成（验收标准）？」为准' : '') + '。',
+             '2. **有疑问**：普通回复提问，之后轮到发起人答复：', ...req('POST', `${api}/replies`, { body_md: '我的问题……' }),
+             '3. **要交文件**：先上传，拿到 `att:` 引用后写进交付回复的正文；单个文件超过 50MB 时，改为在正文中写 NAS 路径：', ...req('POST', `${api}/attachments`, { filename: '对照表.xlsx', size_mb: 0.3 }),
+             '4. **做完了**：带上 `deliver: true` 回复，写明做了什么、交付物在哪里，然后轮到发起人验收：', ...req('POST', `${api}/replies`, { body_md: '已完成……\n\n[对照表.xlsx](att:…)', deliver: true }),
+             '', '交付后**不要关闭工单**，由发起人验收后关闭。需要人来判断时，先问你所属的成员。');
+      if (tpl?.agent_note) L.push('', `模板给 Agent 的说明：${tpl.agent_note}`);
+    } else if (role === 'creator' && turn.member === v.id) {
+      if (turn.why === 'delivered') {
+        L.push(`指派人在 [${turn.since}] **交付**了。对照说明中的验收标准检查交付物；需要人来判断时，先问你所属的成员。`, '',
+               '- **验收通过**：以“完成”关闭：', ...req('POST', `${api}/close`, { reason: 'done' }),
+               '- **不通过**：普通回复，写明哪里不符合，工单会退回指派人：', ...req('POST', `${api}/replies`, { body_md: '还差……' }));
+      } else {
+        L.push(`指派人在 [${turn.since}] 回复了，等你答复：`, ...req('POST', `${api}/replies`, { body_md: '答复……' }));
+      }
+    } else if (role === 'guest' && turn.party === 'guest') {
+      L.push('轮到你了。回复（可附 `author_name` 署名）：', ...req('POST', `${api}/replies`, { body_md: '……', author_name: '张三' }));
+    } else if (view.viewer.can.reply) {
+      L.push('现在不需要你行动。之后要查是否轮到你：');
+      if (v.kind === 'member') L.push(...req('GET', `${BASE}/api/inbox`));
+      L.push('或者只读新内容：', ...req('GET', `${api}/timeline?after=${t.timeline.length}`));
+    }
+    return L;
+  }
+
+  function renderMarkdown(s, v, t, view) {
+    const L = [
+      `# 工单 ${view.number}：${view.title}`, '',
+      `- 类型：${view.kind === 'task' ? '任务' : '反馈'} · 状态：${view.status === 'open' ? '开启' : `已关闭（${REASONS[view.close_reason]}）`}`,
+      `- 发起人：${view.creator} · 指派人：${view.assignee ?? '未指派'}`,
+      `- 现在轮到：${view.waiting_on.text}${view.waiting_on.reason ? `（${view.waiting_on.reason}）` : ''}`,
+    ];
+    if (view.labels) L.push(`- 标签：${view.labels.join('、') || '无'}`);
+    L.push('', `## 说明（第 ${view.brief.revision} 版）`, '', view.brief.markdown, '', '## 附件', '');
+    view.attachments.forEach(a => L.push(`- [${a.filename}](${a.url})（${a.size_mb} MB，附于${a.attached_to}）`));
+    if (!view.attachments.length) L.push('（无）');
+    L.push('', '## 时间线', '');
+    view.timeline.forEach(e => {
+      if (e.type === 'reply') {
+        L.push(`### [${e.seq}] ${e.at} · ${e.actor.display} ${e.deliver ? '**交付**' : '回复'}`, '', e.body_md, '');
+      } else L.push(`- [${e.seq}] ${e.at} · ${e.actor.display} ${eventText(s, e)}`);
+    });
+    L.push('', ...guidance(s, v, t, view));
+    return L.join('\n');
+  }
+
+  function pushEvent(s, t, actor, type, extra = {}) {
+    const e = { seq: t.timeline.length + 1, at: now(s), actor, type, ...extra };
+    t.timeline.push(e);
+    return e;
+  }
+  const attRefs = md => [...String(md || '').matchAll(/att:(att_\d+)/g)].map(m => m[1]);
+
+  function resolveMember(s, x) {
+    if (x == null) return null;
+    const id = Object.keys(s.members).find(k => k === x || s.members[k] === x);
+    if (id) return id;
+    if (/Agent/.test(x) || Object.values(s.tokens).some(tk => tk.agent && x.includes(tk.agent)))
+      fail(422, 'assignee_must_be_member', `「${x}」是成员 Agent，不能被指派`, `指派给它所属的成员；可选成员：${Object.values(s.members).join('、')}`);
+    fail(422, 'unknown_member', `没有成员「${x}」`, `可选成员：${Object.values(s.members).join('、')}`);
+  }
+
+  function inboxOf(s, memberId) {
+    return s.tickets.filter(t => t.status === 'open').map(t => ({ t, turn: turnOf(t) })).filter(x => x.turn.member === memberId)
+      .map(({ t, turn }) => {
+        const mine = t.timeline.filter(e => e.actor.kind === 'member' && e.actor.id === memberId);
+        const after = mine.length ? mine[mine.length - 1].seq : 0;
+        return { number: t.number, title: t.title, role: turn.party === 'assignee' ? 'assignee' : 'creator', reason: WHY[turn.why],
+                 since_seq: turn.since ?? null, read_new: `/api/tickets/${t.number}/timeline?after=${after}`, read_full: `/api/tickets/${t.number}?format=markdown` };
+      });
+  }
+
+  // ---- 路由 ----
+  const routes = [
+    ['GET', /^\/api\/session$/, (s, v) => {
+      if (v.kind === 'member') return { viewer: { kind: 'member', member: { id: v.id, name: v.name }, agent: v.agent }, inbox: '/api/inbox' };
+      const t = s.tickets.find(x => x.seq === v.link.ticket);
+      return { viewer: { kind: 'guest', link_note: v.link.note }, ticket: { number: t.number, api: `/api/tickets/${t.number}` } };
+    }],
+    ['GET', /^\/api\/inbox$/, (s, v) => {
+      if (v.kind !== 'member') fail(403, 'inbox_member_only', '访客没有收件箱', '访客用 GET /api/session 找到自己的工单，再读它的 waiting_on');
+      const items = inboxOf(s, v.id);
+      return { member: v.name, count: items.length, items, note: '收件箱只列出“现在轮到你”的开启工单；同一成员名下的所有 Agent 看到的是同一份' };
+    }],
+    ['GET', /^\/api\/templates\/([^/]+)$/, (s, v, m) => {
+      const tp = s.templates[m[1]];
+      if (!tp) fail(404, 'template_not_found', `没有模板 ${m[1]}`);
+      return { key: m[1], ...tp };
+    }],
+    ['POST', /^\/api\/tickets$/, (s, v, m, q, b) => {
+      if (v.kind !== 'member') fail(403, 'members_only', '访客只能经反馈入口创建工单');
+      const tp = b.template ? s.templates[b.template] : null;
+      if (b.template && !tp) fail(422, 'template_not_found', `没有模板 ${b.template}`);
+      if (!String(b.title || '').trim()) fail(422, 'title_required', '标题必填');
+      const labels = b.labels || [];
+      if (!labels.some(l => l.includes(':'))) fail(422, 'dimension_label_required', '成员创建工单时至少要打一个维度标签',
+        `例如 ${Object.keys(s.dictionary).slice(0, 3).map(d => `${d}:${s.dictionary[d][0]}`).join('、')}；字典见 GET /api/labels`);
+      for (const l of labels.filter(l => l.includes(':'))) {
+        const [d, ...r] = l.split(':');
+        if (!s.dictionary[d]?.includes(r.join(':'))) fail(422, 'unknown_label_value', `标签字典中没有 ${l}`, `「${d}」可选：${(s.dictionary[d] || []).join('、')}`);
+      }
+      const assignee = resolveMember(s, b.assignee);
+      const warnings = tp ? tp.fields.filter(f => f.required && !String(b.fields?.[f.key] || '').trim()).map(f => `必填字段「${f.title}」未填`) : [];
+      const seq = s.nextSeq++;
+      const number = `${TODAY.replace(/-/g, '')}-${String(++s.todayCount).padStart(3, '0')}`;
+      const t = { seq, number, kind: tp ? tp.kind : (b.kind || 'task'), title: b.title, template: b.template || null, fields: tp ? { ...b.fields } : null,
+                  brief_md: tp ? null : (b.brief_md || ''), brief_revision: 1, creator: { kind: 'member', id: v.id }, assignee, status: 'open',
+                  close_reason: null, labels: [...labels], attachments: [], replyCount: 0, timeline: [] };
+      s.tickets.push(t);
+      const actor = actorOf(v);
+      pushEvent(s, t, actor, 'created');
+      if (assignee) pushEvent(s, t, actor, 'assigned', { from: null, to: assignee });
+      const url = `${BASE}/t/${number}`;
+      return { __status: 201, number, seq, url, assignee: assignee ? name(s, assignee) : null, waiting_on: turnText(s, turnOf(t)), warnings,
+               share_text: assignee && assignee !== v.id ? `${name(s, assignee)}：给你派了一张工单「${b.title}」，让你的 Agent 读一下 ${url}（它也会出现在你的收件箱里）` : null };
+    }],
+    ['GET', /^\/api\/tickets\/([^/]+)$/, (s, v, m, q) => {
+      const t = loadTicket(s, v, m[1]);
+      const view = project(s, v, t);
+      return q.get('format') === 'markdown' ? { __markdown: renderMarkdown(s, v, t, view) } : view;
+    }],
+    ['GET', /^\/api\/tickets\/([^/]+)\/timeline$/, (s, v, m, q) => {
+      const t = loadTicket(s, v, m[1]);
+      const view = project(s, v, t);
+      const after = +(q.get('after') || 0);
+      return { events: view.timeline.filter(e => e.seq > after), cursor: t.timeline.length, waiting_on: view.waiting_on, your_turn: view.viewer.your_turn, status: view.status };
+    }],
+    ['POST', /^\/api\/tickets\/([^/]+)\/attachments$/, (s, v, m, q, b) => {
+      const t = loadTicket(s, v, m[1]);
+      if (!caps(v, t).upload) fail(409, 'ticket_closed', '工单已关闭');
+      if (b.size_mb > FILE_LIMIT_MB) fail(413, 'attachment_too_large', `单个文件不能超过 ${FILE_LIMIT_MB} MB`, '把文件放到 NAS，在回复正文中写路径');
+      if (usedMb(t) + b.size_mb > TICKET_LIMIT_MB) fail(413, 'ticket_quota_exceeded', `工单附件合计不能超过 ${TICKET_LIMIT_MB} MB`, '把文件放到 NAS，在回复正文中写路径');
+      const id = `att_${++s.attSeq}`;
+      t.attachments.push({ id, filename: b.filename, size_mb: b.size_mb, state: 'pending', on: null, uploader: v.token });
+      return { __status: 201, id, markdown: isImage(b.filename) ? `![${b.filename}](att:${id})` : `[${b.filename}](att:${id})`, state: 'pending' };
+    }],
+    ['POST', /^\/api\/tickets\/([^/]+)\/replies$/, (s, v, m, q, b) => {
+      const t = loadTicket(s, v, m[1]);
+      const c = caps(v, t);
+      if (!c.reply) fail(409, 'ticket_closed', '工单已关闭，访客链接只读');
+      if (b.deliver && !c.deliver) fail(403, 'deliver_assignee_only',
+        t.status !== 'open' ? '工单已关闭，不能交付' : `只有指派人（${t.assignee ? name(s, t.assignee) : '未指派'}）一方能交付`,
+        '去掉 deliver 作为普通回复；如果这活该你做，请发起人先改派给你');
+      const ids = [...new Set([...(b.attachment_ids || []), ...attRefs(b.body_md)])];
+      if (!String(b.body_md || '').trim() && !ids.length) fail(422, 'empty_reply', '回复需要正文或至少一个附件');
+      for (const id of ids) {
+        const a = t.attachments.find(x => x.id === id);
+        if (!a || a.state !== 'pending' || a.uploader !== v.token) fail(422, 'attachment_not_usable', `附件 ${id} 不存在、已被引用，或不是你上传的`);
+      }
+      const no = ++t.replyCount;
+      ids.forEach(id => Object.assign(t.attachments.find(x => x.id === id), { state: 'attached', on: `回复 ${no}` }));
+      const e = pushEvent(s, t, actorOf(v, b.author_name), 'reply', { reply_no: no, body_md: b.body_md || '', attachment_ids: ids, ...(b.deliver ? { deliver: true } : {}) });
+      return { __status: 201, reply_no: no, timeline_seq: e.seq, deliver: !!b.deliver, author: actorDisplay(e.actor), waiting_on: turnText(s, turnOf(t)) };
+    }],
+    ['POST', /^\/api\/tickets\/([^/]+)\/assign$/, (s, v, m, q, b) => {
+      const t = loadTicket(s, v, m[1]);
+      if (!caps(v, t).assign) fail(403, 'members_only', '只有成员能指派');
+      const to = resolveMember(s, b.assignee);
+      if (to === t.assignee) fail(422, 'already_assigned', `已经指派给 ${name(s, to)}`);
+      const from = t.assignee;
+      t.assignee = to;
+      pushEvent(s, t, actorOf(v), 'assigned', { from, to });
+      return { assignee: to ? name(s, to) : null, waiting_on: turnText(s, turnOf(t)),
+               share_text: to && to !== v.id ? `${name(s, to)}：工单「${t.title}」转给你了，让你的 Agent 读一下 ${BASE}/t/${t.number}` : null };
+    }],
+    ['POST', /^\/api\/tickets\/([^/]+)\/close$/, (s, v, m, q, b) => {
+      const t = loadTicket(s, v, m[1]);
+      if (!caps(v, t).close) fail(409, v.kind === 'guest' ? 'members_only' : 'already_closed', v.kind === 'guest' ? '访客不能关闭工单' : '工单已经关闭');
+      if (!REASONS[b.reason]) fail(422, 'invalid_close_reason', '关闭原因必须是 done、wontfix 或 duplicate 之一');
+      Object.assign(t, { status: 'closed', close_reason: b.reason });
+      pushEvent(s, t, actorOf(v), 'closed', { reason: b.reason });
+      return { status: t.status, close_reason: t.close_reason };
+    }],
+    ['POST', /^\/api\/tickets\/([^/]+)\/reopen$/, (s, v, m) => {
+      const t = loadTicket(s, v, m[1]);
+      if (!caps(v, t).reopen) fail(409, 'not_closed', '工单没有关闭');
+      Object.assign(t, { status: 'open', close_reason: null });
+      pushEvent(s, t, actorOf(v), 'reopened');
+      return { status: t.status, waiting_on: turnText(s, turnOf(t)) };
+    }],
+  ];
+
+  // (state, request) => { state, response }；失败时状态不变
+  function handle(state, req) {
+    const s = structuredClone(state);
+    const [p, qs] = req.path.split('?');
+    const q = new URLSearchParams(qs || '');
+    try {
+      const v = auth(s, req.token);
+      for (const [method, re, fn] of routes) {
+        const m = p.match(re);
+        if (m && method === req.method) {
+          const out = fn(s, v, m, q, req.body || {});
+          if (out.__markdown) return { state: s, response: { status: 200, contentType: 'text/markdown', body: out.__markdown } };
+          const { __status = 200, ...body } = out;
+          return { state: s, response: { status: __status, contentType: 'application/json', body } };
+        }
+      }
+      fail(404, 'no_such_endpoint', `没有 ${req.method} ${p} 这个接口`);
+    } catch (e) {
+      if (!(e instanceof ApiError)) throw e;
+      return { state, response: { status: e.status, contentType: 'application/json',
+        body: { error: { code: e.code, message: e.message, ...(e.hint ? { hint: e.hint } : {}), ...(e.extra || {}) } } } };
+    }
+  }
+
+  return { BASE, initialState, handle, inboxOf, turnOf, turnText, eventText, actorDisplay, briefMd, usedMb };
+})();
+</script>
+
+<!-- ===================== 演示页面（用完即弃） ===================== -->
+<script>
+const T = Taskboard;
+let state = T.initialState();
+let prevState = null;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const j = o => JSON.stringify(o, null, 2);
+
+function actorLabel(token, s = state) {
+  const tk = s.tokens[token];
+  if (tk) return tk.agent ? `${s.members[tk.member]} 的 Agent · ${tk.agent}` : `${s.members[tk.member]} 本人（网页）`;
+  const l = s.links[token];
+  return l ? `访客「${l.note}」` : token;
+}
+
+function mapping(req) {
+  const [p] = req.path.split('?');
+  const tk = p.match(/^\/api\/tickets\/([^/]+)/);
+  const ref = tk ? decodeURIComponent(tk[1]) : '';
+  const b = req.body || {};
+  const rules = [
+    [/^GET \/api\/session$/, () => ['tb whoami', 'whoami']],
+    [/^GET \/api\/inbox$/, () => ['tb inbox', 'inbox_list']],
+    [/^GET \/api\/templates\/[^/]+$/, () => [`tb template show ${p.split('/')[3]}`, 'template_read']],
+    [/^POST \/api\/tickets$/, () => [`tb create --template ${b.template || '…'} --assign ${b.assignee || '…'} --field goal=…`, 'ticket_create']],
+    [/^GET \/api\/tickets\/[^/]+$/, () => [`tb view ${ref}${req.path.includes('markdown') ? ' --markdown' : ' --json'}`, 'ticket_read']],
+    [/^GET \/api\/tickets\/[^/]+\/timeline$/, () => [`tb timeline ${ref} --after …`, 'ticket_timeline']],
+    [/^POST \/api\/tickets\/[^/]+\/attachments$/, () => [`tb attach ${ref} ./${b.filename || '文件'}`, 'attachment_upload']],
+    [/^POST \/api\/tickets\/[^/]+\/replies$/, () => [`tb reply ${ref} -m "…"${b.deliver ? ' --deliver' : ''}`, 'ticket_reply']],
+    [/^POST \/api\/tickets\/[^/]+\/assign$/, () => [`tb assign ${ref} ${b.assignee}`, 'ticket_assign']],
+    [/^POST \/api\/tickets\/[^/]+\/close$/, () => [`tb close ${ref} --reason ${b.reason || '?'}`, 'ticket_close']],
+    [/^POST \/api\/tickets\/[^/]+\/reopen$/, () => [`tb reopen ${ref}`, 'ticket_reopen']],
+  ];
+  const key = `${req.method} ${p}`;
+  for (const [re, f] of rules) if (re.test(key)) return f();
+  return ['（无对应）', '（无对应）'];
+}
+
+function send(req) {
+  const before = state;
+  const { state: next, response } = T.handle(state, req);
+  prevState = before;
+  state = next;
+  renderExchange(req, response);
+  renderAll();
+  return response;
+}
+
+function renderExchange(req, res) {
+  const [cli, mcp] = mapping(req);
+  const ok = res.status < 400;
+  $('exchange').classList.remove('mute');
+  $('exchange').innerHTML = `
+    <div class="mute" style="font-size:12px">身份：${esc(actorLabel(req.token, prevState))}</div>
+    <pre>${esc(`${req.method} ${req.path}\nAuthorization: Bearer ${req.token}`)}${req.body ? '\n\n' + esc(j(req.body)) : ''}</pre>
+    <table><tr><th style="width:60px">CLI</th><td><code>${esc(cli)}</code></td></tr><tr><th>MCP</th><td><code>${esc(mcp)}</code></td></tr></table>
+    <h3>响应 <span class="status ${ok ? 'ok' : 'bad'}">${res.status}</span> <span class="mute" style="font-weight:normal">${res.contentType}</span></h3>
+    <pre>${esc(typeof res.body === 'string' ? res.body : j(res.body))}</pre>`;
+}
+
+function renderAll() {
+  // 收件箱
+  $('inboxes').innerHTML = Object.entries(state.members).map(([id, nm]) => {
+    const items = T.inboxOf(state, id);
+    const before = prevState ? j(T.inboxOf(prevState, id)) : j(items);
+    return `<div class="inbox ${before !== j(items) ? 'new' : ''}"><b>${esc(nm)}</b> <span class="mute">（${items.length} 项）</span>
+      ${items.map(x => `<div>· <b>${esc(x.number)}</b> ${esc(x.title)}<br><span class="tag turn">${esc(x.reason)}</span><span class="tag gray">你是${x.role === 'assignee' ? '指派人' : '发起人'}</span></div>`).join('') || '<div class="mute">空：没有轮到你的工单</div>'}</div>`;
+  }).join('');
+
+  // 工单
+  const prevMax = {};
+  (prevState?.tickets || []).forEach(t => prevMax[t.seq] = t.timeline.length);
+  const changes = [];
+  $('state').innerHTML = state.tickets.map(t => {
+    const isNew = prevState && prevMax[t.seq] === undefined;
+    const fresh = e => prevState && (isNew || e.seq > prevMax[t.seq]);
+    t.timeline.filter(fresh).forEach(e => changes.push(`${t.number}：${T.actorDisplay(e.actor)} ${e.type === 'reply' ? (e.deliver ? '交付' : '回复') : T.eventText(state, e)}`));
+    const turn = T.turnOf(t);
+    const tl = t.timeline.map(e => `<div class="ev ${fresh(e) ? 'new' : ''}">
+        <span class="mute">[${e.seq}] ${esc(e.at.slice(5))}</span> ${esc(T.actorDisplay(e.actor))}
+        ${e.type === 'reply' ? `${e.deliver ? '<span class="tag ok">交付</span>' : '回复'}：${esc(e.body_md)}` : esc(T.eventText(state, e))}</div>`).join('');
+    return `<div class="card" style="margin:0">
+      <div><b>${esc(t.number)}</b> <span class="mute">#${t.seq}</span> ${esc(t.title)}</div>
+      <div class="kv" style="margin-top:8px">
+        <div>类型</div><div>${t.kind === 'task' ? '任务' : '反馈'}${t.template ? ` <span class="mute">· 模板「${esc(state.templates[t.template].name)}」</span>` : ''}</div>
+        <div>状态</div><div>${t.status === 'open' ? '<span class="tag ok">开启</span>' : `<span class="tag bad">已关闭 · ${{ done: '完成', wontfix: '不处理', duplicate: '重复' }[t.close_reason]}</span>`}</div>
+        <div>发起人</div><div>${t.creator.kind === 'member' ? esc(state.members[t.creator.id]) : '访客'}</div>
+        <div>指派人</div><div>${t.assignee ? esc(state.members[t.assignee]) : '未指派'}</div>
+        <div>轮到</div><div><span class="tag turn">${esc(T.turnText(state, turn))}</span></div>
+        <div>标签</div><div>${t.labels.map(l => `<span class="tag">${esc(l)}</span>`).join('')}</div>
+        <div>说明</div><div><pre>${esc(T.briefMd(state, t))}</pre></div>
+        <div>附件</div><div>${t.attachments.map(a => `<span class="tag ${a.state === 'pending' ? 'gray' : ''}">${esc(a.filename)}${a.state === 'pending' ? ' · 待用' : ' · ' + esc(a.on)}</span>`).join('') || '<span class="mute">无</span>'}</div>
+      </div>
+      <div class="tl">${tl}</div>
+    </div>`;
+  }).join('');
+  $('changed').innerHTML = changes.length ? `<div class="changed"><b>刚才发生：</b>${changes.map(esc).join('；')}</div>` : '';
+
+  // 下拉框
+  const cur = $('actor').value;
+  const tokens = [...Object.keys(state.tokens), ...Object.keys(state.links)];
+  $('actor').innerHTML = tokens.map(t => `<option value="${t}">${esc(actorLabel(t))}</option>`).join('');
+  $('actor').value = tokens.includes(cur) ? cur : 'tba_wang';
+  const tcur = $('target').value;
+  $('target').innerHTML = state.tickets.map(t => `<option value="${t.number}">${t.number} ${esc(t.title)}</option>`).join('');
+  $('target').value = state.tickets.some(t => t.number === tcur) ? tcur : state.tickets[0].number;
+}
+
+const NEW_TASK = {
+  template: 'assign-task', title: 'BH-5100 质控模块回归测试', assignee: '李工', labels: ['机型:BH-5100', '算法:质控规则'],
+  fields: { goal: '验证 v3.2 的质控模块在 BH-5100 上没有回归。', deliverables: '一份测试报告（Markdown 即可），附失败用例截图。', acceptance: 'Westgard 6 条规则全部覆盖；失败用例写清复现步骤。', due: '10-18' },
+};
+const OPS = [
+  ['我是谁', r => ['GET', '/api/session']],
+  ['收件箱', r => ['GET', '/api/inbox']],
+  ['读取（Markdown）', r => ['GET', `/api/tickets/${r}?format=markdown`]],
+  ['读取（JSON）', r => ['GET', `/api/tickets/${r}`]],
+  ['增量时间线', r => ['GET', `/api/tickets/${r}/timeline?after=2`]],
+  ['查看模板', r => ['GET', '/api/templates/assign-task']],
+  ['创建并指派', r => ['POST', '/api/tickets', NEW_TASK]],
+  ['上传附件', r => ['POST', `/api/tickets/${r}/attachments`, { filename: '对照表.xlsx', size_mb: 0.3 }]],
+  ['普通回复', r => ['POST', `/api/tickets/${r}/replies`, { body_md: '……' }]],
+  ['交付', r => ['POST', `/api/tickets/${r}/replies`, { body_md: '已完成，见附件。\n\n[对照表.xlsx](att:att_5)', deliver: true }]],
+  ['改派', r => ['POST', `/api/tickets/${r}/assign`, { assignee: '赵工' }]],
+  ['关闭（完成）', r => ['POST', `/api/tickets/${r}/close`, { reason: 'done' }]],
+  ['重新开启', r => ['POST', `/api/tickets/${r}/reopen`]],
+];
+$('ops').innerHTML = OPS.map(([label], i) => `<button data-op="${i}">${label}</button>`).join('');
+$('ops').onclick = e => {
+  const i = e.target.dataset.op; if (i == null) return;
+  const [method, path, body] = OPS[i][1]($('target').value);
+  $('method').value = method; $('path').value = path; $('body').value = body ? j(body) : '';
+};
+$('send').onclick = () => {
+  let body;
+  try { body = $('body').value.trim() ? JSON.parse($('body').value) : undefined; }
+  catch { alert('请求体不是合法的 JSON'); return; }
+  send({ method: $('method').value, path: $('path').value.trim(), token: $('actor').value, body });
+};
+$('reset').onclick = () => { state = T.initialState(); prevState = null; renderAll(); $('exchange').innerHTML = '平台已重置。'; };
+
+// ---- 引导场景 ----
+const W = 'tba_wang', LI = 'tba_li', ZH = 'tba_zhao', WW = 'web_wang', Z = 'tbg_zhang3';
+const NEW = '20261016-001', Q3 = '20261015-006', FB = '20261015-007';
+const SCENARIOS = [
+  { title: '派活到验收', desc: '王工让自己的 Agent 用「分配任务」模板建一张工单，派给李工。注意观察：李工的 Agent <b>自己从收件箱里</b>发现了这张工单；Markdown 末尾的“下一步”告诉它怎么交付；交付后工单<b>没有关闭</b>，而是出现在王工的收件箱里，显示“待你验收”；王工的 Agent 关闭后，两个收件箱都清空。',
+    steps: [
+      ['查看「分配任务」模板的字段', W, 'GET', '/api/templates/assign-task'],
+      ['创建工单并指派给李工 → 拿到 share_text', W, 'POST', '/api/tickets', NEW_TASK],
+      ['查看收件箱 → 新指派给你', LI, 'GET', '/api/inbox'],
+      ['以 Markdown 读取 → 看末尾的“下一步”', LI, 'GET', `/api/tickets/${NEW}?format=markdown`],
+      ['上传测试报告', LI, 'POST', `/api/tickets/${NEW}/attachments`, { filename: '回归测试报告.md', size_mb: 0.1 }],
+      ['交付（deliver: true）', LI, 'POST', `/api/tickets/${NEW}/replies`, { body_md: '6 条规则全部测完，1 条失败（1-3s 规则误报），复现步骤见报告。\n\n[回归测试报告.md](att:att_5)', deliver: true }],
+      ['查看收件箱 → 待你验收', W, 'GET', '/api/inbox'],
+      ['以 Markdown 读取 → 看验收指引', W, 'GET', `/api/tickets/${NEW}?format=markdown`],
+      ['验收通过，以“完成”关闭', W, 'POST', `/api/tickets/${NEW}/close`, { reason: 'done' }],
+      ['李工再看收件箱 → 这张已不在', LI, 'GET', '/api/inbox'],
+    ] },
+  { title: '提问、退回、再交付', desc: '已有一张派给李工的工单「整理 Q3 质控规则对照表」。注意观察“轮到”在两人之间来回切换：李工<b>提问</b>后轮到王工，王工答复后又轮到李工；王工<b>退回</b>交付后，李工的收件箱显示“发起人退回修改”，并给出只读新内容的地址；最后由王工<b>本人在网页上</b>关闭。',
+    steps: [
+      ['读取工单', LI, 'GET', `/api/tickets/${Q3}?format=markdown`],
+      ['提问（普通回复）→ 轮到王工', LI, 'POST', `/api/tickets/${Q3}/replies`, { body_md: '“适用机型”要细到软件版本吗？' }],
+      ['查看收件箱 → 指派人回复了', W, 'GET', '/api/inbox'],
+      ['答复 → 轮到李工', W, 'POST', `/api/tickets/${Q3}/replies`, { body_md: '不用，写到机型即可。' }],
+      ['上传对照表', LI, 'POST', `/api/tickets/${Q3}/attachments`, { filename: 'Q3质控规则对照表.xlsx', size_mb: 0.3 }],
+      ['交付', LI, 'POST', `/api/tickets/${Q3}/replies`, { body_md: '对照表已完成，共 9 条规则。\n\n[Q3质控规则对照表.xlsx](att:att_5)', deliver: true }],
+      ['不通过：回复写明问题 → 退回李工', W, 'POST', `/api/tickets/${Q3}/replies`, { body_md: '漏了 10-08 发布的 R4s 规则，请补上。' }],
+      ['查看收件箱 → 发起人退回修改', LI, 'GET', '/api/inbox'],
+      ['只读新内容（收件箱给的地址）', LI, 'GET', `/api/tickets/${Q3}/timeline?after=5`],
+      ['上传修订版并再次交付', LI, 'POST', `/api/tickets/${Q3}/attachments`, { filename: 'Q3质控规则对照表-v2.xlsx', size_mb: 0.3 }],
+      ['再次交付', LI, 'POST', `/api/tickets/${Q3}/replies`, { body_md: '已补上 R4s，共 10 条。\n\n[Q3质控规则对照表-v2.xlsx](att:att_6)', deliver: true }],
+      ['王工本人在网页上验收并关闭', WW, 'POST', `/api/tickets/${Q3}/close`, { reason: 'done' }],
+    ] },
+  { title: '改派与越权', desc: '一些应该被拒绝的操作，以及改派。注意观察：指派给成员 Agent 会被拒绝；不打维度标签不能创建；不是指派人的成员不能交付；改派后，工单从李工的收件箱<b>移到</b>赵工的收件箱，显示为“新指派给你”。',
+    steps: [
+      ['指派给“李工 的 Agent · 工位” → 422', W, 'POST', '/api/tickets', { ...NEW_TASK, assignee: '李工 的 Agent · 工位' }],
+      ['不打维度标签 → 422', W, 'POST', '/api/tickets', { ...NEW_TASK, labels: ['紧急'] }],
+      ['赵工（不是指派人）尝试交付 → 403', ZH, 'POST', `/api/tickets/${Q3}/replies`, { body_md: '我顺手做了', deliver: true }],
+      ['李工：这周排不开 → 轮到王工', LI, 'POST', `/api/tickets/${Q3}/replies`, { body_md: '这周在跑注册检验，排不开，能否转给别人？' }],
+      ['改派给赵工', W, 'POST', `/api/tickets/${Q3}/assign`, { assignee: '赵工' }],
+      ['赵工查看收件箱 → 新指派给你', ZH, 'GET', '/api/inbox'],
+      ['李工查看收件箱 → 空', LI, 'GET', '/api/inbox'],
+    ] },
+  { title: '反馈转给同事', desc: '检验科张三提交的<b>反馈</b>，原本由王工处理，现在转给李工。注意观察：反馈的另一方是<b>访客</b>，不是发起人。所以李工回复后轮到访客，而不是王工；王工的收件箱里不会出现这张工单。',
+    steps: [
+      ['张三回复试剂批号 → 轮到王工（指派人）', Z, 'POST', `/api/tickets/${FB}/replies`, { body_md: '试剂批号 R20260930。', author_name: '张三' }],
+      ['王工查看收件箱 → 访客回复了', W, 'GET', '/api/inbox'],
+      ['王工转给李工', W, 'POST', `/api/tickets/${FB}/assign`, { assignee: '李工' }],
+      ['李工查看收件箱', LI, 'GET', '/api/inbox'],
+      ['李工回复张三 → 轮到访客', LI, 'POST', `/api/tickets/${FB}/replies`, { body_md: '该批号有已知问题，请换批号 R20261008 复测。' }],
+      ['王工查看收件箱 → 没有这张', W, 'GET', '/api/inbox'],
+      ['张三以 Markdown 读取 → 看“下一步”', Z, 'GET', `/api/tickets/${FB}?format=markdown`],
+    ] },
+];
+
+let active = 0, progress = 0;
+function renderTabs() {
+  $('tabs').innerHTML = SCENARIOS.map((s, i) => `<button class="${i === active ? 'active' : ''}" data-tab="${i}">${i + 1}. ${s.title}</button>`).join('');
+  const sc = SCENARIOS[active];
+  $('scenario').innerHTML = `<p style="margin-top:0">${sc.desc}</p>` + sc.steps.map(([label, who], i) =>
+    `<div class="step"><div class="who">${esc(actorLabel(who))}</div>
+     <button data-step="${i}" class="${i < progress ? 'done' : i === progress ? 'next' : ''}">${i + 1}. ${esc(label)}</button></div>`).join('');
+}
+$('tabs').onclick = e => {
+  const i = e.target.dataset.tab; if (i == null) return;
+  active = +i; progress = 0;
+  state = T.initialState(); prevState = null;
+  renderAll(); renderTabs();
+  $('exchange').innerHTML = '已重置平台，开始场景：' + esc(SCENARIOS[active].title);
+};
+$('scenario').onclick = e => {
+  const i = e.target.dataset.step; if (i == null) return;
+  const [, token, method, path, body] = SCENARIOS[active].steps[i];
+  $('method').value = method; $('path').value = path; $('body').value = body ? j(body) : '';
+  send({ method, path, token, body });
+  progress = Math.max(progress, +i + 1);
+  renderTabs();
+  if (window.innerWidth < 900) $('exchange').scrollIntoView({ behavior: 'smooth' });
+};
+
+renderTabs(); renderAll();
+</script>
+</body>
+</html>
