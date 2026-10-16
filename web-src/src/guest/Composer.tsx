@@ -4,7 +4,7 @@
 // 内容已保存」并带同一个 Idempotency-Key 自动重试（ADR 0002）。
 import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api'
-import { compressImage } from './compress'
+import { compressImage } from '../shared/compress'
 import { clearDraft, draftKey, loadAuthor, loadDraft, saveAuthor, saveDraft, type Draft } from './draft'
 import { guestApi } from './guestApi'
 import { uploadAttachment } from './upload'

@@ -6,8 +6,8 @@ import { Conversation } from './Conversation'
 import { Composer } from './Composer'
 import { BriefForm } from './BriefForm'
 import { guestApi } from './guestApi'
-import { fmtDateCN } from './format'
-import type { GuestSession, TicketView } from './types'
+import { fmtDateCN } from '../shared/format'
+import type { GuestSession, TicketView } from '../shared/types'
 
 type Phase =
   | { kind: 'loading' }

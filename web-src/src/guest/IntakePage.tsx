@@ -7,13 +7,13 @@
 // Idempotency-Key，收到 2xx 才清草稿）。
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, api } from '../api'
-import { compressImage } from './compress'
+import { compressImage } from '../shared/compress'
 import { FieldForm, appendRef, missingRequired, type StagedFile } from './FieldForm'
 import { clearFormDraft, intakeDraftKey, loadAuthor, loadFormDraft, saveAuthor, saveFormDraft } from './draft'
 import { guestApi } from './guestApi'
-import type { IntakeSubmitResult, IntakeView, MissingFieldHint, TemplateField } from './types'
+import type { IntakeSubmitResult, IntakeView, MissingFieldHint, TemplateField } from '../shared/types'
 import { uploadAttachment } from './upload'
-import { fmtDateCN } from './format'
+import { fmtDateCN } from '../shared/format'
 
 const RETRY_FIRST_MS = 1500
 const RETRY_MS = 4000

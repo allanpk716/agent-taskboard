@@ -2,7 +2,7 @@
 // 候选值和别名随字段定义下发（字典端点仅成员可用，别随字典现取），
 // 本地过滤：标准值或任一别名包含输入即命中。
 import { useEffect, useRef, useState } from 'react'
-import type { TemplateField } from './types'
+import type { TemplateField } from '../shared/types'
 
 export interface DimensionSelectProps {
   field: TemplateField

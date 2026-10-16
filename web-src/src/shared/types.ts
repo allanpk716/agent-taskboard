@@ -1,5 +1,5 @@
-// GET /api/v1/tickets/{id}（访客视角）的响应结构（docs/api.md）。
-// 只声明访客页面用到的字段；访客响应里没有 labels、没有标签事件。
+// GET /api/v1/tickets/{id} 的响应结构（docs/api.md）。访客与成员共用；
+// 只声明两个网页都用到的字段。访客响应里没有 labels、没有标签事件。
 
 export interface MemberRef {
   id: number
@@ -57,6 +57,7 @@ export interface TimelineEvent {
   attachment_ids?: string[]
   from?: string
   to?: string
+  label?: string
 }
 
 export interface Brief {
@@ -78,6 +79,8 @@ export interface TicketView {
   creator: Author
   assignee?: Author | null
   waiting_on: { party: string; member?: string | null; text: string; reason: string }
+  /** 仅成员视角：工单当前标签（访客响应没有这个字段）。 */
+  labels?: string[]
   brief: Brief
   attachments: Attachment[]
   viewer: {

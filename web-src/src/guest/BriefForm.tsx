@@ -4,11 +4,11 @@
 // 一套规则）；版本冲突时重读工单、保留访客的修改后再保存。
 import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api'
-import { compressImage } from './compress'
+import { compressImage } from '../shared/compress'
 import { FieldForm, appendRef, type StagedFile } from './FieldForm'
 import { briefDraftKey, clearFormDraft, loadAuthor, loadFormDraft, saveAuthor, saveFormDraft } from './draft'
 import { guestApi } from './guestApi'
-import type { TicketView } from './types'
+import type { TicketView } from '../shared/types'
 import { uploadAttachment } from './upload'
 
 const RETRY_FIRST_MS = 1500

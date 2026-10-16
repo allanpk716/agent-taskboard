@@ -1,0 +1,181 @@
+// 成员网页调用的 API（网页会话 cookie；错误结构见 api.ts）。
+import { api } from '../api'
+import { compressImage } from '../shared/compress'
+import type { TicketView } from '../shared/types'
+
+export interface Me {
+  id: number
+  username: string
+  name: string
+  is_admin: boolean
+}
+
+export interface InboxItem {
+  number: string
+  title: string
+  role: 'assignee' | 'creator'
+  reason: string
+  since_seq: number | null
+  read_new: string
+  read_full: string
+}
+
+export interface InboxResponse {
+  member: string
+  count: number
+  items: InboxItem[]
+}
+
+export interface MemberRef {
+  id: number
+  name: string
+}
+
+/** 成员视角的工单（比访客多 labels；viewer.can 决定按钮是否出现）。 */
+export interface MemberTicket extends TicketView {
+  labels: string[]
+}
+
+export async function fetchSession(): Promise<{ viewer: { kind: string; member: Me } }> {
+  return api('/api/v1/session')
+}
+
+export async function fetchInbox(): Promise<InboxResponse> {
+  return api('/api/v1/inbox')
+}
+
+export async function fetchMembers(): Promise<MemberRef[]> {
+  const body = await api('/api/v1/members')
+  return body.members as MemberRef[]
+}
+
+export async function fetchTicket(ref: string): Promise<MemberTicket> {
+  return api(`/api/v1/tickets/${encodeURIComponent(ref)}`)
+}
+
+export async function logout(): Promise<void> {
+  await api('/api/v1/session', { method: 'DELETE' })
+}
+
+/* ---------------- 工单写操作 ---------------- */
+
+export async function replyTicket(
+  number: string,
+  body: { body_md: string; deliver?: boolean },
+): Promise<void> {
+  await api(`/api/v1/tickets/${encodeURIComponent(number)}/replies`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+    idempotencyKey: crypto.randomUUID(),
+  })
+}
+
+export interface LabelChangeResult {
+  labels: string[]
+  alias_resolved?: { requested: string; label: string; via: string }[]
+  created_dictionary_values?: string[]
+}
+
+export async function changeLabels(
+  number: string,
+  body: { add?: string[]; remove?: string[]; allow_new?: boolean },
+): Promise<LabelChangeResult> {
+  return api(`/api/v1/tickets/${encodeURIComponent(number)}/labels`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function assignTicket(
+  number: string,
+  assignee: string,
+): Promise<{ assignee: MemberRef | null; share_text?: string | null }> {
+  return api(`/api/v1/tickets/${encodeURIComponent(number)}/assign`, {
+    method: 'POST',
+    body: JSON.stringify({ assignee }),
+  })
+}
+
+export async function closeTicket(
+  number: string,
+  body: { reason: string; duplicate_of?: string },
+): Promise<void> {
+  await api(`/api/v1/tickets/${encodeURIComponent(number)}/close`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function reopenTicket(number: string): Promise<void> {
+  await api(`/api/v1/tickets/${encodeURIComponent(number)}/reopen`, { method: 'POST' })
+}
+
+/* ---------------- 访客链接 ---------------- */
+
+export interface GuestLink {
+  id: number
+  note: string
+  expires_at: string
+  revoked_at?: string | null
+  can_edit_brief: boolean
+  created_by: { member?: { name: string }; agent?: { name: string } | null }
+  created_at: string
+}
+
+export interface CreatedGuestLink {
+  id: number
+  url: string
+  note: string
+  expires_at: string
+  can_edit_brief: boolean
+}
+
+export async function fetchGuestLinks(number: string): Promise<GuestLink[]> {
+  const body = await api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links`)
+  return body.links as GuestLink[]
+}
+
+export async function createGuestLink(
+  number: string,
+  body: { note: string; valid_days?: number; can_edit_brief?: boolean },
+): Promise<CreatedGuestLink> {
+  return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function revokeGuestLink(number: string, id: number): Promise<void> {
+  await api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}`, { method: 'DELETE' })
+}
+
+export async function extendGuestLink(number: string, id: number, validDays: number): Promise<void> {
+  await api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}/extend`, {
+    method: 'POST',
+    body: JSON.stringify({ valid_days: validDays }),
+  })
+}
+
+/* ---------------- 附件（两步上传的第一步；图片先压缩） ---------------- */
+
+export async function uploadMemberAttachment(
+  number: string,
+  file: File,
+): Promise<{ id: string; markdown: string; filename: string }> {
+  const prepared = file.type.startsWith('image/') ? await compressImage(file) : file
+  const form = new FormData()
+  form.append('file', prepared, prepared.name)
+  return api(`/api/v1/tickets/${encodeURIComponent(number)}/attachments`, {
+    method: 'POST',
+    body: form,
+    idempotencyKey: crypto.randomUUID(),
+  })
+}
+
+/** 收件箱原因 → 色条 / 徽标配色（mock 的 REASONS + 原因色条）。 */
+export function reasonClass(reason: string): string {
+  if (reason.includes('交付')) return 'delivered'
+  if (reason.includes('访客')) return 'guest'
+  if (reason.includes('退回') || reason.includes('回复了')) return 'back'
+  return 'new'
+}

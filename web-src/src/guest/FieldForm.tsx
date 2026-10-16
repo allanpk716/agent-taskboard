@@ -9,8 +9,8 @@
 // 前拿不到凭证，先暂存本地、建单后补传）。
 import { useRef } from 'react'
 import { DimensionSelect } from './DimensionSelect'
-import type { TemplateField } from './types'
-import { fmtSize } from './format'
+import type { TemplateField } from '../shared/types'
+import { fmtSize } from '../shared/format'
 
 /** 暂存的文件：补全说明场景立即上传（status 就绪时 markdown 里是 att: 引用）；入口场景提交后补传（blob 是文件本体）。 */
 export interface StagedFile {

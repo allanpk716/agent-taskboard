@@ -18,11 +18,20 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(path: string, init?: RequestInit): Promise<any> {
+export interface ApiRequest extends RequestInit {
+  /** 产生新内容的请求带 Idempotency-Key，重试返回首次结果（docs/api.md「幂等」）。 */
+  idempotencyKey?: string
+}
+
+export async function api(path: string, init?: ApiRequest): Promise<any> {
+  const { idempotencyKey, ...rest } = init ?? {}
+  const headers: Record<string, string> = { ...(rest.headers as object) }
+  if (!(rest.body instanceof FormData)) headers['Content-Type'] = 'application/json'
+  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey
   const res = await fetch(path, {
     credentials: 'same-origin',
-    ...init,
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    ...rest,
+    headers,
   })
   if (res.status === 204) return null
   let body: any = null
