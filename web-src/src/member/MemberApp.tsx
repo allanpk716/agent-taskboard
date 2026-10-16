@@ -1,6 +1,7 @@
 // 成员网页（#41）：移动优先卡片 + 底部标签栏（拍板的 mock 方向 B）。
 // 顶栏一栏标题；底部五个标签（收件箱 / 工单 / 大号「＋」建单 / 工具 / 我的）。
-// 工具与我的两个标签是 #42 的内容，先放占位页。
+// 工具里是标签字典与别名、模板维护（#42）；我的里是个人设置（Agent token）
+// 与管理页入口（仅管理员，#42）。
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '../api'
 import { fetchInbox, fetchSession, type Me } from './memberApi'
@@ -9,7 +10,10 @@ import { TicketsPage } from './TicketsPage'
 import { TicketDetailPage } from './TicketDetailPage'
 import { NewTicketPage } from './NewTicketPage'
 import { ToolsPage } from './ToolsPage'
+import { TemplatesPage } from './TemplatesPage'
+import { TemplateEditPage } from './TemplateEditPage'
 import { MePage } from './MePage'
+import { AdminPage } from './AdminPage'
 import { nav, useNavSeq, useRoute, type Route } from './ui'
 
 function pageTitle(route: Route): string {
@@ -26,6 +30,12 @@ function pageTitle(route: Route): string {
       return '工具'
     case 'me':
       return '我的 · 设置'
+    case 'templates':
+      return '模板维护'
+    case 'templateEdit':
+      return '模板'
+    case 'admin':
+      return '管理'
   }
 }
 
@@ -79,9 +89,11 @@ export function MemberApp() {
   }
 
   const h = route
-  const tab = (k: Route['page'], icon: string, name: string, badge?: number) => (
+  const toolsOn = h.page === 'tools' || h.page === 'templates' || h.page === 'templateEdit'
+  const meOn = h.page === 'me' || h.page === 'admin'
+  const tab = (k: Route['page'], icon: string, name: string, badge?: number, on?: boolean) => (
     <a
-      className={`tabbtn${h.page === k ? ' on' : ''}`}
+      className={`tabbtn${(on ?? h.page === k) ? ' on' : ''}`}
       href={k === 'inbox' ? '/' : `/${k}`}
       onClick={(e) => {
         e.preventDefault()
@@ -111,6 +123,9 @@ export function MemberApp() {
           {route.page === 'detail' && <TicketDetailPage key={navSeq} ticketRef={route.ref} />}
           {route.page === 'tools' && <ToolsPage key={navSeq} />}
           {route.page === 'me' && <MePage key={navSeq} me={me} />}
+          {route.page === 'templates' && <TemplatesPage key={navSeq} />}
+          {route.page === 'templateEdit' && <TemplateEditPage key={navSeq} templateKey={route.key} />}
+          {route.page === 'admin' && <AdminPage key={navSeq} me={me} />}
         </div>
         <nav className="b-tabs">
           {tab('inbox', '📥', '收件箱', inboxCount)}
@@ -126,8 +141,8 @@ export function MemberApp() {
             <b>＋</b>
             <span>建单</span>
           </a>
-          {tab('tools', '🧰', '工具')}
-          {tab('me', '👤', '我的')}
+          {tab('tools', '🧰', '工具', undefined, toolsOn)}
+          {tab('me', '👤', '我的', undefined, meOn)}
         </nav>
       </div>
     </main>

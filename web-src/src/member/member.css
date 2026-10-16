@@ -738,3 +738,84 @@
     max-width: 640px;
   }
 }
+
+/* ---- #42：工具 / 模板维护 / 个人设置 / 管理页 ---- */
+
+/* 使用中徽标（绿） */
+.badge.open {
+  background: #e8f4ea;
+  color: #24754b;
+}
+
+/* 等宽文本（token、登录名）与别名小盒（照 mock shared.css） */
+.mono {
+  font-family: Consolas, monospace;
+}
+.aliasbox {
+  display: inline-block;
+  background: #f3f5f8;
+  border: 1px dashed #ccc;
+  border-radius: 5px;
+  padding: 0 6px;
+  font-size: 12px;
+  margin-right: 4px;
+}
+
+/* 说明盒（如「给 Agent 的说明」） */
+.notebox {
+  background: #f3f6fb;
+  border-left: 3px solid #2a6fdb;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13.5px;
+  color: #445;
+  margin: 6px 0;
+  white-space: pre-wrap;
+}
+
+/* 模板源码编辑框与解析出的字段列表 */
+textarea.src {
+  width: 100%;
+  min-height: 300px;
+  font-family: Consolas, monospace;
+  font-size: 13px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  padding: 10px;
+  white-space: pre;
+  overflow-x: auto;
+  box-sizing: border-box;
+}
+.fldlist {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+
+/* 历史版本：可展开的版本行与原文 */
+.verrow {
+  border-bottom: 1px solid #f0f2f6;
+  padding: 6px 0;
+}
+.verrow summary {
+  cursor: pointer;
+  font-size: 13.5px;
+  color: #44536b;
+}
+.verrow .mini {
+  margin-left: 6px;
+}
+.versrc {
+  margin: 8px 0 4px;
+  background: #f6f8fb;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 12.5px;
+  font-family: Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* 管理页分区 tab 复用 .fchip（.frow 已有横向滚动样式） */
+.mcard .frow {
+  margin: 10px 0 4px;
+}
