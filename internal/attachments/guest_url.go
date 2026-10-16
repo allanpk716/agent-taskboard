@@ -96,10 +96,9 @@ func (m *Manager) VerifyGuestURL(ctx context.Context, att AttachmentInfo, linkID
 	if err != nil {
 		return err
 	}
+	// 先验签名（真实性），再看链接状态（撤销/过期即时生效，与工单同判），
+	// 最后看地址自身的到期：链接已失效时按链接的原因报，比「地址过期」准确。
 	now := m.clk.Now()
-	if now.Unix() >= exp {
-		return ErrURLExpired
-	}
 	if !hmac.Equal([]byte(sig), []byte(sign(row.KeyHash, linkID, att.ID, exp))) {
 		return ErrBadSignature
 	}
@@ -108,6 +107,9 @@ func (m *Manager) VerifyGuestURL(ctx context.Context, att AttachmentInfo, linkID
 	}
 	if !now.Before(row.ExpiresAt) {
 		return ErrLinkExpired
+	}
+	if now.Unix() >= exp {
+		return ErrURLExpired
 	}
 	if row.TicketSeq != att.TicketSeq {
 		return ErrNotFound // 链接指向别的工单：与「不存在」不可区分（防枚举）
