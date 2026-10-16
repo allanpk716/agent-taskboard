@@ -1062,3 +1062,90 @@ func equalGroups(a, b []countGroup) bool {
 	}
 	return true
 }
+
+// 「本人 / Agent」筛选（orchestrator 决议 5）：actor_kind=member（非 Agent 署名，
+// 含访客创建）或 agent（成员 Agent 署名）；与 creator=me 组合最常用。
+func Test列表与计数按本人Agent筛选(t *testing.T) {
+	w := newQueryWorld(t)
+
+	got := w.list(t, w.wangA, "?actor_kind=agent&status=all")
+	if !equalStrings(numbers(got), []string{w.q3}) {
+		t.Errorf("actor_kind=agent = %v, 想 [%s]（Q3 由王工的 Agent 创建）", numbers(got), w.q3)
+	}
+	got = w.list(t, w.wangA, "?actor_kind=member&status=all")
+	if got.Total != 6 {
+		t.Errorf("actor_kind=member 总数 = %d, 想 6（其余六张：本人或访客创建）：%v", got.Total, numbers(got))
+	}
+	// 与 creator=me 组合：王工的 Agent 建的 / 王工本人建的。
+	got = w.list(t, w.wangA, "?creator=me&actor_kind=agent")
+	if !equalStrings(numbers(got), []string{w.q3}) {
+		t.Errorf("creator=me&actor_kind=agent = %v", numbers(got))
+	}
+	got = w.list(t, w.wangA, "?creator=me&actor_kind=member&status=all")
+	if !equalStrings(numbers(got), []string{w.wont, w.fb}) {
+		t.Errorf("creator=me&actor_kind=member = %v, 想 [WONT FB]", numbers(got))
+	}
+	// 计数同样接受。
+	counted := w.counts(t, w.wangA, "?group_by=status&actor_kind=agent&status=all")
+	if counted.Total != 1 || len(counted.Groups) != 1 || counted.Groups[0].Value != "open" {
+		t.Errorf("counts actor_kind=agent = %+v", counted.Groups)
+	}
+	// 非法取值 422。
+	res := w.listRaw(t, w.wangA, "?actor_kind=robot")
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("actor_kind=robot 状态码 = %d, 想 422", res.StatusCode)
+	}
+	var e errorBody
+	tbtest.DecodeJSON(t, res, &e)
+	if e.Error.Code != "invalid_actor_kind" {
+		t.Errorf("actor_kind=robot 错误码 = %q, 想 invalid_actor_kind", e.Error.Code)
+	}
+}
+
+// 时间线也按「本人 / Agent」筛选（决议 5）：member 是非 Agent 署名的事件
+// （含访客），agent 是成员 Agent 的事件；cursor 跳过被筛掉的事件。
+func Test时间线按本人Agent筛选(t *testing.T) {
+	w := newQueryWorld(t)
+	// FB 的时间线：王工本人 4 条 + 张三 1 条；再让王工的 Agent 回一条。
+	w.at(t, "2026-10-16T10:00")
+	reply(t, w.s, w.wangA, w.fb, "（Agent 顺带查了批号记录，暂无异常。）")
+
+	read := func(query string) timelineBody {
+		t.Helper()
+		var body timelineBody
+		res := w.s.Do(t, w.webWang, http.MethodGet, "/api/v1/tickets/"+w.fb+"/timeline"+query, nil, &body)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("GET timeline%s 状态码 = %d", query, res.StatusCode)
+		}
+		return body
+	}
+	member := read("?actor_kind=member")
+	if len(member.Events) != 5 { // created、assigned、guest_link_created、张三、王工
+		t.Fatalf("member 事件 = %d 条（%+v）, 想 5", len(member.Events), member.Events)
+	}
+	if member.Cursor != 5 {
+		t.Errorf("member cursor = %d, 想 5（跳过被筛掉的 Agent 事件）", member.Cursor)
+	}
+	agent := read("?actor_kind=agent")
+	if len(agent.Events) != 1 || agent.Events[0].BodyMD != "（Agent 顺带查了批号记录，暂无异常。）" {
+		t.Fatalf("agent 事件 = %+v, 想 1 条 Agent 回复", agent.Events)
+	}
+	if agent.Cursor != 6 {
+		t.Errorf("agent cursor = %d, 想 6", agent.Cursor)
+	}
+	// 增量：从 member cursor 之后继续拿 Agent 的事件。
+	inc := read("?actor_kind=agent&after=5")
+	if len(inc.Events) != 1 || inc.Cursor != 6 {
+		t.Errorf("after=5 的 agent 增量 = %+v", inc.Events)
+	}
+	// 非法取值 422。
+	res := w.s.Do(t, w.webWang, http.MethodGet, "/api/v1/tickets/"+w.fb+"/timeline?actor_kind=x", nil, nil)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("actor_kind=x 状态码 = %d, 想 422", res.StatusCode)
+	}
+	var e errorBody
+	tbtest.DecodeJSON(t, res, &e)
+	if e.Error.Code != "invalid_actor_kind" {
+		t.Errorf("actor_kind=x 错误码 = %q", e.Error.Code)
+	}
+}

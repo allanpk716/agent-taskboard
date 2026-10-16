@@ -29,6 +29,7 @@ import (
 // 列表接受的查询参数（写错 → 422 unknown_parameter）。
 var queryAllowedParams = []string{
 	"status", "kind", "template", "label", "no_label", "assignee", "creator", "waiting_on", "q",
+	"actor_kind",
 	"created_after", "created_before", "updated_after", "updated_before", "closed_after", "closed_before",
 	"changed_after", "sort", "limit", "page_token", "include", "format",
 }
@@ -138,11 +139,11 @@ func (a *API) handleTicketList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body := map[string]any{
-		"total":  len(rows),
-		"count":  len(page),
-		"items":  items,
-		"next":   next,
-		"cursor": cursor,
+		"total":   len(rows),
+		"count":   len(page),
+		"items":   items,
+		"next":    next,
+		"cursor":  cursor,
 		"filters": queryFiltersEcho(fq, sortKey),
 	}
 	if len(resolved) > 0 {
@@ -421,6 +422,13 @@ func (a *API) parseQueryFilters(ctx context.Context, viewer identity.Viewer, q u
 		}
 		fq.WaitingOn = v
 	}
+	if v := q.Get("actor_kind"); v != "" {
+		if !containsStringIn([]string{"member", "agent"}, v) {
+			return fq, nil, NewError(http.StatusUnprocessableEntity, CodeInvalidActorKind,
+				"actor_kind 只能是 member（本人或访客署名）或 agent（成员 Agent 署名）", "")
+		}
+		fq.ActorKind = v
+	}
 	ranges := []struct {
 		prefix string
 		after  **time.Time
@@ -524,6 +532,9 @@ func queryFiltersEcho(fq tickets.ListQuery, sortKey string) map[string]any {
 	}
 	if fq.WaitingOn != "" {
 		echo["waiting_on"] = fq.WaitingOn
+	}
+	if fq.ActorKind != "" {
+		echo["actor_kind"] = fq.ActorKind
 	}
 	timeEcho := func(name string, t *time.Time) {
 		if t != nil {

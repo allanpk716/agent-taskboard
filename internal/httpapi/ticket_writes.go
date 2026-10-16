@@ -179,6 +179,9 @@ func (a *API) reopenTicket(w http.ResponseWriter, r *http.Request, ref string) {
 // 返回 after 之后的事件、当前游标、等待方、是否轮到当前凭证和状态。
 // 访客（#32）只能读链接指向的工单，且看不到标签事件（cursor 因此是访客可见的
 // 最后一条事件 seq，跳过的序号不会当作增量重发）。
+// actor_kind=member|agent（#37，orchestrator 决议 5）按「本人 / Agent」筛选
+// 事件：member 是非 Agent 署名（成员本人或访客），agent 是成员 Agent；
+// cursor 同样只数筛后仍可见的事件。
 func (a *API) ticketTimeline(w http.ResponseWriter, r *http.Request, ref string) {
 	viewer, ok := a.viewerFromRequest(w, r)
 	if !ok {
@@ -194,15 +197,33 @@ func (a *API) ticketTimeline(w http.ResponseWriter, r *http.Request, ref string)
 		}
 		after = n
 	}
+	actorKind := r.URL.Query().Get("actor_kind")
+	if actorKind != "" && actorKind != "member" && actorKind != "agent" {
+		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidActorKind,
+			"actor_kind 只能是 member（本人或访客署名）或 agent（成员 Agent 署名）", "")
+		return
+	}
 	full, ok := a.loadTicketForViewer(w, r, viewer, ref)
 	if !ok {
 		return
 	}
 	isGuest := viewer.Kind == identity.ViewerGuest
+	visible := func(e tickets.Event) bool {
+		if isGuest && !visibleToGuest(e) {
+			return false
+		}
+		switch actorKind {
+		case "member":
+			return e.Actor.AgentID == 0
+		case "agent":
+			return e.Actor.AgentID != 0
+		}
+		return true
+	}
 	waitingOn := tickets.WaitingOnOf(full)
 	cursor := int64(0)
 	for _, e := range full.Timeline {
-		if isGuest && !visibleToGuest(e) {
+		if !visible(e) {
 			continue
 		}
 		cursor = e.Seq
@@ -215,7 +236,7 @@ func (a *API) ticketTimeline(w http.ResponseWriter, r *http.Request, ref string)
 		Status:    full.Status,
 	}
 	for _, e := range full.Timeline {
-		if e.Seq <= after || (isGuest && !visibleToGuest(e)) {
+		if e.Seq <= after || !visible(e) {
 			continue
 		}
 		view.Events = append(view.Events, newEventView(e))

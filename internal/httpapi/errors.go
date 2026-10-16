@@ -103,6 +103,7 @@ const (
 	CodeInvalidWaitingOn = "invalid_waiting_on" // waiting_on 只能是五者之一
 	CodeGroupByRequired  = "group_by_required"  // 计数缺 group_by
 	CodeInvalidGroupBy   = "invalid_group_by"   // 不能按这个维度分组
+	CodeInvalidActorKind = "invalid_actor_kind" // actor_kind 只能是 member/agent
 )
 
 // ErrorBody 是统一错误格式 {error:{code, message, hint?}} 的内层；

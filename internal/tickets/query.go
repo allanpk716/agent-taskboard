@@ -32,17 +32,21 @@ type ListQuery struct {
 	CreatorSet   bool
 	CreatorID    int64
 	CreatorName  string // 回显用
-	CreatorGuest bool // creator=guest：经反馈入口提交
+	CreatorGuest bool   // creator=guest：经反馈入口提交
 
-	WaitingOn     string // assignee | creator | guest | department | me
-	ViewerMemberID int64 // waiting_on=me 时按谁的收件箱算
+	WaitingOn      string // assignee | creator | guest | department | me
+	ViewerMemberID int64  // waiting_on=me 时按谁的收件箱算
+
+	// ActorKind 是「本人 / Agent」筛选（orchestrator 决议 5）：按创建者的署名
+	// 区分——member = 非 Agent 署名（成员本人或访客），agent = 成员 Agent 署名。
+	ActorKind string
 
 	CreatedAfter, CreatedBefore *time.Time // _after 包含该时刻，_before 不包含
 	UpdatedAfter, UpdatedBefore *time.Time
-	ClosedAfter,  ClosedBefore  *time.Time
+	ClosedAfter, ClosedBefore   *time.Time
 
-	ChangedAfter    *int64 // 只返回变更序号大于它的工单
-	Q               string // 关键词（标题、说明与回复，忽略大小写、空格和连字符）
+	ChangedAfter *int64 // 只返回变更序号大于它的工单
+	Q            string // 关键词（标题、说明与回复，忽略大小写、空格和连字符）
 }
 
 // TicketMeta 是列表摘要需要的工单元数据：创建/更新/关闭时间与最后变更序号，
@@ -178,6 +182,16 @@ func (q *ListQuery) matches(t *Full) bool {
 				return false
 			}
 		} else if turn.Party != q.WaitingOn {
+			return false
+		}
+	}
+	switch q.ActorKind {
+	case "member":
+		if t.Creator.AgentID != 0 {
+			return false
+		}
+	case "agent":
+		if t.Creator.MemberID == 0 || t.Creator.AgentID == 0 {
 			return false
 		}
 	}
