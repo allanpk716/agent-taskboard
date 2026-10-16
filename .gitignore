@@ -18,3 +18,4 @@ playwright-report/
 
 # publish-updatehub 的本地产物目录
 /publish-out/
+npm-install.log
