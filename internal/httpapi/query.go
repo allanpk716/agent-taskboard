@@ -382,10 +382,14 @@ func (a *API) parseQueryFilters(ctx context.Context, viewer identity.Viewer, q u
 
 	if v := q.Get("assignee"); v != "" {
 		fq.AssigneeSet = true
-		if v == "none" {
+		switch v {
+		case "none":
 			fq.AssigneeNone = true
 			fq.AssigneeName = "none"
-		} else {
+		case "me":
+			fq.AssigneeID = viewer.Member.ID
+			fq.AssigneeName = viewer.Member.Name
+		default:
 			id, name, err := a.tickets.ResolveMemberRef(ctx, v)
 			if err != nil {
 				return fq, nil, a.unknownMemberQueryError(ctx, v)
@@ -395,10 +399,14 @@ func (a *API) parseQueryFilters(ctx context.Context, viewer identity.Viewer, q u
 	}
 	if v := q.Get("creator"); v != "" {
 		fq.CreatorSet = true
-		if v == "guest" {
+		switch v {
+		case "guest":
 			fq.CreatorGuest = true
 			fq.CreatorName = "guest"
-		} else {
+		case "me":
+			fq.CreatorID = viewer.Member.ID
+			fq.CreatorName = viewer.Member.Name
+		default:
 			id, name, err := a.tickets.ResolveMemberRef(ctx, v)
 			if err != nil {
 				return fq, nil, a.unknownMemberQueryError(ctx, v)

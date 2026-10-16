@@ -568,11 +568,12 @@ func (m *Manager) ResolveFilter(ctx context.Context, q string) (FilterResolution
 		case -1:
 			return FilterResolution{}, &UnknownValueError{Label: q, Suggestions: withDim(dim, values)}
 		}
-		all := make([]string, 0, len(d.values[dim]))
+		// 近似值建议按裸值比较（原型 resolveCandidates），再补回 维度: 前缀。
+		bare := make([]string, 0, len(d.values[dim]))
 		for _, v := range d.values[dim] {
-			all = append(all, dim+":"+v.value)
+			bare = append(bare, v.value)
 		}
-		return FilterResolution{}, &UnknownValueError{Label: q, Suggestions: suggest(q, all)}
+		return FilterResolution{}, &UnknownValueError{Label: q, Suggestions: withDim(dim, suggest(val, bare))}
 	}
 	// 不带维度：先对上不带维度的标签，再换算跨维度唯一的别名。
 	for _, p := range d.plain {
