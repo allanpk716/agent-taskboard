@@ -102,6 +102,10 @@ const (
 	CodeTemplateNotReport = "template_not_report" // 入口只能绑定反馈类型的模板
 	CodeMissingFields     = "missing_fields"      // 入口提交缺必填项（严格校验，逐项提示）
 
+	// #45：更新。
+	CodeUpdateSourceUnreachable = "update_source_unreachable" // 所有更新源都连不上（502）
+	CodeUpdateFailed            = "update_failed"             // 更新本身的失败（哈希不符、备份失败等）
+
 	// #37：查询与计数。
 	CodeUnknownParameter = "unknown_parameter"  // 不认识的查询参数（附可用参数列表）
 	CodeInvalidStatus    = "invalid_status"     // status 只能是 open/closed/all

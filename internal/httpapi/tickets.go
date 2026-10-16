@@ -485,10 +485,10 @@ type waitingOnView struct {
 }
 
 type briefView struct {
-	Fields        *map[string]string  `json:"fields"`
-	Markdown      string              `json:"markdown"`
-	Revision      int64               `json:"revision"`
-	Template      *string             `json:"template"`
+	Fields         *map[string]string  `json:"fields"`
+	Markdown       string              `json:"markdown"`
+	Revision       int64               `json:"revision"`
+	Template       *string             `json:"template"`
 	TemplateFields []templateFieldView `json:"template_fields,omitempty"` // 创建时版本的字段定义（访客网页按问句渲染说明气泡，#38）
 }
 

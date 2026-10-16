@@ -51,17 +51,28 @@ type Source interface {
 	Latest(ctx context.Context) (*Latest, error)
 }
 
+// SourceError 表示更新源层面的问题（没有配置源，或所有源都连不上），
+// 与更新本身的失败（哈希不符、备份失败等）区分开，HTTP 层据此返回不同
+// 的状态码。
+type SourceError struct {
+	Err error
+}
+
+func (e *SourceError) Error() string { return e.Err.Error() }
+func (e *SourceError) Unwrap() error { return e.Err }
+
 // resolveLatest 按 cfg.Sources 的顺序尝试，用第一个连得上的源；错误里带上
 // 每个源的失败原因。httpClient 为 nil 时用默认客户端。
 func resolveLatest(ctx context.Context, cfg config.Update, httpClient *http.Client) (*Latest, error) {
 	if len(cfg.Sources) == 0 {
-		return nil, fmt.Errorf("没有配置更新源（config.toml 的 [update].sources，如 [\"updatehub\", \"github\"]）")
+		return nil, &SourceError{fmt.Errorf("没有配置更新源（config.toml 的 [update].sources，如 [\"updatehub\", \"github\"]）")}
 	}
 	var attempts []string
 	for _, name := range cfg.Sources {
 		src, err := sourceByName(cfg, name, httpClient)
 		if err != nil {
-			return nil, err
+			attempts = append(attempts, fmt.Sprintf("%s：%v", name, err))
+			continue
 		}
 		latest, err := src.Latest(ctx)
 		if err == nil {
@@ -69,7 +80,7 @@ func resolveLatest(ctx context.Context, cfg config.Update, httpClient *http.Clie
 		}
 		attempts = append(attempts, fmt.Sprintf("%s：%v", name, err))
 	}
-	return nil, fmt.Errorf("所有更新源都连不上（%s）", strings.Join(attempts, "；"))
+	return nil, &SourceError{fmt.Errorf("所有更新源都连不上（%s）", strings.Join(attempts, "；"))}
 }
 
 // sourceByName 按配置里的源名构造 Source。
