@@ -3,6 +3,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -65,16 +66,18 @@ func templateRefAndSub(path string) (key, sub string, hasSub bool) {
 }
 
 // templateFieldView 是字段定义的对外结构；维度字段的 options 在读取时
-// 从标签字典现取（字典会变，不能缓存在模板里），末尾带「不确定」。
+// 从标签字典现取（字典会变，不能缓存在模板里），末尾带「不确定」；
+// option_aliases 是各候选值的别名（#39：下拉框按别名搜索，随字典现取）。
 type templateFieldView struct {
-	Key       string   `json:"key"`
-	Title     string   `json:"title"`
-	Guide     string   `json:"guide"`
-	Example   string   `json:"example"`
-	Required  bool     `json:"required"`
-	Type      string   `json:"type"` // text | radio | dimension
-	Options   []string `json:"options"`
-	Dimension string   `json:"dimension,omitempty"`
+	Key           string              `json:"key"`
+	Title         string              `json:"title"`
+	Guide         string              `json:"guide"`
+	Example       string              `json:"example"`
+	Required      bool                `json:"required"`
+	Type          string              `json:"type"` // text | radio | dimension
+	Options       []string            `json:"options"`
+	Dimension     string              `json:"dimension,omitempty"`
+	OptionAliases map[string][]string `json:"option_aliases,omitempty"`
 }
 
 // templateSummaryView 是列表项。
@@ -130,15 +133,36 @@ func (a *API) templateFieldsView(r *http.Request, t templates.Template) []templa
 		}
 		if f.Type == template.TypeDimension {
 			// 维度字段带上字典中的候选值和「不确定」选项（spec「读取」）。
-			values, err := a.tickets.Labels().DimensionValues(r.Context(), f.Dimension)
-			if err != nil {
-				panic(err)
-			}
-			fv.Options = append(append([]string{}, values...), template.UnsureOption)
+			a.fillDimensionOptions(r.Context(), &fv)
 		}
 		fields = append(fields, fv)
 	}
 	return fields
+}
+
+// fillDimensionOptions 给维度字段补上字典候选值（末尾带「不确定」）与各候选值
+// 的别名。候选值随字典变化，读取时现取（#39：补全说明与反馈入口的表单下拉框
+// 按别名搜索；字典端点仅成员可用，别名随字段定义一并下发）。
+func (a *API) fillDimensionOptions(ctx context.Context, fv *templateFieldView) {
+	dict, err := a.tickets.Labels().Dictionary(ctx, fv.Dimension)
+	if err != nil {
+		panic(err)
+	}
+	values := []string{}
+	var aliases map[string][]string
+	for _, d := range dict.Dimensions {
+		for _, v := range d.Values {
+			values = append(values, v.Value)
+			if len(v.Aliases) > 0 {
+				if aliases == nil {
+					aliases = map[string][]string{}
+				}
+				aliases[v.Value] = append([]string{}, v.Aliases...)
+			}
+		}
+	}
+	fv.Options = append(values, template.UnsureOption)
+	fv.OptionAliases = aliases
 }
 
 func (a *API) readTemplate(w http.ResponseWriter, r *http.Request, key string) {

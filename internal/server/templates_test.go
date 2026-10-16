@@ -21,14 +21,15 @@ type templateSummary struct {
 }
 
 type templateFieldBody struct {
-	Key       string   `json:"key"`
-	Title     string   `json:"title"`
-	Guide     string   `json:"guide"`
-	Example   string   `json:"example"`
-	Required  bool     `json:"required"`
-	Type      string   `json:"type"`
-	Options   []string `json:"options"`
-	Dimension string   `json:"dimension"`
+	Key           string              `json:"key"`
+	Title         string              `json:"title"`
+	Guide         string              `json:"guide"`
+	Example       string              `json:"example"`
+	Required      bool                `json:"required"`
+	Type          string              `json:"type"`
+	Options       []string            `json:"options"`
+	Dimension     string              `json:"dimension"`
+	OptionAliases map[string][]string `json:"option_aliases"` // #39：下拉框按别名搜索
 }
 
 // templateBody 是 GET /api/v1/templates/{key} 的解码结构。
@@ -250,4 +251,114 @@ func Test未登录读模板返回401(t *testing.T) {
 	if res.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("未登录读模板状态码 = %d, 想 401", res.StatusCode)
 	}
+}
+
+
+// #39：补全说明与反馈入口提交页共用的字段表单需要维度字段的候选值与别名
+//（下拉框按别名搜索）。工单视图（访客用「补全说明」）此前只回字段快照、不带
+// 候选值；匿名入口视图与成员模板视图此前只有候选值、没有别名。
+
+// 持「可填写说明」链接的访客读工单：brief.template_fields 里维度字段带上
+// 字典候选值、「不确定」和各候选值的别名（别名随字典变化，读取时现取）。
+func Test访客读工单说明字段带维度候选值与别名(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+
+	// 给 UD-2300 挂一个别名（下拉框输入它能搜到标准值）。
+	res := s.Do(t, web, http.MethodPost, "/api/v1/labels/aliases",
+		map[string]any{"label": "机型:UD-2300", "alias": "2300血球仪"}, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("加别名状态码 = %d, 想 201", res.StatusCode)
+	}
+
+	// 建一张 Bug 反馈模板工单（维度字段留空），发一条带「可填写说明」的链接。
+	created := s.Do(t, web, http.MethodPost, "/api/v1/tickets", map[string]any{
+		"template": "bug-report",
+		"title":    "UD-2300 质控时报警 E-203",
+		"fields":   map[string]string{"哪台仪器？": "UD-2300", "什么时候发生的？": "今天上午 9 点左右"},
+	}, nil)
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("建单状态码 = %d", created.StatusCode)
+	}
+	var createBody struct {
+		Number string `json:"number"`
+	}
+	tbtest.DecodeJSON(t, created, &createBody)
+
+	link := s.CreateGuestLink(t, web, createBody.Number, map[string]any{
+		"note": "检验科-张三", "valid_days": 30, "can_edit_brief": true,
+	})
+	guest := s.GuestClient(link.Key(t))
+
+	var view ticketResponseBody
+	got := s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+createBody.Number, nil, &view)
+	if got.StatusCode != http.StatusOK {
+		t.Fatalf("访客读工单状态码 = %d, 想 200", got.StatusCode)
+	}
+	if view.Brief.TemplateFields == nil {
+		t.Fatal("模板工单应带 brief.template_fields")
+	}
+	model := findField(t, view.Brief.TemplateFields, "哪台仪器？")
+	if model.Type != "dimension" {
+		t.Fatalf("「哪台仪器？」应是维度字段：%+v", model)
+	}
+	assertContains(t, model.Options, "UD-2300")
+	assertContains(t, model.Options, "BM-10vet")
+	if len(model.Options) == 0 || model.Options[len(model.Options)-1] != "不确定" {
+		t.Errorf("候选值末尾应是「不确定」，得到 %v", model.Options)
+	}
+	if got := model.OptionAliases["UD-2300"]; len(got) != 1 || got[0] != "2300血球仪" {
+		t.Errorf("UD-2300 的别名 = %v, 想 [2300血球仪]", got)
+	}
+}
+
+// 匿名读反馈入口：模板的维度字段同样带候选值、「不确定」与别名（提交页
+// 的下拉框按别名搜索；字典端点仅成员可用，别名随入口视图下发）。
+func Test匿名读入口模板维度字段带别名(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+
+	res := s.Do(t, web, http.MethodPost, "/api/v1/labels/aliases",
+		map[string]any{"label": "机型:UD-2300", "alias": "2300血球仪"}, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("加别名状态码 = %d, 想 201", res.StatusCode)
+	}
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+
+	var view intakeView
+	anon := s.NewClient()
+	got := s.Do(t, anon, http.MethodGet, "/api/v1/intakes/bug", nil, &view)
+	if got.StatusCode != http.StatusOK {
+		t.Fatalf("匿名读入口状态码 = %d, 想 200", got.StatusCode)
+	}
+	model := findField(t, view.Template.Fields, "哪台仪器？")
+	assertContains(t, model.Options, "UD-2300")
+	if len(model.Options) == 0 || model.Options[len(model.Options)-1] != "不确定" {
+		t.Errorf("候选值末尾应是「不确定」，得到 %v", model.Options)
+	}
+	if got := model.OptionAliases["UD-2300"]; len(got) != 1 || got[0] != "2300血球仪" {
+		t.Errorf("UD-2300 的别名 = %v, 想 [2300血球仪]", got)
+	}
+
+	// 成员读模板视图同样带别名（与入口视图同一结构）。
+	var tpl templateBody
+	s.Do(t, web, http.MethodGet, "/api/v1/templates/bug-report", nil, &tpl)
+	m2 := findField(t, tpl.Fields, "哪台仪器？")
+	if got := m2.OptionAliases["UD-2300"]; len(got) != 1 || got[0] != "2300血球仪" {
+		t.Errorf("模板视图里 UD-2300 的别名 = %v, 想 [2300血球仪]", got)
+	}
+}
+
+// findField 在字段定义里按标题（问句原文）找字段。
+func findField(t testing.TB, fields []templateFieldBody, title string) templateFieldBody {
+	t.Helper()
+	for _, f := range fields {
+		if f.Title == title {
+			return f
+		}
+	}
+	t.Fatalf("找不到字段 %q：%+v", title, fields)
+	return templateFieldBody{}
 }
