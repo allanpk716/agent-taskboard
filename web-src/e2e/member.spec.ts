@@ -136,10 +136,23 @@ async function createTicketViaAgent(
   return (await res.json()).number
 }
 
-// 3. 派活到验收（验收标准 1）：A 建单并指派给 B；B 在收件箱看到「新指派给你」，
-//    打开后交付；A 在收件箱看到「已交付，待你验收」，验收通过以「完成」关闭。
-test('派活到验收：A建单指派B，B收件箱交付，A验收关闭', async ({ page, request }) => {
-  const number = await createTicket(request, { title: '给王工的派活工单', assignee: '王工' })
+// 3. 派活到验收（验收标准 1）：A 在网页上建单并指派给 B；B 在收件箱看到
+//    「新指派给你」，打开后交付；A 在收件箱看到「已交付，待你验收」，验收通过
+//    以「完成」关闭。全程走网页。
+test('派活到验收：A建单指派B，B收件箱交付，A验收关闭', async ({ page }) => {
+  // A（管理员）建单并指派给 B（王工），拿到 share_text 里的编号
+  await login(page, ADMIN)
+  await page.locator('.b-tabs').getByRole('link', { name: '建单' }).click()
+  await page.getByText('自由格式').click()
+  await page.getByLabel('标题').fill('给王工的派活工单')
+  await page.getByLabel('说明').fill('把对照表整理一份，周五前交。')
+  await page.getByLabel('标签输入').fill('机型:SL-1000')
+  await page.getByRole('button', { name: '添加', exact: true }).click()
+  await page.getByLabel('指派给').selectOption('王工')
+  await page.getByRole('button', { name: '创建工单' }).click()
+  await expect(page.locator('.donet')).toContainText('已创建')
+  const shareText = (await page.locator('.linkbox').textContent()) ?? ''
+  const number = shareText.match(/\/t\/(\d{8}-\d+)/)![1]
 
   // B（王工）登录：收件箱出现「新指派给你」
   await login(page, WANG)
@@ -288,4 +301,80 @@ test('详情页打标签改派关闭与重开', async ({ page, request }) => {
   await page.locator('.actrow').getByRole('button', { name: /重开/ }).click()
   await page.locator('.modal').getByRole('button', { name: '重新开启' }).click()
   await expect(page.locator('.badge.myturn, .badge.waiting').first()).toBeVisible()
+})
+
+// 7. 建单（自由格式）：缺维度标签被拦下，补上后创建成功并指派，
+//    完成页显示可复制的 share_text。
+test('建单（自由格式）：缺维度标签被拦，指派后显示 share_text', async ({ page }) => {
+  await login(page, ADMIN)
+  await page.locator('.b-tabs').getByRole('link', { name: '建单' }).click()
+
+  // 第一步：选「自由格式」
+  await page.getByText('自由格式').click()
+
+  // 标题 + 说明 + 一个不带维度的标签（先不足以提交）
+  await page.getByLabel('标题').fill('给王工的紧急任务')
+  await page.getByLabel(/说明/).fill('把对照表整理一份，周五前交。')
+  await page.getByLabel('标签输入').fill('待初筛')
+  await page.getByRole('button', { name: '添加', exact: true }).click()
+  await expect(page.locator('.lblrow .chip')).toContainText('待初筛')
+
+  // 只有普通标签：提交被 dimension_label_required 拦下
+  await page.getByRole('button', { name: '创建工单' }).click()
+  await expect(page.locator('.errbox')).toContainText('dimension_label_required')
+
+  // 补一个维度标签（写别名 1680，自动换成标准值 机型:US-1680），
+  // 指派给王工后创建成功
+  await page.getByLabel('标签输入').fill('1680')
+  await page.getByRole('button', { name: '添加', exact: true }).click()
+  await expect(page.locator('.lblrow .chip').filter({ hasText: '机型:US-1680' })).toBeVisible()
+  await page.getByLabel('指派给').selectOption('王工')
+  await page.getByRole('button', { name: '创建工单' }).click()
+
+  // 完成页：编号、share_text 与复制按钮
+  await expect(page.locator('.donet')).toContainText('已创建')
+  const share = page.locator('.linkbox')
+  await expect(share).toContainText('王工')
+  await expect(share).toContainText('让你的 Agent')
+  const shareText = ((await share.textContent()) ?? '').trim()
+  expect(shareText).toMatch(/\/t\/\d{8}-\d{3}/)
+
+  // share_text 里的编号能打开
+  const number = shareText.match(/\/t\/(\d{8}-\d+)/)![1]
+  await page.getByRole('button', { name: '打开工单' }).click()
+  await expect(page).toHaveURL(new RegExp(`/t/${number}$`))
+  await expect(page.getByRole('heading', { name: '给王工的紧急任务' })).toBeVisible()
+})
+
+// 8. 建单（模板）：缺必填项弹出确认（只提醒不拦截），仍然创建后逐项提示。
+test('建单（模板）：缺必填项弹出确认，仍创建后逐项提示', async ({ page }) => {
+  await login(page, ADMIN)
+  await page.locator('.b-tabs').getByRole('link', { name: '建单' }).click()
+
+  // 第一步：选模板「Bug 反馈」
+  await page.locator('.tplpick', { hasText: 'Bug 反馈' }).click()
+  await expect(page.getByText('哪台仪器？')).toBeVisible()
+
+  // 只填标题和一个维度字段，其余必填留空
+  await page.getByLabel('标题').fill('BM-10vet 质控偏低')
+  await page.getByLabel('哪台仪器？').selectOption('BM-10vet')
+
+  // 维度标签：选中的机型值自动成为标签；但建单请求仍要显式维度标签吗？
+  // 模板的维度字段值会自动并入标签，无需手填。
+  await page.getByRole('button', { name: '创建工单' }).click()
+
+  // 弹出「还有必填项没填」确认框，列出未填的必填字段
+  const confirm = page.locator('.modal')
+  await expect(confirm).toContainText('还有必填项没填')
+  await expect(confirm.locator('.misslist li').first()).toBeVisible()
+  await confirm.getByRole('button', { name: '仍然创建' }).click()
+
+  // 创建成功；完成页提示必填未填的项（已按约定放行）
+  await expect(page.locator('.donet')).toContainText('已创建')
+  await expect(page.locator('.warnbox')).toContainText('必填未填')
+
+  // 打开工单：说明气泡按字段显示，未填的显示（未填写），机型值同时进了标签
+  await page.getByRole('button', { name: '打开工单' }).click()
+  await expect(page.locator('[data-bubble="brief"]')).toContainText('BM-10vet')
+  await expect(page.getByText('（未填写）').first()).toBeVisible()
 })
