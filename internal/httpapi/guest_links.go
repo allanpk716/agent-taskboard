@@ -97,7 +97,7 @@ func (a *API) createGuestLink(w http.ResponseWriter, r *http.Request, ref string
 			return
 		}
 		writeJSON(w, http.StatusCreated, guestLinkView{
-			ID: link.ID, URL: "/g/" + link.Key, Note: link.Note,
+			ID: link.ID, URL: a.absURL("/g/" + link.Key), Note: link.Note,
 			ExpiresAt: link.ExpiresAt.Format(time.RFC3339Nano), CanEditBrief: link.CanEditBrief,
 		})
 	})

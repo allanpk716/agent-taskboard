@@ -564,7 +564,8 @@ spec 用户故事 84），没有 `inbox`：
   都不填时默认 30 天，**没有永久有效的选项**（显式 `valid_days: 0`、非法天数、
   `expires_at` 不晚于现在或格式错误分别返回 422 `invalid_valid_days` /
   `invalid_expires_at`）。`can_edit_brief` 授予「可填写说明」权限（默认 false）。
-- 创建成功 `201`：`{id, url: "/g/<密钥>", note, expires_at, can_edit_brief}`。
+- 创建成功 `201`：`{id, url: "/g/<密钥>", note, expires_at, can_edit_brief}`。配置了
+  `[server] public_url` 时 `url` 是绝对地址（`https://…/g/<密钥>`，评审 P2-7）。
   完整密钥只在创建响应里出现一次（库中只存 SHA-256 哈希）；列表项是
   `{id, note, expires_at, revoked_at?, can_edit_brief, created_by, created_at}`。
 - 创建、撤销、延期各记一条时间线事件（`guest_link_created` / `guest_link_revoked` /
@@ -687,8 +688,9 @@ spec 用户故事 84），没有 `inbox`：
     字典里 `422 unknown_label_value`（附 `suggestions`）。
   - 提交**不要求**维度标签（GLOSSARY：入口提交是「至少一个维度标签」的唯一例外）；
     模板预设标签与维度字段选中的值自动打上。
-  - 成功 `201`：`{ticket: {number, seq, title, url}, guest_link: {url: "/g/<密钥>",
-    note, expires_at, can_edit_brief: true}, next}`。密钥只在提交响应里出现一次。
+  - 成功 `201`：`{ticket: {number, seq, title, url}, guest_link: {url, note, expires_at,
+    can_edit_brief: true}, next}`；`guest_link.url` 是 `/g/<密钥>`（配置了
+    `[server] public_url` 时为绝对地址，评审 P2-7）。密钥只在提交响应里出现一次。
     工单类型由模板决定（恒为 `report`）；编号与序号的分配同建单。
 - 提交者**视同说明的创建者**：工单的创建者记录为访客（带链接备注
   `反馈入口「<名称>」提交人` 与自报的 `author_name`）；`viewer.role` 为 `creator`，

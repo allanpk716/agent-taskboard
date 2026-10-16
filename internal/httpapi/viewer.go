@@ -122,6 +122,16 @@ func webSessionFromRequest(w http.ResponseWriter, viewer identity.Viewer) bool {
 	return true
 }
 
+// absURL 把站内相对路径变成回给用户的地址：配置了 [server] public_url 时
+// 用它拼绝对地址（结尾斜杠容忍），否则原样返回相对路径（评审 P2-7）。
+func (a *API) absURL(path string) string {
+	base := strings.TrimRight(a.cfg.Server.PublicURL, "/")
+	if base == "" {
+		return path
+	}
+	return base + path
+}
+
 // bearerToken 取出 Authorization: Bearer <token> 里的 token。
 func bearerToken(r *http.Request) (string, bool) {
 	h := r.Header.Get("Authorization")

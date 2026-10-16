@@ -24,7 +24,7 @@ import {
 } from './memberApi'
 import { BriefBubble, EventLine, ReplyBubble } from '../shared/conversation'
 import { Lightbox } from '../shared/widgets'
-import { authorName, closeReasonText, fmtDateCN } from '../shared/format'
+import { absoluteUrl, authorName, closeReasonText, fmtDateCN } from '../shared/format'
 import { Confirm, Modal, copyText, invalidate, nav, toast } from './ui'
 import { LabelChips, chipClass } from './TicketsPage'
 
@@ -375,11 +375,13 @@ function LinksDialog({
       {created && (
         <div className="okbox">
           ✓ 已创建（完整链接只在创建时出现一次）。
-          <div className="linkbox">{created.url}</div>
+          <div className="linkbox">{absoluteUrl(created.url)}</div>
           <button
             className="btn sm"
             onClick={() => {
-              void copyText(created.url).then((ok) => toast(ok ? '✓ 已复制到剪贴板' : '复制失败，请手动选择文字复制'))
+              // 复制出去的链接必须能直接打开：API 给了绝对地址就用它，
+              // 相对路径用当前页面的 origin 拼绝对（评审 P2-7）。
+              void copyText(absoluteUrl(created.url)).then((ok) => toast(ok ? '✓ 已复制到剪贴板' : '复制失败，请手动选择文字复制'))
             }}
           >
             复制链接

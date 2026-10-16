@@ -16,6 +16,8 @@ type Config struct {
 	Port int `toml:"port"`
 	// WebDir 是前端静态文件目录（构建产物）。
 	WebDir string `toml:"web_dir"`
+	// Server 是对外地址等部署侧配置。
+	Server Server `toml:"server"`
 	// Attachments 是附件上限（#33；默认值见 ApplyDefaults，
 	// 上限以 docs/deploy-and-release.md「附件上限与显示」为准）。
 	Attachments Attachments `toml:"attachments"`
@@ -24,6 +26,15 @@ type Config struct {
 	Backup Backup `toml:"backup"`
 	// Update 是更新源配置（#45；sources 为空时不检查更新）。
 	Update Update `toml:"update"`
+}
+
+// Server 是 [server] 小节：部署对外信息。
+type Server struct {
+	// PublicURL 是用户访问本平台的对外根地址（如 https://taskboard.urithub.com，
+	// 不带结尾斜杠）。配置后回给用户的访客链接与 share_text 用绝对地址，
+	//「复制链接」拿到即可发送（评审 P2-7）；留空（默认）时保持相对路径，
+	// 前端复制时用当前页面的 origin 拼绝对地址。
+	PublicURL string `toml:"public_url"`
 }
 
 // Attachments 是 [attachments] 小节：服务端只检查上限，不压缩图片

@@ -13,7 +13,7 @@ import { clearFormDraft, intakeDraftKey, loadAuthor, loadFormDraft, saveAuthor, 
 import { guestApi } from './guestApi'
 import type { IntakeSubmitResult, IntakeView, MissingFieldHint, TemplateField } from '../shared/types'
 import { uploadAttachment } from './upload'
-import { fmtDateCN } from '../shared/format'
+import { fmtDateCN, absoluteUrl } from '../shared/format'
 
 const RETRY_FIRST_MS = 1500
 const RETRY_MS = 4000
@@ -232,7 +232,7 @@ export function IntakePage({ slug }: { slug: string }) {
     )
   }
   if (phase.kind === 'done') {
-    const url = new URL(phase.result.guest_link.url, window.location.origin).href
+    const url = absoluteUrl(phase.result.guest_link.url)
     return (
       <main className="guest-root">
         <div className="full intake-done">

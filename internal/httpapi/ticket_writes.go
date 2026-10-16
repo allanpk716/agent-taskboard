@@ -324,7 +324,7 @@ func (a *API) assignTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		}
 		// 改派给自己不需要通知，share_text 为空。
 		if result.AssigneeID != viewer.Member.ID {
-			share := reassignShareText(result.AssigneeName, result.Title, result.Number)
+			share := a.reassignShareText(result.AssigneeName, result.Title, result.Number)
 			view.ShareText = &share
 		}
 		writeJSON(w, http.StatusOK, view)

@@ -166,13 +166,14 @@ test('详情页创建访客链接并复制', async ({ page, request }) => {
   await page.getByLabel('备注').fill('检验科-张三')
   await page.getByRole('button', { name: '创建', exact: true }).click()
 
-  // 链接只出现一次：显示在链接框里，复制后剪贴板内容一致
+  // 链接只出现一次：显示在链接框里，复制后剪贴板内容一致。显示与复制的都是
+  // 绝对地址（服务端没配 public_url，用当前页面的 origin 拼出，评审 P2-7）。
   const linkText = await page.locator('.linkbox').textContent()
-  expect(linkText).toMatch(/^\/g\/tbg_/)
+  expect(linkText).toMatch(/^https?:\/\/127\.0\.0\.1:\d+\/g\/tbg_/)
   await page.getByRole('button', { name: '复制链接' }).click()
   await expect(page.getByText('已复制')).toBeVisible()
   const clip = await page.evaluate(() => navigator.clipboard.readText())
-  expect(clip).toMatch(/^\/g\/tbg_/)
+  expect(clip).toMatch(/^https?:\/\/127\.0\.0\.1:\d+\/g\/tbg_/)
   expect(clip.trim()).toBe(linkText!.trim())
 
   // 创建事件记入时间线；复制出的链接真的能打开（访客页显示工单标题）

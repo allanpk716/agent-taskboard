@@ -186,7 +186,7 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 			res.Assignee = &memberRef{ID: full.AssigneeID, Name: full.AssigneeName}
 			// 指派给他人时才附一句可转发的 share_text（自派自不需要通知自己）。
 			if full.AssigneeID != full.Creator.MemberID {
-				share := createShareText(full.AssigneeName, full.Title, full.Number)
+				share := a.createShareText(full.AssigneeName, full.Title, full.Number)
 				res.ShareText = &share
 			}
 		}
@@ -194,15 +194,16 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// createShareText 是建单指派时的可转发文案（原型的句子）。
-func createShareText(assigneeName, title, number string) string {
-	return assigneeName + "：给你派了一张工单「" + title + "」，让你的 Agent 读一下 /t/" +
-		number + "（它也会出现在你的收件箱里）"
+// createShareText 是建单指派时的可转发文案（原型的句子）。工单地址用
+// absURL：配置了 public_url 时是绝对地址（评审 P2-7），否则保持 /t/<编号>。
+func (a *API) createShareText(assigneeName, title, number string) string {
+	return assigneeName + "：给你派了一张工单「" + title + "」，让你的 Agent 读一下 " +
+		a.absURL("/t/"+number) + "（它也会出现在你的收件箱里）"
 }
 
 // reassignShareText 是改派时的可转发文案。
-func reassignShareText(assigneeName, title, number string) string {
-	return assigneeName + "：工单「" + title + "」转给你了，让你的 Agent 读一下 /t/" + number
+func (a *API) reassignShareText(assigneeName, title, number string) string {
+	return assigneeName + "：工单「" + title + "」转给你了，让你的 Agent 读一下 " + a.absURL("/t/"+number)
 }
 
 // readTicket 处理 GET /api/v1/tickets/{id}[?format=markdown]。访客链接只能

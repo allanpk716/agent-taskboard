@@ -266,7 +266,7 @@ func (a *API) submitToIntake(w http.ResponseWriter, r *http.Request, slug string
 			},
 			Next: "之后用这条访客链接查看这张反馈、补充说明和回复；请收藏链接（也可以把它交给你的 Agent 作 Bearer token）",
 		}
-		view.GuestLink.URL = "/g/" + result.LinkKey
+		view.GuestLink.URL = a.absURL("/g/" + result.LinkKey)
 		view.GuestLink.Note = result.LinkNote
 		view.GuestLink.ExpiresAt = result.ExpiresAt.Format(time.RFC3339Nano)
 		view.GuestLink.CanEditBrief = true

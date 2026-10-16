@@ -194,8 +194,9 @@ payload/{name}        # 产物本身（后端是两个二进制，前端是 web 
    - 用 NSSM 注册 caddy 服务，启动参数用 `caddy run`，**不要用 `caddy start`**；在防火墙上开放 80 和 443 端口；
    - 日志里出现 `certificate obtained successfully` 后，用 `curl` 验证返回 200。
 3. 前提是 VM 能访问公网，签发和续期证书要连 Let's Encrypt 和阿里云 API。公司软路由已有 `urithub.com` 的直连规则。
-4. 创建管理员账号。
-5. 配置备份目标，手动执行一次 `taskboard backup`，确认管理页显示备份成功。然后做一次恢复演练（见「备份与恢复」）。
+4. 在 `config.toml` 里配置 `[server] public_url = "https://taskboard.urithub.com"`：API 回给用户的访客链接与 share_text 用绝对地址，网页上「复制链接」拿到即可发送；留空时回相对路径，前端复制时用当前页面的地址拼绝对（评审 P2-7）。
+5. 创建管理员账号。
+6. 配置备份目标，手动执行一次 `taskboard backup`，确认管理页显示备份成功。然后做一次恢复演练（见「备份与恢复」）。
 
 ## 备份与恢复
 

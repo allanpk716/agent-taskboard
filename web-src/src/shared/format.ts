@@ -17,6 +17,12 @@ export function fmtSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+/** 站内地址 → 能直接发给别人打开的绝对地址（评审 P2-7）：API 已给绝对
+ *  地址（服务端配了 public_url）就原样返回；相对路径用当前页面的 origin 拼出。 */
+export function absoluteUrl(path: string): string {
+  return new URL(path, window.location.origin).href
+}
+
 /** 关闭原因文案。 */
 export function closeReasonText(reason?: string | null): string {
   switch (reason) {
