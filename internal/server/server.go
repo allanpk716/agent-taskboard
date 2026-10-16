@@ -16,6 +16,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/labels"
+	"github.com/allanpk716/agent-taskboard/internal/ops"
 	"github.com/allanpk716/agent-taskboard/internal/store"
 	"github.com/allanpk716/agent-taskboard/internal/templates"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
@@ -24,10 +25,11 @@ import (
 
 // Server 是一个运行中的 taskboard 服务实例。
 type Server struct {
-	cfg   config.Config
-	Ident *identity.Manager
-	Store *store.Store
-	Atts  *attachments.Manager
+	cfg     config.Config
+	Ident   *identity.Manager
+	Store   *store.Store
+	Atts    *attachments.Manager
+	Backups *ops.Backups
 
 	handler  http.Handler
 	web      *webapp.Handler
@@ -53,8 +55,16 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	if err := templateDict.SeedIfEmpty(context.Background()); err != nil {
 		return nil, fmt.Errorf("导入预置模板失败：%w", err)
 	}
+	backups, err := ops.NewBackups(st.DB, cfg.DataDir, ops.BackupOptions{
+		Target: cfg.Backup.Target, DailyAt: cfg.Backup.DailyAt,
+		KeepDaily: cfg.Backup.KeepDaily, KeepMonthly: cfg.Backup.KeepMonthly,
+		KeepPreupdate: cfg.Backup.KeepPreupdate,
+	}, c)
+	if err != nil {
+		return nil, err
+	}
 	api := httpapi.NewAPI(ident, tickets.NewManager(st.DB, c, labelDict, templateDict, atts),
-		templateDict, idempotency.NewManager(st.DB), atts)
+		templateDict, idempotency.NewManager(st.DB), atts, backups)
 	web, err := webapp.New(cfg.WebDir)
 	if err != nil {
 		return nil, err
@@ -69,6 +79,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 		Ident:   ident,
 		Store:   st,
 		Atts:    atts,
+		Backups: backups,
 		handler: mux,
 		web:     web,
 	}, nil
@@ -78,12 +89,16 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 func (s *Server) Handler() http.Handler { return s.handler }
 
 // Serve 在 ln 上对外服务，直到 Shutdown 或关闭连接。服务期间周期运行附件
-// 清除任务（未引用满 24 小时的待用附件；时钟可注入，见 internal/attachments）。
+// 清除任务（未引用满 24 小时的待用附件；时钟可注入，见 internal/attachments）
+// 和备份调度（每天 daily_at；备份时刻同样由注入时钟决定，见 internal/ops）。
 func (s *Server) Serve(ln net.Listener) error {
 	s.listener = ln
 	s.httpSrv = &http.Server{Handler: s.handler}
 	janitorDone := make(chan struct{})
+	backupDone := make(chan struct{})
 	go s.runAttachmentJanitor(janitorDone)
+	go s.Backups.RunSchedule(backupDone, ops.DefaultScheduleTick)
+	defer func() { close(backupDone) }()
 	defer func() { close(janitorDone) }()
 	defer s.web.Close()
 	err := s.httpSrv.Serve(ln)

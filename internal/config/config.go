@@ -19,6 +19,9 @@ type Config struct {
 	// Attachments 是附件上限（#33；默认值见 ApplyDefaults，
 	// 上限以 docs/deploy-and-release.md「附件上限与显示」为准）。
 	Attachments Attachments `toml:"attachments"`
+	// Backup 是备份配置（#43；默认每天 03:00，保留 30 份每日、12 份每月、
+	// 5 份更新前备份；target 用 UNC 路径，空则存 data_dir\backups\）。
+	Backup Backup `toml:"backup"`
 }
 
 // Attachments 是 [attachments] 小节：服务端只检查上限，不压缩图片
@@ -32,6 +35,22 @@ type Attachments struct {
 	MaxImagesPerPost int `toml:"max_images_per_post"`
 	// MaxTicketMB 是整张工单附件合计的上限（MB），待用附件也计入。
 	MaxTicketMB int `toml:"max_ticket_mb"`
+}
+
+// Backup 是 [backup] 小节：备份目标与保留策略（#43，docs/deploy-and-release.md
+// 「备份与恢复」）。
+type Backup struct {
+	// Target 是备份目标（UNC 路径，如 '\\\\nas01\\taskboard-backup'）；
+	// 空串时存到 data_dir\backups\，管理页提示“备份未离开本机”。
+	Target string `toml:"target"`
+	// DailyAt 是每日定时备份的时刻（北京时间，"HH:MM"）。
+	DailyAt string `toml:"daily_at"`
+	// KeepDaily 是每日备份的保留份数。
+	KeepDaily int `toml:"keep_daily"`
+	// KeepMonthly 是每月备份（每月 1 日那份）的保留份数。
+	KeepMonthly int `toml:"keep_monthly"`
+	// KeepPreupdate 是更新前备份的保留份数。
+	KeepPreupdate int `toml:"keep_preupdate"`
 }
 
 // Load 从 path 读取配置并补默认值。
@@ -70,5 +89,17 @@ func ApplyDefaults(cfg *Config) {
 	}
 	if cfg.Attachments.MaxTicketMB == 0 {
 		cfg.Attachments.MaxTicketMB = 50
+	}
+	if cfg.Backup.DailyAt == "" {
+		cfg.Backup.DailyAt = "03:00"
+	}
+	if cfg.Backup.KeepDaily == 0 {
+		cfg.Backup.KeepDaily = 30
+	}
+	if cfg.Backup.KeepMonthly == 0 {
+		cfg.Backup.KeepMonthly = 12
+	}
+	if cfg.Backup.KeepPreupdate == 0 {
+		cfg.Backup.KeepPreupdate = 5
 	}
 }

@@ -660,3 +660,34 @@ spec 用户故事 84），没有 `inbox`：
 - 入口提交同样支持 `Idempotency-Key`（匿名凭证按同一 key 去重，重放返回首次结果）。
 - 管理端点仅限成员；访客 403 `members_only`（hint 指向入口地址），匿名 401。
 
+
+## 备份状态（#43）
+
+| 方法与路径 | 说明 |
+|---|---|
+| `GET /api/v1/admin/backups` | 备份状态（仅管理员；访客/普通成员 403 `admin_required`，匿名 401）。 |
+
+响应结构：
+
+```json
+{
+  "local_only": true,
+  "last_success_at": "2026-10-16T03:00:05+08:00",
+  "overdue": false,
+  "overdue_after_hours": 36,
+  "last_failure": null,
+  "records": [
+    {"at": "2026-10-16T03:00:05+08:00", "kind": "daily", "filename": "taskboard-20261016-030005-daily.db",
+     "size": 192512, "integrity_ok": true, "files_added": 2, "success": true}
+  ]
+}
+```
+
+- `local_only` 为 `true` 表示没有配置备份目标（备份都在本机 `data_dir\backups\`），
+  管理页据此显示「备份未离开本机」。
+- `overdue` 为 `true` 表示最近一次成功备份已超过 `overdue_after_hours`（36）小时，
+  或从未成功过；管理页据此标红。
+- `records` 是最近 20 条备份记录（新→旧），失败记录带 `error` 字段与
+  `success: false`（含目标连不上、完整性校验未通过等）。
+- 手动备份走命令行 `taskboard backup`（与定时备份、更新前备份共用同一段代码），
+  不提供 HTTP 触发；更新流程的「更新前备份」由 #45 的更新接口触发。
