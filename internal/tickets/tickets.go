@@ -205,13 +205,14 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (Ticket, []FieldWa
 		snapshot = &template.Snapshot{Key: tmpl.Key, Version: tmpl.Version, Definition: tmpl.Definition}
 		for _, f := range tmpl.Fields {
 			v := strings.TrimSpace(in.Fields[f.Key])
-			if f.Required && v == "" {
-				warnings = append(warnings, FieldWarning{Field: f.Key, Message: "必填项未填写"})
-			}
 			// 维度字段选中的值同时成为标签；「不确定」不打标签（决议 6）。
 			if f.Type == template.TypeDimension && v != "" && v != template.UnsureOption {
 				in.Labels = append(in.Labels, f.Dimension+":"+v)
 			}
+		}
+		// 必填校验是模板模块的纯逻辑（「不确定」非空、算已填）。
+		for _, key := range template.MissingRequired(in.Fields, tmpl.Fields) {
+			warnings = append(warnings, FieldWarning{Field: key, Message: "必填项未填写"})
 		}
 		// 模板的预设标签自动打上。
 		in.Labels = append(in.Labels, tmpl.PresetLabels...)
