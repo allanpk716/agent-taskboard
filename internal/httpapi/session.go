@@ -39,6 +39,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/tickets", a.handleTicketsRoot)
 	mux.HandleFunc("/api/v1/tickets/", a.handleTicketRef)
 	mux.HandleFunc("/api/v1/inbox", a.handleInbox)
+	mux.HandleFunc("/api/v1/members", a.handleMembers)
 	mux.HandleFunc("/api/v1/labels", a.handleLabelsRoot)
 	mux.HandleFunc("/api/v1/labels/", a.handleLabelsSub)
 	mux.HandleFunc("/api/v1/attachments/", a.handleAttachmentDownload)

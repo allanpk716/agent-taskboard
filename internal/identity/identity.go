@@ -89,6 +89,29 @@ func (m *Manager) createMember(ctx context.Context, username, name, password str
 	return member, nil
 }
 
+// ListMembers 列出全部成员（按 id）。成员网页（#41）的指派下拉用它；
+// 账号的创建与停用（写接口）在 #42。
+func (m *Manager) ListMembers(ctx context.Context) ([]Member, error) {
+	rows, err := m.db.QueryContext(ctx, `SELECT id, username, name, is_admin FROM members ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	members := []Member{}
+	for rows.Next() {
+		var (
+			mem     Member
+			isAdmin int
+		)
+		if err := rows.Scan(&mem.ID, &mem.Username, &mem.Name, &isAdmin); err != nil {
+			return nil, err
+		}
+		mem.IsAdmin = isAdmin == 1
+		members = append(members, mem)
+	}
+	return members, rows.Err()
+}
+
 // Login 校验用户名和密码，成功则创建一条会话。
 func (m *Manager) Login(ctx context.Context, username, password string) (Session, error) {
 	var (
