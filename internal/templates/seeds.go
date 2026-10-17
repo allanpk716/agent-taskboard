@@ -25,6 +25,10 @@ func (m *Manager) SeedIfEmpty(ctx context.Context) error {
 	return nil
 }
 
+// presetBugReportKey 是预置 Bug 反馈模板的 key：种子导入（SeedIfEmpty）与
+// 一次性升级（UpgradePresetBugReport）共用。
+const presetBugReportKey = "bug-report"
+
 // seedTemplates 是三份预置模板的原文（运行时数据，上线后可以随时修改）。
 // Bug 反馈字段取 #12 的推荐清单（per-ticket 笔记），措辞参考 prototype/guest-web
 // 的假数据；分配任务的六字段与「给 Agent 的说明」来自 prototype/member-handoff。
@@ -32,7 +36,7 @@ func (m *Manager) SeedIfEmpty(ctx context.Context) error {
 // prototype/guest-fill 的 c.html 写；线上没改过的旧版本由 UpgradePresetBugReport
 // 一次性升级。
 var seedTemplates = map[string]string{
-	"bug-report": `---
+	presetBugReportKey: `---
 名称: Bug 反馈
 类型: 反馈
 预设标签: [待初筛]
