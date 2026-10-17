@@ -318,7 +318,12 @@ func Test命令行更新哈希不符时拒绝(t *testing.T) {
 	src, _ := newFakeUpdateSource(t, "1.2.3", "1.4.0", "1.0.0")
 	f.writeConfig(updateTomlGitHub(src.server.URL))
 
-	for _, corrupt := range []string{"taskboard.exe", "taskboard-web-1.4.0.zip"} {
+	// 篡改当前平台实际会下载的后端产物（Linux 上取的是 taskboard-linux-amd64）。
+	serverArtifact := "taskboard.exe"
+	if runtime.GOOS != "windows" {
+		serverArtifact = "taskboard-linux-amd64"
+	}
+	for _, corrupt := range []string{serverArtifact, "taskboard-web-1.4.0.zip"} {
 		src.corrupt[corrupt] = true
 		out, err := runUpdate(f)
 		if err == nil {
