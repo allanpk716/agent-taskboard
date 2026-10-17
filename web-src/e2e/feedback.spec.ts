@@ -10,8 +10,8 @@ test('请人反馈：向导生成链接，完成页可复制，访客能打开',
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
   await login(page, ADMIN)
 
-  // 收件箱顶部的卡片「有人要反馈问题？」
-  await expect(page.getByText('有人要反馈问题？')).toBeVisible()
+  // 收件箱顶部的卡片「有人要提反馈？」
+  await expect(page.getByText('有人要提反馈？')).toBeVisible()
   await page.getByRole('button', { name: '＋ 请人反馈' }).click()
   await expect(page.getByRole('heading', { name: '请人反馈' })).toBeVisible()
 
@@ -59,14 +59,14 @@ test('请人反馈：向导生成链接，完成页可复制，访客能打开',
   await expect(page.getByRole('button', { name: '回收件箱' })).toBeVisible()
 
   // 访客（不带成员会话）第一次打开链接先看到落地页（#66）：成员名 + 标题
-  // + 称呼预填链接备注；「只想留言」直接进对话页（这条链接带「可填写说明」）。
+  // + 称呼预填链接备注；「先不填，直接回复」直接进对话页（这条链接带「可填写说明」）。
   const guest = await newGuestPage(browser, linkUrl)
   const landing = guest.locator('.guest-landing')
   await expect(landing).toBeVisible()
-  await expect(landing.locator('.landing-lead')).toHaveText('管理员 请你补充一个问题的情况')
+  await expect(landing.locator('.landing-lead')).toHaveText('管理员 请你补充这张反馈的说明')
   await expect(landing.getByRole('heading', { name: 'UD-2300 质控时报警 E-203' })).toBeVisible()
   await expect(landing.getByLabel('你的称呼（管理员会看到）')).toHaveValue('检验科-张三')
-  await guest.getByRole('button', { name: '只想留言，不填了 →' }).click()
+  await guest.getByRole('button', { name: '先不填，直接回复 →' }).click()
   await expect(guest.locator('.link-meta')).toContainText('检验科-张三')
   await expect(guest.getByRole('button', { name: '✏ 修改说明' })).toBeVisible()
   await guest.context().close()

@@ -1,6 +1,6 @@
 // 「请人反馈」（#64）：一屏向导。两项必填——「请谁反馈」（作链接备注）和
 // 「什么事」（作工单标题）；单选让对方填哪份启用中的反馈类模板（默认 Bug
-// 反馈）或「自由描述」；有效期（7/30/90 天，默认 30）和跟进人（默认本人）
+// 反馈）或「自由格式」；有效期（7/30/90 天，默认 30）和跟进人（默认本人）
 // 收在折叠的「更多选项」里。点「生成链接」一次建好工单和带「可填写说明」
 // 权限的访客链接（服务端免维度标签）；完成页展示服务端生成的转发文案，
 // 可一键复制。视觉参考原型 prototype/feedback-wizard 的 a.html。
@@ -16,14 +16,14 @@ import {
 } from './memberApi'
 import { copyText, invalidate, nav, toast } from './ui'
 
-/** 反馈类模板 + 「自由描述」。「自由描述」是不用模板的哨兵选项（不出现在
+/** 反馈类模板 + 「自由格式」。「自由格式」是不用模板的哨兵选项（不出现在
  *  请求里：选中时建 kind=report 的无模板工单）。 */
 const NO_TEMPLATE_OPTION = '__free__'
 
-/** 「自由描述」选项（模板列表加载失败时也用它兜底）。 */
+/** 「自由格式」选项（模板列表加载失败时也用它兜底）。 */
 const FREE_FORM_OPTION: WizardOption = {
   key: NO_TEMPLATE_OPTION,
-  name: '自由描述',
+  name: '自由格式',
   desc: '对方写一整段情况说明，可以传日志和照片。',
 }
 
@@ -87,7 +87,7 @@ export function FeedbackRequestPage({ me }: { me: Me }) {
     }
   }, [])
 
-  // 模板选项：启用中的反馈类模板 + 自由描述；默认 Bug 反馈（不在时取第一项）。
+  // 模板选项：启用中的反馈类模板 + 自由格式；默认 Bug 反馈（不在时取第一项）。
   useEffect(() => {
     if (options !== null) return
     let alive = true
@@ -140,7 +140,7 @@ export function FeedbackRequestPage({ me }: { me: Me }) {
         guest_link: { note: who.trim(), valid_days: days, can_edit_brief: true },
       }
       if (tpl === NO_TEMPLATE_OPTION) {
-        // 自由描述：一张不用模板的反馈工单，说明为空（访客整块写）。
+        // 自由格式：一张不用模板的反馈工单，说明为空（访客整块写）。
         body.kind = 'report'
         body.brief_md = ''
       } else {

@@ -41,7 +41,7 @@ export function InboxPage() {
   return (
     <div className="bpage">
       <div className="mcard fr-card">
-        <div className="fr-title">有人要反馈问题？</div>
+        <div className="fr-title">有人要提反馈？</div>
         <div className="hint">写个标题和对方是谁，生成链接发给他，细节让他按引导补全。</div>
         <button
           className="btn big"
