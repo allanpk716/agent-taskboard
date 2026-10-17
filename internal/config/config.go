@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 
@@ -117,6 +118,11 @@ func Load(path string) (Config, error) {
 	}
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		return cfg, fmt.Errorf("解析 %s 失败：%w", path, err)
+	}
+	// 单反斜杠开头（\nas\share）在 Windows 上是“当前盘根下的目录”：备份会
+	// 悄悄留在本机，管理页却显示已离开本机（#46）。
+	if t := cfg.Backup.Target; strings.HasPrefix(t, `\`) && !strings.HasPrefix(t, `\\`) {
+		return cfg, fmt.Errorf(`解析 %s 失败：[backup] target = %q 只有一个反斜杠开头；UNC 路径要以 \\ 开头，如 '\\nas01\taskboard-backup'`, path, t)
 	}
 	ApplyDefaults(&cfg)
 	return cfg, nil

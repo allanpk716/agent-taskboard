@@ -3,9 +3,12 @@
 package ops_test
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -137,4 +140,26 @@ func Test调度循环随时钟推进自动备份(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("调度循环在 3 秒内没有执行备份")
+}
+
+// 定时备份失败要进服务日志：失败原因原先只写库，日志里一片安静，部署时
+// 只能登录管理页才看得到（#46）。
+func Test定时备份失败写日志(t *testing.T) {
+	var logBuf bytes.Buffer
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(os.Stderr)
+
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, _, _ := newBackups(t, filepath.Join(blocker, "backups")) // blocker 是文件，建不出目录
+
+	if !b.CheckSchedule(context.Background()) {
+		t.Fatal("应当尝试一次备份")
+	}
+	if out := logBuf.String(); !strings.Contains(out, "定时备份失败") || !strings.Contains(out, "blocker") {
+		t.Errorf("日志应记下失败与原因：%q", out)
+	}
 }
