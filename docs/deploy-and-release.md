@@ -185,18 +185,20 @@ payload/{name}        # 产物本身（后端是两个二进制，前端是 web 
 
 ## 首次部署（手动）
 
-1. 把 taskboard 安装到 UpdateHub 所在 VM 的 C: 上，把 `data_dir` 设为 D: 上的目录，用 NSSM 注册服务，监听 `127.0.0.1` 上的一个新端口。服务要以有备份共享写权限的账号运行（见「备份与恢复」）。
-2. HTTPS 照搬日报系统的做法：
+1. 部署在**日报系统所在的那台 Windows 服务器**上（2026-10-17 首次部署时定下；具体机器、IP、账号不写进仓库）。没有放在 UpdateHub 所在的 VM 上：那台 VM 在 Proxmox 的内部网桥后面，靠宿主机端口映射对外，80/443 没有映射；公司按 MAC 控制上网，VM 不能直接接入办公网。选机器时先确认它在办公网上**直接有 IP**，80/443 可用。
+2. 把 taskboard 装到 `C:\taskboard\`（`taskboard.exe`、`config.toml`、`web\`、`nssm.exe`），`data_dir` 设为 D: 上的目录，用 NSSM 注册服务，只监听 `127.0.0.1` 上的一个空闲端口。服务要以有备份共享写权限的账号运行（见「备份与恢复」）；NSSM 的退出动作保持默认的 Restart，更新时进程退出后才会被拉起新版本。服务器连不上 GitHub 时，首个版本在开发机构建后传上去即可，之后的更新走 UpdateHub。
+3. HTTPS 照搬日报系统的做法（同一台机器上已有 Caddy 时，只在 Caddyfile 里加一个站点块）：
    - 使用**带 alidns 插件**的 caddy.exe，官方版本不带这个插件；
    - 在阿里云 RAM 里给这个服务单独建一个子账号，只授予 `AliyunDNSFullAccess`；
-   - 在阿里云 DNS 上把 `taskboard.urithub.com` 的 A 记录指向 VM 的**内网 IP**；
+   - 在阿里云 DNS 上把 `taskboard.urithub.com` 的 A 记录指向这台服务器的**内网 IP**；
    - 编写 Caddyfile：域名、`tls { dns alidns {...} }`、`reverse_proxy 127.0.0.1:<port>`。用 `icacls` 限制文件权限，因为里面有密钥；
    - 用 NSSM 注册 caddy 服务，启动参数用 `caddy run`，**不要用 `caddy start`**；在防火墙上开放 80 和 443 端口；
+   - 已有 Caddy 时：先备份 Caddyfile，追加站点后用 `caddy validate` 校验，再 `caddy reload` 平滑生效（同机的其他站点不中断）；
    - 日志里出现 `certificate obtained successfully` 后，用 `curl` 验证返回 200。
-3. 前提是 VM 能访问公网，签发和续期证书要连 Let's Encrypt 和阿里云 API。公司软路由已有 `urithub.com` 的直连规则。
-4. 在 `config.toml` 里配置 `[server] public_url = "https://taskboard.urithub.com"`：API 回给用户的访客链接与 share_text 用绝对地址，网页上「复制链接」拿到即可发送；留空时回相对路径，前端复制时用当前页面的地址拼绝对（评审 P2-7）。
-5. 创建管理员账号。
-6. 配置备份目标，手动执行一次 `taskboard backup`，确认管理页显示备份成功。然后做一次恢复演练（见「备份与恢复」）。
+4. 前提是服务器能访问公网，签发和续期证书要连 Let's Encrypt 和阿里云 API。公司软路由已有 `urithub.com` 的直连规则。连 Let's Encrypt 时通时断是常态，Caddy 会自动重试，首次签发可能要等几分钟。
+5. 在 `config.toml` 里配置 `[server] public_url = "https://taskboard.urithub.com"`：API 回给用户的访客链接与 share_text 用绝对地址，网页上「复制链接」拿到即可发送；留空时回相对路径，前端复制时用当前页面的地址拼绝对（评审 P2-7）。
+6. 创建管理员账号：`taskboard create-admin -username <登录名> -name <显示名> -password <密码>`。成员账号由管理员在网页（或 `POST /api/v1/members`）创建。
+7. 配置备份目标，手动执行一次 `taskboard backup`，确认管理页显示备份成功。然后做一次恢复演练（见「备份与恢复」）。
 
 ## 备份与恢复
 
@@ -209,16 +211,17 @@ payload/{name}        # 产物本身（后端是两个二进制，前端是 web 
 - taskboard 进程内置定时任务，用 `VACUUM INTO` 做 SQLite 在线备份，不直接复制库文件。更新前备份与定时备份用的是同一段代码（`ops.Backups.Preupdate`，#45 的更新流程调用，失败时更新中止）。可以用 `taskboard backup` 手动触发（服务运行中也可以：在线备份）。
 - 每次备份的顺序是：导出数据库 → 同步附件镜像 → 对副本执行 `PRAGMA integrity_check` → 结果写库 → 清点既有副本并轮换。
 - 附件做增量镜像，只增不删（附件写入后不再修改，工单也不能删除）：镜像在目标下的 `attachments\` 目录，按文件名对齐主存储，已存在且同大小的跳过。
-- 每次备份还会顺手清点目标里既有的副本：发现损坏的（含人为损圵的）改名 `.bad`，不参与轮换。
+- 每次备份还会顺手清点目标里既有的副本：发现损坏的（含人为损坏的）改名 `.bad`，不参与轮换。
 
 **频率与保留**：数据库每天 03:00（`daily_at`，北京时间）备份一次。保留 30 份每日备份、12 份每月备份（取每月 1 日那份）和 5 份更新前备份。附件只保留一份镜像，不分版本。文件名形如 `taskboard-YYYYMMDD-HHMMSS-<daily|monthly|preupdate>.db`。服务启动时若发现最近一个定时时刻还没备份过（比如那个时刻服务没在跑），会立刻补做一次；同一时刻只补一次。手动 `taskboard backup` 按当天的日期归入 daily（1 日归入 monthly），参与同类轮换。
-
-**频率与保留**：数据库每天 03:00 备份一次。保留 30 份每日备份、12 份每月备份（取每月 1 日那份）和 5 份更新前备份。附件只保留一份镜像，不分版本。文件名形如 `taskboard-YYYYMMDD-HHMMSS-<daily|monthly|preupdate>.db`。
 
 **备份目标**：
 
 - 在 NAS 上新建一个专用共享（如 `taskboard-backup`），用 UNC 路径配置，不要放在数据目录下，否则会和数据一起丢失。
 - 映射的盘符对 Windows 服务不可见，所以要用 UNC 路径，并在 NSSM 中让服务以有该共享写权限的账号运行（服务属性 → 登录）。
+- NAS（群晖）是工作组账号，Windows 服务没法直接以 NAS 账号运行。做法是：在服务器上建一个与 NAS 账号**同名同密码**的本地账号，服务以它运行，访问共享时 Windows 自动用同名同密码通过认证。这个本地账号要设成密码永不过期（`wmic useraccount where "name='<账号>'" set PasswordExpires=false`），否则按服务器策略到期后服务登录失败、备份中断。
+- TOML 里用单引号写 UNC：`target = '\\nas01\taskboard-backup'`，开头**两个**反斜杠。只写一个时 Windows 会把它当成当前盘根下的本地目录，备份留在本机，所以加载配置时会直接报错。
+- 用管理员身份手动执行 `taskboard backup`（如 SSH 登录后）时，管理员会话没有 NAS 凭据，要先在同一个会话里 `net use \\<nas>\<共享> <密码> /user:<nas>\<账号> /persistent:no`，做完再 `net use ... /delete`。定时备份和更新前备份在服务进程里执行，用的是服务账号，不需要这一步。
 - 没有配置备份目标时，备份存到 `data_dir\backups\`，管理页会提示“备份未离开本机”。
 
 ```toml
@@ -249,4 +252,4 @@ keep_preupdate = 5
 
 | 日期 | 版本 | 备份文件 | 结果 |
 |---|---|---|---|
-| | | | |
+| 2026-10-17 | 后端 0.1.3 / 前端 0.1.0 | `taskboard-20261017-110104-preupdate.db`（NAS 上，更新前由服务进程自动备份） | 通过。恢复到一个**不存在的**目录（模拟新机器），另起端口启动实例：3 张工单（均「完成」关闭）、3 个成员、访客修订的说明（第 2 版）与时间线完整。当时库里还没有附件，附件镜像补回 0 个，**附件打开未覆盖**，有了真实附件后再演练一次。演练中发现「恢复到不存在的数据目录直接失败」，已修复（0.1.3）。 |
