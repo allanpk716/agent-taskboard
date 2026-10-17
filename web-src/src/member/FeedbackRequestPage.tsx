@@ -16,11 +16,19 @@ import {
 } from './memberApi'
 import { copyText, invalidate, nav, toast } from './ui'
 
-/** 反馈类模板 + 「自由描述」。 */
-const FREE = '__free__'
+/** 反馈类模板 + 「自由描述」。「自由描述」是不用模板的哨兵选项（不出现在
+ *  请求里：选中时建 kind=report 的无模板工单）。 */
+const NO_TEMPLATE_OPTION = '__free__'
+
+/** 「自由描述」选项（模板列表加载失败时也用它兜底）。 */
+const FREE_FORM_OPTION: WizardOption = {
+  key: NO_TEMPLATE_OPTION,
+  name: '自由描述',
+  desc: '对方写一整段情况说明，可以传日志和照片。',
+}
 
 interface WizardOption {
-  key: string // 模板 key 或 FREE
+  key: string // 模板 key 或 NO_TEMPLATE_OPTION
   name: string
   desc: string
 }
@@ -95,12 +103,12 @@ export function FeedbackRequestPage({ me }: { me: Me }) {
             desc: detail ? templateDesc(detail) : '对方按模板引导填写。',
           })
         }
-        opts.push({ key: FREE, name: '自由描述', desc: '对方写一整段情况说明，可以传日志和照片。' })
+        opts.push(FREE_FORM_OPTION)
         if (!alive) return
         setOptions(opts)
-        setTpl(opts.some((o) => o.key === 'bug-report') ? 'bug-report' : (opts[0]?.key ?? FREE))
+        setTpl(opts.some((o) => o.key === 'bug-report') ? 'bug-report' : (opts[0]?.key ?? NO_TEMPLATE_OPTION))
       } catch {
-        if (alive) setOptions([{ key: FREE, name: '自由描述', desc: '对方写一整段情况说明，可以传日志和照片。' }])
+        if (alive) setOptions([FREE_FORM_OPTION])
       }
     })()
     return () => {
@@ -131,7 +139,7 @@ export function FeedbackRequestPage({ me }: { me: Me }) {
         labels: [],
         guest_link: { note: who.trim(), valid_days: days, can_edit_brief: true },
       }
-      if (tpl === FREE) {
+      if (tpl === NO_TEMPLATE_OPTION) {
         // 自由描述：一张不用模板的反馈工单，说明为空（访客整块写）。
         body.kind = 'report'
         body.brief_md = ''

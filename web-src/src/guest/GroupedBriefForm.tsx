@@ -37,11 +37,12 @@ export interface FillField extends TemplateField {
   nudgeExample?: string
 }
 
-/** 自由描述字段的键（草稿与统一附件区都用它；不与模板字段键冲突）。 */
-export const FREE_KEY = '__brief__'
+/** 自由描述字段的键（草稿与统一附件区都用它；不与模板字段键冲突）。
+ *  值 __brief__ 是写进本机草稿的持久键，改了会让旧草稿读不回来，保持不变。 */
+export const NO_TEMPLATE_FIELD_KEY = '__brief__'
 
 const FREE_FIELD: FillField = {
-  key: FREE_KEY,
+  key: NO_TEMPLATE_FIELD_KEY,
   title: '请把情况写详细',
   type: 'text',
   required: true,
@@ -403,7 +404,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
   const initialDraft = useRef(loadFormDraft(key))
   const [values, setValues] = useState<Record<string, string>>(() =>
     free
-      ? { [FREE_KEY]: ticket.brief.markdown, ...(initialDraft.current?.fields ?? {}) }
+      ? { [NO_TEMPLATE_FIELD_KEY]: ticket.brief.markdown, ...(initialDraft.current?.fields ?? {}) }
       : { ...(ticket.brief.fields ?? {}), ...(initialDraft.current?.fields ?? {}) },
   )
   const [author, setAuthor] = useState(initialDraft.current?.author ?? initialAuthor ?? loadAuthor())
@@ -414,7 +415,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
   const [openGroup, setOpenGroup] = useState(0)
   const desktop = useDesktop()
   const member = memberNameOf(ticket)
-  const areaField = free ? FREE_KEY : lastTextFieldKey(templateFields)
+  const areaField = free ? NO_TEMPLATE_FIELD_KEY : lastTextFieldKey(templateFields)
   const baseRevisionRef = useRef(ticket.brief.revision)
   const idemKeyRef = useRef<string | undefined>(initialDraft.current?.idemKey)
   const pendingRef = useRef(!!initialDraft.current?.pending)
@@ -505,7 +506,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
       const name = authorRef.current.trim()
       // 自由描述提交整块 brief_md（非模板工单）；模板工单逐字段提交。
       const body = free
-        ? { brief_md: valuesRef.current[FREE_KEY] ?? '', base_revision: baseRevisionRef.current, ...(name ? { author_name: name } : {}) }
+        ? { brief_md: valuesRef.current[NO_TEMPLATE_FIELD_KEY] ?? '', base_revision: baseRevisionRef.current, ...(name ? { author_name: name } : {}) }
         : (() => {
             const out: Record<string, string> = {}
             for (const f of templateFields) out[f.key] = valuesRef.current[f.key] ?? ''
