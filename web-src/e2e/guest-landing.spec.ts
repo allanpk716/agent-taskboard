@@ -180,7 +180,9 @@ test.describe('自由描述', () => {
     const box = groups.nth(0).locator('.cf:not(.area) textarea')
     await box.fill('今天报错')
     await expect(groups.nth(0).locator('.nudge')).toBeVisible()
-    await expect(groups.nth(0).locator('.nudge')).toContainText('能再具体一点吗')
+    await expect(groups.nth(0).locator('.nudge')).toContainText(
+      '能再具体一点吗？比如：哪台设备、什么时候、做了什么、看到什么、本来应该怎样、频繁吗',
+    )
     await box.fill('BH-7600CS 今天上午 9 点做质控时报 E-203，重试两次都在同一步报警，平时每天都正常。')
     await expect(groups.nth(0).locator('.nudge')).toHaveCount(0)
     await expect(page.locator('.fill-prog')).toHaveText(/必填都写好了/)

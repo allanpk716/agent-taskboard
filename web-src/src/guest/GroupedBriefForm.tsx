@@ -29,12 +29,12 @@ const NUDGE_MIN_CHARS = 20
 const ATTACH_AREA_GROUP_TITLE = '发生了什么'
 
 /** 自由描述（#66）：无模板工单合成的一组「情况说明」的大文本框，
- *  上方列出可以按哪几点写；tips / nudgeHint 只在前端用，服务端不下发。 */
+ *  上方列出可以按哪几点写；tips / nudgeExample 只在前端用，服务端不下发。 */
 export interface FillField extends TemplateField {
   /** 提示点列表（照原型，大文本框上方逐条列出） */
   tips?: string[]
-  /** 追问提示的专属文案（没有时取示例 / 引导说明） */
-  nudgeHint?: string
+  /** 追问提示的内容（没有时取示例 / 引导说明；自由描述取提示点） */
+  nudgeExample?: string
 }
 
 /** 自由描述字段的键（草稿与统一附件区都用它；不与模板字段键冲突）。 */
@@ -55,7 +55,7 @@ const FREE_FIELD: FillField = {
     '本来应该怎样',
     '出现得频繁吗',
   ],
-  nudgeHint: '再多写几句会更好，参照上面几点补充。',
+  nudgeExample: '哪台设备、什么时候、做了什么、看到什么、本来应该怎样、频繁吗',
 }
 
 export interface GroupedBriefFormProps {
@@ -105,13 +105,13 @@ function filled(value: string | undefined): boolean {
   return !!(value ?? '').trim()
 }
 
-/** 追问提示文案：内容取字段专属提示，否则取示例，再否则取引导说明（不调 AI）。 */
+/** 追问提示文案：统一「能再具体一点吗？比如：…」的形式，内容取字段专属
+ *  内容，否则取示例，再否则取引导说明（不调 AI）。 */
 function nudgeText(f: FillField, value: string): string | null {
   if (f.type !== 'text') return null
   const v = value.trim()
   if (!v || v === UNSURE || v.length >= NUDGE_MIN_CHARS) return null
-  if (f.nudgeHint) return `能再具体一点吗？${f.nudgeHint}`
-  const src = f.example || f.guide
+  const src = f.nudgeExample || f.example || f.guide
   return src ? `能再具体一点吗？比如：${src}` : '能再具体一点吗？'
 }
 
