@@ -172,14 +172,15 @@ test('维度下拉框输入别名能选中对应的标准值', async ({ page, re
   expect((await ticket.json()).labels).toContain('机型:UD-2300')
 })
 
-// 3. 持「可填写说明」链接的访客：说明卡片上「✏ 修改说明」进入分组填写页
-//    （#65）→ 改一个字段（含粘贴图片）→ 提交 → 确认页 → 回到对话，时间线
-//    出现修订事件，插图挂在说明里。必填项在建单时已填齐，提交不会被拦。
+// 3. 持「可填写说明」链接的访客：第一次打开先看落地页（#66），「开始填写」
+//    进入分组填写页（#65）→ 改一个字段（含粘贴图片）→ 提交 → 确认页 → 回到
+//    对话，时间线出现修订事件，插图挂在说明里。必填项在建单时已填齐，提交
+//    不会被拦。
 test('修改说明提交后回到对话，时间线出现修订事件', async ({ page, request }) => {
   const seed = await seedEditableTicket(request)
   await page.goto(`/g/${seed.linkKey}`)
 
-  await page.getByRole('button', { name: '✏ 修改说明' }).click()
+  await page.getByRole('button', { name: '开始填写' }).click()
   await expect(page.locator('.grp').first()).toContainText('哪台仪器')
 
   // 改一个字段：序列号和软件版本（原本未填）
