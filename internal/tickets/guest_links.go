@@ -52,6 +52,18 @@ type GuestLinkSpec struct {
 	CanEditBrief bool
 }
 
+// validateCreate 校验并规范化「创建」一条访客链接的输入（与延期不同，创建
+// 必须有备注）：备注去空白、必填，有效期合法并算出到期时刻。写入前由
+// createGuestLinkTx 调用，单建（#32）与「请人反馈」（#64）两个入口共用；
+// 「请人反馈」在建单前先调它快速失败，任何校验失败都不动工单。
+func (spec *GuestLinkSpec) validateCreate(now time.Time) (time.Time, error) {
+	spec.Note = strings.TrimSpace(spec.Note)
+	if spec.Note == "" {
+		return time.Time{}, ErrNoteRequired
+	}
+	return spec.validate(now)
+}
+
 // validate 校验并算出到期时刻（不检查备注：延期请求不带备注）。
 func (spec GuestLinkSpec) validate(now time.Time) (time.Time, error) {
 	if spec.ValidDays != 0 && spec.ExpiresAt != nil {
@@ -89,14 +101,7 @@ func (m *Manager) CreateGuestLink(ctx context.Context, viewer identity.Viewer, r
 	if err != nil {
 		return GuestLinkCreated{}, err
 	}
-	spec.Note = strings.TrimSpace(spec.Note)
-	if spec.Note == "" {
-		return GuestLinkCreated{}, ErrNoteRequired
-	}
-	if _, err := spec.validate(m.clk.Now()); err != nil {
-		return GuestLinkCreated{}, err
-	}
-
+	// 校验（备注、有效期）由 createGuestLinkTx 里的 validateCreate 统一完成。
 	now := m.clk.Now()
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -116,10 +121,10 @@ func (m *Manager) CreateGuestLink(ctx context.Context, viewer identity.Viewer, r
 
 // createGuestLinkTx 在已有事务里写入一条访客链接并记 guest_link_created 事件
 //（带备注）；链接与工单在同一个事务里创建（#64「请人反馈」）或独立创建
-//（#32）共用这里。
+//（#32）共用这里，备注的规范化与校验也统一在这里（validateCreate）完成。
 func (m *Manager) createGuestLinkTx(ctx context.Context, tx *sql.Tx, ticketSeq int64,
 	actor Author, spec GuestLinkSpec, now time.Time) (*GuestLinkCreated, error) {
-	expiresAt, err := spec.validate(now)
+	expiresAt, err := spec.validateCreate(now)
 	if err != nil {
 		return nil, err
 	}
