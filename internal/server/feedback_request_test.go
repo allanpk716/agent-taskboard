@@ -254,6 +254,7 @@ func Test带链接建单校验失败返回422且不留下工单(t *testing.T) {
 	}{
 		"非法天数":   {map[string]any{"note": "x", "valid_days": 14, "can_edit_brief": true}, "invalid_valid_days"},
 		"永久零天":   {map[string]any{"note": "x", "valid_days": 0, "can_edit_brief": true}, "invalid_valid_days"},
+		"带过期日期": {map[string]any{"note": "x", "expires_at": "2026-12-01", "can_edit_brief": true}, "invalid_valid_days"},
 		"缺备注":    {map[string]any{"can_edit_brief": true}, "note_required"},
 		"空白备注":   {map[string]any{"note": "  ", "can_edit_brief": true}, "note_required"},
 	} {
