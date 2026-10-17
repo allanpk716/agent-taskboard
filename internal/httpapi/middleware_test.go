@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -71,5 +73,32 @@ func TestPanic恢复不补写已开始的响应(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/markdown") {
 		t.Errorf("Content-Type 被覆盖：%q", ct)
+	}
+}
+
+// 客户端断开导致的 context.Canceled 不是服务器故障：只记一行、不带堆栈，
+// 也不再往已断开的连接补写 500。
+func TestPanic恢复客户端断开不刷堆栈(t *testing.T) {
+	var logBuf bytes.Buffer
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(nil)
+
+	handler := recoverMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		panic(fmt.Errorf("query inbox: %w", r.Context().Err()))
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/inbox", nil).WithContext(ctx))
+
+	if rec.Body.Len() != 0 {
+		t.Errorf("客户端已断开，不应补写响应：%s", rec.Body.String())
+	}
+	out := logBuf.String()
+	if !strings.Contains(out, "/api/v1/inbox") {
+		t.Errorf("仍应记一行出事端点：%q", out)
+	}
+	if strings.Contains(out, "middleware_test.go") {
+		t.Errorf("客户端断开不应打堆栈：%s", out)
 	}
 }

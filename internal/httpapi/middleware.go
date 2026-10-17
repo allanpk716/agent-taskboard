@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"context"
+	"errors"
 	"log"
 	"net/http"
 	"runtime/debug"
@@ -18,6 +20,12 @@ func recoverMiddleware(next http.Handler) http.Handler {
 		tracker := &writeTracker{ResponseWriter: w}
 		defer func() {
 			if rec := recover(); rec != nil {
+				// 客户端断开时查询会带着 context.Canceled 失败：这不是服务器
+				// 故障，记一行即可，连接已断也不必补写 500。
+				if err, ok := rec.(error); ok && errors.Is(err, context.Canceled) && r.Context().Err() != nil {
+					log.Printf("client gone: %s %s: %v", r.Method, r.URL.Path, err)
+					return
+				}
 				log.Printf("panic: %s %s: %v\n%s", r.Method, r.URL.Path, rec, debug.Stack())
 				if !tracker.wrote {
 					WriteError(w, http.StatusInternalServerError, CodeInternal, "服务器内部错误", "")
