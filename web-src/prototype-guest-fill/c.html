@@ -60,7 +60,7 @@ function setv(k,v,redraw){S.vals[k]=v;if(redraw){draw();return}document.querySel
 function nudgeText(k){const f=FIELDS().find(x=>x.k===k);const v=(S.vals[k]||'').trim();if(!f||!f.big||!v||v==='不清楚'||v.length>=20)return '';return '能再具体一点吗？'+f.more}
 function input(f,auto){
   if(f.type==='chips')return `<div class="chips">${f.opts.map(o=>`<span class="chip ${S.vals[f.k]===o?'on':''}" onclick="setv('${f.k}','${o}',1)">${o}</span>`).join('')}</div>`
-  return `${f.tips?`<ul class="tips">${f.tips.map(t=>`<li>${t}</li>`).join('')}</ul>`:''}<textarea rows="${f.big?(f.tips?8:5):2}" placeholder="${f.ex?esc('示例：'+f.ex.split('\n')[0]+(f.ex.includes('\n')?' …':'')):'在这里写…'}" oninput="setv('${f.k}',this.value)" ${auto?'autofocus':''}>${esc(S.vals[f.k])}</textarea>
+  return `${f.tips?`<ul class="tips">${f.tips.map(t=>`<li>${t}</li>`).join('')}</ul>`:''}<textarea rows="${f.big?(f.tips?8:5):2}" placeholder="在这里写…" oninput="setv('${f.k}',this.value)" ${auto?'autofocus':''}>${esc(S.vals[f.k])}</textarea>
   <div class="nudge nudge-${f.k}">${nudgeText(f.k)}</div>
   <div style="display:flex;gap:14px">${f.ex&&f.ex.includes('\n')?`<button class="linkish" onclick="this.nextElementSibling.style.display='block';this.remove()">看完整示例</button><div class="ex" style="display:none;flex:1"><b>示例</b>\n${esc(f.ex)}</div>`:''}
   ${f.req&&!f.tips?`<button class="linkish" onclick="setv('${f.k}','不清楚',1)">不清楚</button>`:''}${f.photo||f.tips?`<button class="linkish" onclick="addFile('photo')">📷 附张照片</button>`:''}</div>`}
