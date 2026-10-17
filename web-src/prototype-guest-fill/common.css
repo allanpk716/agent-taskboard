@@ -1,0 +1,31 @@
+/* 一次性原型：访客分步补全说明（#60），不合并 */
+*{box-sizing:border-box}body{margin:0;background:#f5f6f8;font-family:system-ui,'Microsoft YaHei',sans-serif;color:#1f2937;font-size:14px}
+.proto{position:sticky;top:0;z-index:50;background:#111827;color:#fff;font-size:12px;padding:6px 10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.proto b{color:#fbbf24}.proto button{background:#374151;color:#fff;border:0;border-radius:5px;padding:4px 8px;font-size:12px}.proto button.on{background:#2a6fdb}
+.gtop{background:#fff;border-bottom:1px solid #e6e9f0;padding:9px 14px;display:flex;align-items:center;gap:8px;font-size:13px}.gtop .logo{font-weight:700}.gtop .no{color:#6b7280}.gtop .ver{margin-left:auto;font-size:10.5px;color:#b0b7c3}
+.card{background:#fff;border-radius:12px;padding:16px;margin:12px;border:1px solid #e6e9f0}
+.btn{background:#2a6fdb;color:#fff;border:0;border-radius:9px;padding:10px 18px;font-size:15px;cursor:pointer;font-family:inherit}.btn.ghost{background:#eef3fc;color:#2a6fdb}.btn.plain{background:none;color:#6b7280}.btn.big{padding:13px 28px;font-size:16px}.btn.block{width:100%}
+.btn:disabled{opacity:.4}
+.muted{color:#6b7280}.small{font-size:12.5px}.center{text-align:center}
+.req{font-style:normal;font-size:11px;color:#d64545;margin-left:6px;font-weight:400}.opt{font-style:normal;font-size:11px;color:#9aa3b2;margin-left:6px;font-weight:400}
+textarea,input[type=text]{width:100%;padding:11px;border:1px solid #d7dde8;border-radius:9px;font-size:15.5px;font-family:inherit;line-height:1.55}
+textarea:focus,input:focus{outline:2px solid #bcd3fa;border-color:#2a6fdb}
+.chips{display:flex;gap:8px;flex-wrap:wrap}.chip{border:1.5px solid #d7dde8;border-radius:20px;padding:8px 15px;font-size:14.5px;background:#fff;cursor:pointer}.chip.on{background:#2a6fdb;color:#fff;border-color:#2a6fdb}.chip.sm{padding:4px 11px;font-size:13px}
+.guide{font-size:13.5px;color:#4b5563;margin:4px 0 10px;line-height:1.6}
+.ex{font-size:13px;color:#6b7280;background:#f6f7f9;border-radius:8px;padding:8px 10px;margin-top:8px;white-space:pre-wrap;line-height:1.6}.ex b{color:#9aa3b2;font-weight:500}
+.nudge{font-size:13px;color:#a15c07;background:#fff7e6;border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.55}.nudge:empty{display:none}
+.tips{margin:6px 0 10px;padding-left:18px;font-size:13.5px;color:#4b5563;line-height:1.8}
+.linkish{background:none;border:0;color:#2a6fdb;font-size:13.5px;padding:6px 0;cursor:pointer;font-family:inherit}
+.att-btns{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}.att-btns button{background:#f3f6fb;border:1px solid #dbe3ef;border-radius:10px;padding:14px 4px;font-size:13.5px;color:#1f2937;cursor:pointer}.att-btns .ic{font-size:22px;display:block;margin-bottom:4px}
+.drop{border:1.5px dashed #b9c6db;border-radius:12px;padding:26px;text-align:center;color:#6b7280;background:#fafbfd;cursor:pointer}
+.files{margin-top:10px;display:flex;flex-direction:column;gap:6px}.file{display:flex;align-items:center;gap:8px;background:#f6f7f9;border-radius:8px;padding:7px 10px;font-size:13px}.file .x{margin-left:auto;color:#9aa3b2;cursor:pointer}
+.rv{border-bottom:1px solid #f0f2f6;padding:10px 0;display:flex;gap:10px}.rv:last-child{border:0}.rv .q{font-size:12.5px;color:#6b7280}.rv .a{white-space:pre-wrap;margin-top:2px;line-height:1.55}.rv .a.miss{color:#d64545}.rv .a.none{color:#b0b7c3}.rv .ed{margin-left:auto;color:#2a6fdb;font-size:13px;cursor:pointer;white-space:nowrap}
+.bigok{font-size:50px;text-align:center;color:#3aa676;margin-top:22px}
+.ev{font-size:12px;color:#9aa3b2;text-align:center;margin:10px 0}
+.msg{background:#fff;border:1px solid #e6e9f0;border-radius:10px;padding:10px 12px;margin:8px 12px}.msg .who{font-size:12px;color:#6b7280;margin-bottom:4px}
+.composer{position:sticky;bottom:0;background:#fff;border-top:1px solid #e6e9f0;padding:8px 10px;display:flex;gap:8px;align-items:flex-end}.composer textarea{flex:1;padding:8px 10px;font-size:15px}
+.brief-qa{font-size:13.5px;line-height:1.6}.brief-qa .q{color:#6b7280;font-size:12.5px;margin-top:8px}.brief-qa .a{white-space:pre-wrap}
+/* PC：1280 宽画布按屏宽缩放 */
+#pcwrap{display:none;transform-origin:0 0;width:1280px;min-height:820px;background:#f5f6f8}
+body.pc #phone{display:none}body.pc #pcwrap{display:block}
+.pcbody{max-width:1040px;margin:0 auto;padding:24px}

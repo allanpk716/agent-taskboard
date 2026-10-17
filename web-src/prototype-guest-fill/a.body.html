@@ -1,0 +1,28 @@
+<script>document.write(protoBar('候选 A · 一问一屏','每屏只问一个问题，带进度；附件单独一步'))</script>
+<script>
+// 步骤 = 字段 + 在「实际看到了什么」（自由描述则在说明）之后插入一步附件
+function steps(){const fs=FIELDS().slice();const at=fs.findIndex(f=>f.k==='saw'||f.k==='desc');fs.splice(at+1,0,{k:'_att',t:'有照片、截图或日志吗？',g:'报警画面拍张照、导出的日志，都可以传上来，能帮我们更快找到原因。没有就跳过。'});return fs}
+function live(){const st=steps()[S.i];const b=document.querySelectorAll('.nextbtn');b.forEach(x=>x.disabled=!!(st&&st.req&&!filled(st)));document.querySelectorAll(".skipbtn").forEach(x=>x.style.display=filled(st)?"none":"")}
+function next(){const n=steps().length;S.i<n-1?go('fill',S.i+1):go('review')}
+function stepBody(m){const st=steps()[S.i],n=steps().length;const isAtt=st.k==='_att';
+ return `<div class="small muted" style="margin-bottom:6px">第 ${S.i+1} / ${n} 步 · ${st.req?'<span style="color:#d64545">必填</span>':'选填，可跳过'}</div>
+ <div style="font-size:20px;font-weight:700;line-height:1.4">${st.t}</div>${st.g?`<div class="guide">${st.g}</div>`:''}
+ ${isAtt?attach(m):input(st,1)}${!isAtt&&st.ex&&!st.ex.includes('\n')?`<div class="ex"><b>示例</b>　${esc(st.ex)}</div>`:''}`}
+function navBtns(){const st=steps()[S.i];const last=S.i===steps().length-1;return `${S.i>0?`<button class="btn plain" onclick="go('fill',${S.i-1})">‹ 上一步</button>`:`<button class="btn plain" onclick="go('land')">‹ 返回</button>`}<span style="flex:1"></span>
+ ${!st.req&&!(st.k==='_att'?S.files.length:filled(st))?`<button class="btn ghost skipbtn" onclick="next()">跳过</button>`:''}
+ <button class="btn nextbtn" ${st.req&&!filled(st)?'disabled':''} onclick="next()">${last?'检查一下':'下一步'}</button>`}
+function fill(m){const n=steps().length,p=Math.round((S.i)/n*100);
+ if(m==='ph')return `<div style="height:4px;background:#e6e9f0"><div style="height:4px;width:${p}%;background:#2a6fdb"></div></div>
+  <div style="padding:18px 16px 110px">${stepBody(m)}</div>
+  <div style="position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #e6e9f0;padding:10px 12px;display:flex;gap:8px;align-items:center">${navBtns()}</div>`
+ return `<div class="pcbody" style="display:grid;grid-template-columns:260px 1fr;gap:24px">
+  <div class="card" style="margin:0;align-self:start"><div class="small muted">${MEMBER} 请你补充</div><div style="font-weight:700;margin:4px 0 12px">${TITLE}</div>
+  ${steps().map((s,i)=>{const d=s.k==='_att'?S.files.length>0:filled(s);return `<div onclick="go('fill',${i})" style="cursor:pointer;padding:7px 8px;border-radius:7px;font-size:13.5px;${i===S.i?'background:#eef3fc;color:#2a6fdb;font-weight:600':''}"><span style="display:inline-block;width:20px;color:${d?'#3aa676':'#c0c7d2'}">${d?'✓':(i===S.i?'●':'○')}</span>${s.t}${s.req?'<i class="req">*</i>':''}</div>`}).join('')}
+  <div onclick="go('review')" style="cursor:pointer;padding:7px 8px;font-size:13.5px;color:#6b7280"><span style="display:inline-block;width:20px">→</span>检查并提交</div></div>
+  <div class="card" style="margin:0;padding:28px 32px;max-width:680px">${stepBody(m)}<div style="display:flex;gap:8px;margin-top:22px;align-items:center">${navBtns()}</div></div></div>`}
+function review(m){return `<div style="${m==='pc'?'max-width:680px;margin:20px auto':''}"><div style="padding:16px 14px 0;font-size:19px;font-weight:700">检查一下再提交</div><div class="small muted" style="padding:2px 14px">点“改”回到那一步。</div>
+ <div class="card">${reviewList(i=>`go('fill',${steps().findIndex(s=>s.k===FIELDS()[i].k)})`)}<div class="rv"><div style="flex:1"><div class="q">附件</div><div class="a ${S.files.length?'':'none'}">${S.files.length?S.files.map(f=>f.ic+' '+f.n).join('\n'):'没有'}</div></div><span class="ed" onclick="go('fill',${steps().findIndex(s=>s.k==='_att')})">${S.files.length?'改':'去传'}</span></div></div>
+ <div class="card small">署名：<b>${esc(S.author)}</b>　<span class="linkish" onclick="go('land')">改</span></div>${submitBar()}</div>`}
+function view(m){return S.v==='land'?landing(m):S.v==='fill'?fill(m):S.v==='review'?review(m):S.v==='done'?done(m):convo(m)}
+draw()
+</script>

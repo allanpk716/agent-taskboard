@@ -1,0 +1,124 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>候选</title><style>
+/* 一次性原型：访客分步补全说明（#60），不合并 */
+*{box-sizing:border-box}body{margin:0;background:#f5f6f8;font-family:system-ui,'Microsoft YaHei',sans-serif;color:#1f2937;font-size:14px}
+.proto{position:sticky;top:0;z-index:50;background:#111827;color:#fff;font-size:12px;padding:6px 10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.proto b{color:#fbbf24}.proto button{background:#374151;color:#fff;border:0;border-radius:5px;padding:4px 8px;font-size:12px}.proto button.on{background:#2a6fdb}
+.gtop{background:#fff;border-bottom:1px solid #e6e9f0;padding:9px 14px;display:flex;align-items:center;gap:8px;font-size:13px}.gtop .logo{font-weight:700}.gtop .no{color:#6b7280}.gtop .ver{margin-left:auto;font-size:10.5px;color:#b0b7c3}
+.card{background:#fff;border-radius:12px;padding:16px;margin:12px;border:1px solid #e6e9f0}
+.btn{background:#2a6fdb;color:#fff;border:0;border-radius:9px;padding:10px 18px;font-size:15px;cursor:pointer;font-family:inherit}.btn.ghost{background:#eef3fc;color:#2a6fdb}.btn.plain{background:none;color:#6b7280}.btn.big{padding:13px 28px;font-size:16px}.btn.block{width:100%}
+.btn:disabled{opacity:.4}
+.muted{color:#6b7280}.small{font-size:12.5px}.center{text-align:center}
+.req{font-style:normal;font-size:11px;color:#d64545;margin-left:6px;font-weight:400}.opt{font-style:normal;font-size:11px;color:#9aa3b2;margin-left:6px;font-weight:400}
+textarea,input[type=text]{width:100%;padding:11px;border:1px solid #d7dde8;border-radius:9px;font-size:15.5px;font-family:inherit;line-height:1.55}
+textarea:focus,input:focus{outline:2px solid #bcd3fa;border-color:#2a6fdb}
+.chips{display:flex;gap:8px;flex-wrap:wrap}.chip{border:1.5px solid #d7dde8;border-radius:20px;padding:8px 15px;font-size:14.5px;background:#fff;cursor:pointer}.chip.on{background:#2a6fdb;color:#fff;border-color:#2a6fdb}.chip.sm{padding:4px 11px;font-size:13px}
+.guide{font-size:13.5px;color:#4b5563;margin:4px 0 10px;line-height:1.6}
+.ex{font-size:13px;color:#6b7280;background:#f6f7f9;border-radius:8px;padding:8px 10px;margin-top:8px;white-space:pre-wrap;line-height:1.6}.ex b{color:#9aa3b2;font-weight:500}
+.nudge{font-size:13px;color:#a15c07;background:#fff7e6;border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.55}.nudge:empty{display:none}
+.tips{margin:6px 0 10px;padding-left:18px;font-size:13.5px;color:#4b5563;line-height:1.8}
+.linkish{background:none;border:0;color:#2a6fdb;font-size:13.5px;padding:6px 0;cursor:pointer;font-family:inherit}
+.att-btns{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}.att-btns button{background:#f3f6fb;border:1px solid #dbe3ef;border-radius:10px;padding:14px 4px;font-size:13.5px;color:#1f2937;cursor:pointer}.att-btns .ic{font-size:22px;display:block;margin-bottom:4px}
+.drop{border:1.5px dashed #b9c6db;border-radius:12px;padding:26px;text-align:center;color:#6b7280;background:#fafbfd;cursor:pointer}
+.files{margin-top:10px;display:flex;flex-direction:column;gap:6px}.file{display:flex;align-items:center;gap:8px;background:#f6f7f9;border-radius:8px;padding:7px 10px;font-size:13px}.file .x{margin-left:auto;color:#9aa3b2;cursor:pointer}
+.rv{border-bottom:1px solid #f0f2f6;padding:10px 0;display:flex;gap:10px}.rv:last-child{border:0}.rv .q{font-size:12.5px;color:#6b7280}.rv .a{white-space:pre-wrap;margin-top:2px;line-height:1.55}.rv .a.miss{color:#d64545}.rv .a.none{color:#b0b7c3}.rv .ed{margin-left:auto;color:#2a6fdb;font-size:13px;cursor:pointer;white-space:nowrap}
+.bigok{font-size:50px;text-align:center;color:#3aa676;margin-top:22px}
+.ev{font-size:12px;color:#9aa3b2;text-align:center;margin:10px 0}
+.msg{background:#fff;border:1px solid #e6e9f0;border-radius:10px;padding:10px 12px;margin:8px 12px}.msg .who{font-size:12px;color:#6b7280;margin-bottom:4px}
+.composer{position:sticky;bottom:0;background:#fff;border-top:1px solid #e6e9f0;padding:8px 10px;display:flex;gap:8px;align-items:flex-end}.composer textarea{flex:1;padding:8px 10px;font-size:15px}
+.brief-qa{font-size:13.5px;line-height:1.6}.brief-qa .q{color:#6b7280;font-size:12.5px;margin-top:8px}.brief-qa .a{white-space:pre-wrap}
+/* PC：1280 宽画布按屏宽缩放 */
+#pcwrap{display:none;transform-origin:0 0;width:1280px;min-height:820px;background:#f5f6f8}
+body.pc #phone{display:none}body.pc #pcwrap{display:block}
+.pcbody{max-width:1040px;margin:0 auto;padding:24px}
+</style><script>
+// 一次性原型：访客分步补全说明（#60），不合并。假数据：张工请检验科-张三补全一张 Bug 反馈。
+const BUG=[
+{k:'model',t:'哪台仪器？',type:'chips',req:1,g:'在仪器背面铭牌上可以看到型号；不确定可以选“不确定”。',opts:['BH-7600CS','UD-2300','SL-1000','不确定']},
+{k:'sn',t:'序列号和软件版本是多少？',type:'text',g:'在“设置 → 关于本机”里可以看到。',ex:'序列号 7600CS-2023-0412，软件 V3.2.1'},
+{k:'when',t:'什么时候发生的？',type:'text',req:1,g:'大概时间即可，便于我们查仪器日志。',ex:'今天上午 9 点左右'},
+{k:'steps',t:'你做了哪些操作？',type:'text',req:1,big:1,g:'按顺序写，一步一行。',ex:'1. 开机自检完成\n2. 进入质控界面\n3. 点击“开始”',more:'比如：在哪个界面、点了哪个按钮、输入了什么。'},
+{k:'saw',t:'实际看到了什么？',type:'text',req:1,big:1,g:'屏幕上的报警或提示请原样照抄，包括编号；能拍照最好。',ex:'弹出“E-203 试剂余量不足”',more:'比如：报警编号、提示原文、屏幕上显示的数值。拍张照也行。'},
+{k:'expect',t:'你期望看到什么？',type:'text',req:1,g:'本来应该发生什么。',ex:'正常开始质控测试'},
+{k:'freq',t:'出现得频繁吗？',type:'chips',req:1,opts:['每次','经常','偶尔','仅一次']},
+{k:'impact',t:'对工作有影响吗？',type:'chips',g:'帮助我们判断优先级。',opts:['无法出报告','能绕过','不影响']},
+{k:'guess',t:'你的猜测或补充？',type:'text',g:'如果你觉得是什么原因，写在这里；猜错也没关系。',ex:'可能是试剂瓶的液位传感器没识别到'}]
+const FREE=[{k:'desc',t:'请把情况写详细',type:'text',req:1,big:1,g:'可以按下面几点写，想到哪写到哪，不用写成一段完整的话：',tips:['哪台设备、哪个系统','什么时候发生的','做了哪些操作（按顺序）','看到了什么（报警、提示原文照抄）','本来应该怎样','出现得频繁吗'],more:'再多写几句会更好，参照上面几点补充。'}]
+const S={v:'land',i:0,route:'bug',vals:{},files:[],author:'检验科-张三',open:0}
+const FIELDS=()=>S.route==='bug'?BUG:FREE
+const MEMBER='张工',TITLE='UD-2300 质控报 E-203',NO='20261017-004'
+const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')
+const filled=f=>!!(S.vals[f.k]||'').trim()
+const reqs=()=>FIELDS().filter(f=>f.req)
+const reqDone=()=>reqs().filter(filled).length
+function setMode(m){document.body.classList.toggle('pc',m==='pc');document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('on',b.dataset.mode===m));fit()}
+function setRoute(r){S.route=r;S.v='land';S.i=0;S.vals={};S.files=[];S.open=0;document.querySelectorAll('[data-route]').forEach(b=>b.classList.toggle('on',b.dataset.route===r));draw()}
+function fit(){const w=document.getElementById('pcwrap');if(w)w.style.transform='scale('+Math.min(1,window.innerWidth/1280)+')'}
+window.addEventListener('resize',fit)
+function go(v,i){S.v=v;if(i!==undefined)S.i=i;draw();window.scrollTo(0,0)}
+// 文本输入不重绘（保住焦点），只刷新追问提示和按钮
+function setv(k,v,redraw){S.vals[k]=v;if(redraw){draw();return}document.querySelectorAll('.nudge-'+k).forEach(e=>e.innerHTML=nudgeText(k));if(window.live)live()}
+function nudgeText(k){const f=FIELDS().find(x=>x.k===k);const v=(S.vals[k]||'').trim();if(!f||!f.big||!v||v==='不清楚'||v.length>=20)return '';return '能再具体一点吗？'+f.more}
+function input(f,auto){
+  if(f.type==='chips')return `<div class="chips">${f.opts.map(o=>`<span class="chip ${S.vals[f.k]===o?'on':''}" onclick="setv('${f.k}','${o}',1)">${o}</span>`).join('')}</div>`
+  return `${f.tips?`<ul class="tips">${f.tips.map(t=>`<li>${t}</li>`).join('')}</ul>`:''}<textarea rows="${f.big?(f.tips?8:5):2}" placeholder="${f.ex?esc('示例：'+f.ex.split('\n')[0]+(f.ex.includes('\n')?' …':'')):'在这里写…'}" oninput="setv('${f.k}',this.value)" ${auto?'autofocus':''}>${esc(S.vals[f.k])}</textarea>
+  <div class="nudge nudge-${f.k}">${nudgeText(f.k)}</div>
+  <div style="display:flex;gap:14px">${f.ex&&f.ex.includes('\n')?`<button class="linkish" onclick="this.nextElementSibling.style.display='block';this.remove()">看完整示例</button><div class="ex" style="display:none;flex:1"><b>示例</b>\n${esc(f.ex)}</div>`:''}
+  ${f.req&&!f.tips?`<button class="linkish" onclick="setv('${f.k}','不清楚',1)">不清楚</button>`:''}${f.photo||f.tips?`<button class="linkish" onclick="addFile('photo')">📷 附张照片</button>`:''}</div>`}
+const FAKE={photo:['IMG_2041.jpg','1.2 MB','🖼'],album:['截图_0930.png','640 KB','🖼'],file:['UD2300_log_20261017.zip','3.4 MB','📄']}
+function addFile(kind){const [n,s,ic]=FAKE[kind];S.files.push({n,s,ic});draw()}
+function fileList(){return S.files.length?`<div class="files">${S.files.map((f,i)=>`<div class="file">${f.ic} ${f.n} <span class="muted">· ${f.s}</span><span class="x" onclick="S.files.splice(${i},1);draw()">✕</span></div>`).join('')}</div>`:''}
+function attach(m){return (m==='pc'?`<div class="drop" onclick="addFile('file')">把日志、照片拖到这里，或 <u>点击选择文件</u></div>`:
+  `<div class="att-btns"><button onclick="addFile('photo')"><span class="ic">📷</span>拍照</button><button onclick="addFile('album')"><span class="ic">🖼</span>相册</button><button onclick="addFile('file')"><span class="ic">📄</span>文件</button></div>`)+
+  fileList()+`<div class="small muted" style="margin-top:8px">单个文件不超过 5 MB；日志太大的话，把 NAS 共享盘路径写在说明里就行。</div>`}
+function gtopBar(){return `<div class="gtop"><span class="logo">工单台</span><span class="no">${NO}</span><span class="ver">v0.2.0</span></div>`}
+function landing(m,startLabel){const n=FIELDS().length,r=reqs().length;return `<div style="${m==='pc'?'max-width:560px;margin:30px auto':''}"><div class="card" style="margin-top:${m==='pc'?0:16}px">
+<div class="muted small">${MEMBER} 请你补充一个问题的情况</div>
+<div style="font-size:21px;font-weight:700;margin:6px 0 12px">${TITLE}</div>
+<div style="background:#f4f8ff;border-radius:10px;padding:12px;line-height:1.75;font-size:14px">
+⏱ 大约 ${S.route==='bug'?'5':'3'} 分钟${S.route==='bug'?`，${n} 个问题（${r} 个必填）`:'，写一段说明'}<br>📎 可以上传照片、截图和日志<br>💾 写到一半关掉也没关系，内容保存在这台设备上</div>
+<div style="margin-top:14px"><div class="small muted" style="margin-bottom:4px">你的称呼（${MEMBER}会看到）</div><input type="text" value="${esc(S.author)}" oninput="S.author=this.value"></div>
+<button class="btn big block" style="margin-top:16px" onclick="go('fill',0)">${startLabel||'开始填写'}</button>
+<div class="center" style="margin-top:10px"><button class="linkish" onclick="go('convo')">只想留言，不填了 →</button></div></div></div>`}
+function reviewList(onEdit){return FIELDS().map((f,i)=>{const v=(S.vals[f.k]||'').trim();return `<div class="rv"><div style="flex:1"><div class="q">${f.t}${f.req?'<i class="req">必填</i>':''}</div><div class="a ${v?'':(f.req?'miss':'none')}">${v?esc(v):(f.req?'还没写':'没填')}</div></div><span class="ed" onclick="${onEdit(i,f)}">${v?'改':'去写'}</span></div>`}).join('')}
+function submitBar(){const ok=reqDone()===reqs().length;return `<div style="margin:0 12px 20px"><button class="btn big block" ${ok?'':'disabled'} onclick="go('done')">提交给${MEMBER}</button>${ok?'':`<div class="small center" style="color:#d64545;margin-top:6px">还有 ${reqs().length-reqDone()} 个必填项没写，不知道的可以写“不清楚”</div>`}</div>`}
+function done(m){return `<div style="${m==='pc'?'max-width:560px;margin:30px auto':''}"><div class="bigok">✓</div><div class="center" style="font-size:18px;font-weight:600">已提交给${MEMBER}</div>
+<div class="card small" style="line-height:1.8">${MEMBER}看过后会在这里回复你。<b>请收藏这个链接</b>，之后打开就能看到回复，也可以接着补充情况或修改说明。</div>
+<div style="margin:0 12px"><button class="btn big block" onclick="go('convo')">查看对话</button></div></div>`}
+function briefCard(){const fs=FIELDS().filter(filled);return `<div class="card"><div style="display:flex;align-items:center"><b>说明</b><span class="small muted" style="margin-left:8px">${esc(S.author)} 补全于 刚刚</span><button class="btn ghost" style="margin-left:auto;padding:5px 12px;font-size:13px" onclick="go('fill',0)">✏ 修改说明</button></div>
+<div class="brief-qa">${fs.length?fs.map(f=>`<div class="q">${f.t}</div><div class="a">${esc(S.vals[f.k])}</div>`).join(''):'<div class="muted" style="margin-top:8px">（还没填写）</div>'}</div>${fileList()}</div>`}
+function convo(m){return `<div style="${m==='pc'?'max-width:760px;margin:0 auto':''}"><div style="padding:14px 12px 0"><div class="small muted">${NO} · ${MEMBER} 发起</div><div style="font-size:19px;font-weight:700">${TITLE}</div></div>
+${briefCard()}<div class="ev">${esc(S.author)} 补全了说明 · 刚刚</div><div class="ev">轮到 ${MEMBER} 回复</div><div style="height:${m==='pc'?40:200}px"></div>
+<div class="composer"><span style="font-size:20px">📎</span><textarea rows="1" placeholder="补充情况，或回复${MEMBER}…"></textarea><button class="btn" style="padding:8px 14px">发送</button></div></div>`}
+function draw(){document.getElementById('ph').innerHTML=view('ph');document.getElementById('pcm').innerHTML=view('pc');fit()}
+function protoBar(label,desc){return `<div class="proto"><b>${label}</b>${desc}<span style="flex:1"></span><button data-route="bug" class="on" onclick="setRoute('bug')">Bug 模板</button><button data-route="free" onclick="setRoute('free')">自由描述</button><span style="width:6px"></span><button data-mode="phone" class="on" onclick="setMode('phone')">📱 手机</button><button data-mode="pc" onclick="setMode('pc')">🖥 电脑</button></div>
+<div id="phone">${gtopBar()}<div id="ph"></div></div><div id="pcwrap">${gtopBar()}<div id="pcm"></div></div>`}
+</script></head><body>
+<script>document.write(protoBar('候选 A · 一问一屏','每屏只问一个问题，带进度；附件单独一步'))</script>
+<script>
+// 步骤 = 字段 + 在「实际看到了什么」（自由描述则在说明）之后插入一步附件
+function steps(){const fs=FIELDS().slice();const at=fs.findIndex(f=>f.k==='saw'||f.k==='desc');fs.splice(at+1,0,{k:'_att',t:'有照片、截图或日志吗？',g:'报警画面拍张照、导出的日志，都可以传上来，能帮我们更快找到原因。没有就跳过。'});return fs}
+function live(){const st=steps()[S.i];const b=document.querySelectorAll('.nextbtn');b.forEach(x=>x.disabled=!!(st&&st.req&&!filled(st)));document.querySelectorAll(".skipbtn").forEach(x=>x.style.display=filled(st)?"none":"")}
+function next(){const n=steps().length;S.i<n-1?go('fill',S.i+1):go('review')}
+function stepBody(m){const st=steps()[S.i],n=steps().length;const isAtt=st.k==='_att';
+ return `<div class="small muted" style="margin-bottom:6px">第 ${S.i+1} / ${n} 步 · ${st.req?'<span style="color:#d64545">必填</span>':'选填，可跳过'}</div>
+ <div style="font-size:20px;font-weight:700;line-height:1.4">${st.t}</div>${st.g?`<div class="guide">${st.g}</div>`:''}
+ ${isAtt?attach(m):input(st,1)}${!isAtt&&st.ex&&!st.ex.includes('\n')?`<div class="ex"><b>示例</b>　${esc(st.ex)}</div>`:''}`}
+function navBtns(){const st=steps()[S.i];const last=S.i===steps().length-1;return `${S.i>0?`<button class="btn plain" onclick="go('fill',${S.i-1})">‹ 上一步</button>`:`<button class="btn plain" onclick="go('land')">‹ 返回</button>`}<span style="flex:1"></span>
+ ${!st.req&&!(st.k==='_att'?S.files.length:filled(st))?`<button class="btn ghost skipbtn" onclick="next()">跳过</button>`:''}
+ <button class="btn nextbtn" ${st.req&&!filled(st)?'disabled':''} onclick="next()">${last?'检查一下':'下一步'}</button>`}
+function fill(m){const n=steps().length,p=Math.round((S.i)/n*100);
+ if(m==='ph')return `<div style="height:4px;background:#e6e9f0"><div style="height:4px;width:${p}%;background:#2a6fdb"></div></div>
+  <div style="padding:18px 16px 110px">${stepBody(m)}</div>
+  <div style="position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #e6e9f0;padding:10px 12px;display:flex;gap:8px;align-items:center">${navBtns()}</div>`
+ return `<div class="pcbody" style="display:grid;grid-template-columns:260px 1fr;gap:24px">
+  <div class="card" style="margin:0;align-self:start"><div class="small muted">${MEMBER} 请你补充</div><div style="font-weight:700;margin:4px 0 12px">${TITLE}</div>
+  ${steps().map((s,i)=>{const d=s.k==='_att'?S.files.length>0:filled(s);return `<div onclick="go('fill',${i})" style="cursor:pointer;padding:7px 8px;border-radius:7px;font-size:13.5px;${i===S.i?'background:#eef3fc;color:#2a6fdb;font-weight:600':''}"><span style="display:inline-block;width:20px;color:${d?'#3aa676':'#c0c7d2'}">${d?'✓':(i===S.i?'●':'○')}</span>${s.t}${s.req?'<i class="req">*</i>':''}</div>`}).join('')}
+  <div onclick="go('review')" style="cursor:pointer;padding:7px 8px;font-size:13.5px;color:#6b7280"><span style="display:inline-block;width:20px">→</span>检查并提交</div></div>
+  <div class="card" style="margin:0;padding:28px 32px;max-width:680px">${stepBody(m)}<div style="display:flex;gap:8px;margin-top:22px;align-items:center">${navBtns()}</div></div></div>`}
+function review(m){return `<div style="${m==='pc'?'max-width:680px;margin:20px auto':''}"><div style="padding:16px 14px 0;font-size:19px;font-weight:700">检查一下再提交</div><div class="small muted" style="padding:2px 14px">点“改”回到那一步。</div>
+ <div class="card">${reviewList(i=>`go('fill',${steps().findIndex(s=>s.k===FIELDS()[i].k)})`)}<div class="rv"><div style="flex:1"><div class="q">附件</div><div class="a ${S.files.length?'':'none'}">${S.files.length?S.files.map(f=>f.ic+' '+f.n).join('\n'):'没有'}</div></div><span class="ed" onclick="go('fill',${steps().findIndex(s=>s.k==='_att')})">${S.files.length?'改':'去传'}</span></div></div>
+ <div class="card small">署名：<b>${esc(S.author)}</b>　<span class="linkish" onclick="go('land')">改</span></div>${submitBar()}</div>`}
+function view(m){return S.v==='land'?landing(m):S.v==='fill'?fill(m):S.v==='review'?review(m):S.v==='done'?done(m):convo(m)}
+draw()
+</script>
+</body></html>

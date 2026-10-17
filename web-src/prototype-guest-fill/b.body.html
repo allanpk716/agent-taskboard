@@ -1,0 +1,48 @@
+<script>document.write(protoBar('候选 B · 对话引导','像聊天一样一问一答；提交后同一个窗口直接接着和成员对话'))</script>
+<style>
+.chat{padding:10px 10px 0}.bub{max-width:84%;padding:10px 13px;border-radius:14px;margin:6px 0;line-height:1.6;font-size:14.5px;white-space:pre-wrap}
+.bub.sys{background:#fff;border:1px solid #e6e9f0;border-top-left-radius:4px}.bub.me{background:#2a6fdb;color:#fff;margin-left:auto;border-top-right-radius:4px;cursor:pointer}
+.bub.me.skip{background:#e6e9f0;color:#6b7280}.bub .g{font-size:13px;color:#6b7280;margin-top:4px}.bub .exs{font-size:12.5px;color:#9aa3b2;margin-top:4px}
+.who{font-size:11.5px;color:#9aa3b2;margin:8px 2px 0}
+.dock{background:#fff;border-top:1px solid #e6e9f0;padding:10px}.dock .row{display:flex;gap:8px;align-items:flex-end}.dock textarea{flex:1;font-size:15px;padding:9px 10px}
+.qr{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+</style>
+<script>
+function steps(){const fs=FIELDS().slice();const at=fs.findIndex(f=>f.k==='saw'||f.k==='desc');fs.splice(at+1,0,{k:'_att',t:'有照片、截图或日志吗？',g:'报警画面拍张照、导出的日志，都可以直接传上来。'});return fs}
+S.edit=null
+const _sr=setRoute;setRoute=r=>{S.chatOnly=0;S.edit=null;_sr(r)}
+const cur=()=>S.edit!==null?S.edit:S.i
+function ans(st){if(st.k==='_att')return S.files.length?S.files.map(f=>f.ic+' '+f.n).join('\n'):null;const v=(S.vals[st.k]||'').trim();return v||null}
+function send(){const st=steps()[cur()];if(st.req&&!filled(st))return;if(S.edit!==null){S.edit=null}else S.i++;if(S.i>=steps().length&&S.v==='fill')S.v='review';draw();scrollEnd()}
+function scrollEnd(){setTimeout(()=>{window.scrollTo(0,document.body.scrollHeight);document.querySelectorAll('.chatbox').forEach(c=>c.scrollTop=c.scrollHeight)},0)}
+function live(){const st=steps()[cur()];document.querySelectorAll('.sendbtn').forEach(x=>x.disabled=!!(st&&st.req&&!filled(st)))}
+function qBubble(st){return `<div class="who">${MEMBER} 的问题</div><div class="bub sys"><b>${st.t}</b>${st.req?'<i class="req">必填</i>':''}${st.g?`<div class="g">${st.g}</div>`:''}${st.tips?`<div class="g">${st.tips.map(t=>'· '+t).join('\n')}</div>`:''}${st.ex?`<div class="exs">示例：${esc(st.ex)}</div>`:''}</div>`}
+function msgs(){let h=`<div class="who">工单台</div><div class="bub sys">${MEMBER} 请你补充一个问题的情况：
+<b style="font-size:16px">${TITLE}</b>
+${S.route==='bug'?`我会一个一个问，大约 5 分钟，${FIELDS().length} 个问题（${reqs().length} 个必填）。`:'请写一段说明，大约 3 分钟。'}不知道的可以说“不清楚”，写到一半关掉也没关系。</div>`
+ if(S.v==='land')return h
+ if(S.chatOnly)return h+`<div class="who">工单台</div><div class="bub sys">好的，直接在下面留言就行。之后想补全说明，可以随时点“开始补全”。</div><div class="center"><button class="linkish" onclick="S.chatOnly=0;S.v='fill';S.i=0;draw()">开始补全说明</button></div>`
+ const n=S.v==='fill'?S.i:steps().length
+ steps().slice(0,n).forEach((st,j)=>{const a=ans(st);h+=qBubble(st)+`<div class="bub me ${a?'':'skip'}" onclick="S.edit=${j};draw();scrollEnd()" title="点一下修改">${a?esc(a):'跳过'}</div>`})
+ if(S.v==='fill'&&S.i<steps().length)h+=qBubble(steps()[S.i])
+ if(S.v!=='fill'&&S.v!=='land'){const miss=reqs().length-reqDone();h+=`<div class="who">工单台</div><div class="bub sys">${miss?`还有 ${miss} 个必填项没回答，点上面灰色的“跳过”补一下。`:`整理好了。确认无误就提交给${MEMBER}，点上面任何一条回答都能改。`}\n署名：<b>${esc(S.author)}</b></div>`}
+ if(S.v==='done'||S.v==='convo')h+=`<div class="ev">${esc(S.author)} 提交了说明 · 刚刚</div><div class="who">工单台</div><div class="bub sys">已经交给${MEMBER}了。${MEMBER}会在这里回复你，<b>请收藏这个链接</b>，之后打开就能看到。想补充什么，直接在下面写。</div>`
+ if(S.edit!==null)h+=`<div class="ev">正在修改：${steps()[S.edit].t}</div>`
+ return h}
+function dock(m){
+ if(S.v==='land')return `<div class="small muted" style="margin-bottom:4px">你的称呼（${MEMBER}会看到）</div><input type="text" value="${esc(S.author)}" oninput="S.author=this.value" style="margin-bottom:8px"><button class="btn big block" onclick="S.v='fill';draw()">开始</button><div class="center"><button class="linkish" onclick="S.chatOnly=1;S.v='convo';draw()">只想留言，不填了 →</button></div>`
+ if(S.v==='done'||S.v==='convo')return `<div class="row"><span style="font-size:20px;padding-bottom:8px">📎</span><textarea rows="1" placeholder="补充情况，或回复${MEMBER}…"></textarea><button class="btn">发送</button></div>`
+ if(S.v==='review'&&S.edit===null){const ok=reqDone()===reqs().length;return `<button class="btn big block" ${ok?'':'disabled'} onclick="S.v='done';draw();scrollEnd()">提交给${MEMBER}</button>`}
+ const st=steps()[cur()]
+ if(st.k==='_att')return attach(m)+`<button class="btn block" style="margin-top:10px" onclick="send()">${S.files.length?'传好了，继续':'没有，继续'}</button>`
+ if(st.type==='chips')return `<div class="chips">${st.opts.map(o=>`<span class="chip ${S.vals[st.k]===o?'on':''}" onclick="S.vals['${st.k}']='${o}';send()">${o}</span>`).join('')}${st.req?'':`<span class="chip" style="color:#6b7280" onclick="send()">跳过</span>`}</div>`
+ return `<div class="nudge nudge-${st.k}" style="margin:0 0 8px">${nudgeText(st.k)}</div><div class="qr">${st.req?`<span class="chip sm" onclick="setv('${st.k}','不清楚');send()">不清楚</span>`:`<span class="chip sm" onclick="send()">跳过</span>`}${st.photo||st.tips?`<span class="chip sm" onclick="addFile('photo')">📷 附照片</span>`:''}</div>${st.photo||st.tips?fileList():''}
+ <div class="row"><textarea rows="${st.big?4:1}" placeholder="在这里回答…" oninput="setv('${st.k}',this.value)" autofocus>${esc(S.vals[st.k])}</textarea><button class="btn sendbtn" ${st.req&&!filled(st)?'disabled':''} onclick="send()">${S.edit!==null?'改好了':'发送'}</button></div>`}
+function view(m){
+ if(m==='ph')return `<div class="chat" style="padding-bottom:20px">${msgs()}</div><div class="dock" style="position:sticky;bottom:0">${dock(m)}</div>`
+ const sts=steps();return `<div class="pcbody" style="display:grid;grid-template-columns:1fr 260px;gap:24px">
+ <div class="card" style="margin:0;padding:0;display:flex;flex-direction:column;height:760px"><div class="chat chatbox" style="flex:1;overflow:auto;padding:16px 20px">${msgs()}</div><div class="dock" style="border-radius:0 0 12px 12px;padding:14px 20px">${dock(m)}</div></div>
+ <div class="card" style="margin:0;align-self:start"><div class="small muted" style="margin-bottom:8px">说明进度 · 必填 ${reqDone()}/${reqs().length}</div>
+ ${sts.map((s,j)=>{const d=!!ans(s);const reached=S.v!=='land'&&(S.v!=='fill'||j<=S.i);return `<div onclick="${reached?`S.edit=${j};draw()`:''}" style="padding:6px 4px;font-size:13px;cursor:${reached?'pointer':'default'};color:${reached?'#1f2937':'#b0b7c3'}"><span style="display:inline-block;width:18px;color:${d?'#3aa676':'#c0c7d2'}">${d?'✓':'○'}</span>${s.t}${s.req?'<i class="req">*</i>':''}</div>`}).join('')}</div></div>`}
+draw()
+</script>

@@ -1,0 +1,1 @@
+for c in "$@"; do { echo '<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>候选</title><style>'; cat common.css; echo '</style><script>'; cat common.js; echo '</script></head><body>'; cat $c.body.html; echo '</body></html>'; } > $c.html; done

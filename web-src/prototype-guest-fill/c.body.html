@@ -1,0 +1,29 @@
+<script>document.write(protoBar('候选 C · 分组清单','一页分三组折叠展开，顶部看必填进度；附件放在“发生了什么”组里'))</script>
+<style>
+.grp{background:#fff;border:1px solid #e6e9f0;border-radius:12px;margin:10px 12px;overflow:hidden}.grp .hd{display:flex;align-items:center;gap:10px;padding:13px 14px;cursor:pointer}
+.grp .num{width:24px;height:24px;border-radius:50%;background:#eef3fc;color:#2a6fdb;font-size:13px;display:flex;align-items:center;justify-content:center;font-weight:600}.grp .num.ok{background:#3aa676;color:#fff}
+.grp .hd .t{font-weight:700;font-size:15.5px}.grp .hd .s{margin-left:auto;font-size:12.5px;color:#9aa3b2}.grp .bd{padding:0 14px 14px}
+.cf{padding:12px 0;border-top:1px solid #f0f2f6}.cf>label{display:block;font-weight:600;font-size:15px}
+.sticky{position:sticky;top:0;z-index:5;background:#f5f6f8;padding:8px 12px}
+</style>
+<script>
+function groups(){return S.route==='bug'?[{n:'哪台仪器',d:'型号和版本',ks:['model','sn']},{n:'发生了什么',d:'时间、操作、现象，照片和日志',ks:['when','steps','saw','expect'],att:1},{n:'影响多大',d:'频率、影响和你的猜测',ks:['freq','impact','guess']}]:[{n:'情况说明',d:'写一段，附上照片和日志',ks:['desc'],att:1}]}
+const F=k=>FIELDS().find(f=>f.k===k)
+function gReq(g){const r=g.ks.map(F).filter(f=>f.req);return [r.filter(filled).length,r.length]}
+function live(){document.querySelectorAll('.progtxt').forEach(e=>e.innerHTML=progTxt());groups().forEach((g,i)=>{const [a,b]=gReq(g);document.querySelectorAll('.gs'+i).forEach(e=>e.textContent=b?`必填 ${a}/${b}`:'选填');document.querySelectorAll('.gn'+i).forEach(e=>{e.classList.toggle('ok',a===b);e.textContent=a===b?'✓':i+1})});document.querySelectorAll('.subbtn').forEach(x=>x.disabled=reqDone()!==reqs().length)}
+function progTxt(){const r=reqs().length,d=reqDone();return `<div style="display:flex;align-items:center;gap:10px"><div style="flex:1;height:6px;background:#e6e9f0;border-radius:3px"><div style="height:6px;border-radius:3px;background:${d===r?'#3aa676':'#2a6fdb'};width:${Math.round(d/r*100)}%"></div></div><span class="small ${d===r?'':'muted'}" style="${d===r?'color:#3aa676':''}">${d===r?'必填都写好了':`必填 ${d}/${r}`}</span></div>`}
+function fieldBlock(f){return `<div class="cf" id="f-${f.k}"><label>${f.t}${f.req?'<i class="req">必填</i>':'<i class="opt">选填</i>'}</label>${f.g?`<div class="guide">${f.g}</div>`:''}${input(f)}${f.ex&&!f.ex.includes('\n')?`<div class="ex"><b>示例</b>　${esc(f.ex)}</div>`:''}</div>`}
+function attBlock(m){return `<div class="cf"><label>照片、截图和日志<i class="opt">选填</i></label><div class="guide">报警画面拍张照、导出的日志，都能帮我们更快找到原因。</div>${attach(m)}</div>`}
+function grp(g,i,m,openAll){const [a,b]=gReq(g);const open=openAll||S.open===i;const last=i===groups().length-1;
+ return `<div class="grp"><div class="hd" onclick="${openAll?'':`S.open=${open?-1:i};draw()`}"><span class="num gn${i} ${a===b?'ok':''}">${a===b?'✓':i+1}</span><div><div class="t">${g.n}</div><div class="small muted">${g.d}</div></div><span class="s gs${i}">${b?`必填 ${a}/${b}`:'选填'}</span>${openAll?'':`<span style="color:#9aa3b2">${open?'▴':'▾'}</span>`}</div>
+ ${open?`<div class="bd">${g.ks.map(k=>fieldBlock(F(k))).join('')}${g.att&&m==='ph'?attBlock(m):''}${!openAll&&!last?`<button class="btn ghost block" style="margin-top:6px" onclick="S.open=${i+1};draw();document.querySelectorAll('.grp')[${i+1}].scrollIntoView()">下一组：${groups()[i+1].n} ›</button>`:''}</div>`:''}</div>`}
+function subArea(){const ok=reqDone()===reqs().length;return `<div class="small" style="margin-bottom:6px">署名 <input type="text" value="${esc(S.author)}" oninput="S.author=this.value" style="margin-top:4px"></div><button class="btn big block subbtn" ${ok?'':'disabled'} onclick="go('done')">提交给${MEMBER}</button><div class="small muted center" style="margin-top:6px">不知道的必填项写“不清楚”就行</div>`}
+function fill(m){const gs=groups();
+ if(m==='ph')return `<div class="sticky"><div class="small muted" style="margin-bottom:4px">${TITLE}</div><div class="progtxt">${progTxt()}</div></div>${gs.map((g,i)=>grp(g,i,m,false)).join('')}<div style="margin:16px 12px 30px">${subArea()}</div>`
+ return `<div class="pcbody" style="display:grid;grid-template-columns:1fr 300px;gap:24px;align-items:start"><div><div style="padding:0 12px 6px"><div class="small muted">${MEMBER} 请你补充</div><div style="font-size:20px;font-weight:700">${TITLE}</div></div>${gs.map((g,i)=>grp(g,i,m,true)).join('')}</div>
+ <div style="position:sticky;top:12px"><div class="card" style="margin:12px 0"><div class="progtxt">${progTxt()}</div><div style="margin-top:10px">${FIELDS().map(f=>`<div onclick="document.getElementById('f-${f.k}').scrollIntoView({block:'center'})" style="cursor:pointer;font-size:13px;padding:4px 0;color:${filled(f)?'#1f2937':'#6b7280'}"><span style="color:${filled(f)?'#3aa676':'#c0c7d2'};display:inline-block;width:18px">${filled(f)?'✓':'○'}</span>${f.t}${f.req?'<i class="req">*</i>':''}</div>`).join('')}</div></div>
+ <div class="card" style="margin:12px 0"><b style="font-size:14px">照片、截图和日志</b><div style="margin-top:8px">${attach(m)}</div></div><div class="card" style="margin:12px 0">${subArea()}</div></div></div>`}
+// C 没有单独的检查页：这一页本身就是清单
+function view(m){return S.v==='land'?landing(m):S.v==='fill'?fill(m):S.v==='done'?done(m):convo(m)}
+draw()
+</script>
