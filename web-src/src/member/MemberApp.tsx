@@ -1,7 +1,7 @@
 // 成员网页（#41）：移动优先卡片 + 底部标签栏（拍板的 mock 方向 B）。
-// 顶栏一栏标题；底部五个标签（收件箱 / 工单 / 大号「＋」建单 / 工具 / 我的）。
+// 顶栏一栏标题；底部五个标签（收件箱 / 工单 / 大号「＋」建单（高级）/ 工具 / 我的）。
 // 工具里是标签字典与别名、模板维护（#42）；我的里是个人设置（Agent token）
-// 与管理页入口（仅管理员，#42）。
+// 与管理页入口（仅管理员，#42）；收件箱顶部是「请人反馈」向导入口（#64）。
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '../api'
 import { fetchInbox, fetchSession, type Me } from './memberApi'
@@ -9,6 +9,7 @@ import { InboxPage } from './InboxPage'
 import { TicketsPage } from './TicketsPage'
 import { TicketDetailPage } from './TicketDetailPage'
 import { NewTicketPage } from './NewTicketPage'
+import { FeedbackRequestPage } from './FeedbackRequestPage'
 import { ToolsPage } from './ToolsPage'
 import { TemplatesPage } from './TemplatesPage'
 import { TemplateEditPage } from './TemplateEditPage'
@@ -23,7 +24,9 @@ function pageTitle(route: Route): string {
     case 'tickets':
       return '工单'
     case 'new':
-      return '建单'
+      return '建单（高级）'
+    case 'feedback':
+      return '请人反馈'
     case 'detail':
       return '工单'
     case 'tools':
@@ -120,6 +123,7 @@ export function MemberApp() {
           {route.page === 'inbox' && <InboxPage key={navSeq} />}
           {route.page === 'tickets' && <TicketsPage key={navSeq} />}
           {route.page === 'new' && <NewTicketPage key={navSeq} />}
+          {route.page === 'feedback' && <FeedbackRequestPage key={navSeq} me={me} />}
           {route.page === 'detail' && <TicketDetailPage key={navSeq} ticketRef={route.ref} />}
           {route.page === 'tools' && <ToolsPage key={navSeq} />}
           {route.page === 'me' && <MePage key={navSeq} me={me} />}
@@ -139,7 +143,7 @@ export function MemberApp() {
             }}
           >
             <b>＋</b>
-            <span>建单</span>
+            <span>建单（高级）</span>
           </a>
           {tab('tools', '🧰', '工具', undefined, toolsOn)}
           {tab('me', '👤', '我的', undefined, meOn)}

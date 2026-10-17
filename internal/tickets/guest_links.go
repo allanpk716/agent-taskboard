@@ -93,12 +93,7 @@ func (m *Manager) CreateGuestLink(ctx context.Context, viewer identity.Viewer, r
 	if spec.Note == "" {
 		return GuestLinkCreated{}, ErrNoteRequired
 	}
-	expiresAt, err := spec.validate(m.clk.Now())
-	if err != nil {
-		return GuestLinkCreated{}, err
-	}
-	key, err := identity.NewGuestKey()
-	if err != nil {
+	if _, err := spec.validate(m.clk.Now()); err != nil {
 		return GuestLinkCreated{}, err
 	}
 
@@ -109,9 +104,32 @@ func (m *Manager) CreateGuestLink(ctx context.Context, viewer identity.Viewer, r
 	}
 	defer tx.Rollback()
 
+	link, err := m.createGuestLinkTx(ctx, tx, full.Seq, authorOf(viewer), spec, now)
+	if err != nil {
+		return GuestLinkCreated{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return GuestLinkCreated{}, err
+	}
+	return *link, nil
+}
+
+// createGuestLinkTx 在已有事务里写入一条访客链接并记 guest_link_created 事件
+//（带备注）；链接与工单在同一个事务里创建（#64「请人反馈」）或独立创建
+//（#32）共用这里。
+func (m *Manager) createGuestLinkTx(ctx context.Context, tx *sql.Tx, ticketSeq int64,
+	actor Author, spec GuestLinkSpec, now time.Time) (*GuestLinkCreated, error) {
+	expiresAt, err := spec.validate(now)
+	if err != nil {
+		return nil, err
+	}
+	key, err := identity.NewGuestKey()
+	if err != nil {
+		return nil, err
+	}
 	var agentID any
-	if viewer.Agent != nil {
-		agentID = viewer.Agent.ID
+	if actor.AgentID != 0 {
+		agentID = actor.AgentID
 	}
 	var id int64
 	if err := tx.QueryRowContext(ctx, `
@@ -119,19 +137,16 @@ func (m *Manager) CreateGuestLink(ctx context.Context, viewer identity.Viewer, r
 		                         created_by_member_id, created_by_agent_id, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id`,
-		full.Seq, identity.CredentialHash(key), spec.Note, expiresAt.Format(time.RFC3339Nano),
-		boolToInt(spec.CanEditBrief), viewer.Member.ID, agentID, now.Format(time.RFC3339Nano),
+		ticketSeq, identity.CredentialHash(key), spec.Note, expiresAt.Format(time.RFC3339Nano),
+		boolToInt(spec.CanEditBrief), actor.MemberID, agentID, now.Format(time.RFC3339Nano),
 	).Scan(&id); err != nil {
-		return GuestLinkCreated{}, fmt.Errorf("写入访客链接失败：%w", err)
+		return nil, fmt.Errorf("写入访客链接失败：%w", err)
 	}
-	if err := m.insertLinkEvent(ctx, tx, full.Seq, authorOf(viewer), "guest_link_created",
+	if err := m.insertLinkEvent(ctx, tx, ticketSeq, actor, "guest_link_created",
 		spec.Note, "", now); err != nil {
-		return GuestLinkCreated{}, err
+		return nil, err
 	}
-	if err := tx.Commit(); err != nil {
-		return GuestLinkCreated{}, err
-	}
-	return GuestLinkCreated{
+	return &GuestLinkCreated{
 		ID: id, Key: key, Note: spec.Note, ExpiresAt: expiresAt, CanEditBrief: spec.CanEditBrief,
 	}, nil
 }
