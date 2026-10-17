@@ -21,8 +21,6 @@ export interface ComposerProps {
   onTicketClosed: () => void
   /** 链接失效（401 link_revoked / link_expired）：整页提示。 */
   onLinkDead: (code: string) => void
-  /** 链接带「可填写说明」权限：点「✏ 补全说明」进入字段表单（#39）。 */
-  onEditBrief?: () => void
 }
 
 export function Composer(props: ComposerProps) {
@@ -195,11 +193,6 @@ export function Composer(props: ComposerProps) {
         <button type="button" className="btn ghost" onClick={() => document.getElementById('guest-file-input')?.click()}>
           📎 附件
         </button>
-        {props.onEditBrief && (
-          <button type="button" className="btn ghost" onClick={props.onEditBrief}>
-            ✏ 补全说明
-          </button>
-        )}
         <input
           id="guest-file-input"
           type="file"

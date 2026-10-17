@@ -45,14 +45,21 @@ export function GuestHeader({ ticket }: { ticket: TicketView }) {
   )
 }
 
-/** 整条对话（不含底部输入区）。 */
-export function Conversation({ ticket }: { ticket: TicketView }) {
+/** 整条对话（不含底部输入区）。onEditBrief：持「可填写说明」权限的访客
+ * 在说明卡片上点「✏ 修改说明」进入分组填写页（#65）。 */
+export function Conversation({
+  ticket,
+  onEditBrief,
+}: {
+  ticket: TicketView
+  onEditBrief?: () => void
+}) {
   const [lightbox, setLightbox] = useState<string | null>(null)
   const body = useMemo(
     () => (
       <>
         <GuestHeader ticket={ticket} />
-        <BriefBubble ticket={ticket} onImageClick={setLightbox} />
+        <BriefBubble ticket={ticket} onImageClick={setLightbox} onEditBrief={onEditBrief} />
         {ticket.timeline.map((e) =>
           e.type === 'reply' ? (
             <ReplyBubble key={e.seq} event={e} ticket={ticket} onImageClick={setLightbox} />
@@ -62,7 +69,7 @@ export function Conversation({ ticket }: { ticket: TicketView }) {
         )}
       </>
     ),
-    [ticket],
+    [ticket, onEditBrief],
   )
   return (
     <div className="guest-app">

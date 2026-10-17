@@ -25,20 +25,31 @@ func (m *Manager) SeedIfEmpty(ctx context.Context) error {
 	return nil
 }
 
+// presetBugReportKey 是预置 Bug 反馈模板的 key：种子导入（SeedIfEmpty）与
+// 一次性升级（UpgradePresetBugReport）共用。
+const presetBugReportKey = "bug-report"
+
 // seedTemplates 是三份预置模板的原文（运行时数据，上线后可以随时修改）。
 // Bug 反馈字段取 #12 的推荐清单（per-ticket 笔记），措辞参考 prototype/guest-web
 // 的假数据；分配任务的六字段与「给 Agent 的说明」来自 prototype/member-handoff。
+// #63 起 Bug 反馈分三组（哪台仪器 / 发生了什么 / 影响多大），副标题按原型
+// prototype/guest-fill 的 c.html 写；线上没改过的旧版本由 UpgradePresetBugReport
+// 一次性升级。
 var seedTemplates = map[string]string{
-	"bug-report": `---
+	presetBugReportKey: `---
 名称: Bug 反馈
 类型: 反馈
 预设标签: [待初筛]
 ---
+# 哪台仪器
+型号和版本
 ## 哪台仪器？ {维度:机型 必填}
 在仪器背面铭牌上可以看到型号；不确定可以选“不确定”。
 ## 序列号和软件版本是多少？
 在“设置 → 关于本机”里可以看到。
 > 示例：序列号 7600CS-2023-0412，软件 V3.2.1
+# 发生了什么
+时间、操作、现象，照片和日志
 ## 什么时候发生的？ {必填}
 大概时间即可，便于我们查仪器日志。
 > 示例：今天上午 9 点左右
@@ -51,6 +62,8 @@ var seedTemplates = map[string]string{
 ## 你期望看到什么？ {必填}
 本来应该发生什么。
 > 示例：正常开始质控测试
+# 影响多大
+频率、影响和你的猜测
 ## 出现得频繁吗？ {单选: 每次 | 经常 | 偶尔 | 仅一次 必填}
 ## 对工作有影响吗？ {单选: 无法出报告 | 能绕过 | 不影响}
 帮助我们判断优先级。

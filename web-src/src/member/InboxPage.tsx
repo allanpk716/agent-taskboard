@@ -40,6 +40,18 @@ export function InboxPage() {
 
   return (
     <div className="bpage">
+      <div className="mcard fr-card">
+        <div className="fr-title">有人要反馈问题？</div>
+        <div className="hint">写个标题和对方是谁，生成链接发给他，细节让他按引导补全。</div>
+        <button
+          className="btn big"
+          onClick={() => {
+            nav('/feedback')
+          }}
+        >
+          ＋ 请人反馈
+        </button>
+      </div>
       <div className="b-note">
         「现在轮到我」的开启工单，注明原因；名下所有成员 Agent 共用这一份。
       </div>

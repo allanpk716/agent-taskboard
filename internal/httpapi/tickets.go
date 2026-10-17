@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
+	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/labels"
 	"github.com/allanpk716/agent-taskboard/internal/markdownview"
@@ -127,19 +128,23 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 // createTicketRequest 是 POST /api/v1/tickets 的请求体。
 // 用模板创建时带 template 与 fields（类型由模板决定、缺必填只 warnings）；
 // assignee 可写成员 id 或姓名，写成成员 Agent → 422 assignee_must_be_member（#36）。
+// guest_link（#64「请人反馈」）非空时在同一事务里一并创建访客链接，
+// 链接带 can_edit_brief 权限时免「至少一个维度标签」。
 type createTicketRequest struct {
-	Kind     string            `json:"kind"`
-	Template string            `json:"template"`
-	Title    string            `json:"title"`
-	BriefMD  string            `json:"brief_md"`
-	Fields   map[string]string `json:"fields"`
-	Labels   []string          `json:"labels"`
-	Assignee string            `json:"assignee"`
+	Kind      string            `json:"kind"`
+	Template  string            `json:"template"`
+	Title     string            `json:"title"`
+	BriefMD   string            `json:"brief_md"`
+	Fields    map[string]string `json:"fields"`
+	Labels    []string          `json:"labels"`
+	Assignee  string            `json:"assignee"`
+	GuestLink *guestLinkRequest `json:"guest_link"`
 }
 
 // createTicketResponse 是建单成功的响应（201）。用模板建单缺必填项时
 // 工单照常创建，warnings 逐项列出（选「不确定」算已填）；指派给他人时
-// 另带 assignee、waiting_on 和一句可直接转发的 share_text（#36）。
+// 另带 assignee、waiting_on 和一句可直接转发的 share_text（#36）。请求带
+// guest_link 时另带嵌套对象 guest_link（含面向访客的转发文案，#64）。
 type createTicketResponse struct {
 	Number    string                 `json:"number"`
 	Seq       int64                  `json:"seq"`
@@ -148,6 +153,15 @@ type createTicketResponse struct {
 	Assignee  *memberRef             `json:"assignee"`
 	WaitingOn waitingOnView          `json:"waiting_on"`
 	ShareText *string                `json:"share_text"`
+	GuestLink *createGuestLinkView   `json:"guest_link,omitempty"`
+}
+
+// createGuestLinkView 是建单响应里嵌套的访客链接（#64）：与单建链接的响应
+// 同形（url 只出现一次），另带服务端生成的转发文案 share_text（网页与
+// 成员 Agent 用同一份）。
+type createGuestLinkView struct {
+	guestLinkBase
+	ShareText string `json:"share_text"`
 }
 
 func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
@@ -157,11 +171,28 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createTicketRequest
-	if !decodeJSON(w, r, &req, `{"kind?": "task|report", "template?": "模板 key", "title": "…", "brief_md?": "…", "fields?": {"问句？": "…"}, "labels": ["维度:值"], "assignee?": "成员 id 或姓名"}`) {
+	if !decodeJSON(w, r, &req, `{"kind?": "task|report", "template?": "模板 key", "title": "…", "brief_md?": "…", "fields?": {"问句？": "…"}, "labels": ["维度:值"], "assignee?": "成员 id 或姓名", "guest_link?": {"note": "…", "valid_days?": 30, "can_edit_brief": true}}`) {
 		return
 	}
+	// guest_link 复用单建访客链接的请求体与校验（note 必填；错误码也一致，#64），
+	// 但只接受 {note, valid_days, can_edit_brief}：expires_at 只在单建链接时可用
+	//（这里必须守住 7/30/90 的限制）。
+	var guestSpec *tickets.GuestLinkSpec
+	if req.GuestLink != nil {
+		if strings.TrimSpace(req.GuestLink.ExpiresAt) != "" {
+			WriteError(w, http.StatusUnprocessableEntity, CodeInvalidValidDays,
+				"guest_link 的有效期只能选 7、30 或 90 天，不支持 expires_at",
+				"guest_link 只接受 {note, valid_days, can_edit_brief}；要指定具体日期时，建单后单独创建访客链接")
+			return
+		}
+		spec, ok := parseGuestLinkSpec(w, *req.GuestLink)
+		if !ok {
+			return
+		}
+		guestSpec = &spec
+	}
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
-		full, warnings, err := a.tickets.Create(r.Context(), tickets.CreateInput{
+		result, err := a.tickets.Create(r.Context(), tickets.CreateInput{
 			Kind:        req.Kind,
 			Title:       req.Title,
 			BriefMD:     req.BriefMD,
@@ -170,16 +201,18 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 			Fields:      req.Fields,
 			Assignee:    req.Assignee,
 			Creator:     viewer,
+			GuestLink:   guestSpec,
 		})
 		if err != nil {
 			a.writeTicketError(w, r, "", err)
 			return
 		}
+		full := result.Full
 		res := createTicketResponse{
 			Number:    full.Number,
 			Seq:       full.Seq,
 			URL:       "/t/" + full.Number,
-			Warnings:  warnings,
+			Warnings:  result.Warnings,
 			WaitingOn: newWaitingOnView(tickets.WaitingOnOf(full)),
 		}
 		if full.AssigneeID != 0 {
@@ -190,8 +223,29 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 				res.ShareText = &share
 			}
 		}
+		if result.GuestLink != nil {
+			link := result.GuestLink
+			url := a.absURL("/g/" + link.Key)
+			res.GuestLink = &createGuestLinkView{
+				guestLinkBase: guestLinkBase{
+					ID: link.ID, URL: url, Note: link.Note,
+					ExpiresAt:    link.ExpiresAt.Format(time.RFC3339Nano),
+					CanEditBrief: link.CanEditBrief,
+				},
+				ShareText: a.guestShareText(link.Note, full.Title, url, link.ExpiresAt),
+			}
+		}
 		writeJSON(w, http.StatusCreated, res)
 	})
+}
+
+// guestShareText 是「请人反馈」面向访客的转发文案（#64）：称呼对方 + 标题 +
+// 请按提示写详细、可传日志照片 + 链接 + 不用登录、有效期至某日。服务端生成，
+// 网页与成员 Agent 用同一份（与指派给被指派人的顶层 share_text 互不混用）。
+func (a *API) guestShareText(note, title, url string, expiresAt time.Time) string {
+	return note + "：想请你帮忙反馈「" + title + "」的详细情况。打开这个链接，按提示把情况写具体一些" +
+		"（什么时候、做了什么、看到什么），可以上传日志和照片：" + url +
+		"。不用登录，有效期至 " + expiresAt.In(clock.Beijing).Format("2006-01-02")
 }
 
 // createShareText 是建单指派时的可转发文案（原型的句子）。工单地址用
@@ -497,21 +551,23 @@ type waitingOnView struct {
 }
 
 type briefView struct {
-	Fields         *map[string]string  `json:"fields"`
-	Markdown       string              `json:"markdown"`
-	Revision       int64               `json:"revision"`
-	Template       *string             `json:"template"`
-	TemplateFields []templateFieldView `json:"template_fields,omitempty"` // 创建时版本的字段定义（访客网页按问句渲染说明气泡，#38）
+	Fields         *map[string]string   `json:"fields"`
+	Markdown       string               `json:"markdown"`
+	Revision       int64                `json:"revision"`
+	Template       *string              `json:"template"`
+	TemplateFields []templateFieldView  `json:"template_fields,omitempty"` // 创建时版本的字段定义（访客网页按问句渲染说明气泡，#38）
+	TemplateGroups []templateGroupView  `json:"template_groups,omitempty"` // 创建时版本的分组（#63）；不分组时省略
 }
 
 // fieldViewsOf 把工单保存的模板快照字段定义转成对外结构（与模板接口同形；
-// 维度字段不现取字典候选值——说明气泡只需要问句与顺序）。
+// 维度字段不现取字典候选值——说明气泡只需要问句与顺序；字段带 group（#63））。
 func fieldViewsOf(defs []template.Field) []templateFieldView {
 	out := make([]templateFieldView, 0, len(defs))
 	for _, f := range defs {
 		out = append(out, templateFieldView{
 			Key: f.Key, Title: f.Title, Guide: f.Guide, Example: f.Example,
 			Required: f.Required, Type: f.Type, Options: f.Options, Dimension: f.Dimension,
+			Group: f.Group,
 		})
 	}
 	return out
@@ -651,6 +707,7 @@ func newTicketView(full tickets.Full, viewer identity.Viewer) ticketView {
 		v.Brief.Fields = &fields
 		if full.TemplateDef != nil {
 			v.Brief.TemplateFields = fieldViewsOf(full.TemplateDef.Fields)
+			v.Brief.TemplateGroups = groupViewsOf(full.TemplateDef.Groups)
 		}
 	}
 	if !isGuest {

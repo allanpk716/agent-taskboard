@@ -598,3 +598,531 @@
   position: sticky;
   bottom: 0;
 }
+
+/* 访客分组填写页（#65，照 prototype/guest-fill 的 c.html） */
+.guest-root.fillroot {
+  padding-bottom: 40px;
+}
+.brief-fill {
+  max-width: 760px;
+  margin: 0 auto;
+  font-size: 15px;
+}
+.brief-fill .notice {
+  margin: 10px 12px 0;
+}
+
+/* 必填进度条 */
+.fill-prog {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.fill-prog .bar {
+  flex: 1;
+  height: 6px;
+  background: #e6e9f0;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.fill-prog .barin {
+  height: 6px;
+  border-radius: 3px;
+  background: #2f7cf6;
+}
+.fill-prog .txt {
+  font-size: 13px;
+  color: #666;
+  white-space: nowrap;
+}
+.fill-prog.ok .barin {
+  background: #3aa676;
+}
+.fill-prog.ok .txt {
+  color: #3aa676;
+}
+
+/* 手机：顶部吸顶（标题 + 必填进度） */
+.fill-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #eef1f5;
+  padding: 8px 12px;
+}
+.fill-toprow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.fill-toprow .back {
+  flex: none;
+}
+.fill-title {
+  font-size: 13px;
+  color: #666;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 分组 */
+.grp {
+  background: #fff;
+  border: 1px solid #e2e6ee;
+  border-radius: 12px;
+  margin: 10px 12px;
+  overflow: hidden;
+  scroll-margin-top: 76px; /* 「下一组」滚动时给吸顶条留位 */
+}
+.grp-hd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.grp-hd .grp-num {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #e8f0fe;
+  color: #2a6fdb;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  flex: none;
+}
+.grp-hd .grp-num.ok {
+  background: #3aa676;
+  color: #fff;
+}
+.grp-hd .grp-t {
+  flex: 1;
+  min-width: 0;
+}
+.grp-hd .grp-name {
+  display: block;
+  font-weight: 700;
+  font-size: 15.5px;
+  color: #1f2937;
+}
+.grp-hd .grp-sub {
+  display: block;
+  font-size: 12.5px;
+  color: #9aa3b2;
+}
+.grp-hd .grp-req {
+  font-size: 12.5px;
+  color: #9aa3b2;
+  white-space: nowrap;
+}
+.grp-hd .chev {
+  color: #9aa3b2;
+}
+.grp-bd {
+  padding: 0 14px 14px;
+}
+.next-btn {
+  margin-top: 8px;
+}
+
+/* 字段块 */
+.cf {
+  padding: 12px 0;
+  border-top: 1px solid #f0f2f6;
+}
+.grp-bd .cf:first-child {
+  border-top: 0;
+}
+.cf > label {
+  display: block;
+  font-weight: 600;
+  font-size: 15px;
+}
+.cf .req {
+  font-style: normal;
+  font-size: 11px;
+  color: #d64545;
+  margin-left: 6px;
+  font-weight: 400;
+}
+.cf .opt {
+  font-style: normal;
+  font-size: 11px;
+  color: #9aa3b2;
+  margin-left: 6px;
+  font-weight: 400;
+}
+.cf .guide {
+  font-size: 13.5px;
+  color: #4b5563;
+  margin: 4px 0 8px;
+  line-height: 1.6;
+}
+.cf textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d7dde8;
+  border-radius: 9px;
+  padding: 10px 11px;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.55;
+  min-height: 66px;
+  resize: vertical;
+}
+.cf textarea:focus,
+.cf .dim-select input:focus {
+  outline: 2px solid #bcd3fa;
+  border-color: #2a6fdb;
+}
+.cf .tools {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.cf .tools .linkish,
+.brief-fill .linkish.back {
+  background: none;
+  border: 0;
+  color: #2a6fdb;
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.nudge {
+  font-size: 13px;
+  color: #a15c07;
+  background: #fff7e6;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: 8px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.ex {
+  font-size: 13px;
+  color: #6b7280;
+  background: #f6f7f9;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: 8px;
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+.ex b {
+  color: #9aa3b2;
+  font-weight: 500;
+}
+.small {
+  font-size: 12.5px;
+}
+.muted {
+  color: #6b7280;
+}
+
+/* 单选（照原型） */
+.brief-fill .radios {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.brief-fill .radios label {
+  border: 1.5px solid #d7dde8;
+  border-radius: 20px;
+  padding: 7px 14px;
+  font-size: 14px;
+  cursor: pointer;
+  font-weight: 400;
+}
+.brief-fill .radios label:has(input:checked) {
+  background: #e8f0fe;
+  border-color: #2a6fdb;
+}
+.brief-fill .radios input {
+  margin: 0 6px 0 0;
+  accent-color: #2a6fdb;
+}
+
+/* 上传入口：手机三按钮（统一附件区用大格） */
+.att-btns {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+.att-btns button {
+  background: #f3f6fb;
+  border: 1px solid #dbe3ef;
+  border-radius: 10px;
+  padding: 12px 4px;
+  font-size: 13px;
+  color: #1f2937;
+  cursor: pointer;
+  font-family: inherit;
+}
+.att-btns .ic {
+  font-size: 20px;
+  display: block;
+  margin-bottom: 3px;
+}
+.cf .note {
+  margin-top: 8px;
+}
+.cf.area > label {
+  font-size: 15px;
+}
+.cf.area .drop {
+  padding: 20px;
+}
+
+/* 提交区（署名 + 提交给成员 + 提示） */
+.fill-submit {
+  margin: 14px 12px 24px;
+  font-size: 13px;
+}
+.fill-submit input {
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 6px 8px;
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 13px;
+  margin-top: 4px;
+}
+.fill-submit .author-label {
+  color: #666;
+  display: block;
+}
+.fill-submit .subbtn {
+  margin-top: 10px;
+}
+.fill-submit .subbtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.btn.big {
+  padding: 12px 24px;
+  font-size: 16px;
+}
+.btn.block {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+}
+.btn.ghost.block {
+  text-align: center;
+}
+.subhint {
+  font-size: 12.5px;
+  color: #9aa3b2;
+  text-align: center;
+  margin-top: 6px;
+}
+
+/* 提交后的确认页 */
+.fill-done {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 0 12px 30px;
+}
+.fill-done .bigok {
+  font-size: 50px;
+  text-align: center;
+  color: #3aa676;
+  margin-top: 24px;
+}
+.fill-done .done-title {
+  text-align: center;
+  font-size: 18px;
+  font-weight: 600;
+}
+.fill-done .done-card {
+  background: #fff;
+  border: 1px solid #e2e6ee;
+  border-radius: 12px;
+  padding: 14px;
+  font-size: 13.5px;
+  line-height: 1.8;
+  margin: 14px 0;
+}
+
+/* 宽屏：双栏（左全部展开，右吸顶） */
+.brief-fill.desktop .fill-pc {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+.brief-fill.desktop .fill-head {
+  padding: 14px 12px 6px;
+}
+.brief-fill.desktop .fill-head h1 {
+  font-size: 20px;
+  margin: 2px 0 0;
+}
+.brief-fill.desktop .fill-head .back {
+  padding: 0;
+}
+.fill-twocol {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  gap: 24px;
+  align-items: start;
+}
+.fill-twocol .grp {
+  margin: 10px 0;
+}
+.fill-twocol .grp-hd {
+  cursor: default;
+}
+.fill-side {
+  position: sticky;
+  top: 12px;
+}
+.fill-card {
+  background: #fff;
+  border: 1px solid #e2e6ee;
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin: 0 0 12px;
+}
+.fill-card .area-title {
+  font-size: 14px;
+}
+.fill-check {
+  margin-top: 10px;
+}
+.check-item {
+  cursor: pointer;
+  font-size: 13px;
+  padding: 4px 0;
+  color: #6b7280;
+}
+.check-item .mark {
+  color: #c0c7d2;
+  display: inline-block;
+  width: 18px;
+}
+.check-item.ok {
+  color: #1f2937;
+}
+.check-item .mark.ok {
+  color: #3aa676;
+}
+.check-item .req {
+  font-style: normal;
+  color: #d64545;
+  font-size: 12px;
+  margin-left: 2px;
+}
+.fill-side .fill-submit {
+  margin: 0;
+}
+.fill-side .fill-card .staged-files {
+  margin-top: 6px;
+}
+
+/* 说明卡片上的「✏ 修改说明」（#65：入口从输入区移到说明卡片） */
+.who .edit-brief {
+  margin-left: auto;
+  padding: 3px 10px;
+  font-size: 12.5px;
+}
+.who:has(.edit-brief) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 访客落地页（#66，照 prototype/guest-fill 的 c.html） */
+.guest-root.landing-root {
+  padding-bottom: 40px;
+}
+.guest-landing {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 16px 12px 32px;
+}
+.landing-card {
+  background: #fff;
+  border: 1px solid #e2e6ee;
+  border-radius: 12px;
+  padding: 16px;
+}
+.landing-lead {
+  font-size: 13px;
+}
+.landing-title {
+  font-size: 21px;
+  font-weight: 700;
+  margin: 6px 0 12px;
+  line-height: 1.4;
+}
+.landing-info {
+  background: #f4f8ff;
+  border-radius: 10px;
+  padding: 12px;
+  line-height: 1.75;
+  font-size: 14px;
+}
+.landing-author {
+  margin-top: 14px;
+}
+.landing-author label {
+  display: block;
+  font-size: 12.5px;
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+.landing-author input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d7dde8;
+  border-radius: 9px;
+  padding: 11px;
+  font: inherit;
+  font-size: 15px;
+}
+.landing-author input:focus {
+  outline: 2px solid #bcd3fa;
+  border-color: #2a6fdb;
+}
+.guest-landing .start-btn {
+  margin-top: 16px;
+}
+.landing-talk {
+  text-align: center;
+  margin-top: 10px;
+}
+.guest-landing .linkish {
+  background: none;
+  border: 0;
+  color: #2a6fdb;
+  font: inherit;
+  font-size: 13.5px;
+  padding: 6px 0;
+  cursor: pointer;
+}
+
+/* 自由描述「情况说明」组（#66）：提示点列表 + 大文本框 */
+.cf .tips {
+  margin: 4px 0 8px;
+  padding-left: 18px;
+  font-size: 13.5px;
+  color: #4b5563;
+  line-height: 1.8;
+}
+.cf textarea.big {
+  min-height: 170px;
+}

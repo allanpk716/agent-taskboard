@@ -141,6 +141,9 @@ test('派活到验收：A建单指派B，B收件箱交付，A验收关闭', asyn
   // 换 A（管理员）登录：收件箱出现「已交付，待你验收」
   await page.locator('.b-tabs').getByRole('link', { name: '我的' }).click()
   await page.getByRole('button', { name: '登出' }).click()
+  // 登出按钮在异步 POST 完成后自行跳转 /login；不等它就 goto 会被这次导航中止（ERR_ABORTED）。
+  // 与 login.spec.ts 的写法保持一致。
+  await expect(page).toHaveURL(/\/login$/)
   await login(page, ADMIN)
   const acceptCard = page.locator('.tcard', { hasText: number })
   await expect(acceptCard).toBeVisible()

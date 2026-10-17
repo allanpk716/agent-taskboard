@@ -85,7 +85,9 @@ test('工具页：字典浏览、resolve 解析与添加别名', async ({ page }
   // resolve：写型号的一部分 → fuzzy 命中标准值
   await page.getByLabel('解析输入').fill('2300')
   await page.getByRole('button', { name: '解析' }).click()
-  await expect(page.locator('.mini-tbl .chip', { hasText: '机型:UD-2300' })).toBeVisible()
+  // 解析结果表在 DOM 里排在字典浏览表之前（ResolveCard 先渲染）；两表都有同一 chip，
+  // 用 .first() 明确断言解析结果的那个，避免 strict mode 命中两个元素。
+  await expect(page.locator('.mini-tbl .chip', { hasText: '机型:UD-2300' }).first()).toBeVisible()
   await expect(page.locator('.mini-tbl').first()).toContainText('fuzzy')
 
   // 添加别名（每次运行唯一），之后 resolve 写别名 → alias 命中

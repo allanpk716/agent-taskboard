@@ -330,11 +330,12 @@ type ticketResponseBody struct {
 	} `json:"waiting_on"`
 	Labels []string `json:"labels"` // 访客视角没有这个字段（解码为 nil；另用原始 JSON 断言字段不存在）
 	Brief  struct {
-		Fields         *map[string]string   `json:"fields"`
-		Markdown       string               `json:"markdown"`
-		Revision       int64                `json:"revision"`
-		Template       *string              `json:"template"`
+		Fields         *map[string]string  `json:"fields"`
+		Markdown       string              `json:"markdown"`
+		Revision       int64               `json:"revision"`
+		Template       *string             `json:"template"`
 		TemplateFields []templateFieldBody `json:"template_fields"` // #39：补全说明表单用
+		TemplateGroups []groupBody         `json:"template_groups"` // #63：创建时版本的分组
 	} `json:"brief"`
 	Viewer struct {
 		Kind   string `json:"kind"`

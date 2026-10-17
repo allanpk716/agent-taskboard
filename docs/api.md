@@ -119,7 +119,7 @@ spec 用户故事 84），没有 `inbox`：
 
 | 方法与路径 | 说明 |
 |---|---|
-| `POST /api/v1/tickets` | 建单（成员/成员 Agent；访客 403 `members_only`，访客建单走反馈入口 #35）。 |
+| `POST /api/v1/tickets` | 建单（成员/成员 Agent；访客 403 `members_only`，访客建单走反馈入口 #35）。可带 `guest_link` 一并创建访客链接（#64「请人反馈」）。 |
 | `GET /api/v1/tickets` | 条件列表（#37，仅成员；见「查询与计数（#37）」）。 |
 | `GET /api/v1/tickets/counts` | 按一个维度计数（#37，仅成员；筛选与列表相同）。 |
 | `GET /api/v1/tickets/{id}` | 读一张工单；`?format=markdown` 返回给 Agent 读的 Markdown。 |
@@ -136,7 +136,8 @@ spec 用户故事 84），没有 `inbox`：
 （labels 在 #31；guest-links 见下。）
 
 - 建单请求体 `{"kind", "title", "brief_md", "labels", "assignee?"}`（不用模板）或
-  `{"template", "title", "fields", "labels", "assignee?"}`（用模板，见下面的「模板（#34）」）：
+  `{"template", "title", "fields", "labels", "assignee?"}`（用模板，见下面的「模板（#34）」），
+  以及可选的 `"guest_link"`（#64「请人反馈」，与工单在同一个事务里创建访客链接）：
   - `kind` 可省（默认 `task`），只能是 `task`（任务）或 `report`（反馈）；用模板创建时由模板决定（请求里的 `kind` 被忽略）。
   - `title` 必填；`brief_md` 是不用模板时的一整块说明（可空）；模板工单的说明由 `fields` 按字段拼成。
   - `labels` 至少要有一个 `维度:值` 形式的维度标签；且每个标签（含不带维度的）
@@ -144,17 +145,31 @@ spec 用户故事 84），没有 `inbox`：
     初始值见 `internal/labels/seeds.go`）。别名与 allow_new 见下面的「标签、字典与别名（#31）」。
     用模板创建时，模板的预设标签与维度字段选中的值会自动并进来（预设标签、维度字段值
     都要满足同样的字典校验；「不确定」不打标签）。
+    **唯一例外**：请求带 `guest_link` 且 `can_edit_brief` 为 `true` 时，免「至少一个
+    维度标签」（成员这时不知道机型，由访客补全说明时选的维度值或初筛补上）；
+    其余校验照常（标签仍须是字典里在用的值、模板必须启用等），模板的预设标签照常打上。
   - `assignee`（#36）可写成员 id 或姓名；写成成员 Agent（署名写法或 Agent 名字）
     返回 `422 assignee_must_be_member`（成员 Agent 不能被指派，hint 列出可选成员）；
     查无此人返回 `422 unknown_member`；账号已停用的成员返回 `422 assignee_deactivated`
     （#42：停用即时生效，不再接新工单）。建单时指派会在 `created` 事件后记一条
     `assigned{from: null, to}` 事件。
-- 建单响应 `201`：`{number, seq, url, warnings, assignee, waiting_on, share_text}`
+  - `guest_link`（#64）是 `{"note", "valid_days?", "can_edit_brief"}`：`note` 必填
+    （写对方是谁，如「检验科-张三」），`valid_days` 只能 7/30/90（不填默认 30），
+    复用单建访客链接的校验与错误码（422 `note_required` / `invalid_valid_days`）。
+    链接与工单在同一个事务里创建：任何一步失败都不留下工单；时间线依次是
+    `created`、`assigned`（有指派人时）、`guest_link_created`（带 `note`）。
+- 建单响应 `201`：`{number, seq, url, warnings, assignee, waiting_on, share_text, guest_link?}`
   （`url` 即 `/t/<编号>`）。`warnings` 是用模板建单时「缺必填」的逐项提醒
   `{field, message}[]`——工单照常创建，只在响应里提醒（spec 用户故事 6）；不用模板或
   必填全填时为空数组。`assignee` 为成员或 null；`share_text` 只在指派给**他人**时非空，
   可直接转发：`李工：给你派了一张工单「整理对照表」，让你的 Agent 读一下
   /t/20261016-001（它也会出现在你的收件箱里）`。
+  请求带 `guest_link` 时，响应另带嵌套对象 `guest_link:
+  {id, url, note, expires_at, can_edit_brief, share_text}`：`url` 是访客链接地址
+  （完整密钥只出现这一次；配置了 `[server] public_url` 时是绝对地址），`share_text`
+  是服务端生成的面向访客的转发文案（称呼对方 + 标题 + 请按提示写详细、可传日志照片 +
+  链接 + 不用登录、有效期至某日），网页与成员 Agent 用同一份，与给被指派人的顶层
+  `share_text` 互不混用。同一个 `Idempotency-Key` 重放返回首次结果，不会多出工单或链接。
 - 建单错误码：`422 title_required`、`422 invalid_kind`、
   `422 dimension_label_required`（hint 给出字典里的维度标签示例）、
   `422 unknown_label_value`（附 `suggestions`：同维度里规范化后相等或互相包含的值，
@@ -416,8 +431,12 @@ spec 用户故事 84），没有 `inbox`：
 类型: 反馈
 预设标签: [待初筛]
 ---
+# 哪台仪器
+型号和版本
 ## 哪台仪器？ {维度:机型 必填}
 在仪器背面铭牌上可以看到型号；不确定可以选“不确定”。
+# 发生了什么
+时间、操作、现象，照片和日志
 ## 你做了哪些操作？ {必填}
 按顺序写，一步一行。
 > 示例：1. 开机自检完成 2. 进入质控界面 3. 点击“开始”
@@ -428,6 +447,14 @@ spec 用户故事 84），没有 `inbox`：
   引导说明，`> 示例：` 起的引用行是占位示例。
 - 花括号标记写在标题行末尾：`{必填}`、`{选填}`、`{单选: A | B}`、`{维度:X 必填}`
   （可与 `必填`/`选填` 组合）；不写时默认多行文本、选填。
+- **分组（#63）**：`# 组名` 开一组，可选；组标题下、下一个 `##` 之前的
+  第一段非空文字是组副标题，之后的 `##` 字段都属于这一组，直到下一个 `#`。规则：
+  - 一份模板要么完全不分组，要么所有字段都在分组里；用了分组、却有字段写在
+    第一个 `#` 之前 → 带行号的 422。
+  - 空组（下面没有字段）报错；除 `# ` 和 `## ` 外其他级别的标题（`###` 等）仍报错。
+  - 「给 Agent 的说明」不属于任何组，写在哪里都行。
+  - 分组只影响展示（访客分组填写页按它渲染）；说明的渲染、必填校验、
+    给 Agent 的填写指南都不变。
 - 小节标题为「给 Agent 的说明」的一段不是字段，是一段说明；会出现在模板的填写指南里，
   也会出现在按该模板建的工单 Markdown 的「下一步」里（spec 用户故事 35）。
 - 字段标题重复、标记无法识别、YAML 头缺键等格式错误：保存失败（422
@@ -439,7 +466,7 @@ spec 用户故事 84），没有 `inbox`：
 |---|---|
 | `GET /api/v1/templates` | 模板列表（含已停用，各项带 `active`），成员与成员 Agent 可读。 |
 | `POST /api/v1/templates` | 新建：`{"key": "check", "markdown": "模板原文"}`，成功 201。 |
-| `GET /api/v1/templates/{key}` | 读当前版本：字段定义、`agent_note`、模板原文 `markdown`、`version`、`updated_by`。 |
+| `GET /api/v1/templates/{key}` | 读当前版本：字段定义、`agent_note`、分组 `groups`（带分组时，#63）、模板原文 `markdown`、`version`、`updated_by`。 |
 | `GET /api/v1/templates/{key}?format=markdown` | 给 Agent 的填写指南（`text/markdown`）：建单请求示例、逐字段问句/引导/示例/候选值、「给 Agent 的说明」。 |
 | `PATCH /api/v1/templates/{key}` | 修改：`{"markdown": "新原文"}`，产生新版本（版本号 +1，记录修改人）。 |
 | `GET /api/v1/templates/{key}/versions` | 历史版本（新→旧），每版 `{version, name, markdown, updated_by, updated_at}`（#42 模板维护页）。 |
@@ -449,10 +476,14 @@ spec 用户故事 84），没有 `inbox`：
 - `key` 是模板的稳定标识（出现在工单的 `template` 字段里），不能含空格或 `/`，
   且不能复用已存在的 key（409 `template_key_taken`）。
 - 字段定义结构：`{key, title, guide, example, required, type, options[], dimension?,
-  option_aliases?}`；`type` 为 `text | radio | dimension`。**维度字段的 `options` 是读取时
+  option_aliases?, group?}`；`type` 为 `text | radio | dimension`；`group` 是所属
+  分组的序号（从 0 起，#63），只在带分组的模板里出现。**维度字段的 `options` 是读取时
   从标签字典现取的候选值 + 「不确定」**（字典会变，不缓存在模板里）；`option_aliases`
   是各候选值的别名（`{值: [别名…]}`，同样读取时现取，#39：网页的下拉框按别名搜索；
   匿名的入口读取也带，因为字典端点仅成员可用）。
+- 分组结构：带分组的模板在读取响应里另带 `groups: [{title, subtitle?}]`（按出现
+  顺序，`subtitle` 是组标题下的第一段非空文字，可省略）；不分组的模板没有 `groups`，
+  字段也不带 `group`（由前端把所有字段合成一组）。分组随模板版本快照保存。
 - 错误码：`422 template_format_error`（带行号）、`422 template_key_required`、
   `422 invalid_template_key`、`422 markdown_required`、`409 template_key_taken`、
   `404 template_not_found`。
@@ -474,11 +505,16 @@ spec 用户故事 84），没有 `inbox`：
   （与模板接口同形，含未填字段，按模板顺序），访客网页据此按问句渲染说明气泡、
   对未填字段显示「（未填写）」（#38）；非模板工单没有这个字段。维度字段在此视图
   里同样带 `options`（字典候选值 + 「不确定」）与 `option_aliases`（#39：「补全说明」
-  表单的下拉框用，读取时现取）。
+  表单的下拉框用，读取时现取）。创建时版本带分组的工单另带 `brief.template_groups`
+  （`[{title, subtitle?}]`，与模板接口同形），`template_fields` 的每个字段带 `group`
+  （组序号，从 0 起，#63）；不分组模板的工单两者都不出现（读取结果与升级前一致）。
 - `PATCH /api/v1/tickets/{id} {"fields": {改动的字段}, "base_revision": N}`：
   只改动传入的字段，其余保持不变；每次修订记一条 `brief_revised` 事件（见上）。
-- 预置三份模板（spec「初始数据」）：`bug-report`（Bug 反馈，预设 `待初筛`）、
-  `assign-task`（分配任务）、`question`（问题咨询）；模板是运行时数据，上线后可随时修改。
+- 预置三份模板（spec「初始数据」）：`bug-report`（Bug 反馈，预设 `待初筛`，分三组
+  「哪台仪器 / 发生了什么 / 影响多大」）、`assign-task`（分配任务）、`question`（问题咨询）；
+  模板是运行时数据，上线后可随时修改。#63 起服务启动时做一次性迁移：`bug-report`
+  的当前版本与升级前的预置原文**完全一致**时，追加一个带分组的新版本（版本历史里
+  可见）；改过的或全新的库都不动。
 
 
 ## 标签、字典与别名（#31）
@@ -668,7 +704,7 @@ spec 用户故事 84），没有 `inbox`：
 |---|---|
 | `POST /api/v1/intakes` | 创建（任何成员）：`{"slug", "name", "template"}`。 |
 | `GET /api/v1/intakes` | 列表（任何成员，含已停用，各项带 `active`）。 |
-| `GET /api/v1/intakes/{slug}` | **匿名**读取：入口信息 + 绑定模板的当前版本（维度字段带字典候选值和「不确定」）。 |
+| `GET /api/v1/intakes/{slug}` | **匿名**读取：入口信息 + 绑定模板的当前版本（维度字段带字典候选值和「不确定」；分组 `groups` 与字段 `group` 同模板接口，#63）。 |
 | `GET /api/v1/intakes/{slug}?format=markdown` | **匿名**读取给 Agent 的填写指南（`text/markdown`，与 `GET /api/v1/templates/{key}?format=markdown` 同一份）。 |
 | `POST /api/v1/intakes/{slug}/tickets` | **匿名**提交：`{"title", "fields", "author_name?"}`。 |
 | `POST /api/v1/intakes/{slug}/deactivate` | 停用（任何成员；幂等 200）。 |

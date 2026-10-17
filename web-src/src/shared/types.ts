@@ -31,6 +31,14 @@ export interface TemplateField {
   dimension?: string
   /** 维度字段各候选值的别名（#39：下拉框按别名搜索；随字典现取） */
   option_aliases?: Record<string, string[]>
+  /** 所属分组的序号（从 0 起，#63）；不分组的模板没有这个字段 */
+  group?: number
+}
+
+/** 模板分组（#63）：组名与副标题；不分组时 groups 为空。 */
+export interface TemplateGroup {
+  title: string
+  subtitle?: string
 }
 
 export interface Attachment {
@@ -67,6 +75,8 @@ export interface Brief {
   revision: number
   template?: string | null
   template_fields?: TemplateField[]
+  /** 创建时模板版本的分组（#63）；不分组时省略，由前端合成一组「填写说明」 */
+  template_groups?: TemplateGroup[]
 }
 
 export interface TicketView {
