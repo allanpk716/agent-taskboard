@@ -74,9 +74,17 @@ func templateRefAndSub(path string) (key, sub string, hasSub bool) {
 	return key, sub, hasSub
 }
 
+// templateGroupView 是模板分组的对外结构（#63）：组名与副标题；不分组时
+// groups 为空（省略）。
+type templateGroupView struct {
+	Title    string `json:"title"`
+	Subtitle string `json:"subtitle,omitempty"`
+}
+
 // templateFieldView 是字段定义的对外结构；维度字段的 options 在读取时
 // 从标签字典现取（字典会变，不能缓存在模板里），末尾带「不确定」；
-// option_aliases 是各候选值的别名（#39：下拉框按别名搜索，随字典现取）。
+// option_aliases 是各候选值的别名（#39：下拉框按别名搜索，随字典现取）；
+// group 是所属分组的序号（#63，从 0 起），不分组时不出现。
 type templateFieldView struct {
 	Key           string              `json:"key"`
 	Title         string              `json:"title"`
@@ -87,6 +95,7 @@ type templateFieldView struct {
 	Options       []string            `json:"options"`
 	Dimension     string              `json:"dimension,omitempty"`
 	OptionAliases map[string][]string `json:"option_aliases,omitempty"`
+	Group         *int                `json:"group,omitempty"`
 }
 
 // templateSummaryView 是列表项。
@@ -105,6 +114,7 @@ type templateDetailView struct {
 	templateSummaryView
 	AgentNote string              `json:"agent_note"`
 	Fields    []templateFieldView `json:"fields"`
+	Groups    []templateGroupView `json:"groups,omitempty"` // 字段分组（#63）；不分组时省略
 	Markdown  string              `json:"markdown"`
 	UpdatedBy *authorView         `json:"updated_by"`
 	UpdatedAt string              `json:"updated_at"`
@@ -139,6 +149,7 @@ func (a *API) templateFieldsView(r *http.Request, t templates.Template) []templa
 		fv := templateFieldView{
 			Key: f.Key, Title: f.Title, Guide: f.Guide, Example: f.Example,
 			Required: f.Required, Type: f.Type, Options: nonNil(f.Options), Dimension: f.Dimension,
+			Group: f.Group,
 		}
 		if f.Type == template.TypeDimension {
 			// 维度字段带上字典中的候选值和「不确定」选项（spec「读取」）。
@@ -195,6 +206,7 @@ func (a *API) readTemplate(w http.ResponseWriter, r *http.Request, key string) {
 			PresetLabels: nonNil(t.PresetLabels), URL: "/api/v1/templates/" + t.Key,
 		},
 		AgentNote: t.AgentNote,
+		Groups:    groupViewsOf(t.Groups),
 		Markdown:  t.Markdown,
 		UpdatedAt: t.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
@@ -204,6 +216,18 @@ func (a *API) readTemplate(w http.ResponseWriter, r *http.Request, key string) {
 	}
 	view.Fields = a.templateFieldsView(r, t)
 	writeJSON(w, http.StatusOK, view)
+}
+
+// groupViewsOf 把模板分组转成对外结构；不分组时返回 nil（JSON 里省略）。
+func groupViewsOf(groups []template.Group) []templateGroupView {
+	if len(groups) == 0 {
+		return nil
+	}
+	out := make([]templateGroupView, 0, len(groups))
+	for _, g := range groups {
+		out = append(out, templateGroupView{Title: g.Title, Subtitle: g.Subtitle})
+	}
+	return out
 }
 
 // guide 组装填写指南：各维度的候选值现取字典。

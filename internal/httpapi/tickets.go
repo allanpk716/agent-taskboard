@@ -497,21 +497,23 @@ type waitingOnView struct {
 }
 
 type briefView struct {
-	Fields         *map[string]string  `json:"fields"`
-	Markdown       string              `json:"markdown"`
-	Revision       int64               `json:"revision"`
-	Template       *string             `json:"template"`
-	TemplateFields []templateFieldView `json:"template_fields,omitempty"` // 创建时版本的字段定义（访客网页按问句渲染说明气泡，#38）
+	Fields         *map[string]string   `json:"fields"`
+	Markdown       string               `json:"markdown"`
+	Revision       int64                `json:"revision"`
+	Template       *string              `json:"template"`
+	TemplateFields []templateFieldView  `json:"template_fields,omitempty"` // 创建时版本的字段定义（访客网页按问句渲染说明气泡，#38）
+	TemplateGroups []templateGroupView  `json:"template_groups,omitempty"` // 创建时版本的分组（#63）；不分组时省略
 }
 
 // fieldViewsOf 把工单保存的模板快照字段定义转成对外结构（与模板接口同形；
-// 维度字段不现取字典候选值——说明气泡只需要问句与顺序）。
+// 维度字段不现取字典候选值——说明气泡只需要问句与顺序；字段带 group（#63））。
 func fieldViewsOf(defs []template.Field) []templateFieldView {
 	out := make([]templateFieldView, 0, len(defs))
 	for _, f := range defs {
 		out = append(out, templateFieldView{
 			Key: f.Key, Title: f.Title, Guide: f.Guide, Example: f.Example,
 			Required: f.Required, Type: f.Type, Options: f.Options, Dimension: f.Dimension,
+			Group: f.Group,
 		})
 	}
 	return out
@@ -651,6 +653,7 @@ func newTicketView(full tickets.Full, viewer identity.Viewer) ticketView {
 		v.Brief.Fields = &fields
 		if full.TemplateDef != nil {
 			v.Brief.TemplateFields = fieldViewsOf(full.TemplateDef.Fields)
+			v.Brief.TemplateGroups = groupViewsOf(full.TemplateDef.Groups)
 		}
 	}
 	if !isGuest {

@@ -30,6 +30,13 @@ type templateFieldBody struct {
 	Options       []string            `json:"options"`
 	Dimension     string              `json:"dimension"`
 	OptionAliases map[string][]string `json:"option_aliases"` // #39：下拉框按别名搜索
+	Group         *int                `json:"group"`          // #63：所属分组序号；不分组时缺省
+}
+
+// groupBody 是分组 [{title, subtitle}] 的解码结构（#63）。
+type groupBody struct {
+	Title    string `json:"title"`
+	Subtitle string `json:"subtitle"`
 }
 
 // templateBody 是 GET /api/v1/templates/{key} 的解码结构。
@@ -42,6 +49,7 @@ type templateBody struct {
 	PresetLabels []string            `json:"preset_labels"`
 	AgentNote    string              `json:"agent_note"`
 	Fields       []templateFieldBody `json:"fields"`
+	Groups       []groupBody         `json:"groups"`
 	Markdown     string              `json:"markdown"`
 	UpdatedBy    *authorBody         `json:"updated_by"`
 }
@@ -252,7 +260,6 @@ func Test未登录读模板返回401(t *testing.T) {
 		t.Fatalf("未登录读模板状态码 = %d, 想 401", res.StatusCode)
 	}
 }
-
 
 // #39：补全说明与反馈入口提交页共用的字段表单需要维度字段的候选值与别名
 //（下拉框按别名搜索）。工单视图（访客用「补全说明」）此前只回字段快照、不带

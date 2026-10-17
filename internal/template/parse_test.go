@@ -160,7 +160,13 @@ func Test格式错误报出行号(t *testing.T) {
 		{"预设标签格式错", "---\n名称: x\n类型: 任务\n预设标签: 待初筛\n---\n## 想问什么？\n一句话。\n", 4, "["},
 		{"YAML行没有冒号", "---\n名称: x\n类型\n---\n## 想问什么？\n一句话。\n", 3, "键"},
 		{"正文在##小节之外", "---\n名称: x\n类型: 任务\n---\n这句话多余。\n## 想问什么？\n一句话。\n", 5, "##"},
-		{"一级标题", "---\n名称: x\n类型: 任务\n---\n# 想问什么？\n一句话。\n", 5, "##"},
+		{"三级标题", "---\n名称: x\n类型: 任务\n---\n### 想问什么？\n一句话。\n", 5, "标题"},
+		{"只有井号没有空格", "---\n名称: x\n类型: 任务\n---\n#想问什么\n一句话。\n", 5, "标题"},
+		{"组名为空", "---\n名称: x\n类型: 任务\n---\n# \n副标题\n## 想问什么？\n一句话。\n", 5, "组名"},
+		{"只有一级标题没有字段", "---\n名称: x\n类型: 任务\n---\n# 想问什么？\n一句话。\n", 5, "空"},
+		{"字段写在第一组之前", "---\n名称: x\n类型: 任务\n---\n## 想问什么？\n一句话。\n# 分组\n副标题\n## 再问？\n又一句。\n", 5, "分组"},
+		{"空组", "---\n名称: x\n类型: 任务\n---\n# 组一\n副标题\n## 字段？\nx\n# 组二\n这里没有字段\n", 9, "空"},
+		{"相邻的空组", "---\n名称: x\n类型: 任务\n---\n# 组一\n副标题一\n# 组二\n副标题二\n## 字段？\nx\n", 5, "空"},
 		{"小节标题为空", "---\n名称: x\n类型: 任务\n---\n## {必填}\n一句话。\n", 5, "标题"},
 		{"标记不在行末", "---\n名称: x\n类型: 任务\n---\n## {必填} 想问什么？\n一句话。\n", 5, "{"},
 		{"标记里的未知写法", "---\n名称: x\n类型: 任务\n---\n## 想问什么？ {必填 文本}\n一句话。\n", 5, "文本"},
@@ -192,6 +198,121 @@ func Test格式错误报出行号(t *testing.T) {
 				t.Errorf("Error() 应带行号：%q", err.Error())
 			}
 		})
+	}
+}
+
+// #63 分组：`# 组名` 开一组，紧随其后、下一个 ## 之前的第一段非空文字是
+// 副标题；之后的 ## 字段都属于这一组。「给 Agent 的说明」不属于任何组。
+const groupedExample = `---
+名称: 分组反馈
+类型: 反馈
+---
+# 哪台仪器
+型号和版本
+## 哪台仪器？ {维度:机型 必填}
+在仪器背面铭牌上可以看到型号。
+## 序列号和软件版本是多少？
+在“设置 → 关于本机”里可以看到。
+# 发生了什么
+时间、操作、现象，照片和日志
+## 什么时候发生的？ {必填}
+大概时间即可。
+## 给 Agent 的说明
+照片和日志作为附件上传。
+# 影响多大
+频率、影响和你的猜测
+## 出现得频繁吗？ {单选: 每次 | 经常 | 偶尔 | 仅一次 必填}
+## 你的猜测或补充？
+如果你觉得是什么原因，写在这里。
+`
+
+// 解析分组模板：groups 按出现顺序带标题与副标题；字段带组序号（从 0 起）。
+// 「给 Agent 的说明」夹在两组之间，不属于任何组，也不影响分组的非空判定。
+func Test解析分组模板(t *testing.T) {
+	def, err := Parse(groupedExample)
+	if err != nil {
+		t.Fatalf("解析失败：%v", err)
+	}
+	if len(def.Groups) != 3 {
+		t.Fatalf("分组数 = %d, 想 3：%+v", len(def.Groups), def.Groups)
+	}
+	wantGroups := []Group{
+		{Title: "哪台仪器", Subtitle: "型号和版本"},
+		{Title: "发生了什么", Subtitle: "时间、操作、现象，照片和日志"},
+		{Title: "影响多大", Subtitle: "频率、影响和你的猜测"},
+	}
+	for i, want := range wantGroups {
+		if def.Groups[i] != want {
+			t.Errorf("分组 %d = %+v, 想 %+v", i, def.Groups[i], want)
+		}
+	}
+	wantFieldGroups := map[string]int{
+		"哪台仪器？":        0,
+		"序列号和软件版本是多少？": 0,
+		"什么时候发生的？":     1,
+		"出现得频繁吗？":      2,
+		"你的猜测或补充？":     2,
+	}
+	if len(def.Fields) != len(wantFieldGroups) {
+		t.Fatalf("字段数 = %d, 想 %d：%+v", len(def.Fields), len(wantFieldGroups), def.Fields)
+	}
+	for _, f := range def.Fields {
+		if f.Group == nil {
+			t.Errorf("分组模板的字段 %q 应带组序号", f.Key)
+			continue
+		}
+		if got := *f.Group; got != wantFieldGroups[f.Key] {
+			t.Errorf("字段 %q 的组序号 = %d, 想 %d", f.Key, got, wantFieldGroups[f.Key])
+		}
+	}
+	if def.AgentNote != "照片和日志作为附件上传。" {
+		t.Errorf("给 Agent 的说明 = %q", def.AgentNote)
+	}
+}
+
+// 分组只有副标题、没有字段时也解析成功（副标题是第一段非空文字；
+// 组名后直接跟下一个 # 也算空组，见格式错误用例）。
+func Test分组副标题跨行成段(t *testing.T) {
+	def, err := Parse("---\n名称: x\n类型: 任务\n---\n# 组\n第一行\n第二行\n\n忽略的又一段\n## 字段？\nx\n")
+	if err != nil {
+		t.Fatalf("解析失败：%v", err)
+	}
+	if len(def.Groups) != 1 {
+		t.Fatalf("分组数 = %d, 想 1", len(def.Groups))
+	}
+	if def.Groups[0].Subtitle != "第一行\n第二行" {
+		t.Errorf("副标题 = %q, 想 第一行\\n第二行（只取第一段）", def.Groups[0].Subtitle)
+	}
+}
+
+// 不分组的旧模板：没有 groups，字段不带组序号。
+func Test不分组模板没有groups(t *testing.T) {
+	def, err := Parse(specExample)
+	if err != nil {
+		t.Fatalf("解析失败：%v", err)
+	}
+	if len(def.Groups) != 0 {
+		t.Errorf("不分组模板不应有 groups：%+v", def.Groups)
+	}
+	for _, f := range def.Fields {
+		if f.Group != nil {
+			t.Errorf("不分组模板的字段 %q 不应带组序号：%d", f.Key, *f.Group)
+		}
+	}
+}
+
+// 「给 Agent 的说明」写在哪里都行：写在第一个分组之前不触发
+//「字段写在分组之前」的报错。
+func Test给Agent的说明可以写在分组之前(t *testing.T) {
+	def, err := Parse("---\n名称: x\n类型: 任务\n---\n## 给 Agent 的说明\n先看这里。\n# 组一\n副标题\n## 字段？\nx\n")
+	if err != nil {
+		t.Fatalf("解析失败：%v", err)
+	}
+	if def.AgentNote != "先看这里。" {
+		t.Errorf("给 Agent 的说明 = %q", def.AgentNote)
+	}
+	if len(def.Fields) != 1 || def.Fields[0].Group == nil || *def.Fields[0].Group != 0 {
+		t.Fatalf("字段应属于组 0：%+v", def.Fields)
 	}
 }
 
