@@ -160,12 +160,8 @@ type createTicketResponse struct {
 // 同形（url 只出现一次），另带服务端生成的转发文案 share_text（网页与
 // 成员 Agent 用同一份）。
 type createGuestLinkView struct {
-	ID           int64  `json:"id"`
-	URL          string `json:"url"`
-	Note         string `json:"note"`
-	ExpiresAt    string `json:"expires_at"`
-	CanEditBrief bool   `json:"can_edit_brief"`
-	ShareText    string `json:"share_text"`
+	guestLinkBase
+	ShareText string `json:"share_text"`
 }
 
 func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
@@ -178,10 +174,17 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req, `{"kind?": "task|report", "template?": "模板 key", "title": "…", "brief_md?": "…", "fields?": {"问句？": "…"}, "labels": ["维度:值"], "assignee?": "成员 id 或姓名", "guest_link?": {"note": "…", "valid_days?": 30, "can_edit_brief": true}}`) {
 		return
 	}
-	// guest_link 复用单建访客链接的请求体与校验（note 必填；valid_days 只能
-	// 7/30/90，不填默认 30），错误码也一致（#64）。
+	// guest_link 复用单建访客链接的请求体与校验（note 必填；错误码也一致，#64），
+	// 但只接受 {note, valid_days, can_edit_brief}：expires_at 只在单建链接时可用
+	//（这里必须守住 7/30/90 的限制）。
 	var guestSpec *tickets.GuestLinkSpec
 	if req.GuestLink != nil {
+		if strings.TrimSpace(req.GuestLink.ExpiresAt) != "" {
+			WriteError(w, http.StatusUnprocessableEntity, CodeInvalidValidDays,
+				"guest_link 的有效期只能选 7、30 或 90 天，不支持 expires_at",
+				"guest_link 只接受 {note, valid_days, can_edit_brief}；要指定具体日期时，建单后单独创建访客链接")
+			return
+		}
 		spec, ok := parseGuestLinkSpec(w, *req.GuestLink)
 		if !ok {
 			return
@@ -224,10 +227,12 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 			link := result.GuestLink
 			url := a.absURL("/g/" + link.Key)
 			res.GuestLink = &createGuestLinkView{
-				ID: link.ID, URL: url, Note: link.Note,
-				ExpiresAt:    link.ExpiresAt.Format(time.RFC3339Nano),
-				CanEditBrief: link.CanEditBrief,
-				ShareText:    a.guestShareText(link.Note, full.Title, url, link.ExpiresAt),
+				guestLinkBase: guestLinkBase{
+					ID: link.ID, URL: url, Note: link.Note,
+					ExpiresAt:    link.ExpiresAt.Format(time.RFC3339Nano),
+					CanEditBrief: link.CanEditBrief,
+				},
+				ShareText: a.guestShareText(link.Note, full.Title, url, link.ExpiresAt),
 			}
 		}
 		writeJSON(w, http.StatusCreated, res)

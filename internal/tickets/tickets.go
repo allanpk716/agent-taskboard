@@ -226,13 +226,10 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, err
 	if in.Title == "" {
 		return CreateResult{}, ErrTitleRequired
 	}
-	// 「请人反馈」的访客链接先校验（备注、有效期），任何校验失败都不动工单。
+	// 「请人反馈」的访客链接先校验（备注、有效期，validateCreate），任何校验
+	// 失败都不动工单；写入事务里的另一半校验是同一份逻辑。
 	if in.GuestLink != nil {
-		in.GuestLink.Note = strings.TrimSpace(in.GuestLink.Note)
-		if in.GuestLink.Note == "" {
-			return CreateResult{}, ErrNoteRequired
-		}
-		if _, err := in.GuestLink.validate(m.clk.Now()); err != nil {
+		if _, err := in.GuestLink.validateCreate(m.clk.Now()); err != nil {
 			return CreateResult{}, err
 		}
 	}

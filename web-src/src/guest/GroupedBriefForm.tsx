@@ -24,21 +24,25 @@ const DESKTOP_QUERY = '(min-width: 768px)'
 const UNSURE = '不清楚'
 /** 追问提示的长度阈值：多行文本少于 20 字且不是「不清楚」时出现。 */
 const NUDGE_MIN_CHARS = 20
+/** 整张工单的附件区（手机）放在这一组的组末（#65 spec：照片、日志跟
+ *  时间/操作/现象同在一组）；模板里没有时退回最后一组组末。 */
+const ATTACH_AREA_GROUP_TITLE = '发生了什么'
 
 /** 自由描述（#66）：无模板工单合成的一组「情况说明」的大文本框，
- *  上方列出可以按哪几点写；tips / nudgeHint 只在前端用，服务端不下发。 */
+ *  上方列出可以按哪几点写；tips / nudgeExample 只在前端用，服务端不下发。 */
 export interface FillField extends TemplateField {
   /** 提示点列表（照原型，大文本框上方逐条列出） */
   tips?: string[]
-  /** 追问提示的专属文案（没有时取示例 / 引导说明） */
-  nudgeHint?: string
+  /** 追问提示的内容（没有时取示例 / 引导说明；自由描述取提示点） */
+  nudgeExample?: string
 }
 
-/** 自由描述字段的键（草稿与统一附件区都用它；不与模板字段键冲突）。 */
-export const FREE_KEY = '__brief__'
+/** 自由描述字段的键（草稿与统一附件区都用它；不与模板字段键冲突）。
+ *  值 __brief__ 是写进本机草稿的持久键，改了会让旧草稿读不回来，保持不变。 */
+export const NO_TEMPLATE_FIELD_KEY = '__brief__'
 
 const FREE_FIELD: FillField = {
-  key: FREE_KEY,
+  key: NO_TEMPLATE_FIELD_KEY,
   title: '请把情况写详细',
   type: 'text',
   required: true,
@@ -52,7 +56,7 @@ const FREE_FIELD: FillField = {
     '本来应该怎样',
     '出现得频繁吗',
   ],
-  nudgeHint: '再多写几句会更好，参照上面几点补充。',
+  nudgeExample: '哪台设备、什么时候、做了什么、看到什么、本来应该怎样、频繁吗',
 }
 
 export interface GroupedBriefFormProps {
@@ -102,13 +106,13 @@ function filled(value: string | undefined): boolean {
   return !!(value ?? '').trim()
 }
 
-/** 追问提示文案：内容取字段专属提示，否则取示例，再否则取引导说明（不调 AI）。 */
+/** 追问提示文案：统一「能再具体一点吗？比如：…」的形式，内容取字段专属
+ *  内容，否则取示例，再否则取引导说明（不调 AI）。 */
 function nudgeText(f: FillField, value: string): string | null {
   if (f.type !== 'text') return null
   const v = value.trim()
   if (!v || v === UNSURE || v.length >= NUDGE_MIN_CHARS) return null
-  if (f.nudgeHint) return `能再具体一点吗？${f.nudgeHint}`
-  const src = f.example || f.guide
+  const src = f.nudgeExample || f.example || f.guide
   return src ? `能再具体一点吗？比如：${src}` : '能再具体一点吗？'
 }
 
@@ -299,7 +303,8 @@ function FileChips({ files, onRemove }: { files: StagedFile[]; onRemove?: (id: s
   )
 }
 
-/** 整张工单的附件区：手机在最后一组组末（三入口），宽屏在右栏（拖放区）。 */
+/** 整张工单的附件区：手机在「发生了什么」组末（没有时最后一组组末，
+ *  三入口），宽屏在右栏（拖放区）。 */
 function AttachArea({
   fieldKey,
   onPickFiles,
@@ -399,7 +404,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
   const initialDraft = useRef(loadFormDraft(key))
   const [values, setValues] = useState<Record<string, string>>(() =>
     free
-      ? { [FREE_KEY]: ticket.brief.markdown, ...(initialDraft.current?.fields ?? {}) }
+      ? { [NO_TEMPLATE_FIELD_KEY]: ticket.brief.markdown, ...(initialDraft.current?.fields ?? {}) }
       : { ...(ticket.brief.fields ?? {}), ...(initialDraft.current?.fields ?? {}) },
   )
   const [author, setAuthor] = useState(initialDraft.current?.author ?? initialAuthor ?? loadAuthor())
@@ -410,7 +415,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
   const [openGroup, setOpenGroup] = useState(0)
   const desktop = useDesktop()
   const member = memberNameOf(ticket)
-  const areaField = free ? FREE_KEY : lastTextFieldKey(templateFields)
+  const areaField = free ? NO_TEMPLATE_FIELD_KEY : lastTextFieldKey(templateFields)
   const baseRevisionRef = useRef(ticket.brief.revision)
   const idemKeyRef = useRef<string | undefined>(initialDraft.current?.idemKey)
   const pendingRef = useRef(!!initialDraft.current?.pending)
@@ -501,7 +506,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
       const name = authorRef.current.trim()
       // 自由描述提交整块 brief_md（非模板工单）；模板工单逐字段提交。
       const body = free
-        ? { brief_md: valuesRef.current[FREE_KEY] ?? '', base_revision: baseRevisionRef.current, ...(name ? { author_name: name } : {}) }
+        ? { brief_md: valuesRef.current[NO_TEMPLATE_FIELD_KEY] ?? '', base_revision: baseRevisionRef.current, ...(name ? { author_name: name } : {}) }
         : (() => {
             const out: Record<string, string> = {}
             for (const f of templateFields) out[f.key] = valuesRef.current[f.key] ?? ''
@@ -599,6 +604,12 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
     desktop,
   }
 
+  // 整张工单的附件区（手机）的组：有「发生了什么」组时在它组末，否则退回
+  // 最后一组组末（不分组模板与自由描述都只有一组）。附件引用仍挂最后一个
+  // 文本字段（areaField 不变）。
+  const areaGroup = groups.findIndex((g) => g.title === ATTACH_AREA_GROUP_TITLE)
+  const areaGroupIndex = areaGroup >= 0 ? areaGroup : groups.length - 1
+
   const groupsView = (openAll: boolean) => (
     <>
       {groups.map((g, i) => {
@@ -622,7 +633,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
                 {g.fields.map((f) => (
                   <FieldBlock key={f.key} field={f} value={values[f.key] ?? ''} {...fieldProps} />
                 ))}
-                {last && !desktop && (
+                {i === areaGroupIndex && !desktop && (
                   <AttachArea fieldKey={areaField} onPickFiles={fieldProps.onPickFiles} files={files} onRemoveFile={removeFile} desktop={desktop} />
                 )}
                 {!openAll && !last && (

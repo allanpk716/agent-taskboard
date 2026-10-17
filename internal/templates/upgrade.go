@@ -53,7 +53,7 @@ func (m *Manager) UpgradePresetBugReport(ctx context.Context) error {
 		SELECT v.markdown
 		FROM templates t
 		JOIN template_versions v ON v.template_key = t.key AND v.version = t.current_version
-		WHERE t.key = 'bug-report'`).Scan(&markdown)
+		WHERE t.key = ?`, presetBugReportKey).Scan(&markdown)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -63,6 +63,6 @@ func (m *Manager) UpgradePresetBugReport(ctx context.Context) error {
 	if markdown != LegacyBugReportMarkdown {
 		return nil
 	}
-	_, err = m.Update(ctx, "bug-report", seedTemplates["bug-report"], identity.Viewer{})
+	_, err = m.Update(ctx, presetBugReportKey, seedTemplates[presetBugReportKey], identity.Viewer{})
 	return err
 }

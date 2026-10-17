@@ -92,6 +92,35 @@ test.describe('手机视口', () => {
     await expect(g1.locator('.cf', { hasText: '哪台仪器？' })).toBeVisible()
     await expect(g2.locator('.cf')).toHaveCount(0)
   })
+
+  // 2.（手机视口）整张工单的附件区在「发生了什么」组末，最后一组没有：
+  //    照片、日志跟时间/操作/现象同在一组（#65 spec），不分组时退回组末。
+  test('整张工单的附件区在「发生了什么」组末', async ({ page, request }) => {
+    const seed = await seedFillTicket(request)
+    await page.goto(`/g/${seed.linkKey}`)
+    await page.getByRole('button', { name: '开始填写' }).click()
+
+    const groups = page.locator('.grp')
+
+    // 展开第二组（发生了什么）：附件区在这一组的组末，且只有这一个
+    const g2 = groups.nth(1)
+    await g2.locator('.grp-hd').click()
+    await expect(g2.locator('.cf', { hasText: '什么时候发生的？' })).toBeVisible()
+    await expect(g2.locator('.cf.area')).toHaveCount(1)
+    await expect(g2.locator('.cf.area')).toContainText('照片、截图和日志')
+
+    // 最后一组（影响多大）展开后没有附件区
+    const g3 = groups.nth(2)
+    await g3.locator('.grp-hd').click()
+    await expect(g3.locator('.cf', { hasText: '出现得频繁吗？' })).toBeVisible()
+    await expect(g3.locator('.cf.area')).toHaveCount(0)
+
+    // 第一组（哪台仪器）也没有
+    const g1 = groups.nth(0)
+    await g1.locator('.grp-hd').click()
+    await expect(g1.locator('.cf', { hasText: '哪台仪器？' })).toBeVisible()
+    await expect(g1.locator('.cf.area')).toHaveCount(0)
+  })
 })
 
 // 3.（手机视口）「不清楚」能填好必填项；短文本出现追问提示，写长后消失。
