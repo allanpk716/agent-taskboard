@@ -9,6 +9,10 @@
 //   - 每个请求先看链接指向有没有变，变了就打开新版本目录接着服务（不用重启）；
 //   - 一个请求自始至终只用一个版本目录，不会半新半旧；
 //   - 刚换下来的旧版本目录再保留两代：翻到一半的旧页面还能取到旧哈希资源。
+//     切回保留期内的目录时复用已打开的 root（几个版本来回切不会反复开、关），
+//     所以循环切换时旧哈希资源一直可取；
+//   - 超过保留代数被淘汰的 root 带引用计数：在途请求用完（release）之前不
+//     会真正关闭，切换期间不会冒出 404。
 package webapp
 
 import (
@@ -32,16 +36,20 @@ type Handler struct {
 	// linkMode 为 true 时按链接目标的变化惰性切换版本目录。
 	linkMode bool
 
-	mu      sync.RWMutex
+	mu      sync.Mutex
 	current *versionRoot
-	retired []*versionRoot // 最近两代旧版本（给旧页面补旧哈希资源）
+	retired []*versionRoot // 最近 keepRetired 代旧版本（按目录去重，给旧页面补旧哈希资源）
+	dying   []*versionRoot // 已淘汰但还有在途请求在用的 root，引用归零时才真正关闭
 	closed  bool
 }
 
-// versionRoot 是一个打开的前端版本目录。
+// versionRoot 是一个打开的前端版本目录。refs 是正在用它服务的请求数：
+// root 被淘汰（从 current/retired 摘除）后要等 refs 归零才 Close，
+// 否则正在用它取文件的请求会 404。refs 由 Handler.mu 保护。
 type versionRoot struct {
 	root *os.Root
 	dir  string // 实际目录（链接目标）的绝对路径
+	refs int    // 在途请求数
 }
 
 // keepRetired 是换下来还保持可服务的旧版本目录数（配合更新器在磁盘上
@@ -128,15 +136,18 @@ func (h *Handler) Close() error {
 		return nil
 	}
 	h.closed = true
+	all := append([]*versionRoot{h.current}, h.retired...)
+	all = append(all, h.dying...)
 	var firstErr error
-	for _, vr := range append([]*versionRoot{h.current}, h.retired...) {
-		if vr != nil {
-			if err := vr.root.Close(); err != nil && firstErr == nil {
-				firstErr = err
-			}
+	for _, vr := range all {
+		if vr == nil {
+			continue
+		}
+		if err := vr.root.Close(); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	h.retired = nil
+	h.retired, h.dying = nil, nil
 	return firstErr
 }
 
@@ -145,7 +156,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	vr := h.version()
+	vr := h.acquire()
+	defer h.release(vr)
 	name, file, err := h.resolve(vr, r.URL.Path)
 	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
@@ -167,42 +179,97 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, path.Base(name), st.ModTime(), seeker)
 }
 
-// version 返回本次请求用的版本目录。链接模式下先看链接指向是否变了（更新器
-// 重建链接后，下一个请求就切到新版本，不用重启服务）。
-func (h *Handler) version() *versionRoot {
-	h.mu.RLock()
-	current := h.current
-	h.mu.RUnlock()
-	if !h.linkMode {
-		return current
-	}
-	target, err := os.Readlink(h.linkPath)
-	if err != nil || target == current.dir {
-		return current
+// acquire 取本次请求要用的版本目录并计一次引用（ServeHTTP 结束时 release）。
+// 链接模式下先看链接指向是否变了（更新器重建链接后，下一个请求就切到新
+// 版本，不用重启服务）。引用计数和「root 是否还在被服务持有」在同一个锁
+// 里更新，淘汰路径（retireLocked）不可能关掉刚被本请求拿到的 root。
+func (h *Handler) acquire() *versionRoot {
+	var target string
+	var linkErr error
+	if h.linkMode {
+		target, linkErr = os.Readlink(h.linkPath)
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.current.dir == target || h.closed {
-		return h.current // 别的请求已经切过去了，或已关闭
+	vr := h.current
+	if linkErr == nil && !h.closed && target != vr.dir {
+		vr = h.switchVersion(target)
 	}
-	vr, err := openVersion(target)
-	if err != nil {
+	vr.refs++
+	return vr
+}
+
+// release 归还一次引用：root 已被淘汰（进了 dying）且引用归零时才真正关闭。
+func (h *Handler) release(vr *versionRoot) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	vr.refs--
+	if vr.refs > 0 {
+		return
+	}
+	for i, d := range h.dying {
+		if d == vr {
+			h.dying = append(h.dying[:i], h.dying[i+1:]...)
+			vr.root.Close()
+			return
+		}
+	}
+}
+
+// switchVersion 在持锁状态下把 current 换成 target 目录（调用方保证 target
+// 与 current 不是同一目录、Handler 未关闭）：
+//   - target 已在 retired 里：复用那个 root，从 retired 取出来当 current。
+//     否则 A→B→C→A 循环切换时同一个目录会在 retired 里堆多份，把真正需要
+//     保留的旧版本挤出去，旧页面的哈希资源就取不到了；
+//   - 否则新开一个 root（打不开就继续用旧版本服务）。
+//
+// 换下来的旧 current 进 retired；retired 超过 keepRetired 时淘汰最旧的：
+// 没有在途请求就立即关闭，否则标记进 dying，等引用归零（见 release）。
+func (h *Handler) switchVersion(target string) *versionRoot {
+	vr := h.current
+	if i := h.retiredIndex(target); i >= 0 {
+		vr = h.retired[i]
+		h.retired = append(h.retired[:i], h.retired[i+1:]...)
+	} else if fresh, err := openVersion(target); err == nil {
+		vr = fresh
+	} else {
 		return h.current // 链接指到了打不开的目录：继续用旧版本服务
 	}
-	h.retired = append(h.retired, h.current)
-	if len(h.retired) > keepRetired {
-		old := h.retired[0]
-		h.retired = h.retired[len(h.retired)-keepRetired:]
-		old.root.Close()
-	}
+	h.retireLocked(h.current)
 	h.current = vr
 	return vr
 }
 
+// retireLocked 把换下来的 root 放进 retired，超过 keepRetired 代就淘汰最旧的。
+func (h *Handler) retireLocked(vr *versionRoot) {
+	h.retired = append(h.retired, vr)
+	if len(h.retired) <= keepRetired {
+		return
+	}
+	old := h.retired[0]
+	h.retired = h.retired[1:]
+	if old.refs == 0 {
+		old.root.Close()
+		return
+	}
+	// 还有请求在用：先摘出来，等最后一个请求结束再关。
+	h.dying = append(h.dying, old)
+}
+
+func (h *Handler) retiredIndex(dir string) int {
+	for i, vr := range h.retired {
+		if vr.dir == dir {
+			return i
+		}
+	}
+	return -1
+}
+
 // openFromRetired 在换下来的旧版本目录里找一个文件（旧页面的哈希资源）。
+// retired 里的 root 一定还开着（淘汰时先摘出去再关）。
 func (h *Handler) openFromRetired(name string) (fs.File, bool) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	for i := len(h.retired) - 1; i >= 0; i-- {
 		if f, err := h.retired[i].root.Open(name); err == nil {
 			if st, statErr := f.Stat(); statErr == nil && !st.IsDir() {
