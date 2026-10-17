@@ -1,0 +1,28 @@
+*{box-sizing:border-box}body{margin:0;background:#f5f6f8;font-family:system-ui,'Microsoft YaHei',sans-serif;color:#1f2937;font-size:14px}
+.proto{position:sticky;top:0;z-index:50;background:#111827;color:#fff;font-size:12px;padding:6px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.proto b{color:#fbbf24}.proto button{background:#374151;color:#fff;border:0;border-radius:5px;padding:4px 9px;font-size:12px}.proto button.on{background:#2a6fdb}
+.top{background:#fff;border-bottom:1px solid #e6e9f0;padding:10px 14px;display:flex;align-items:center;gap:10px}.top .logo{font-weight:700}.top .ver{margin-left:auto;font-size:11px;color:#9aa3b2}
+.mcard{background:#fff;border-radius:10px;padding:14px 16px;margin:0 12px 14px;border:1px solid #e6e9f0}
+.btn{background:#2a6fdb;color:#fff;border:0;border-radius:8px;padding:8px 16px;font-size:14px;cursor:pointer}.btn.ghost{background:#eef3fc;color:#2a6fdb}.btn.big{padding:12px 28px;font-size:16px}.btn.block{width:100%}
+.btn:disabled{opacity:.45}
+.sec-t{font-weight:700;margin:14px 12px 8px;font-size:15px}.hint{font-size:12.5px;color:#6b7280}
+.fld{margin:12px 0}.fld label{display:block;font-weight:600;margin-bottom:4px}.fld .guide{font-size:12.5px;color:#6b7280;margin-bottom:6px}
+.req{font-style:normal;font-size:11px;color:#d64545;margin-left:6px;font-weight:400}
+input[type=text],select,textarea{width:100%;padding:10px;border:1px solid #d7dde8;border-radius:8px;font-size:15px;font-family:inherit}
+.linkbox{background:#f3f5f8;border-radius:8px;padding:10px 12px;word-break:break-all;font-size:13.5px;margin:10px 0;white-space:pre-wrap;line-height:1.6}
+.btnrow{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap}
+.bigok{font-size:46px;text-align:center;color:#3aa676;margin-top:14px}.donet{text-align:center;font-size:16px;margin:4px 0}
+.tpl{border:1.5px solid #e6e9f0;border-radius:10px;padding:10px 12px;margin:8px 0;cursor:pointer;background:#fff}.tpl.on{border-color:#2a6fdb;background:#f4f8ff}
+.tpl .n{font-weight:600}.tpl .d{font-size:12.5px;color:#6b7280;margin-top:3px;line-height:1.5}
+details{margin-top:10px;font-size:13.5px}summary{color:#2a6fdb;cursor:pointer}
+.chips{display:flex;gap:6px;flex-wrap:wrap}.chip{border:1px solid #d7dde8;border-radius:16px;padding:5px 12px;font-size:13px;background:#fff;cursor:pointer}.chip.on{background:#2a6fdb;color:#fff;border-color:#2a6fdb}
+.inbox-item{padding:10px 0;border-bottom:1px solid #f0f2f6}.inbox-item:last-child{border:0}.inbox-item .why{font-size:12px;color:#b45309}.inbox-item .t{font-weight:500}
+.tabbar{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #e6e9f0;display:flex}.tabbar div{flex:1;text-align:center;padding:8px 0;font-size:12px;color:#6b7280}.tabbar .on{color:#2a6fdb;font-weight:600}
+.guestprev{border:1px dashed #c7d2e5;border-radius:10px;padding:10px 12px;background:#fafbfd;font-size:13px;line-height:1.6}
+/* PC 模式：1280 宽画布按屏宽缩放 */
+#pcwrap{display:none;transform-origin:0 0;width:1280px}
+body.pc #phone{display:none}body.pc #pcwrap{display:block}
+.pc-shell{display:grid;grid-template-columns:200px 1fr;min-height:800px;background:#f5f6f8}
+.side{background:#fff;border-right:1px solid #e6e9f0;padding:14px 10px}.side .logo{font-weight:700;padding:4px 8px 14px}.side .nv{padding:8px 10px;border-radius:7px;margin:2px 0;color:#374151}.side .nv.on{background:#eef3fc;color:#2a6fdb;font-weight:600}
+.side .cta{margin:4px 0 14px}.side .ver{font-size:11px;color:#9aa3b2;padding:20px 10px 0}
+.pc-main{padding:24px 32px}

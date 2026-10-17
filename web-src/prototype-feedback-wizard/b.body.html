@@ -1,0 +1,31 @@
+<div class="proto"><b>候选 B · 三步向导</b> 请谁 → 什么事 → 确认，每步一个问题<span style="flex:1"></span><button data-mode="phone" class="on" onclick="setMode('phone')">📱 手机</button><button data-mode="pc" onclick="setMode('pc')">🖥 电脑</button></div>
+<style>.steps{display:flex;gap:4px;margin:12px 12px 4px}.steps div{flex:1;height:4px;border-radius:2px;background:#e6e9f0}.steps .on{background:#2a6fdb}.stepl{font-size:12px;color:#6b7280;margin:0 12px 6px}.q{font-size:18px;font-weight:600;margin:6px 0 4px}.nav{display:flex;gap:8px;margin:0 12px}.nav .btn{flex:1}</style>
+<div id="phone"><div class="top"><span class="logo">工单台</span><span class="ver">v0.2.0</span></div><div id="ph"></div><div style="height:60px"></div>
+<div class="tabbar"><div class="on">收件箱</div><div>工单</div><div>工具</div><div>我</div></div></div>
+<div id="pcwrap"><div class="pc-shell"><div class="side"><div class="logo">工单台</div><div class="cta"><button class="btn block" onclick="S.pc.v=1;draw()">＋ 请人反馈</button></div><div class="nv on">收件箱</div><div class="nv">工单</div><div class="nv">建单（高级）</div><div class="nv">模板</div><div class="nv">工具</div><div class="nv">管理</div><div class="ver">v0.2.0</div></div><div class="pc-main"><div id="pcm" style="max-width:600px"></div></div></div></div>
+<script>
+const S={ph:{v:0,who:'',title:'',tpl:'bug',days:30},pc:{v:1,who:'',title:'',tpl:'bug',days:30}}
+function st(k,n){return `<div class="steps">${[1,2,3].map(i=>`<div class="${i<=n?'on':''}"></div>`).join('')}</div><div class="stepl">第 ${n} 步 / 共 3 步</div>`}
+function home(k){return `<div class="mcard" style="margin-top:12px;padding:16px;display:flex;align-items:center;gap:12px"><div style="flex:1"><div style="font-weight:600">请人反馈</div><div class="hint">生成一条链接，让对方按引导把问题写清楚</div></div><button class="btn" onclick="S.${k}.v=1;draw()">开始</button></div>
+<div class="sec-t">现在轮到我 · 3</div><div class="mcard"><div class="inbox-item"><div class="why">访客回复了 · 检验科-张三</div><div class="t">UD-2300 质控报 E-203</div></div><div class="inbox-item"><div class="why">新指派</div><div class="t">整理 SL-1000 遗留问题清单</div></div><div class="inbox-item"><div class="why">已交付待验收</div><div class="t">Q3 质控规则对照表</div></div></div>`}
+function s1(k){const s=S[k];return st(k,1)+`<div class="mcard"><div class="q">请谁反馈？</div><div class="hint">写部门和名字，之后用来区分是谁回的。</div><div class="fld"><input type="text" placeholder="例如：检验科-张三" value="${s.who}" oninput="S.${k}.who=this.value;document.getElementById('n-${k}').disabled=!this.value"></div>
+<div class="hint">最近请过：<span class="chip" onclick="S.${k}.who='检验科-张三';draw()">检验科-张三</span> <span class="chip" onclick="S.${k}.who='生化组-李四';draw()">生化组-李四</span></div></div>
+<div class="nav"><button class="btn ghost" onclick="S.${k}.v=${k==='pc'?1:0};draw()">取消</button><button id="n-${k}" class="btn" ${s.who?'':'disabled'} onclick="S.${k}.v=2;draw()">下一步</button></div>`}
+function s2(k){const s=S[k];return st(k,2)+`<div class="mcard"><div class="q">什么事？</div><div class="hint">一句话就行，对方口头讲过的大概情况。</div><div class="fld"><input type="text" placeholder="例如：UD-2300 质控报 E-203" value="${s.title}" oninput="S.${k}.title=this.value;document.getElementById('n2-${k}').disabled=!this.value"></div>
+<div style="font-weight:600;margin-top:14px">请对方填写什么？</div>
+<div class="tpl ${s.tpl==='bug'?'on':''}" onclick="S.${k}.tpl='bug';draw()"><div class="n">仪器 / 软件出了问题（Bug 反馈）</div><div class="d">对方会被一步步问：哪台仪器、什么时候、做了什么、看到什么报警、频不频繁；可传日志和照片。</div></div>
+<div class="tpl ${s.tpl==='free'?'on':''}" onclick="S.${k}.tpl='free';draw()"><div class="n">让对方自由描述</div><div class="d">不分字段，对方写一整段说明，可传附件。</div></div></div>
+<div class="nav"><button class="btn ghost" onclick="S.${k}.v=1;draw()">上一步</button><button id="n2-${k}" class="btn" ${s.title?'':'disabled'} onclick="S.${k}.v=3;draw()">下一步</button></div>`}
+function s3(k){const s=S[k];return st(k,3)+`<div class="mcard"><div class="q">确认一下</div>
+<div class="fld"><label>链接有效期</label><div class="chips">${[7,30,90].map(d=>`<span class="chip ${s.days===d?'on':''}" onclick="S.${k}.days=${d};draw()">${d} 天</span>`).join('')}</div></div>
+<div class="fld"><label>谁来跟进</label><select><option>我（王工）</option><option>李工</option><option>王梦龙</option></select><div class="guide">对方回复后出现在跟进人的收件箱。</div></div>
+<div style="font-weight:600;margin:10px 0 6px">${s.who||'对方'} 打开链接会看到</div><div class="guestprev"><b>${s.title||'（标题）'}</b><br>王工请你补充这个问题的详细情况。<br>${s.tpl==='bug'?'接下来会一步步问你几个问题，每步都有示例，最后可以上传日志和照片。':'写一段说明，可以上传附件。'}<br><span class="btn" style="display:inline-block;margin-top:6px;padding:4px 10px;font-size:12px">开始填写</span></div></div>
+<div class="nav"><button class="btn ghost" onclick="S.${k}.v=2;draw()">上一步</button><button class="btn" onclick="S.${k}.v=4;draw()">生成链接</button></div>`}
+function done(k){const s=S[k];const t=shareText(s.who||'检验科-张三',s.title||'UD-2300 质控报 E-203',s.days);return `<div class="bigok">✓</div><div class="donet">已创建 <b>20261017-004</b></div>
+<div class="mcard" style="margin-top:12px"><div style="font-weight:600">发给 ${s.who||'检验科-张三'}</div><div class="linkbox">${t}</div><div class="btnrow"><button class="btn" data-t="复制文案" onclick="copy(this)">复制文案</button><button class="btn ghost" data-t="只复制链接" onclick="copy(this)">只复制链接</button></div>
+<div class="hint">对方回复后会出现在你的收件箱（「访客回复了」）。</div></div>
+<div class="btnrow" style="margin:0 12px;justify-content:center"><button class="btn ghost">打开工单</button><button class="btn ghost" onclick="Object.assign(S.${k},{v:1,who:'',title:''});draw()">再请一个人</button></div>`}
+const V=[home,s1,s2,s3,done]
+function draw(){document.getElementById('ph').innerHTML=V[S.ph.v]('ph');document.getElementById('pcm').innerHTML=V[S.pc.v]('pc')}
+draw();fit()
+</script>

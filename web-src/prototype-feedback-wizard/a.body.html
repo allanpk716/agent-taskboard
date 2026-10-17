@@ -1,0 +1,25 @@
+<div class="proto"><b>候选 A · 一屏极简</b> 首页大按钮 → 一张卡填两项 → 生成链接<span style="flex:1"></span><button data-mode="phone" class="on" onclick="setMode('phone')">📱 手机</button><button data-mode="pc" onclick="setMode('pc')">🖥 电脑</button></div>
+<div id="phone"><div class="top"><span class="logo">工单台</span><span class="ver">v0.2.0</span></div><div id="ph"></div><div style="height:60px"></div>
+<div class="tabbar"><div class="on">收件箱</div><div>工单</div><div>工具</div><div>我</div></div></div>
+<div id="pcwrap"><div class="pc-shell"><div class="side"><div class="logo">工单台</div><div class="cta"><button class="btn block" onclick="go('pc','form')">＋ 请人反馈</button></div><div class="nv on">收件箱</div><div class="nv">工单</div><div class="nv">建单（高级）</div><div class="nv">模板</div><div class="nv">工具</div><div class="nv">管理</div><div class="ver">v0.2.0</div></div><div class="pc-main"><div id="pcm" style="max-width:560px"></div></div></div></div>
+<script>
+const S={ph:{v:'home',who:'',title:'',tpl:'bug',days:30},pc:{v:'form',who:'',title:'',tpl:'bug',days:30}}
+function go(k,v){S[k==='pc'?'pc':'ph'].v=v;draw()}
+function inbox(k){return `<div class="mcard" style="margin-top:12px;text-align:center;padding:18px"><div style="font-size:15px;font-weight:600;margin-bottom:4px">有人要反馈问题？</div><div class="hint" style="margin-bottom:12px">写个标题和对方是谁，生成链接发给他，细节让他按引导补全。</div><button class="btn big block" onclick="go('${k}','form')">＋ 请人反馈</button></div>
+<div class="sec-t">现在轮到我 · 3</div><div class="mcard"><div class="inbox-item"><div class="why">访客回复了 · 检验科-张三</div><div class="t">UD-2300 质控报 E-203</div></div><div class="inbox-item"><div class="why">新指派</div><div class="t">整理 SL-1000 遗留问题清单</div></div><div class="inbox-item"><div class="why">已交付待验收</div><div class="t">Q3 质控规则对照表</div></div></div>`}
+function form(k){const s=S[k];return `<div class="sec-t">请人反馈</div><div class="mcard">
+<div class="fld"><label>请谁反馈<i class="req">必填</i></label><div class="guide">写部门和名字，之后用来区分是谁回的。</div><input type="text" placeholder="例如：检验科-张三" value="${s.who}" oninput="S.${k}.who=this.value;chk('${k}')"></div>
+<div class="fld"><label>什么事<i class="req">必填</i></label><div class="guide">一句话就行，对方口头讲过的大概情况。</div><input type="text" placeholder="例如：UD-2300 质控报 E-203" value="${s.title}" oninput="S.${k}.title=this.value;chk('${k}')"></div>
+<div class="fld"><label>请对方填写</label><div class="chips"><span class="chip ${s.tpl==='bug'?'on':''}" onclick="S.${k}.tpl='bug';draw()">Bug 反馈（推荐）</span><span class="chip ${s.tpl==='free'?'on':''}" onclick="S.${k}.tpl='free';draw()">自由描述</span></div>
+<div class="hint" style="margin-top:6px">${s.tpl==='bug'?'对方会被一步步引导：哪台仪器、什么时候、做了什么、看到什么报警，可传日志和照片。':'对方写一整段说明，可传附件。'}</div></div>
+<details><summary>更多选项：有效期 ${s.days} 天 · 由我跟进</summary><div class="fld"><label>链接有效期</label><div class="chips">${[7,30,90].map(d=>`<span class="chip ${s.days===d?'on':''}" onclick="S.${k}.days=${d};draw()">${d} 天</span>`).join('')}</div></div>
+<div class="fld"><label>谁来跟进</label><select><option>我（王工）</option><option>李工</option><option>王梦龙</option></select><div class="guide">对方回复后出现在跟进人的收件箱。</div></div></details>
+</div><div style="margin:0 12px"><button id="go-${k}" class="btn big block" ${s.who&&s.title?'':'disabled'} onclick="go('${k}','done')">生成链接</button><div class="hint" style="text-align:center;margin-top:8px">需要填完整说明、打标签？用 <u>建单（高级）</u></div></div>`}
+function done(k){const s=S[k];const t=shareText(s.who||'检验科-张三',s.title||'UD-2300 质控报 E-203',s.days);return `<div class="bigok">✓</div><div class="donet">已创建 <b>20261017-004</b></div><div class="hint" style="text-align:center">链接发给 ${s.who||'检验科-张三'} 就行</div>
+<div class="mcard" style="margin-top:12px"><div style="font-weight:600">转发文案</div><div class="linkbox">${t}</div><div class="btnrow"><button class="btn" data-t="复制文案" onclick="copy(this)">复制文案</button><button class="btn ghost" data-t="只复制链接" onclick="copy(this)">只复制链接</button></div>
+<div class="hint">对方打开后会看到你写的标题，并被引导补全说明。回复会出现在你的收件箱（「访客回复了」）。</div></div>
+<div class="btnrow" style="margin:0 12px;justify-content:center"><button class="btn ghost">打开工单</button><button class="btn ghost" onclick="S.${k}.who='';S.${k}.title='';go('${k}','form')">再请一个人</button><button class="btn ghost" onclick="go('${k}','home')">回收件箱</button></div>`}
+function chk(k){const s=S[k];document.getElementById('go-'+k).disabled=!(s.who&&s.title)}
+function draw(){for(const [k,el] of [['ph','ph'],['pc','pcm']]){const s=S[k];const v=s.v==='home'?(k==='pc'?form:inbox):s.v==='form'?form:done;document.getElementById(el).innerHTML=v(k)}}
+draw();fit()
+</script>

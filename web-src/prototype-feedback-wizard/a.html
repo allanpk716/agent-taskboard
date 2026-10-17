@@ -1,0 +1,62 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>候选</title><style>
+*{box-sizing:border-box}body{margin:0;background:#f5f6f8;font-family:system-ui,'Microsoft YaHei',sans-serif;color:#1f2937;font-size:14px}
+.proto{position:sticky;top:0;z-index:50;background:#111827;color:#fff;font-size:12px;padding:6px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.proto b{color:#fbbf24}.proto button{background:#374151;color:#fff;border:0;border-radius:5px;padding:4px 9px;font-size:12px}.proto button.on{background:#2a6fdb}
+.top{background:#fff;border-bottom:1px solid #e6e9f0;padding:10px 14px;display:flex;align-items:center;gap:10px}.top .logo{font-weight:700}.top .ver{margin-left:auto;font-size:11px;color:#9aa3b2}
+.mcard{background:#fff;border-radius:10px;padding:14px 16px;margin:0 12px 14px;border:1px solid #e6e9f0}
+.btn{background:#2a6fdb;color:#fff;border:0;border-radius:8px;padding:8px 16px;font-size:14px;cursor:pointer}.btn.ghost{background:#eef3fc;color:#2a6fdb}.btn.big{padding:12px 28px;font-size:16px}.btn.block{width:100%}
+.btn:disabled{opacity:.45}
+.sec-t{font-weight:700;margin:14px 12px 8px;font-size:15px}.hint{font-size:12.5px;color:#6b7280}
+.fld{margin:12px 0}.fld label{display:block;font-weight:600;margin-bottom:4px}.fld .guide{font-size:12.5px;color:#6b7280;margin-bottom:6px}
+.req{font-style:normal;font-size:11px;color:#d64545;margin-left:6px;font-weight:400}
+input[type=text],select,textarea{width:100%;padding:10px;border:1px solid #d7dde8;border-radius:8px;font-size:15px;font-family:inherit}
+.linkbox{background:#f3f5f8;border-radius:8px;padding:10px 12px;word-break:break-all;font-size:13.5px;margin:10px 0;white-space:pre-wrap;line-height:1.6}
+.btnrow{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap}
+.bigok{font-size:46px;text-align:center;color:#3aa676;margin-top:14px}.donet{text-align:center;font-size:16px;margin:4px 0}
+.tpl{border:1.5px solid #e6e9f0;border-radius:10px;padding:10px 12px;margin:8px 0;cursor:pointer;background:#fff}.tpl.on{border-color:#2a6fdb;background:#f4f8ff}
+.tpl .n{font-weight:600}.tpl .d{font-size:12.5px;color:#6b7280;margin-top:3px;line-height:1.5}
+details{margin-top:10px;font-size:13.5px}summary{color:#2a6fdb;cursor:pointer}
+.chips{display:flex;gap:6px;flex-wrap:wrap}.chip{border:1px solid #d7dde8;border-radius:16px;padding:5px 12px;font-size:13px;background:#fff;cursor:pointer}.chip.on{background:#2a6fdb;color:#fff;border-color:#2a6fdb}
+.inbox-item{padding:10px 0;border-bottom:1px solid #f0f2f6}.inbox-item:last-child{border:0}.inbox-item .why{font-size:12px;color:#b45309}.inbox-item .t{font-weight:500}
+.tabbar{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #e6e9f0;display:flex}.tabbar div{flex:1;text-align:center;padding:8px 0;font-size:12px;color:#6b7280}.tabbar .on{color:#2a6fdb;font-weight:600}
+.guestprev{border:1px dashed #c7d2e5;border-radius:10px;padding:10px 12px;background:#fafbfd;font-size:13px;line-height:1.6}
+/* PC 模式：1280 宽画布按屏宽缩放 */
+#pcwrap{display:none;transform-origin:0 0;width:1280px}
+body.pc #phone{display:none}body.pc #pcwrap{display:block}
+.pc-shell{display:grid;grid-template-columns:200px 1fr;min-height:800px;background:#f5f6f8}
+.side{background:#fff;border-right:1px solid #e6e9f0;padding:14px 10px}.side .logo{font-weight:700;padding:4px 8px 14px}.side .nv{padding:8px 10px;border-radius:7px;margin:2px 0;color:#374151}.side .nv.on{background:#eef3fc;color:#2a6fdb;font-weight:600}
+.side .cta{margin:4px 0 14px}.side .ver{font-size:11px;color:#9aa3b2;padding:20px 10px 0}
+.pc-main{padding:24px 32px}
+</style><script>
+function setMode(m){document.body.classList.toggle('pc',m==='pc');document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('on',b.dataset.mode===m));fit()}
+function fit(){const w=document.getElementById('pcwrap');if(w)w.style.transform='scale('+Math.min(1,window.innerWidth/1280)+')'}
+window.addEventListener('resize',fit)
+function copy(btn){btn.textContent='✓ 已复制';setTimeout(()=>btn.textContent=btn.dataset.t,1200)}
+function shareText(who,title,days){const name=(who.split('-').pop()||who).trim();return name+'你好，关于「'+title+'」，麻烦打开下面的链接，按提示把情况写详细一些；有日志、照片可以直接传上去：\nhttp://taskboard.lan/g/tbg_7Kq2…x9\n（不用登录，'+days+' 天内有效）'}
+</script></head><body>
+<div class="proto"><b>候选 A · 一屏极简</b> 首页大按钮 → 一张卡填两项 → 生成链接<span style="flex:1"></span><button data-mode="phone" class="on" onclick="setMode('phone')">📱 手机</button><button data-mode="pc" onclick="setMode('pc')">🖥 电脑</button></div>
+<div id="phone"><div class="top"><span class="logo">工单台</span><span class="ver">v0.2.0</span></div><div id="ph"></div><div style="height:60px"></div>
+<div class="tabbar"><div class="on">收件箱</div><div>工单</div><div>工具</div><div>我</div></div></div>
+<div id="pcwrap"><div class="pc-shell"><div class="side"><div class="logo">工单台</div><div class="cta"><button class="btn block" onclick="go('pc','form')">＋ 请人反馈</button></div><div class="nv on">收件箱</div><div class="nv">工单</div><div class="nv">建单（高级）</div><div class="nv">模板</div><div class="nv">工具</div><div class="nv">管理</div><div class="ver">v0.2.0</div></div><div class="pc-main"><div id="pcm" style="max-width:560px"></div></div></div></div>
+<script>
+const S={ph:{v:'home',who:'',title:'',tpl:'bug',days:30},pc:{v:'form',who:'',title:'',tpl:'bug',days:30}}
+function go(k,v){S[k==='pc'?'pc':'ph'].v=v;draw()}
+function inbox(k){return `<div class="mcard" style="margin-top:12px;text-align:center;padding:18px"><div style="font-size:15px;font-weight:600;margin-bottom:4px">有人要反馈问题？</div><div class="hint" style="margin-bottom:12px">写个标题和对方是谁，生成链接发给他，细节让他按引导补全。</div><button class="btn big block" onclick="go('${k}','form')">＋ 请人反馈</button></div>
+<div class="sec-t">现在轮到我 · 3</div><div class="mcard"><div class="inbox-item"><div class="why">访客回复了 · 检验科-张三</div><div class="t">UD-2300 质控报 E-203</div></div><div class="inbox-item"><div class="why">新指派</div><div class="t">整理 SL-1000 遗留问题清单</div></div><div class="inbox-item"><div class="why">已交付待验收</div><div class="t">Q3 质控规则对照表</div></div></div>`}
+function form(k){const s=S[k];return `<div class="sec-t">请人反馈</div><div class="mcard">
+<div class="fld"><label>请谁反馈<i class="req">必填</i></label><div class="guide">写部门和名字，之后用来区分是谁回的。</div><input type="text" placeholder="例如：检验科-张三" value="${s.who}" oninput="S.${k}.who=this.value;chk('${k}')"></div>
+<div class="fld"><label>什么事<i class="req">必填</i></label><div class="guide">一句话就行，对方口头讲过的大概情况。</div><input type="text" placeholder="例如：UD-2300 质控报 E-203" value="${s.title}" oninput="S.${k}.title=this.value;chk('${k}')"></div>
+<div class="fld"><label>请对方填写</label><div class="chips"><span class="chip ${s.tpl==='bug'?'on':''}" onclick="S.${k}.tpl='bug';draw()">Bug 反馈（推荐）</span><span class="chip ${s.tpl==='free'?'on':''}" onclick="S.${k}.tpl='free';draw()">自由描述</span></div>
+<div class="hint" style="margin-top:6px">${s.tpl==='bug'?'对方会被一步步引导：哪台仪器、什么时候、做了什么、看到什么报警，可传日志和照片。':'对方写一整段说明，可传附件。'}</div></div>
+<details><summary>更多选项：有效期 ${s.days} 天 · 由我跟进</summary><div class="fld"><label>链接有效期</label><div class="chips">${[7,30,90].map(d=>`<span class="chip ${s.days===d?'on':''}" onclick="S.${k}.days=${d};draw()">${d} 天</span>`).join('')}</div></div>
+<div class="fld"><label>谁来跟进</label><select><option>我（王工）</option><option>李工</option><option>王梦龙</option></select><div class="guide">对方回复后出现在跟进人的收件箱。</div></div></details>
+</div><div style="margin:0 12px"><button id="go-${k}" class="btn big block" ${s.who&&s.title?'':'disabled'} onclick="go('${k}','done')">生成链接</button><div class="hint" style="text-align:center;margin-top:8px">需要填完整说明、打标签？用 <u>建单（高级）</u></div></div>`}
+function done(k){const s=S[k];const t=shareText(s.who||'检验科-张三',s.title||'UD-2300 质控报 E-203',s.days);return `<div class="bigok">✓</div><div class="donet">已创建 <b>20261017-004</b></div><div class="hint" style="text-align:center">链接发给 ${s.who||'检验科-张三'} 就行</div>
+<div class="mcard" style="margin-top:12px"><div style="font-weight:600">转发文案</div><div class="linkbox">${t}</div><div class="btnrow"><button class="btn" data-t="复制文案" onclick="copy(this)">复制文案</button><button class="btn ghost" data-t="只复制链接" onclick="copy(this)">只复制链接</button></div>
+<div class="hint">对方打开后会看到你写的标题，并被引导补全说明。回复会出现在你的收件箱（「访客回复了」）。</div></div>
+<div class="btnrow" style="margin:0 12px;justify-content:center"><button class="btn ghost">打开工单</button><button class="btn ghost" onclick="S.${k}.who='';S.${k}.title='';go('${k}','form')">再请一个人</button><button class="btn ghost" onclick="go('${k}','home')">回收件箱</button></div>`}
+function chk(k){const s=S[k];document.getElementById('go-'+k).disabled=!(s.who&&s.title)}
+function draw(){for(const [k,el] of [['ph','ph'],['pc','pcm']]){const s=S[k];const v=s.v==='home'?(k==='pc'?form:inbox):s.v==='form'?form:done;document.getElementById(el).innerHTML=v(k)}}
+draw();fit()
+</script>
+</body></html>
