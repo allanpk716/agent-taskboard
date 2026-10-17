@@ -24,6 +24,9 @@ const DESKTOP_QUERY = '(min-width: 768px)'
 const UNSURE = '不清楚'
 /** 追问提示的长度阈值：多行文本少于 20 字且不是「不清楚」时出现。 */
 const NUDGE_MIN_CHARS = 20
+/** 整张工单的附件区（手机）放在这一组的组末（#65 spec：照片、日志跟
+ *  时间/操作/现象同在一组）；模板里没有时退回最后一组组末。 */
+const ATTACH_AREA_GROUP_TITLE = '发生了什么'
 
 /** 自由描述（#66）：无模板工单合成的一组「情况说明」的大文本框，
  *  上方列出可以按哪几点写；tips / nudgeHint 只在前端用，服务端不下发。 */
@@ -299,7 +302,8 @@ function FileChips({ files, onRemove }: { files: StagedFile[]; onRemove?: (id: s
   )
 }
 
-/** 整张工单的附件区：手机在最后一组组末（三入口），宽屏在右栏（拖放区）。 */
+/** 整张工单的附件区：手机在「发生了什么」组末（没有时最后一组组末，
+ *  三入口），宽屏在右栏（拖放区）。 */
 function AttachArea({
   fieldKey,
   onPickFiles,
@@ -599,6 +603,12 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
     desktop,
   }
 
+  // 整张工单的附件区（手机）的组：有「发生了什么」组时在它组末，否则退回
+  // 最后一组组末（不分组模板与自由描述都只有一组）。附件引用仍挂最后一个
+  // 文本字段（areaField 不变）。
+  const areaGroup = groups.findIndex((g) => g.title === ATTACH_AREA_GROUP_TITLE)
+  const areaGroupIndex = areaGroup >= 0 ? areaGroup : groups.length - 1
+
   const groupsView = (openAll: boolean) => (
     <>
       {groups.map((g, i) => {
@@ -622,7 +632,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
                 {g.fields.map((f) => (
                   <FieldBlock key={f.key} field={f} value={values[f.key] ?? ''} {...fieldProps} />
                 ))}
-                {last && !desktop && (
+                {i === areaGroupIndex && !desktop && (
                   <AttachArea fieldKey={areaField} onPickFiles={fieldProps.onPickFiles} files={files} onRemoveFile={removeFile} desktop={desktop} />
                 )}
                 {!openAll && !last && (
