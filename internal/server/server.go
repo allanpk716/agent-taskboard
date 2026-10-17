@@ -58,6 +58,10 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	if err := templateDict.SeedIfEmpty(context.Background()); err != nil {
 		return nil, fmt.Errorf("导入预置模板失败：%w", err)
 	}
+	// #63 一次性迁移：没改过的预置 Bug 反馈模板升级成带分组的新版本。
+	if err := templateDict.UpgradePresetBugReport(context.Background()); err != nil {
+		return nil, fmt.Errorf("升级预置 Bug 反馈模板失败：%w", err)
+	}
 	backups, err := ops.NewBackups(st.DB, cfg.DataDir, cfg.Backup.BackupOptions(), c)
 	if err != nil {
 		return nil, err

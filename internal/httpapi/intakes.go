@@ -106,7 +106,8 @@ type intakeSummaryView struct {
 	CreatedAt     string     `json:"created_at"`
 }
 
-// intakeTemplateView 是匿名读取时回显的模板（始终最新版本）。
+// intakeTemplateView 是匿名读取时回显的模板（始终最新版本）；字段带分组序号，
+// 分组列表随字段一并回显（#63，与模板接口同形）。
 type intakeTemplateView struct {
 	Key          string              `json:"key"`
 	Name         string              `json:"name"`
@@ -115,6 +116,7 @@ type intakeTemplateView struct {
 	PresetLabels []string            `json:"preset_labels"`
 	AgentNote    string              `json:"agent_note"`
 	Fields       []templateFieldView `json:"fields"`
+	Groups       []templateGroupView `json:"groups,omitempty"`
 }
 
 // intakePublicView 是 GET /api/v1/intakes/{slug}（匿名）的响应。
@@ -211,6 +213,7 @@ func (a *API) readIntake(w http.ResponseWriter, r *http.Request, slug string) {
 			Key: t.Key, Name: t.Name, Version: t.Version, Kind: t.Kind,
 			PresetLabels: nonNil(t.PresetLabels), AgentNote: t.AgentNote,
 			Fields: a.templateFieldsView(r, t),
+			Groups: groupViewsOf(t.Groups),
 		},
 	})
 }

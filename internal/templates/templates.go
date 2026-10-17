@@ -164,7 +164,7 @@ func (m *Manager) Deactivate(ctx context.Context, key string) (bool, error) {
 func (m *Manager) List(ctx context.Context) ([]Template, error) {
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT t.key, t.active, v.version, v.name, v.kind, v.preset_labels, v.agent_note,
-		       v.fields, v.markdown, v.updated_by_member_id, um.name, v.updated_by_agent_id, ua.name, v.updated_at
+		       v.fields, v.groups, v.markdown, v.updated_by_member_id, um.name, v.updated_by_agent_id, ua.name, v.updated_at
 		FROM templates t
 		JOIN template_versions v ON v.template_key = t.key AND v.version = t.current_version
 		LEFT JOIN members um ON um.id = v.updated_by_member_id
@@ -189,7 +189,7 @@ func (m *Manager) List(ctx context.Context) ([]Template, error) {
 func (m *Manager) Get(ctx context.Context, key string) (Template, error) {
 	row := m.db.QueryRowContext(ctx, `
 		SELECT t.key, t.active, v.version, v.name, v.kind, v.preset_labels, v.agent_note,
-		       v.fields, v.markdown, v.updated_by_member_id, um.name, v.updated_by_agent_id, ua.name, v.updated_at
+		       v.fields, v.groups, v.markdown, v.updated_by_member_id, um.name, v.updated_by_agent_id, ua.name, v.updated_at
 		FROM templates t
 		JOIN template_versions v ON v.template_key = t.key AND v.version = t.current_version
 		LEFT JOIN members um ON um.id = v.updated_by_member_id
@@ -263,6 +263,7 @@ func scanTemplate(row scanner) (Template, error) {
 		active    int
 		presets   string
 		fields    string
+		groups    string
 		memberID  sql.NullInt64
 		member    sql.NullString
 		agentID   sql.NullInt64
@@ -270,7 +271,7 @@ func scanTemplate(row scanner) (Template, error) {
 		updatedAt string
 	)
 	if err := row.Scan(&t.Key, &active, &t.Version, &t.Name, &t.Kind, &presets, &t.AgentNote,
-		&fields, &t.Markdown, &memberID, &member, &agentID, &agent, &updatedAt); err != nil {
+		&fields, &groups, &t.Markdown, &memberID, &member, &agentID, &agent, &updatedAt); err != nil {
 		return Template{}, err
 	}
 	t.Active = active == 1
@@ -286,6 +287,9 @@ func scanTemplate(row scanner) (Template, error) {
 	if err := json.Unmarshal([]byte(fields), &t.Fields); err != nil {
 		return Template{}, fmt.Errorf("解析模板 %s 的字段定义失败：%w", t.Key, err)
 	}
+	if err := json.Unmarshal([]byte(groups), &t.Groups); err != nil {
+		return Template{}, fmt.Errorf("解析模板 %s 的分组失败：%w", t.Key, err)
+	}
 	return t, nil
 }
 
@@ -298,6 +302,10 @@ func insertVersion(ctx context.Context, tx *sql.Tx, t Template, at time.Time) er
 	if err != nil {
 		return err
 	}
+	groups, err := json.Marshal(nonNilGroups(t.Groups))
+	if err != nil {
+		return err
+	}
 	var agentID, memberID any
 	if t.UpdatedBy.AgentID != 0 {
 		agentID = t.UpdatedBy.AgentID
@@ -307,11 +315,19 @@ func insertVersion(ctx context.Context, tx *sql.Tx, t Template, at time.Time) er
 	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO template_versions (template_key, version, name, kind, preset_labels, agent_note,
-		                               fields, markdown, updated_by_member_id, updated_by_agent_id, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                               fields, groups, markdown, updated_by_member_id, updated_by_agent_id, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.Key, t.Version, t.Name, t.Kind, string(presets), t.AgentNote,
-		string(fields), t.Markdown, memberID, agentID, at.Format(time.RFC3339Nano))
+		string(fields), string(groups), t.Markdown, memberID, agentID, at.Format(time.RFC3339Nano))
 	return err
+}
+
+// nonNilGroups 把 nil 分组写成空数组（不分组时存 []，不存 null）。
+func nonNilGroups(g []template.Group) []template.Group {
+	if g == nil {
+		return []template.Group{}
+	}
+	return g
 }
 
 func updaterOf(v identity.Viewer) Updater {

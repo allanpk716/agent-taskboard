@@ -2,11 +2,12 @@
 // 模板 Markdown、生成字段定义、格式错误报行号；把 fields 渲染成 brief_md；
 // 必填校验；生成给 Agent 的填写指南）。没有 IO，不碰数据库和 HTTP。
 //
-// 模板写法（spec #26「模板语法」，来自 #9）：YAML 头写 名称、类型、预设标签；
-// 每个 ## 小节是一个字段，标题写成问句，小节正文是引导说明，> 示例： 是占位
-// 文字；花括号标记字段类型和是否必填：{必填}、{选填}、{单选: A | B}、
-// {维度:X 必填}，不写时默认为多行文本、选填。模板里可以另写一段「给 Agent
-// 的说明」。
+// 模板写法（spec #26「模板语法」，来自 #9；分组标记见 #63）：YAML 头写 名称、
+// 类型、预设标签；每个 ## 小节是一个字段，标题写成问句，小节正文是引导说明，
+// > 示例： 是占位文字；花括号标记字段类型和是否必填：{必填}、{选填}、
+// {单选: A | B}、{维度:X 必填}，不写时默认为多行文本、选填。模板里可以另写
+// 一段「给 Agent 的说明」。#63 起正文可用 `# 组名` 给字段分组，组标题下、
+// 第一个 ## 之前的第一段非空文字是组副标题。
 package template
 
 import (
@@ -28,6 +29,14 @@ const UnsureOption = "不确定"
 // AgentNoteTitle 是「给 Agent 的说明」小节的标题；这段不是字段。
 const AgentNoteTitle = "给 Agent 的说明"
 
+// Group 是模板正文里的一个分组（#63）：`# 组名` 开一组，紧随其后、
+// 在下一个 `##` 之前的第一段非空文字是副标题。分组只影响展示（访客填写页
+// 按组折叠），不影响说明渲染、必填校验和给 Agent 的填写指南。
+type Group struct {
+	Title    string `json:"title"`              // 组名（# 后的原文）
+	Subtitle string `json:"subtitle,omitempty"` // 组标题下的第一段非空文字
+}
+
 // Field 是模板里的一个字段（data-model「Template」的字段结构）。
 // 键就是小节标题（问句）原文——模板语法里没有独立的键，问句即键。
 type Field struct {
@@ -39,6 +48,7 @@ type Field struct {
 	Type      string   `json:"type"`                // text | radio | dimension
 	Options   []string `json:"options,omitempty"`   // radio 的选项；维度字段的候选值运行时取字典
 	Dimension string   `json:"dimension,omitempty"` // 维度字段的维度名
+	Group     *int     `json:"group,omitempty"`     // 所属分组的序号（从 0 起）；不分组时为 nil
 }
 
 // Definition 是一份模板的定义：YAML 头与字段小节解析的结果。
@@ -48,6 +58,7 @@ type Definition struct {
 	PresetLabels []string `json:"preset_labels,omitempty"` // 预设标签
 	AgentNote    string   `json:"agent_note,omitempty"`    // 给 Agent 的说明
 	Fields       []Field  `json:"fields"`
+	Groups       []Group  `json:"groups,omitempty"` // 字段分组（#63）；不分组时为空
 }
 
 // Snapshot 是工单保存的「创建时模板版本」：key、版本号和当时的字段定义
@@ -152,8 +163,11 @@ func parseHeader(lines []string) (Definition, error) {
 	return def, nil
 }
 
-// parseBody 解析正文：每个 ## 小节是一个字段（或「给 Agent 的说明」）。
-// bodyStart 是正文第一行的行号（1 起），用于报行号。
+// parseBody 解析正文：`# 组名` 开一组（可选，#63），每个 ## 小节是一个字段
+//（或「给 Agent 的说明」）。bodyStart 是正文第一行的行号（1 起），用于报行号。
+// 分组规则：要么完全不分组，要么所有字段都在分组里（字段写在第一个 # 之前
+// 报带行号的错）；空组报错；「给 Agent 的说明」不属于任何组，写在哪里都行；
+// 除 # 与 ## 外，其他级别的标题仍然报错。
 func parseBody(lines []string, bodyStart int, def *Definition) error {
 	type section struct {
 		line    int    // 小节标题行号
@@ -164,9 +178,24 @@ func parseBody(lines []string, bodyStart int, def *Definition) error {
 		note    string
 		example []string
 		guide   []string
+		group   int // 所属分组的序号；-1 = 不在任何分组（未用分组，或「给 Agent 的说明」）
+	}
+	type group struct {
+		line         int
+		title        string
+		subtitle     []string // 副标题：第一段非空文字（可跨行）
+		subtitleDone bool     // 已取到第一段（空行分段）；之后的非空文字不进副标题
 	}
 	var sections []*section
+	var groups []*group
+	curGroup := -1        // 当前分组序号；-1 = 还没遇到 #
+	inGroupIntro := false // 正在分组标题与第一个 ## 之间：非空文字是副标题
 
+	endSubtitlePara := func() {
+		if inGroupIntro && curGroup >= 0 && len(groups[curGroup].subtitle) > 0 {
+			groups[curGroup].subtitleDone = true
+		}
+	}
 	for i, raw := range lines {
 		line := bodyStart + i
 		t := strings.TrimSpace(raw)
@@ -174,6 +203,7 @@ func parseBody(lines []string, bodyStart int, def *Definition) error {
 			if n := len(sections); n > 0 {
 				sections[n-1].body = append(sections[n-1].body, "")
 			}
+			endSubtitlePara()
 			continue
 		}
 		if strings.HasPrefix(t, "## ") {
@@ -181,15 +211,39 @@ func parseBody(lines []string, bodyStart int, def *Definition) error {
 			if err != nil {
 				return err
 			}
+			g := -1
+			if title != AgentNoteTitle && curGroup >= 0 {
+				g = curGroup
+			}
 			sections = append(sections, &section{line: line, title: title, marker: marker,
-				isNote: title == AgentNoteTitle})
+				isNote: title == AgentNoteTitle, group: g})
+			inGroupIntro = false
+			continue
+		}
+		// # 组名 开一组；组标题下、第一个 ## 之前的第一段非空文字是副标题。
+		if strings.HasPrefix(t, "# ") || t == "#" {
+			title := strings.TrimSpace(strings.TrimPrefix(t, "#"))
+			if title == "" {
+				return parseErr(line, "组名不能为空：# 加一个空格再写组名")
+			}
+			groups = append(groups, &group{line: line, title: title})
+			curGroup = len(groups) - 1
+			inGroupIntro = true
 			continue
 		}
 		if strings.HasPrefix(t, "#") {
-			return parseErr(line, "模板正文里的小节标题用「## 」（## 加一个空格）")
+			return parseErr(line, "模板正文里的标题只能用「# 」（分组）或「## 」（字段小节）")
+		}
+		if inGroupIntro {
+			// 分组标题与第一个 ## 之间的第一段非空文字是副标题，其余忽略。
+			g := groups[curGroup]
+			if !g.subtitleDone {
+				g.subtitle = append(g.subtitle, t)
+			}
+			continue
 		}
 		if len(sections) == 0 {
-			return parseErr(line, "模板正文从 ## 小节开始（YAML 头之后不要写别的文字）")
+			return parseErr(line, "模板正文从分组（# ）或字段小节（## ）开始（YAML 头之后不要写别的文字）")
 		}
 		cur := sections[len(sections)-1]
 		if cur.isNote {
@@ -213,6 +267,7 @@ func parseBody(lines []string, bodyStart int, def *Definition) error {
 	}
 
 	seenTitles := map[string]int{}
+	groupFields := make([]int, len(groups))
 	for _, sec := range sections {
 		if sec.isNote {
 			if sec.marker != "" {
@@ -224,6 +279,9 @@ func parseBody(lines []string, bodyStart int, def *Definition) error {
 			def.AgentNote = strings.TrimSpace(sec.note)
 			continue
 		}
+		if len(groups) > 0 && sec.group < 0 {
+			return parseErr(sec.line, "字段「%s」写在第一个分组（# ）之前；用了分组时，所有字段都要写在分组里", sec.title)
+		}
 		f, err := parseField(sec.title, sec.marker, sec.line)
 		if err != nil {
 			return err
@@ -234,7 +292,18 @@ func parseBody(lines []string, bodyStart int, def *Definition) error {
 			return parseErr(sec.line, "字段标题重复：%s（上一段在第 %d 行）", f.Key, prev)
 		}
 		seenTitles[f.Key] = sec.line
+		if len(groups) > 0 {
+			g := sec.group
+			f.Group = &g
+			groupFields[g]++
+		}
 		def.Fields = append(def.Fields, f)
+	}
+	for i, g := range groups {
+		if groupFields[i] == 0 {
+			return parseErr(g.line, "分组「%s」是空的：下面要至少有一个 ## 字段小节", g.title)
+		}
+		def.Groups = append(def.Groups, Group{Title: g.title, Subtitle: strings.Join(g.subtitle, "\n")})
 	}
 	if len(def.Fields) == 0 {
 		return parseErr(bodyStart, "模板至少要有一个字段小节（## 问句），「%s」不算字段", AgentNoteTitle)
