@@ -1,0 +1,72 @@
+# 后端发布：打 server/vX.Y.Z tag 时构建 Windows 与 linux/amd64 产物，
+# 附 manifest.json（含 SHA256）发布 Release，并读改写 channel-stable 下的
+# latest.json（只更新 server 条目，保留 web 条目）。
+# 细节见 docs/deploy-and-release.md 的「发布」一节。
+name: release-server
+
+on:
+  push:
+    tags: ["server/v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: 测试
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: 构建
+        run: |
+          set -euxo pipefail
+          VERSION="${GITHUB_REF_NAME#server/v}"
+          mkdir -p dist
+          # 后端版本注入 internal/version.Server，更新器靠它对比当前版本。
+          go build -trimpath -ldflags="-s -w -X github.com/allanpk716/agent-taskboard/internal/version.Server=$VERSION" -o dist/taskboard.exe ./cmd/taskboard
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X github.com/allanpk716/agent-taskboard/internal/version.Server=$VERSION" -o dist/taskboard-linux-amd64 ./cmd/taskboard
+
+      - name: 生成 manifest.json
+        run: |
+          VERSION="${GITHUB_REF_NAME#server/v}"
+          go run ./cmd/release manifest -component server -version "$VERSION" -min-server "$VERSION" -dir dist
+
+      - name: 发布 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          VERSION="${GITHUB_REF_NAME#server/v}"
+          if gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber -R "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "server $VERSION" --generate-notes -R "$GITHUB_REPOSITORY"
+          fi
+
+      - name: 更新 channel-stable 的 latest.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          VERSION="${GITHUB_REF_NAME#server/v}"
+          # releases/latest 只指向最近发布的那个组件，所以用固定 tag 下的 latest.json。
+          curl -fsSL -o latest.json "https://github.com/$GITHUB_REPOSITORY/releases/download/channel-stable/latest.json" \
+            || printf '{}' > latest.json
+          go run ./cmd/release latest -component server -version "$VERSION" \
+            -tag "$GITHUB_REF_NAME" -repo "$GITHUB_REPOSITORY" -file latest.json
+          if ! gh release view channel-stable -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create channel-stable --target "$GITHUB_SHA" --title channel-stable \
+              --notes "固定 tag：latest.json 记录前后端各自的最新版本（打 server/v* 或 web/v* tag 时自动更新）" \
+              -R "$GITHUB_REPOSITORY"
+          fi
+          gh release upload channel-stable latest.json --clobber -R "$GITHUB_REPOSITORY"

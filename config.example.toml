@@ -1,0 +1,52 @@
+# taskboard 配置示例。复制为 config.toml 后按需修改；config.toml 不入库。
+# 部署约定见 docs/deploy-and-release.md。
+
+# 数据目录：SQLite 库（taskboard.db）和附件都放在这里。
+data_dir = 'data'
+
+# 监听端口。服务只监听 127.0.0.1，HTTPS 由前面的 Caddy 反代提供。
+port = 8080
+
+# 前端静态文件目录（web-src 执行 npm run build 的产物）。
+web_dir = 'web'
+
+# 对外地址（评审 P2-7）。配置后 API 回给用户的访客链接与 share_text 用绝对
+# 地址（如 https://taskboard.urithub.com/g/<密钥>），网页上的「复制链接」拿到
+# 即可发送；留空（默认）时保持相对路径，前端复制时用当前页面的地址拼绝对。
+[server]
+public_url = ''
+
+# 附件上限（#33）。服务端只检查上限，不压缩图片（压缩在前端做）；超过上限
+# 的文件改用 NAS 外部文件引用，把路径写在说明或回复里。
+[attachments]
+max_file_mb         = 5    # 单个文件，超过返回 413 attachment_too_large
+max_files_per_post  = 5    # 每条说明或回复的附件个数（插图另计）
+max_images_per_post = 10   # 每条说明或回复的插图张数
+max_ticket_mb       = 50   # 整张工单合计（待用附件也计入）
+
+# 备份（#43，见 docs/deploy-and-release.md「备份与恢复」）。定时备份内置在 serve 里；
+# 手动备份用 taskboard backup，恢复用 taskboard restore <备份文件>。
+[backup]
+# 备份目标：NAS 上的专用共享，用 UNC 路径（映射盘符对 Windows 服务不可见），
+# 服务账号需要有写权限。留空时备份存到 data_dir\backups\，管理页会提示
+# “备份未离开本机”。
+target         = ''
+daily_at       = "03:00"  # 每日定时备份时刻（北京时间）；每月 1 日那份是 monthly
+keep_daily     = 30       # 每日备份保留份数
+keep_monthly   = 12       # 每月备份（每月 1 日那份）保留份数
+keep_preupdate = 5        # 更新前备份保留份数（#45 的更新流程用）
+
+# 更新（#45，见 docs/deploy-and-release.md「更新」）。sources 留空（默认）
+# 不检查更新，避免开发/测试环境意外连真实源；生产建议按顺序回退：
+# updatehub = ["updatehub", "github"]
+[update]
+sources = []
+
+[update.updatehub]
+base_url = ""                    # 内网 UpdateHub 地址，如 https://updatehub.example.com
+channel  = "stable"
+
+[update.github]
+repo   = "allanpk716/agent-taskboard"
+mirror = []                      # 镜像前缀（形如 https://<镜像>/），按顺序尝试，最后直连
+proxy  = ""                      # http:// 或 socks5://；为空时读 HTTPS_PROXY 环境变量

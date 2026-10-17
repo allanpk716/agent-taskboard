@@ -1,0 +1,600 @@
+/* 访客网页（#38）：布局与状态切换照 prototype/guest-web 的 a.html（对话流）。 */
+
+.guest-root {
+  min-height: 100vh;
+  background: #eef1f5;
+  font: 15px/1.6 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: #222;
+  padding-bottom: 170px; /* 给固定底部的输入区留位 */
+}
+
+.guest-root.readonly {
+  padding-bottom: 90px;
+}
+
+.guest-app {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+/* 头部 */
+.head {
+  background: #fff;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid #ddd;
+}
+.head .meta {
+  font-size: 12px;
+  color: #888;
+}
+.head h1 {
+  font-size: 18px;
+  margin: 4px 0 8px;
+  line-height: 1.4;
+}
+.head .badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.turn-badge {
+  display: inline-block;
+  font-size: 13px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+.turn-badge.you {
+  background: #fff1d6;
+  color: #a35f00;
+}
+.turn-badge.them {
+  background: #e7f0ff;
+  color: #2a5db0;
+}
+.turn-badge.done {
+  background: #e8e8e8;
+  color: #555;
+}
+.link-meta {
+  margin-left: 4px;
+}
+
+/* 气泡 */
+.bubble {
+  margin: 12px;
+  display: flex;
+  gap: 8px;
+}
+.av {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 13px;
+  position: relative;
+}
+.av.g {
+  background: #3aa676;
+}
+.av.a {
+  background: #7c6cd8;
+}
+.av.m {
+  background: #3b7ddd;
+}
+.av .robot-badge {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  font-size: 12px;
+  background: #fff;
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+}
+.card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 10px 12px;
+  flex: 1;
+  min-width: 0;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 6%);
+}
+.who {
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 4px;
+}
+.who b {
+  color: #333;
+}
+.deliver-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: #e8f7ef;
+  color: #237a4e;
+  font-size: 12px;
+}
+
+/* 说明气泡的字段 */
+.f {
+  margin: 8px 0;
+}
+.f .q {
+  font-size: 13px;
+  color: #666;
+}
+.f .v {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.f .v.empty {
+  color: #bbb;
+}
+
+/* 正文 */
+.md p {
+  margin: 4px 0;
+}
+.md ol,
+.md ul {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+.md code,
+.unc code {
+  background: #f0f0f0;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.92em;
+}
+.inline-img {
+  max-width: 800px; /* 插图最宽 800px，随宽度缩放 */
+  width: 100%;
+  border-radius: 6px;
+  margin: 6px 0;
+  cursor: zoom-in;
+  display: block;
+}
+.unc {
+  display: block;
+  background: #f3f5f8;
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 6px 0;
+  word-break: break-all;
+}
+.unc button {
+  margin-left: 8px;
+  border: 1px solid #ccc;
+  background: #fff;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.att-missing {
+  color: #999;
+}
+
+/* 附件条 */
+.atts {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.att {
+  background: #f3f5f8;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+  color: #2a5db0;
+  text-decoration: none;
+}
+.att-link {
+  color: #2a5db0;
+}
+
+/* 系统事件：居中灰色小字 */
+.event {
+  text-align: center;
+  font-size: 12px;
+  color: #999;
+  margin: 10px;
+}
+
+/* 底部固定输入区 */
+.composer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #fff;
+  border-top: 1px solid #ddd;
+  padding: 8px 10px 10px;
+  max-width: 720px;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+.composer textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  padding: 8px;
+  font: inherit;
+  height: 64px;
+  resize: vertical;
+}
+.composer .row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+  font-size: 13px;
+}
+.composer .row input {
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 5px 8px;
+  width: 130px;
+  font: inherit;
+  font-size: 13px;
+}
+.author-label {
+  color: #666;
+}
+.btn {
+  background: #2f7cf6;
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 16px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.btn.ghost {
+  background: #eef3ff;
+  color: #2f7cf6;
+}
+.btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.sp {
+  flex: 1;
+}
+.saved {
+  font-size: 12px;
+  color: #3aa676;
+  margin-top: 4px;
+}
+.notice {
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.notice.down {
+  background: #fff4e5;
+  border: 1px solid #f0b060;
+  color: #8a5300;
+}
+.notice.err {
+  background: #fdecec;
+  border: 1px solid #eeb4b4;
+  color: #a33;
+}
+.toobig {
+  background: #fff4e5;
+  border: 1px solid #f0b060;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  margin-bottom: 6px;
+  word-break: break-all;
+}
+
+/* 关闭后的只读条 */
+.ro {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #f7f7f7;
+  border-top: 1px solid #ddd;
+  padding: 14px;
+  text-align: center;
+  color: #666;
+  font-size: 14px;
+}
+
+/* 链接失效整页提示 */
+.full {
+  background: #fff;
+  margin: 40px 16px;
+  border-radius: 12px;
+  padding: 28px 20px;
+  text-align: center;
+}
+.full h2 {
+  margin: 8px 0;
+}
+.muted {
+  color: #666;
+}
+.center {
+  text-align: center;
+}
+
+/* 点击插图查看大图 */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 80%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  cursor: zoom-out;
+  padding: 20px;
+}
+.lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+/* 手机尺寸：气泡贴边一点 */
+@media (max-width: 480px) {
+  .bubble {
+    margin: 10px 8px;
+  }
+  .inline-img {
+    max-width: 100%;
+  }
+  .composer .row input {
+    width: 100px;
+  }
+}
+
+/* 按字段分区的表单（#39，照 prototype a.html）：补全说明与反馈入口共用 */
+.form {
+  background: #fff;
+  margin: 12px;
+  border-radius: 10px;
+  padding: 4px 14px 14px;
+}
+.intake-page .form:first-of-type {
+  margin-top: 0;
+}
+.fld {
+  padding: 12px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+.fld:last-child {
+  border-bottom: 0;
+}
+.fld > label {
+  font-weight: 600;
+  display: block;
+}
+.fld .req {
+  color: #d33;
+  font-size: 12px;
+  margin-left: 4px;
+  font-weight: 400;
+}
+.fld .guide {
+  font-size: 13px;
+  color: #888;
+  margin: 2px 0 6px;
+}
+.fld textarea,
+.fld input[type='text'],
+.fld input[type='text']:focus {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 8px;
+  font: inherit;
+}
+.fld textarea {
+  height: 70px;
+  resize: vertical;
+}
+.fld.miss textarea,
+.fld.miss input[type='text'] {
+  border-color: #e55;
+  background: #fff6f6;
+}
+.fld .tools {
+  font-size: 12px;
+  margin-top: 4px;
+}
+.fld .tools .linkish {
+  color: #2f7cf6;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.fld .err {
+  color: #d33;
+  font-size: 13px;
+  margin-top: 4px;
+}
+.radios label {
+  display: inline-block;
+  font-weight: 400;
+  margin-right: 12px;
+}
+.drop {
+  border: 2px dashed #ccc;
+  border-radius: 8px;
+  padding: 14px;
+  text-align: center;
+  color: #888;
+  font-size: 13px;
+  cursor: pointer;
+}
+.missbox {
+  background: #fff6f6;
+  border: 1px solid #f3b4b4;
+  border-radius: 8px;
+  margin: 12px;
+  padding: 10px 14px;
+  font-size: 14px;
+}
+.missbox ul {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+.linkbox {
+  background: #f3f5f8;
+  border-radius: 8px;
+  padding: 10px;
+  word-break: break-all;
+  font-size: 13px;
+  margin: 10px 0;
+}
+.intake-done .btn {
+  margin-top: 4px;
+}
+
+/* 维度下拉框（可按别名搜索） */
+.dim-select {
+  position: relative;
+}
+.dim-select input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 8px;
+  font: inherit;
+}
+.dim-select input.invalid,
+.fld.miss .dim-select input {
+  border-color: #e55;
+  background: #fff6f6;
+}
+.dim-options {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  max-height: 240px;
+  overflow-y: auto;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 12%);
+}
+.dim-options li {
+  padding: 7px 10px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+.dim-options li:hover,
+.dim-options li[aria-selected='true'] {
+  background: #eef3ff;
+}
+.dim-alias {
+  color: #999;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 暂存/已上传的文件 */
+.staged-files {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.staged-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #f3f5f8;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+.staged-file img {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+.staged-file .state {
+  color: #a35f00;
+}
+.staged-file.failed .state {
+  color: #d33;
+}
+.staged-file .rm {
+  border: 0;
+  background: none;
+  color: #999;
+  cursor: pointer;
+  font-size: 15px;
+  padding: 0 2px;
+}
+.staged-note {
+  margin: 0 14px;
+  font-size: 12px;
+  color: #a35f00;
+}
+
+/* 补全说明页与入口页的底部动作条 */
+.form-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0 12px 16px;
+  font-size: 13px;
+}
+.form-actions input {
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  padding: 5px 8px;
+  width: 130px;
+  font: inherit;
+  font-size: 13px;
+}
+.intake-page {
+  padding-bottom: 90px;
+}
+.brief-form .notice {
+  margin: 10px 12px 0;
+}
+.intake-page .notice {
+  margin: 10px 12px 0;
+}
+.intake-composer {
+  position: sticky;
+  bottom: 0;
+}

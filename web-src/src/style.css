@@ -1,0 +1,74 @@
+:root {
+  font-family: system-ui, 'Microsoft YaHei', sans-serif;
+  color: #1f2937;
+}
+
+body {
+  margin: 0;
+  background: #f5f6f8;
+}
+
+main {
+  max-width: 640px;
+  margin: 4rem auto;
+  padding: 2rem;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 8%);
+}
+
+h1 {
+  font-size: 1.4rem;
+  margin: 0 0 1.5rem;
+}
+
+form label {
+  display: block;
+  margin-bottom: 1rem;
+}
+
+form input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 0.25rem;
+  padding: 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font-size: 1rem;
+}
+
+form button {
+  padding: 0.5rem 2rem;
+  border: none;
+  border-radius: 4px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+form button:disabled {
+  background: #93c5fd;
+}
+
+.error {
+  color: #b91c1c;
+}
+
+.shell header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.shell .me button {
+  margin-left: 1rem;
+  padding: 0.25rem 1rem;
+}
+
+.placeholder {
+  margin-top: 3rem;
+  color: #6b7280;
+  text-align: center;
+}

@@ -1,0 +1,23 @@
+# 构建产物
+/bin/
+/web/
+/web-initial/
+/web-[0-9]*.*.*/
+*.exe
+
+# 本地运行数据
+/data/
+/config.toml
+
+# 前端
+node_modules/
+
+# Playwright
+test-results/
+playwright-report/
+.blob-report/
+.playwright/
+
+# publish-updatehub 的本地产物目录
+/publish-out/
+npm-install.log
