@@ -23,16 +23,22 @@ type guestLinkRequest struct {
 	CanEditBrief bool   `json:"can_edit_brief"`
 }
 
+// guestLinkBase 是访客链接响应的公共字段：单建链接的创建响应、建单响应里
+// 嵌套的 guest_link（#64）与列表项共用（列表项不带 url）。
+type guestLinkBase struct {
+	ID           int64  `json:"id"`
+	URL          string `json:"url,omitempty"` // 仅创建响应：/g/<密钥>，只出现一次
+	Note         string `json:"note"`
+	ExpiresAt    string `json:"expires_at"`
+	CanEditBrief bool   `json:"can_edit_brief"`
+}
+
 // guestLinkView 是访客链接的对外结构（列表项不含密钥）。
 type guestLinkView struct {
-	ID           int64      `json:"id"`
-	URL          string     `json:"url,omitempty"` // 仅创建响应：/g/<密钥>，只出现一次
-	Note         string     `json:"note"`
-	ExpiresAt    string     `json:"expires_at"`
-	RevokedAt    *string    `json:"revoked_at,omitempty"`
-	CanEditBrief bool       `json:"can_edit_brief"`
-	CreatedBy    authorView `json:"created_by"`
-	CreatedAt    string     `json:"created_at"`
+	guestLinkBase
+	RevokedAt *string    `json:"revoked_at,omitempty"`
+	CreatedBy authorView `json:"created_by"`
+	CreatedAt string     `json:"created_at"`
 }
 
 // handleGuestLinks 处理 …/guest-links 与 …/guest-links/{id}[/extend]：
@@ -97,8 +103,10 @@ func (a *API) createGuestLink(w http.ResponseWriter, r *http.Request, ref string
 			return
 		}
 		writeJSON(w, http.StatusCreated, guestLinkView{
-			ID: link.ID, URL: a.absURL("/g/" + link.Key), Note: link.Note,
-			ExpiresAt: link.ExpiresAt.Format(time.RFC3339Nano), CanEditBrief: link.CanEditBrief,
+			guestLinkBase: guestLinkBase{
+				ID: link.ID, URL: a.absURL("/g/" + link.Key), Note: link.Note,
+				ExpiresAt: link.ExpiresAt.Format(time.RFC3339Nano), CanEditBrief: link.CanEditBrief,
+			},
 		})
 	})
 }
@@ -159,9 +167,12 @@ func (a *API) extendGuestLink(w http.ResponseWriter, r *http.Request, ref string
 
 func newGuestLinkView(l tickets.GuestLinkInfo) guestLinkView {
 	v := guestLinkView{
-		ID: l.ID, Note: l.Note,
-		ExpiresAt:    l.ExpiresAt.Format(time.RFC3339Nano),
-		CanEditBrief: l.CanEditBrief,
+		guestLinkBase: guestLinkBase{
+			ID:           l.ID,
+			Note:         l.Note,
+			ExpiresAt:    l.ExpiresAt.Format(time.RFC3339Nano),
+			CanEditBrief: l.CanEditBrief,
+		},
 		CreatedBy:    newAuthorView(l.CreatedBy),
 		CreatedAt:    l.CreatedAt.Format(time.RFC3339Nano),
 	}
