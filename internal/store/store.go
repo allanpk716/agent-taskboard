@@ -22,12 +22,26 @@ type Store struct {
 	DB *sql.DB
 }
 
+// FileURI 把文件路径转成 SQLite 的 file: URI（不带查询参数）。路径统一写成
+// 以 / 开头再接在 file:// 之后（authority 留空）：D:\x → file:///D:/x，
+// UNC \\nas\share\x → file:////nas/share/x。直接拼 "file:"+路径时 UNC 会变成
+// file://nas/share，SQLite 把 nas 当成 URI authority 拒绝打开（#46）。
+// URI 里有特殊含义的 % ? # 按百分号编码。
+func FileURI(path string) string {
+	p := filepath.ToSlash(path)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	p = strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(p)
+	return "file://" + p
+}
+
 // Open 确保 dataDir 存在，打开 taskboard.db，开启 WAL 并执行迁移。
 func Open(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("创建数据目录 %s 失败：%w", dataDir, err)
 	}
-	dsn := "file:" + filepath.ToSlash(filepath.Join(dataDir, "taskboard.db"))
+	dsn := FileURI(filepath.Join(dataDir, "taskboard.db"))
 	dsn += "?" + strings.Join([]string{
 		// database/sql 连接池里每条连接都要生效的 PRAGMA 走 DSN。
 		"_pragma=busy_timeout(10000)",

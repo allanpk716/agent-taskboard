@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/store"
 	_ "modernc.org/sqlite" // 副本的完整性校验用
 )
 
@@ -312,7 +313,7 @@ func (b *Backups) sweepAndRotate(dir, skip string) {
 
 // verifyCopy 对一个数据库副本执行 PRAGMA integrity_check；返回是否通过。
 func verifyCopy(path string) (bool, error) {
-	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
+	db, err := sql.Open("sqlite", store.FileURI(path)+"?mode=ro")
 	if err != nil {
 		return false, err
 	}
