@@ -7,7 +7,9 @@
 // 服务持有的是打开的版本目录（链接目标），切换 = 重建链接：
 //
 //   - 每个请求先看链接指向有没有变，变了就打开新版本目录接着服务（不用重启）；
-//   - 一个请求自始至终只用一个版本目录，不会半新半旧；
+//   - 一个请求自始至终只用一个版本目录，不会半新半旧；它要的哈希资源若
+//     不在拿到的版本里（页面来自切换前后的另一版），到 current 和保留的
+//     旧版本里补取，页面与资源跨切换保持一致；
 //   - 刚换下来的旧版本目录再保留两代：翻到一半的旧页面还能取到旧哈希资源。
 //     切回保留期内的目录时复用已打开的 root（几个版本来回切不会反复开、关），
 //     所以循环切换时旧哈希资源一直可取；
@@ -265,11 +267,21 @@ func (h *Handler) retiredIndex(dir string) int {
 	return -1
 }
 
-// openFromRetired 在换下来的旧版本目录里找一个文件（旧页面的哈希资源）。
-// retired 里的 root 一定还开着（淘汰时先摘出去再关）。
-func (h *Handler) openFromRetired(name string) (fs.File, bool) {
+// openFromOtherVersions 在本请求的版本（vr）之外还开着的版本目录里找一个
+// 文件（旧页面的哈希资源）：h.current（若它已不是本请求的 vr——请求在途
+// 期间链接又切走再切回，比 vr 更新的版本会回到 current 而不在 retired 里）
+// 和 h.retired。current/retired 里的 root 一定还开着（淘汰时先摘出去再关）。
+func (h *Handler) openFromOtherVersions(vr *versionRoot, name string) (fs.File, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.current != nil && h.current != vr {
+		if f, err := h.current.root.Open(name); err == nil {
+			if st, statErr := f.Stat(); statErr == nil && !st.IsDir() {
+				return f, true
+			}
+			f.Close()
+		}
+	}
 	for i := len(h.retired) - 1; i >= 0; i-- {
 		if f, err := h.retired[i].root.Open(name); err == nil {
 			if st, statErr := f.Stat(); statErr == nil && !st.IsDir() {
@@ -294,10 +306,11 @@ func (h *Handler) resolve(vr *versionRoot, urlPath string) (string, fs.File, err
 		}
 		f.Close()
 	}
-	// 哈希资源在新版本里没有：可能页面还是旧版本（index.html 是 no-cache，
-	// 浏览器刚拿到旧页面链接就切了版本）。到旧版本目录里补。
+	// 哈希资源在本请求的版本里没有：页面可能来自更新的版本（本请求 acquire
+	// 之后链接又切走/切回了），也可能来自更旧的版本（index.html 是 no-cache，
+	// 浏览器刚拿到旧页面链接就切了版本）。到 current 和 retired 里补。
 	if strings.HasPrefix(name, "assets/") {
-		if f, ok := h.openFromRetired(name); ok {
+		if f, ok := h.openFromOtherVersions(vr, name); ok {
 			return name, f, nil
 		}
 	}
