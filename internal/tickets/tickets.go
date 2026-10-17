@@ -184,9 +184,19 @@ func NewManager(db *sql.DB, c clock.Clock, lm *labels.Manager, tm *templates.Man
 // Labels 返回标签字典模块（HTTP 层组 hint 用；完整字典接口在 #31）。
 func (m *Manager) Labels() *labels.Manager { return m.labels }
 
+// CreateResult 是建单成功的返回：工单投影（含时间线）、模板必填 warnings，
+// 以及「请人反馈」一并创建的访客链接（#64；请求没带 guest_link 时为 nil，
+// Key 只在这里出现一次）。
+type CreateResult struct {
+	Full      Full
+	Warnings  []FieldWarning
+	GuestLink *GuestLinkCreated
+}
+
 // CreateInput 是建单的输入。不用模板时给一整块 brief_md；用模板时给 template
 // 和 fields（缺必填项只产生 warnings，不拦截）。assignee（成员 id 或姓名，
-// #36）为空时不指派。
+// #36）为空时不指派。guest_link（#64「请人反馈」）非空时在同一个事务里
+// 一并创建访客链接。
 type CreateInput struct {
 	Kind        string
 	Title       string
@@ -196,6 +206,7 @@ type CreateInput struct {
 	Fields      map[string]string
 	Assignee    string // 成员 id 或姓名；空 = 不指派（#36）
 	Creator     identity.Viewer
+	GuestLink   *GuestLinkSpec // 带 can_edit_brief 权限时免「至少一个维度标签」（#64）
 }
 
 // Create 校验并创建一张工单。工单编号（北京时间每天从 001 起，超 999 自动 4 位）
@@ -206,23 +217,37 @@ type CreateInput struct {
 // 用模板创建时：类型由模板决定（忽略请求里的 kind）；预设标签自动打上；
 // 维度字段选中的值同时成为标签并写进说明；缺必填项只产生 warnings
 // （「不确定」算已填、不打该维度的标签）；工单保存创建时版本的字段定义快照。
-func (m *Manager) Create(ctx context.Context, in CreateInput) (Full, []FieldWarning, error) {
+//
+// 带 guest_link（#64「请人反馈」）时：链接与工单在同一个事务里创建，时间线
+// 依次是 created、assigned（有指派人时）、guest_link_created；链接带
+// 「可填写说明」权限时免「至少一个维度标签」的校验，其余校验照常。
+func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, error) {
 	in.Title = strings.TrimSpace(in.Title)
 	if in.Title == "" {
-		return Full{}, nil, ErrTitleRequired
+		return CreateResult{}, ErrTitleRequired
+	}
+	// 「请人反馈」的访客链接先校验（备注、有效期），任何校验失败都不动工单。
+	if in.GuestLink != nil {
+		in.GuestLink.Note = strings.TrimSpace(in.GuestLink.Note)
+		if in.GuestLink.Note == "" {
+			return CreateResult{}, ErrNoteRequired
+		}
+		if _, err := in.GuestLink.validate(m.clk.Now()); err != nil {
+			return CreateResult{}, err
+		}
 	}
 	warnings := []FieldWarning{}
 	var snapshot *template.Snapshot
 	if in.TemplateKey != "" {
 		tmpl, err := m.templates.Get(ctx, in.TemplateKey)
 		if err != nil {
-			return Full{}, nil, err
+			return CreateResult{}, err
 		}
 		if !tmpl.Active {
-			return Full{}, nil, ErrTemplateInactive
+			return CreateResult{}, ErrTemplateInactive
 		}
 		if err := validateFieldsAgainst(tmpl.Fields, in.Fields); err != nil {
-			return Full{}, nil, err
+			return CreateResult{}, err
 		}
 		in.Kind = tmpl.Kind
 		snapshot = &template.Snapshot{Key: tmpl.Key, Version: tmpl.Version, Definition: tmpl.Definition}
@@ -245,7 +270,7 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (Full, []FieldWarn
 			in.Kind = "task"
 		case "task", "report":
 		default:
-			return Full{}, nil, ErrInvalidKind
+			return CreateResult{}, ErrInvalidKind
 		}
 	}
 	// 指派（#36）：成员 id 或姓名；写成成员 Agent → 422 assignee_must_be_member。
@@ -257,7 +282,7 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (Full, []FieldWarn
 		var err error
 		assigneeID, assigneeName, err = m.resolveAssignee(ctx, in.Assignee)
 		if err != nil {
-			return Full{}, nil, err
+			return CreateResult{}, err
 		}
 	}
 	in.Labels = dedupe(in.Labels)
@@ -268,11 +293,13 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (Full, []FieldWarn
 			break
 		}
 	}
-	if !hasDimension {
-		return Full{}, nil, ErrDimensionLabelRequired
+	// 免维度标签（#64）：只有带 guest_link 且 can_edit_brief 为真时才免
+	//（成员这时不知道机型，等访客补全）；其余建单规则不变。
+	if !hasDimension && !(in.GuestLink != nil && in.GuestLink.CanEditBrief) {
+		return CreateResult{}, ErrDimensionLabelRequired
 	}
 	if err := m.labels.Validate(ctx, in.Labels); err != nil {
-		return Full{}, nil, err
+		return CreateResult{}, err
 	}
 
 	now := m.clk.Now()
@@ -280,7 +307,7 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (Full, []FieldWarn
 
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
-		return Full{}, nil, err
+		return CreateResult{}, err
 	}
 	defer tx.Rollback()
 
@@ -288,7 +315,7 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (Full, []FieldWarn
 	var today int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM tickets WHERE number LIKE ?`, date+"-%").Scan(&today); err != nil {
-		return Full{}, nil, err
+		return CreateResult{}, err
 	}
 	daily := today + 1
 	number := date + "-"
@@ -330,12 +357,12 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (Full, []FieldWarn
 		t.BriefMD = template.RenderBrief(in.Fields, snapshot.Fields)
 		templateKey = snapshot.Key
 		if buf, err := json.Marshal(snapshot); err != nil {
-			return Full{}, nil, fmt.Errorf("序列化模板快照失败：%w", err)
+			return CreateResult{}, fmt.Errorf("序列化模板快照失败：%w", err)
 		} else {
 			snapshotJSON = string(buf)
 		}
 		if buf, err := json.Marshal(in.Fields); err != nil {
-			return Full{}, nil, fmt.Errorf("序列化字段值失败：%w", err)
+			return CreateResult{}, fmt.Errorf("序列化字段值失败：%w", err)
 		} else {
 			fieldsJSON = string(buf)
 		}
@@ -349,40 +376,51 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (Full, []FieldWarn
 		number, in.Kind, in.Title, t.BriefMD, creator.MemberID, agentID,
 		nullInt(assigneeID), now.Format(time.RFC3339Nano),
 		templateKey, snapshotVersion(snapshot), snapshotJSON, fieldsJSON).Scan(&t.Seq); err != nil {
-		return Full{}, nil, fmt.Errorf("写入工单失败：%w", err)
+		return CreateResult{}, fmt.Errorf("写入工单失败：%w", err)
 	}
 
 	// created 事件：单内 seq 从 1 起；全局变更序号与事件写入同事务推进。
-	// 建单时指派（#36）随后再记一条 assigned{from:null,to}。
+	// 建单时指派（#36）随后再记一条 assigned{from:null,to}；「请人反馈」的
+	// 链接（#64）最后记 guest_link_created。
 	_, change, err := m.appendEvent(ctx, tx, t.Seq, now, creator, "created")
 	if err != nil {
-		return Full{}, nil, err
+		return CreateResult{}, err
 	}
 	t.LastChange = change
 	if _, err := tx.ExecContext(ctx, `UPDATE tickets SET last_change = ? WHERE seq = ?`, change, t.Seq); err != nil {
-		return Full{}, nil, err
+		return CreateResult{}, err
 	}
 	if assigneeID != 0 {
 		if err := m.insertAssignedEvent(ctx, tx, t.Seq, creator, "", assigneeName, now); err != nil {
-			return Full{}, nil, err
+			return CreateResult{}, err
 		}
 	}
 	for _, l := range in.Labels {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO ticket_labels (ticket_seq, label) VALUES (?, ?)`, t.Seq, l); err != nil {
-			return Full{}, nil, fmt.Errorf("写入标签 %s 失败：%w", l, err)
+			return CreateResult{}, fmt.Errorf("写入标签 %s 失败：%w", l, err)
 
 		}
 	}
+	// 「请人反馈」（#64）：访客链接与工单同一个事务创建，任何一步失败都回滚
+	//（不留下半张工单）；时间线在 created/assigned 之后记 guest_link_created。
+	var linkCreated *GuestLinkCreated
+	if in.GuestLink != nil {
+		link, err := m.createGuestLinkTx(ctx, tx, t.Seq, authorOf(in.Creator), *in.GuestLink, now)
+		if err != nil {
+			return CreateResult{}, err
+		}
+		linkCreated = link
+	}
 
 	if err := tx.Commit(); err != nil {
-		return Full{}, nil, err
+		return CreateResult{}, err
 	}
 	full, err := m.ByRef(ctx, number)
 	if err != nil {
-		return Full{}, warnings, err
+		return CreateResult{GuestLink: linkCreated}, err
 	}
-	return full, warnings, nil
+	return CreateResult{Full: full, Warnings: warnings, GuestLink: linkCreated}, nil
 }
 
 // validateFieldsAgainst 校验字段值：键必须是模板里的字段（问句原文），
