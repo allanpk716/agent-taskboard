@@ -119,7 +119,7 @@ spec 用户故事 84），没有 `inbox`：
 
 | 方法与路径 | 说明 |
 |---|---|
-| `POST /api/v1/tickets` | 建单（成员/成员 Agent；访客 403 `members_only`，访客建单走反馈入口 #35）。 |
+| `POST /api/v1/tickets` | 建单（成员/成员 Agent；访客 403 `members_only`，访客建单走反馈入口 #35）。可带 `guest_link` 一并创建访客链接（#64「请人反馈」）。 |
 | `GET /api/v1/tickets` | 条件列表（#37，仅成员；见「查询与计数（#37）」）。 |
 | `GET /api/v1/tickets/counts` | 按一个维度计数（#37，仅成员；筛选与列表相同）。 |
 | `GET /api/v1/tickets/{id}` | 读一张工单；`?format=markdown` 返回给 Agent 读的 Markdown。 |
@@ -136,7 +136,8 @@ spec 用户故事 84），没有 `inbox`：
 （labels 在 #31；guest-links 见下。）
 
 - 建单请求体 `{"kind", "title", "brief_md", "labels", "assignee?"}`（不用模板）或
-  `{"template", "title", "fields", "labels", "assignee?"}`（用模板，见下面的「模板（#34）」）：
+  `{"template", "title", "fields", "labels", "assignee?"}`（用模板，见下面的「模板（#34）」），
+  以及可选的 `"guest_link"`（#64「请人反馈」，与工单在同一个事务里创建访客链接）：
   - `kind` 可省（默认 `task`），只能是 `task`（任务）或 `report`（反馈）；用模板创建时由模板决定（请求里的 `kind` 被忽略）。
   - `title` 必填；`brief_md` 是不用模板时的一整块说明（可空）；模板工单的说明由 `fields` 按字段拼成。
   - `labels` 至少要有一个 `维度:值` 形式的维度标签；且每个标签（含不带维度的）
@@ -144,17 +145,31 @@ spec 用户故事 84），没有 `inbox`：
     初始值见 `internal/labels/seeds.go`）。别名与 allow_new 见下面的「标签、字典与别名（#31）」。
     用模板创建时，模板的预设标签与维度字段选中的值会自动并进来（预设标签、维度字段值
     都要满足同样的字典校验；「不确定」不打标签）。
+    **唯一例外**：请求带 `guest_link` 且 `can_edit_brief` 为 `true` 时，免「至少一个
+    维度标签」（成员这时不知道机型，由访客补全说明时选的维度值或初筛补上）；
+    其余校验照常（标签仍须是字典里在用的值、模板必须启用等），模板的预设标签照常打上。
   - `assignee`（#36）可写成员 id 或姓名；写成成员 Agent（署名写法或 Agent 名字）
     返回 `422 assignee_must_be_member`（成员 Agent 不能被指派，hint 列出可选成员）；
     查无此人返回 `422 unknown_member`；账号已停用的成员返回 `422 assignee_deactivated`
     （#42：停用即时生效，不再接新工单）。建单时指派会在 `created` 事件后记一条
     `assigned{from: null, to}` 事件。
-- 建单响应 `201`：`{number, seq, url, warnings, assignee, waiting_on, share_text}`
+  - `guest_link`（#64）是 `{"note", "valid_days?", "can_edit_brief"}`：`note` 必填
+    （写对方是谁，如「检验科-张三」），`valid_days` 只能 7/30/90（不填默认 30），
+    复用单建访客链接的校验与错误码（422 `note_required` / `invalid_valid_days`）。
+    链接与工单在同一个事务里创建：任何一步失败都不留下工单；时间线依次是
+    `created`、`assigned`（有指派人时）、`guest_link_created`（带 `note`）。
+- 建单响应 `201`：`{number, seq, url, warnings, assignee, waiting_on, share_text, guest_link?}`
   （`url` 即 `/t/<编号>`）。`warnings` 是用模板建单时「缺必填」的逐项提醒
   `{field, message}[]`——工单照常创建，只在响应里提醒（spec 用户故事 6）；不用模板或
   必填全填时为空数组。`assignee` 为成员或 null；`share_text` 只在指派给**他人**时非空，
   可直接转发：`李工：给你派了一张工单「整理对照表」，让你的 Agent 读一下
   /t/20261016-001（它也会出现在你的收件箱里）`。
+  请求带 `guest_link` 时，响应另带嵌套对象 `guest_link:
+  {id, url, note, expires_at, can_edit_brief, share_text}`：`url` 是访客链接地址
+  （完整密钥只出现这一次；配置了 `[server] public_url` 时是绝对地址），`share_text`
+  是服务端生成的面向访客的转发文案（称呼对方 + 标题 + 请按提示写详细、可传日志照片 +
+  链接 + 不用登录、有效期至某日），网页与成员 Agent 用同一份，与给被指派人的顶层
+  `share_text` 互不混用。同一个 `Idempotency-Key` 重放返回首次结果，不会多出工单或链接。
 - 建单错误码：`422 title_required`、`422 invalid_kind`、
   `422 dimension_label_required`（hint 给出字典里的维度标签示例）、
   `422 unknown_label_value`（附 `suggestions`：同维度里规范化后相等或互相包含的值，

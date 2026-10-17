@@ -8,6 +8,7 @@ export type Route =
   | { page: 'inbox' }
   | { page: 'tickets' }
   | { page: 'new' }
+  | { page: 'feedback' }
   | { page: 'detail'; ref: string }
   | { page: 'tools' }
   | { page: 'me' }
@@ -22,6 +23,7 @@ export function parseRoute(pathname: string): Route {
   if (pathname === '/templates') return { page: 'templates' }
   if (pathname === '/tickets') return { page: 'tickets' }
   if (pathname === '/new') return { page: 'new' }
+  if (pathname === '/feedback') return { page: 'feedback' }
   if (pathname === '/tools') return { page: 'tools' }
   if (pathname === '/me') return { page: 'me' }
   if (pathname === '/admin') return { page: 'admin' }

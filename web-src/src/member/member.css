@@ -839,3 +839,62 @@ textarea.src {
   color: #aab;
   background: #f2f4f8;
 }
+
+/* 请人反馈（#64）：收件箱顶部入口卡片 + 向导的可点选 chips（单选） */
+.fr-card {
+  text-align: center;
+  padding: 18px;
+}
+.fr-card .fr-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.fr-card .hint {
+  margin-bottom: 12px;
+}
+.fr-card .btn {
+  width: 100%;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chips .chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  padding: 5px 12px;
+  border-radius: 16px;
+  background: #eef1f6;
+  color: #555;
+  cursor: pointer;
+  margin: 0;
+}
+.chips .chip input {
+  /* 视觉上隐藏但保留可点击性（无 pointer-events:none）：键盘与自动化都能点到 */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+}
+.chips .chip.on {
+  background: #e3ecfa;
+  color: #2a5db0;
+  font-weight: 600;
+}
+.fr-more {
+  border-top: 1px dashed #e2e6ee;
+  margin-top: 4px;
+  padding-top: 10px;
+}
+.fr-more summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: #667;
+  padding: 2px 0 8px;
+  user-select: none;
+}
