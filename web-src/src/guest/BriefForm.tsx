@@ -1,7 +1,7 @@
-// 补全说明（#39）：持「可填写说明」链接的访客点「✏ 补全说明」进入按字段分区
-// 的表单，保存后回到对话（时间线会出现修订事件）。上传图片立即拿 att: 引用
-// 插进对应字段；草稿实时写入 localStorage，服务中断时自动重试（与对话页同
-// 一套规则）；版本冲突时重读工单、保留访客的修改后再保存。
+// 补全说明（#39）：无模板工单的访客仍用这张整页表单（自由描述接入是
+// #66）；模板工单由 #65 的分组填写页（GroupedBriefForm）取代。上传图片
+// 立即拿 att: 引用插进对应字段；草稿实时写入 localStorage，服务中断时自动
+// 重试（与对话页同一套规则）；版本冲突时重读工单、保留访客的修改后再保存。
 import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api'
 import { compressImage } from '../shared/compress'

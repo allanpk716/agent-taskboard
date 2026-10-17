@@ -5,6 +5,7 @@ import { ApiError } from '../api'
 import { Conversation } from './Conversation'
 import { Composer } from './Composer'
 import { BriefForm } from './BriefForm'
+import { GroupedBriefForm } from './GroupedBriefForm'
 import { guestApi } from './guestApi'
 import { fmtDateCN } from '../shared/format'
 import type { GuestSession, TicketView } from '../shared/types'
@@ -37,7 +38,7 @@ function LinkInvalidPage({ code, expiresAt }: { code: string; expiresAt?: string
 export function GuestPage({ linkKey }: { linkKey: string }) {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' })
   const [expiresAt, setExpiresAt] = useState<string | undefined>()
-  // #39：✏ 补全说明进入字段表单，保存后回到对话。
+  // #65：✏ 修改说明进入分组填写页，提交后回到对话。
   const [mode, setMode] = useState<'talk' | 'fill'>('talk')
 
   const load = useCallback(async () => {
@@ -84,25 +85,44 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
       : '给你发链接的同事'
 
   if (mode === 'fill') {
+    // 模板工单用分组填写页（#65）；无模板工单维持原来的整页表单（#66 再接入）。
+    const fields = ticket.brief.template_fields ?? []
     return (
-      <main className="guest-root">
-        <BriefForm
-          linkKey={linkKey}
-          ticket={ticket}
-          onSaved={() => {
-            setMode('talk')
-            void load()
-          }}
-          onBack={() => setMode('talk')}
-          onLinkDead={(code) => setPhase({ kind: 'invalid', code })}
-        />
+      <main className="guest-root fillroot">
+        {fields.length > 0 ? (
+          <GroupedBriefForm
+            linkKey={linkKey}
+            ticket={ticket}
+            onSaved={() => {
+              setMode('talk')
+              void load()
+            }}
+            onBack={() => setMode('talk')}
+            onLinkDead={(code) => setPhase({ kind: 'invalid', code })}
+          />
+        ) : (
+          <BriefForm
+            linkKey={linkKey}
+            ticket={ticket}
+            onSaved={() => {
+              setMode('talk')
+              void load()
+            }}
+            onBack={() => setMode('talk')}
+            onLinkDead={(code) => setPhase({ kind: 'invalid', code })}
+          />
+        )}
       </main>
     )
   }
 
   return (
     <main className={`guest-root${closed || !ticket.viewer.can.reply ? ' readonly' : ''}`}>
-      <Conversation ticket={ticket} />
+      {/* 工单关闭后不能再修订说明（服务端 409 ticket_closed），入口随之隐藏 */}
+      <Conversation
+        ticket={ticket}
+        onEditBrief={ticket.viewer.can.edit_brief && ticket.status !== 'closed' ? () => setMode('fill') : undefined}
+      />
       {closed || !ticket.viewer.can.reply ? (
         <div className="ro">工单已关闭，只能查看。如还有问题，请联系 {contact}。</div>
       ) : (
@@ -112,7 +132,6 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
           onSent={load}
           onTicketClosed={load}
           onLinkDead={(code) => setPhase({ kind: 'invalid', code })}
-          onEditBrief={ticket.viewer.can.edit_brief ? () => setMode('fill') : undefined}
         />
       )}
     </main>

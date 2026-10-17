@@ -48,13 +48,16 @@ function attachmentsOf(ticket: TicketView): Map<string, Attachment> {
   return new Map(ticket.attachments.map((a) => [a.id, a]))
 }
 
-/** 说明 = 第一条气泡：模板工单按字段逐个显示问句/回答，其余按 Markdown 渲染。 */
+/** 说明 = 第一条气泡：模板工单按字段逐个显示问句/回答，其余按 Markdown 渲染。
+ * onEditBrief（访客可填写说明时）：卡片上有「✏ 修改说明」，点开回到分组填写页（#65）。 */
 export function BriefBubble({
   ticket,
   onImageClick,
+  onEditBrief,
 }: {
   ticket: TicketView
   onImageClick: (url: string) => void
+  onEditBrief?: () => void
 }) {
   const atts = attachmentsOf(ticket)
   const fields = ticket.brief.template_fields ?? []
@@ -69,6 +72,11 @@ export function BriefBubble({
         <div className="who">
           <b>{creator}</b>
           {created && <> · {fmtShort(created.at)}</>} · 说明
+          {onEditBrief && (
+            <button type="button" className="btn ghost sm edit-brief" onClick={onEditBrief}>
+              ✏ 修改说明
+            </button>
+          )}
         </div>
         {fields.length > 0 ? (
           fields.map((f) => {

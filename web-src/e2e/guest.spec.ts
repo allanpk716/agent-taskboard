@@ -196,8 +196,8 @@ test('打开访客链接看到徽标与说明气泡，回复并附带粘贴的�
   await expect(page.getByLabel('署名')).toHaveValue('张三')
   await expect(page.locator('.turn-badge')).toHaveText('● 现在轮到你回复')
 
-  // 这条链接没与「可填写说明」权限：不显示 ✏ 补全说明（#39）
-  await expect(page.getByRole('button', { name: '✏ 补全说明' })).toHaveCount(0)
+  // 这条链接没与「可填写说明」权限：说明卡片上不显示 ✏ 修改说明（#39）
+  await expect(page.getByRole('button', { name: '✏ 修改说明' })).toHaveCount(0)
 
   // 写回复 + 粘贴截图（上传完成后输入框里出现 att: 引用）
   await page.getByPlaceholder(/写回复/).fill('软件版本 V3.2.1，报警照片如下。')

@@ -62,7 +62,7 @@ test('请人反馈：向导生成链接，完成页可复制，访客能打开',
   const guest = await newGuestPage(browser, linkUrl)
   await expect(guest.getByRole('heading', { name: 'UD-2300 质控时报警 E-203' })).toBeVisible()
   await expect(guest.locator('.link-meta')).toContainText('检验科-张三')
-  await expect(guest.getByRole('button', { name: '✏ 补全说明' })).toBeVisible()
+  await expect(guest.getByRole('button', { name: '✏ 修改说明' })).toBeVisible()
   await guest.context().close()
 
   // 成员侧：工单确实存在（经 API 核对编号一致）。
