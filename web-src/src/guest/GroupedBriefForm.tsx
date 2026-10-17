@@ -4,7 +4,8 @@
 // 逐字段清单（点一下滚到该字段）、整张工单的附件区、署名与提交。保存沿用
 // 旧逻辑：草稿实时写本机、一次 PATCH（带 base_revision）+ 幂等键重试、版本
 // 冲突时重读重试；文件立即上传拿 att: 引用写进字段值（统一附件区挂到最后
-// 一个文本字段）。必填校验只在前端拦提交，服务端规则不变。
+// 一个文本字段）。必填校验只在前端拦提交，服务端规则不变。无模板的工单
+// （#66 自由描述）合成一组「情况说明」，修订时提交 brief_md。
 // 视觉参考 prototype/guest-fill 的 c.html（原型代码不合并）。
 import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api'
@@ -24,24 +25,60 @@ const UNSURE = '不清楚'
 /** 追问提示的长度阈值：多行文本少于 20 字且不是「不清楚」时出现。 */
 const NUDGE_MIN_CHARS = 20
 
+/** 自由描述（#66）：无模板工单合成的一组「情况说明」的大文本框，
+ *  上方列出可以按哪几点写；tips / nudgeHint 只在前端用，服务端不下发。 */
+export interface FillField extends TemplateField {
+  /** 提示点列表（照原型，大文本框上方逐条列出） */
+  tips?: string[]
+  /** 追问提示的专属文案（没有时取示例 / 引导说明） */
+  nudgeHint?: string
+}
+
+/** 自由描述字段的键（草稿与统一附件区都用它；不与模板字段键冲突）。 */
+export const FREE_KEY = '__brief__'
+
+const FREE_FIELD: FillField = {
+  key: FREE_KEY,
+  title: '请把情况写详细',
+  type: 'text',
+  required: true,
+  guide: '可以按下面几点写，想到哪写到哪，不用写成一段完整的话：',
+  example: '',
+  tips: [
+    '哪台设备、哪个系统',
+    '什么时候发生的',
+    '做了哪些操作（按顺序）',
+    '看到了什么（报警、提示原文照抄）',
+    '本来应该怎样',
+    '出现得频繁吗',
+  ],
+  nudgeHint: '再多写几句会更好，参照上面几点补充。',
+}
+
 export interface GroupedBriefFormProps {
   linkKey: string
   ticket: TicketView
+  /** 落地页「你的称呼」带过来的署名初值（#66；没经过落地页时省略）。 */
+  initialAuthor?: string
   /** 保存成功并点「查看对话」：回到对话并刷新（时间线出现修订事件）。 */
   onSaved: () => void
   onBack: () => void
   onLinkDead: (code: string) => void
 }
 
-/** 展示用的一组字段：模板的分组；不分组时全部字段合成一组「填写说明」。 */
+/** 展示用的一组字段：模板的分组；不分组时全部字段合成一组「填写说明」；
+ *  无模板（自由描述）合成一组「情况说明」（#66）。 */
 export interface FieldGroup {
   title: string
   subtitle?: string
-  fields: TemplateField[]
+  fields: FillField[]
 }
 
 export function groupsOf(ticket: TicketView): FieldGroup[] {
   const fields = ticket.brief.template_fields ?? []
+  if (fields.length === 0) {
+    return [{ title: '情况说明', subtitle: '写一段，附上照片和日志', fields: [FREE_FIELD] }]
+  }
   const gs = ticket.brief.template_groups ?? []
   if (gs.length > 0) {
     return gs.map((g, i) => ({ title: g.title, subtitle: g.subtitle, fields: fields.filter((f) => f.group === i) }))
@@ -65,23 +102,24 @@ function filled(value: string | undefined): boolean {
   return !!(value ?? '').trim()
 }
 
-/** 追问提示文案：内容取字段示例，没有示例时取引导说明（不调 AI）。 */
-function nudgeText(f: TemplateField, value: string): string | null {
+/** 追问提示文案：内容取字段专属提示，否则取示例，再否则取引导说明（不调 AI）。 */
+function nudgeText(f: FillField, value: string): string | null {
   if (f.type !== 'text') return null
   const v = value.trim()
   if (!v || v === UNSURE || v.length >= NUDGE_MIN_CHARS) return null
+  if (f.nudgeHint) return `能再具体一点吗？${f.nudgeHint}`
   const src = f.example || f.guide
   return src ? `能再具体一点吗？比如：${src}` : '能再具体一点吗？'
 }
 
 /** 必填进度：已填必填数 / 必填总数。 */
-function reqProgress(fields: TemplateField[], values: Record<string, string>): [number, number] {
+function reqProgress(fields: FillField[], values: Record<string, string>): [number, number] {
   const reqs = fields.filter((f) => f.required)
   return [reqs.filter((f) => filled(values[f.key])).length, reqs.length]
 }
 
 /** 需要在说明里提交给对方的成员名（建单的成员；兜底同对话页的联系人）。 */
-function memberNameOf(ticket: TicketView): string {
+export function memberNameOf(ticket: TicketView): string {
   return ticket.creator.member?.name ?? ticket.assignee?.member?.name ?? '给你发链接的同事'
 }
 
@@ -99,7 +137,7 @@ function Progress({ done, total }: { done: number; total: number }) {
 }
 
 interface FieldBlockProps {
-  field: TemplateField
+  field: FillField
   value: string
   onChange: (key: string, value: string) => void
   onPickFiles: (fieldKey: string, files: File[], viaArea: boolean) => void
@@ -152,7 +190,15 @@ function FieldBlock({ field: f, value, onChange, onPickFiles, files, onRemoveFil
         </div>
       ) : (
         <>
+          {f.tips && (
+            <ul className="tips">
+              {f.tips.map((t) => (
+                <li key={t}>{t}</li>
+              ))}
+            </ul>
+          )}
           <textarea
+            className={f.tips ? 'big' : undefined}
             placeholder={f.example ? `示例：${f.example.split('\n')[0]}` : '在这里写…'}
             value={value}
             onChange={(e) => onChange(f.key, e.target.value)}
@@ -343,16 +389,20 @@ function AttachArea({
   )
 }
 
-export function GroupedBriefForm({ linkKey, ticket, onSaved, onBack, onLinkDead }: GroupedBriefFormProps) {
-  const fields = ticket.brief.template_fields ?? []
+export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBack, onLinkDead }: GroupedBriefFormProps) {
+  // 自由描述（#66）：无模板工单只有一个合成字段，初值取整块说明。
+  const templateFields = ticket.brief.template_fields ?? []
+  const free = templateFields.length === 0
+  const fields: FillField[] = free ? [FREE_FIELD] : templateFields
   const groups = groupsOf(ticket)
   const key = briefDraftKey(linkKey, ticket.number)
   const initialDraft = useRef(loadFormDraft(key))
-  const [values, setValues] = useState<Record<string, string>>(() => ({
-    ...(ticket.brief.fields ?? {}),
-    ...(initialDraft.current?.fields ?? {}),
-  }))
-  const [author, setAuthor] = useState(initialDraft.current?.author ?? loadAuthor())
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    free
+      ? { [FREE_KEY]: ticket.brief.markdown, ...(initialDraft.current?.fields ?? {}) }
+      : { ...(ticket.brief.fields ?? {}), ...(initialDraft.current?.fields ?? {}) },
+  )
+  const [author, setAuthor] = useState(initialDraft.current?.author ?? initialAuthor ?? loadAuthor())
   const [files, setFiles] = useState<StagedFile[]>([])
   const [notice, setNotice] = useState<{ kind: 'down' | 'err'; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
@@ -360,7 +410,7 @@ export function GroupedBriefForm({ linkKey, ticket, onSaved, onBack, onLinkDead 
   const [openGroup, setOpenGroup] = useState(0)
   const desktop = useDesktop()
   const member = memberNameOf(ticket)
-  const areaField = lastTextFieldKey(fields)
+  const areaField = free ? FREE_KEY : lastTextFieldKey(templateFields)
   const baseRevisionRef = useRef(ticket.brief.revision)
   const idemKeyRef = useRef<string | undefined>(initialDraft.current?.idemKey)
   const pendingRef = useRef(!!initialDraft.current?.pending)
@@ -448,12 +498,18 @@ export function GroupedBriefForm({ linkKey, ticket, onSaved, onBack, onLinkDead 
       if (!idemKeyRef.current) idemKeyRef.current = crypto.randomUUID()
       pendingRef.current = true
       saveFormDraft(key, { fields: valuesRef.current, author: authorRef.current, idemKey: idemKeyRef.current, pending: true })
-      const out: Record<string, string> = {}
-      for (const f of fields) out[f.key] = valuesRef.current[f.key] ?? ''
       const name = authorRef.current.trim()
+      // 自由描述提交整块 brief_md（非模板工单）；模板工单逐字段提交。
+      const body = free
+        ? { brief_md: valuesRef.current[FREE_KEY] ?? '', base_revision: baseRevisionRef.current, ...(name ? { author_name: name } : {}) }
+        : (() => {
+            const out: Record<string, string> = {}
+            for (const f of templateFields) out[f.key] = valuesRef.current[f.key] ?? ''
+            return { fields: out, base_revision: baseRevisionRef.current, ...(name ? { author_name: name } : {}) }
+          })()
       await guestApi(linkKey, `/api/v1/tickets/${encodeURIComponent(ticket.number)}`, {
         method: 'PATCH',
-        body: JSON.stringify({ fields: out, base_revision: baseRevisionRef.current, ...(name ? { author_name: name } : {}) }),
+        body: JSON.stringify(body),
         idempotencyKey: idemKeyRef.current,
       })
       pendingRef.current = false
