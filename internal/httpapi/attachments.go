@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
@@ -69,10 +70,11 @@ func (a *API) handleTicketAttachments(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 
+	filename := clientBaseName(header.Filename)
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
-		info, markdown, err := a.atts.Upload(r.Context(), full.Seq, header.Filename, content, attachments.PrincipalOf(viewer))
+		info, markdown, err := a.atts.Upload(r.Context(), full.Seq, filename, content, attachments.PrincipalOf(viewer))
 		if err != nil {
-			a.writeAttachmentError(w, err, full.Number, header.Filename)
+			a.writeAttachmentError(w, err, full.Number, filename)
 			return
 		}
 		writeJSON(w, http.StatusCreated, attachmentUploadView{
@@ -94,6 +96,16 @@ type attachmentUploadView struct {
 	State    string `json:"state"`
 	Markdown string `json:"markdown"`
 	Note     string `json:"note"`
+}
+
+// clientBaseName 把客户端带来的文件名截成基本名，/ 和 \ 都算分隔符。
+// multipart 的 FileName 用 filepath.Base，只认当前平台的分隔符：Linux 上
+// C:\temp\x.png 会原样留下，再被文件名校验拒绝。
+func clientBaseName(name string) string {
+	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
+		return name[i+1:]
+	}
+	return name
 }
 
 // writeAttachmentError 把附件模块的错误映射成 HTTP 错误；三种 413 的 hint
