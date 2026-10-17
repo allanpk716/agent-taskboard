@@ -202,3 +202,95 @@ func Test切换期间并发请求不会半新半旧(t *testing.T) {
 		t.Error(p)
 	}
 }
+
+// 多于 keepRetired 个不同版本快速轮换时，每次切换都会真正淘汰旧 root。
+// 在途请求拿着的 root 不能被关掉：页面和资源请求都应 200（资源所在版本
+// 已被淘汰时回退成某个版本的 index.html，是文档化的 SPA 回退，但绝不能
+// 因为切换而在途 404）。
+func Test超过保留代数的版本轮换在途请求不404(t *testing.T) {
+	versions := []string{"1.0.0", "2.0.0", "3.0.0", "4.0.0", "5.0.0"}
+	server, web := startStatic(t, versions...)
+	parent := filepath.Dir(web)
+	index := map[string]string{}
+	byIndex := map[string]string{} // index.html 内容 → 版本（反查）
+	for _, v := range versions {
+		c := fmt.Sprintf("<!doctype html><title>v%s</title>", v)
+		index[v] = c
+		byIndex[c] = v
+	}
+
+	stop := make(chan struct{})
+	switcherDone := make(chan []string)
+	var readers sync.WaitGroup
+	var mu sync.Mutex
+	var problems []string
+
+	// 后台在 5 个版本之间不停轮换（远超 keepRetired=2，旧版本被真淘汰）。
+	go func() {
+		var errs []string
+		defer func() { switcherDone <- errs }()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			v := versions[i%len(versions)]
+			tmpLink := web + ".switching"
+			_ = os.Remove(tmpLink)
+			if err := fslink.Make(tmpLink, parent+filepath.FromSlash("/web-"+v)); err != nil {
+				errs = append(errs, "建链接失败："+err.Error())
+				return
+			}
+			if err := os.Rename(tmpLink, web); err != nil {
+				_ = os.Remove(web)
+				if err2 := fslink.Make(web, parent+filepath.FromSlash("/web-"+v)); err2 != nil {
+				errs = append(errs, "换链接失败："+err2.Error())
+				return
+			}
+			}
+		}
+	}()
+
+	// 并发读者：页面必须是 200 且属于某个完整版本；资源也必须 200，内容
+	// 要么是那个版本的资源、要么是回退出来的完整 index.html（版本已被淘汰），
+	// 不能 404，也不能是混杂内容。
+	for w := 0; w < 4; w++ {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for i := 0; i < 120; i++ {
+				code, indexHTML := getBody(t, server.URL+"/")
+				if code != 200 || byIndex[indexHTML] == "" {
+					mu.Lock()
+					problems = append(problems, fmt.Sprintf("GET / = %d %q", code, indexHTML))
+					mu.Unlock()
+					continue
+				}
+				ver := byIndex[indexHTML]
+				acode, asset := getBody(t, server.URL+"/assets/app-"+ver+".js")
+				if acode != 200 {
+					mu.Lock()
+					problems = append(problems, fmt.Sprintf("页面 %s 的资源拿到 %d %q", ver, acode, asset))
+					mu.Unlock()
+					continue
+				}
+				if asset != "console.log('"+ver+"')" && byIndex[asset] == "" {
+					mu.Lock()
+					problems = append(problems, fmt.Sprintf("页面 %s 的资源拿到混杂内容 %q", ver, asset))
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	readers.Wait()
+	close(stop)
+	for _, err := range <-switcherDone {
+		t.Error(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, p := range problems {
+		t.Error(p)
+	}
+}
