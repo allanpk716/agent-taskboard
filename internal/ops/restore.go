@@ -59,6 +59,11 @@ func Restore(dataDir string, port int, backupFile string, now time.Time) (Restor
 		return res, fmt.Errorf("备份文件 %s 完整性校验未通过，不能用于恢复", backupFile)
 	}
 
+	// 新机器上恢复时数据目录还不存在（#46）。
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return res, fmt.Errorf("创建数据目录 %s 失败：%w", dataDir, err)
+	}
+
 	// 2. 另存当前库（连同它的 -wal/-shm 一起挪走，避免残留在新库旁边）。
 	suffix := "pre-restore-" + now.Format("20060102-150405")
 	for _, name := range []string{"taskboard.db", "taskboard.db-wal", "taskboard.db-shm"} {

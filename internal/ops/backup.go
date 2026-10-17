@@ -325,16 +325,18 @@ func verifyCopy(path string) (bool, error) {
 	return result == "ok", nil
 }
 
+// copyFile 先写 .part 再改名，中途失败不留半截文件（附件镜像、恢复换库、
+// 恢复补附件共用）。
 func copyFile(from, to string) error {
 	in, err := os.Open(from)
 	if err != nil {
-		return fmt.Errorf("读附件 %s 失败：%w", from, err)
+		return fmt.Errorf("读 %s 失败：%w", from, err)
 	}
 	defer in.Close()
 	tmp := to + ".part"
 	out, err := os.Create(tmp)
 	if err != nil {
-		return fmt.Errorf("写镜像 %s 失败：%w", to, err)
+		return fmt.Errorf("写 %s 失败：%w", to, err)
 	}
 	if _, err := io.Copy(out, in); err != nil {
 		out.Close()
@@ -343,7 +345,7 @@ func copyFile(from, to string) error {
 	}
 	if err := out.Close(); err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("写镜像 %s 失败：%w", to, err)
+		return fmt.Errorf("写 %s 失败：%w", to, err)
 	}
 	return os.Rename(tmp, to)
 }

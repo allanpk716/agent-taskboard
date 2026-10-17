@@ -156,3 +156,24 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(content)
 }
+
+// 在新机器上恢复（VM 损坏后的正路）：data_dir 还不存在，恢复要自己建出来，
+// 不能因为目录不在就失败（#46 恢复演练时踩到）。
+func Test恢复到不存在的数据目录(t *testing.T) {
+	b, _, _ := newBackups(t, t.TempDir())
+	rec, err := b.BackupNow(context.Background(), ops.KindDaily)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup := filepath.Join(b.TargetDir(), rec.Filename)
+
+	fresh := filepath.Join(t.TempDir(), "new-machine", "data")
+	if _, err := ops.Restore(fresh, 0, backup, time.Now()); err != nil {
+		t.Fatalf("恢复到新目录失败：%v", err)
+	}
+	st, err := store.Open(fresh)
+	if err != nil {
+		t.Fatalf("恢复后的库打不开：%v", err)
+	}
+	st.Close()
+}
