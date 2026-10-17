@@ -1,0 +1,158 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>候选</title><style>
+/* 一次性原型：PC 响应式布局（#57），不合并 */
+*{box-sizing:border-box}body{margin:0;background:#d9dde4;font-family:system-ui,'Microsoft YaHei',sans-serif;color:#1f2937;font-size:14px}
+.proto{position:sticky;top:0;z-index:50;background:#111827;color:#fff;font-size:12px;padding:6px 10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.proto b{color:#fbbf24}.proto button{background:#374151;color:#fff;border:0;border-radius:5px;padding:4px 8px;font-size:12px}.proto button.on{background:#2a6fdb}
+.proto .d{color:#cbd5e1;flex-basis:100%;line-height:1.5}
+#stage{overflow:hidden}
+#pc{transform-origin:0 0;height:800px;background:#f5f6f8;display:flex;overflow:hidden;position:relative}
+.btn{background:#2a6fdb;color:#fff;border:0;border-radius:8px;padding:8px 14px;font-size:14px;cursor:pointer;font-family:inherit}.btn.ghost{background:#eef3fc;color:#2a6fdb}.btn.plain{background:none;color:#6b7280}.btn.sm{padding:5px 10px;font-size:12.5px}.btn.block{width:100%}
+.muted{color:#6b7280}.small{font-size:12.5px}.tiny{font-size:11.5px}
+.chip{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:10px;background:#f0f2f6;color:#4b5563;margin:0 4px 2px 0;white-space:nowrap}.chip.dim{background:#e8f0fd;color:#245fc0}
+.badge{display:inline-block;font-size:11px;padding:1px 6px;border-radius:4px;background:#f0f2f6;color:#4b5563}.badge.fb{background:#fff1e6;color:#b45309}.badge.task{background:#ecfdf3;color:#15803d}.badge.closed{background:#f3f4f6;color:#9ca3af}
+.wait{font-size:12px;color:#b45309}.wait.me{color:#d64545;font-weight:600}
+.dot{display:inline-block;min-width:18px;padding:0 5px;border-radius:9px;background:#d64545;color:#fff;font-size:11px;text-align:center;line-height:18px;font-style:normal}
+/* 侧栏 */
+.side{width:212px;flex:none;background:#fff;border-right:1px solid #e6e9f0;display:flex;flex-direction:column;padding:14px 10px}
+.side .brand{font-weight:800;font-size:16px;padding:2px 8px 14px}
+.side .nav{margin-top:12px;display:flex;flex-direction:column;gap:2px}
+.side .it{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:7px;cursor:pointer;color:#374151}.side .it:hover{background:#f3f5f9}.side .it.on{background:#eef3fc;color:#2a6fdb;font-weight:600}.side .it .dot{margin-left:auto}
+.side .sub{padding:6px 10px 6px 34px;font-size:13px}.side .sub .n{margin-left:auto;color:#9aa3b2;font-size:12px}
+.side .grp{font-size:11px;color:#9aa3b2;padding:12px 10px 4px}
+.side .foot{margin-top:auto;border-top:1px solid #f0f2f6;padding:10px 8px 0;font-size:12.5px}.side .foot .ver{color:#b0b7c3;font-size:11px;margin-top:3px}
+.rail{width:68px;flex:none;background:#fff;border-right:1px solid #e6e9f0;display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:4px}
+.rail .plus{width:44px;height:44px;border-radius:12px;background:#2a6fdb;color:#fff;font-size:22px;display:flex;align-items:center;justify-content:center;margin-bottom:8px;cursor:pointer}
+.rail .it{width:58px;text-align:center;padding:7px 0;border-radius:8px;font-size:18px;cursor:pointer;position:relative}.rail .it span{display:block;font-size:10.5px;color:#6b7280;margin-top:2px}.rail .it.on{background:#eef3fc}.rail .it.on span{color:#2a6fdb;font-weight:600}
+.rail .it .dot{position:absolute;top:2px;right:6px;font-size:10px;min-width:16px;line-height:16px}
+.rail .ver{margin-top:auto;font-size:10px;color:#b0b7c3}
+/* 列表 */
+.lcol{flex:none;background:#fff;border-right:1px solid #e6e9f0;display:flex;flex-direction:column;overflow:hidden}
+.lhead{padding:12px 14px;border-bottom:1px solid #f0f2f6}
+.search{width:100%;padding:7px 10px;border:1px solid #d7dde8;border-radius:7px;font-size:13px;font-family:inherit;background:#fafbfc}
+.fchips{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}.fc{font-size:12px;padding:3px 9px;border-radius:12px;border:1px solid #dfe4ec;color:#4b5563;cursor:pointer;background:#fff}.fc.on{background:#2a6fdb;border-color:#2a6fdb;color:#fff}
+.lbody{overflow:auto;flex:1}
+.row{padding:10px 14px;border-bottom:1px solid #f3f4f7;cursor:pointer;position:relative}.row:hover{background:#fafbfd}.row.on{background:#eef3fc;box-shadow:inset 3px 0 #2a6fdb}
+.row .t{font-weight:600;margin:3px 0;line-height:1.4}.row.unread .t::before{content:'';display:inline-block;width:7px;height:7px;border-radius:4px;background:#2a6fdb;margin-right:6px;vertical-align:2px}
+.row .m{font-size:12px;color:#6b7280}
+table.tt{width:100%;border-collapse:collapse;background:#fff}
+.tt th{text-align:left;font-size:12px;color:#6b7280;font-weight:500;padding:8px 10px;border-bottom:1px solid #e6e9f0;background:#fafbfc;position:sticky;top:0}
+.tt td{padding:9px 10px;border-bottom:1px solid #f0f2f6;vertical-align:top;font-size:13px}.tt tr:hover td{background:#fafbfd;cursor:pointer}.tt tr.unread td.tl{font-weight:600}
+/* 详情 */
+.dcol{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.dhead{background:#fff;border-bottom:1px solid #e6e9f0;padding:12px 18px}
+.dhead h2{font-size:17px;margin:4px 0 2px;line-height:1.4}
+.acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.dmain{flex:1;display:flex;overflow:hidden}
+.convo{flex:1;overflow:auto;padding:14px 18px;min-width:0}
+.msg{background:#fff;border:1px solid #e6e9f0;border-radius:10px;padding:10px 12px;margin-bottom:10px;max-width:760px}
+.msg .who{font-size:12px;color:#6b7280;margin-bottom:5px}.msg .who b{color:#1f2937}.msg.mine{margin-left:auto;background:#f2f7ff;border-color:#d6e4fb}.msg.agent{background:#f7f5ff;border-color:#e3dcfb}
+.msg .tx{line-height:1.6;white-space:pre-wrap}
+.qa .q{font-size:12px;color:#6b7280;margin-top:7px}.qa .a{line-height:1.55}
+.files{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.file{font-size:12px;background:#f3f5f9;border-radius:6px;padding:4px 8px}
+.sys{text-align:center;font-size:12px;color:#9aa3b2;margin:6px 0 12px}
+.composer{background:#fff;border-top:1px solid #e6e9f0;padding:10px 18px;display:flex;gap:8px;align-items:flex-end}.composer textarea{flex:1;height:58px;padding:8px 10px;border:1px solid #d7dde8;border-radius:8px;font-family:inherit;font-size:13.5px;resize:none}
+.meta{width:290px;flex:none;border-left:1px solid #e6e9f0;background:#fff;overflow:auto;padding:14px 16px}
+.mblk{padding:10px 0;border-bottom:1px solid #f0f2f6}.mblk:last-child{border:0}.mblk .h{font-size:11.5px;color:#9aa3b2;margin-bottom:5px;display:flex}.mblk .h a{margin-left:auto;color:#2a6fdb;cursor:pointer}
+.link{font-size:12.5px;background:#f6f7f9;border-radius:7px;padding:7px 9px;margin-top:5px}.link .u{color:#2a6fdb;word-break:break-all}
+.strip{background:#fafbfc;border-bottom:1px solid #e6e9f0;padding:7px 18px;font-size:12.5px;color:#4b5563;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+.ph{flex:1;display:flex;align-items:center;justify-content:center;color:#9aa3b2;font-size:15px}
+/* 抽屉 */
+.mask{position:absolute;inset:0;background:rgba(17,24,39,.28)}
+.drawer{position:absolute;top:0;right:0;bottom:0;background:#f5f6f8;box-shadow:-8px 0 24px rgba(0,0,0,.12);display:flex;flex-direction:column}
+.tabs{display:flex;gap:2px;border-bottom:1px solid #e6e9f0;background:#fff;padding:0 18px}.tabs span{padding:9px 12px;font-size:13.5px;cursor:pointer;color:#6b7280;border-bottom:2px solid transparent}.tabs span.on{color:#2a6fdb;border-color:#2a6fdb;font-weight:600}
+/* 访客页 */
+.gtop{background:#fff;border-bottom:1px solid #e6e9f0;padding:10px 20px;display:flex;align-items:center;gap:10px}.gtop .logo{font-weight:800}
+.gfoot{text-align:center;font-size:11px;color:#b0b7c3;padding:10px}
+.card{background:#fff;border:1px solid #e6e9f0;border-radius:12px;padding:14px 16px}
+</style><script>
+// 一次性原型：PC 响应式布局（#57），不合并。数据全部写死在内存里。
+const S={view:'inbox',w:1366,sel:0,open:false,tab:'convo',nav:'inbox'}
+const VER='v0.2.0'
+const T=[
+ {no:'T-0128',kind:'fb',title:'UD-2300 开机后报警 E21，无法进样',wait:'你（指派人）',me:1,assignee:'陈工',creator:'陈工',guest:'检验科-张三',labels:['机型:UD-2300','待初筛'],upd:'10 分钟前',unread:1,tpl:'Bug 反馈'},
+ {no:'T-0127',kind:'task',title:'整理 9 月售后故障统计，按机型出表',wait:'你（指派人）',me:1,assignee:'陈工',creator:'王梦龙 的 Agent',labels:['售后'],upd:'1 小时前',unread:1},
+ {no:'T-0125',kind:'fb',title:'打印报告时条码缺一截',wait:'访客',assignee:'陈工',creator:'陈工',guest:'门诊化验-李医生',labels:['机型:UD-1600'],upd:'昨天 16:20'},
+ {no:'T-0124',kind:'task',title:'升级 3 号机固件到 2.4.1 并验证',wait:'发起人验收',assignee:'王梦龙',creator:'陈工',labels:['固件','机型:UD-2300'],upd:'昨天 11:02',unread:1},
+ {no:'T-0121',kind:'fb',title:'试剂余量显示与实际不符',wait:'部门（未指派）',assignee:null,creator:'李娜',guest:'急诊-周护士',labels:['待初筛'],upd:'10-14'},
+ {no:'T-0119',kind:'fb',title:'质控结果导出 Excel 乱码',wait:'指派人',assignee:'李娜',creator:'李娜',labels:['机型:UD-1600','软件'],upd:'10-13'},
+ {no:'T-0116',kind:'task',title:'给新同事开通成员账号',wait:'指派人',assignee:'李娜',creator:'陈工',labels:[],upd:'10-12'},
+ {no:'T-0110',kind:'fb',title:'样本架识别偶发失败',closed:'已解决',assignee:'陈工',creator:'陈工',guest:'检验科-张三',labels:['机型:UD-2300'],upd:'10-09'},
+]
+const INBOX=[0,1,3]
+function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function kind(t){return t.closed?`<span class="badge closed">已关闭 · ${t.closed}</span>`:t.kind==='task'?'<span class="badge task">任务</span>':'<span class="badge fb">反馈</span>'}
+function waitTx(t){return t.closed?'':`<span class="wait ${t.me?'me':''}">等待 ${t.wait}</span>`}
+function chips(ls){return ls.map(l=>`<span class="chip ${l.includes(':')?'dim':''}">${esc(l)}</span>`).join('')}
+function set(o){Object.assign(S,o);draw()}
+const NAV=[['inbox','📥','收件箱',3],['list','🗂','工单'],['new','📝','建单（高级）','','建单'],['tools','🧰','工具'],['me','👤','我的'],['admin','🛡','管理']]
+function go(k){if(k==='inbox')set({view:'inbox',nav:'inbox',open:false});else if(k==='list')set({view:'list',nav:'list',open:false});else set({view:'other',nav:k})}
+function side(extra){return `<aside class="side"><div class="brand">工单板</div>
+ <button class="btn block" onclick="set({view:'other',nav:'wizard'})">＋ 请人反馈</button>
+ <div class="nav">${NAV.map(([k,ic,n,b])=>`<div class="it ${S.nav===k?'on':''}" onclick="go('${k}')">${ic} ${n}${b?`<i class="dot">${b}</i>`:''}</div>${k==='list'&&extra?extra:''}`).join('')}</div>
+ <div class="foot"><b>陈工</b> <span class="muted tiny">管理员</span><div class="ver">工单板 ${VER}</div></div></aside>`}
+function rail(){return `<aside class="rail"><div class="plus" title="请人反馈" onclick="set({view:'other',nav:'wizard'})">＋</div>
+ ${NAV.map(([k,ic,n,b,sn])=>`<div class="it ${S.nav===k?'on':''}" onclick="go('${k}')">${ic}${b?`<i class="dot">${b}</i>`:''}<span>${sn||n}</span></div>`).join('')}<div class="ver">${VER}</div></aside>`}
+function other(){const n={wizard:'「请人反馈」表单（#56 已定，这里不展开）',new:'建单（高级）页',tools:'工具：标签字典 / 模板维护',me:'我的：个人设置、Agent token',admin:'管理：成员账号、更新'}[S.nav];return `<div class="ph">${n}<br>（内容沿用现有页面，宽屏下居中、最大宽度 960）</div>`}
+const MSGS=[
+ {k:'sys',tx:'陈工 通过「请人反馈」创建了工单，访客链接发给 检验科-张三 · 10-15 09:12'},
+ {k:'brief',who:'检验科-张三',role:'访客',time:'10-15 10:03',qa:[['出问题的仪器','UD-2300（3 号机）'],['什么时候开始','今天早上开机就这样'],['实际看到了什么','开机自检到一半弹出 E21，进样针不动，重启两次一样'],['之前做过什么','昨天下班前换过清洗液']],files:['📷 报警画面.jpg','📄 system_log_1015.txt']},
+ {k:'msg',who:'陈工',role:'成员',mine:1,time:'10-15 10:20',tx:'收到。麻烦再看下清洗液瓶的管路有没有气泡？能拍一张最好。'},
+ {k:'msg',who:'检验科-张三',role:'访客',time:'10-15 10:41',tx:'有一点气泡，照片发上来了。',files:['📷 管路.jpg']},
+ {k:'msg',who:'陈工 的 Agent',role:'Agent',agent:1,time:'10-15 10:45',tx:'已比对日志：E21 是液路压力异常，和管路进气对得上。建议先按说明书 6.3 排气，再开机自检。'},
+]
+function convo(guest,noBrief){return MSGS.filter(m=>!(guest&&m.k==='sys')).map(m=>{
+ if(m.k==='brief'&&noBrief)return `<div class="sys">${noBrief} · 10-15 10:03</div>`
+ if(m.k==='sys')return `<div class="sys">${m.tx}</div>`
+ const mine=guest?m.role==='访客':m.mine
+ const who=`<div class="who"><b>${guest&&m.role==='访客'?'你':m.who}</b> · ${m.role} · ${m.time}</div>`
+ const fs=m.files?`<div class="files">${m.files.map(f=>`<span class="file">${f}</span>`).join('')}</div>`:''
+ if(m.k==='brief')return `<div class="msg ${mine?'mine':''}">${who}<div class="small" style="font-weight:600">${guest?'你填写的说明':'访客填写的说明'} · Bug 反馈</div><div class="qa">${m.qa.map(([q,a])=>`<div class="q">${q}</div><div class="a">${a}</div>`).join('')}</div>${fs}</div>`
+ return `<div class="msg ${mine?'mine':''} ${m.agent?'agent':''}">${who}<div class="tx">${m.tx}</div>${fs}</div>`}).join('')}
+function composer(guest){return `<div class="composer"><textarea placeholder="${guest?'回复（可传照片、日志）':'回复…'}"></textarea><div style="display:flex;flex-direction:column;gap:6px">${guest?'':'<label class="tiny muted"><input type="checkbox"> 交付</label>'}<span style="display:flex;gap:6px"><button class="btn ghost sm">📎</button><button class="btn sm">发送</button></span></div></div>`}
+function metaBlocks(t){return `
+ <div class="mblk"><div class="h">状态</div>${kind(t)} ${waitTx(t)}</div>
+ <div class="mblk"><div class="h">指派人<a>改派</a></div>${t.assignee||'未指派'}</div>
+ <div class="mblk"><div class="h">发起人</div>${t.creator}${t.tpl?`<div class="tiny muted">模板 ${t.tpl}</div>`:''}</div>
+ <div class="mblk"><div class="h">标签<a>编辑</a></div>${chips(t.labels)||'<span class="muted small">无</span>'}</div>
+ <div class="mblk"><div class="h">访客链接<a>管理</a></div>${t.guest?`<div class="link"><b>${t.guest}</b> · 可填写说明<div class="u">http://tb.lan/g/7Kq2…</div><div class="tiny muted">还剩 28 天 · 已用 3 次</div></div>`:'<span class="muted small">还没有</span>'}</div>`}
+function actBtns(){return `<button class="btn ghost sm">🏷 标签</button><button class="btn ghost sm">👤 改派</button><button class="btn ghost sm">🔗 访客链接</button><button class="btn ghost sm">✔ 关闭</button>`}
+function stripMeta(t){return `<div class="strip">${kind(t)} ${waitTx(t)}<span>指派 <b>${t.assignee||'未指派'}</b></span><span>${chips(t.labels)}</span>${t.guest?`<span>🔗 ${t.guest} · 剩 28 天</span>`:''}<span style="margin-left:auto;color:#2a6fdb">全部信息 ▾</span></div>`}
+function guestHead(){const t=T[S.sel];return `<div class="gtop"><span class="logo">工单板</span><span class="muted small">${t.no} · 陈工 请你反馈</span><span style="margin-left:auto" class="small muted">你是访客，不用登录</span></div>`}
+function bar(){return `<b>${NAME}</b><span>${DESC0}</span><span style="flex:1"></span>
+ ${[['inbox','收件箱'],['list','工单列表'],['detail','工单详情'],['guest','访客页']].map(([k,n])=>`<button class="${S.view===k?'on':''}" onclick="${k==='detail'?"set({view:'detail',nav:'list',open:true})":k==='guest'?"set({view:'guest'})":`go('${k}')`}">${n}</button>`).join('')}
+ <span>宽</span>${[1366,1024].map(w=>`<button class="${S.w===w?'on':''}" onclick="set({w:${w}})">${w}</button>`).join('')}<div class="d">${DESC}</div>`}
+function fit(){const pc=document.getElementById('pc');pc.style.width=S.w+'px';const s=innerWidth/S.w;pc.style.transform=`scale(${s})`;document.getElementById('stage').style.height=800*s+'px'}
+function draw(){document.getElementById('bar').innerHTML=bar();document.getElementById('pc').innerHTML=view();fit()}
+addEventListener('resize',fit)
+</script></head><body>
+<div class="proto" id="bar"></div><div id="stage"><div id="pc"></div></div>
+<script>
+const NAME='候选 C · 视图侧栏 + 抽屉详情'
+const DESC0='侧栏直接分好类，详情从右边滑出'
+const DESC='侧栏的「工单」下面直接列出常用视图（等我处理 / 我发起的 / 等访客回复 / 部门未指派 / 已关闭），点一下就筛好。列表占满宽度，一行一张。点工单从右边滑出抽屉，分「对话 / 信息 / 访客链接」三个标签页，点遮罩或 ✕ 关掉回到原位置。宽度 ≥1280：完整侧栏，抽屉占 62%；1024–1279：侧栏缩成图标（视图改成列表顶上的标签），抽屉占 88%；<768：手机布局不变。访客页是居中单栏，「对话」和「我填写的说明」分成两个标签页。'
+const VIEWS=[['等我处理',3],['我发起的',5],['等访客回复',1],['部门未指派',1],['已关闭','']]
+function subs(){return VIEWS.map(([n,c],i)=>`<div class="it sub ${S.nav==='list'&&S.sv===i?'on':''}" onclick="set({view:'list',nav:'list',sv:${i},open:false})">${n}<span class="n">${c}</span></div>`).join('')}
+function lrows(ids){return ids.map(i=>{const t=T[i];return `<div class="row ${t.unread?'unread':''}" style="display:flex;gap:14px;align-items:center;padding:11px 20px" onclick="set({open:true,sel:${i},tab:'convo'})">
+ <span class="tiny muted" style="width:52px">${t.no}</span><span style="width:110px">${kind(t)}</span><div style="flex:1;min-width:0"><div class="t" style="margin:0">${esc(t.title)}</div><div style="margin-top:3px">${chips(t.labels)}</div></div>
+ <span style="width:130px">${waitTx(t)}</span><span class="small" style="width:70px">${t.assignee||'<span class="muted">未指派</span>'}</span><span class="tiny muted" style="width:72px;text-align:right">${t.upd}</span></div>`}).join('')}
+function drawer(wide){const t=T[S.sel];const tb=[['convo','对话'],['info','信息'],['links','访客链接']]
+ const body=S.tab==='convo'?`<div class="convo">${convo()}</div>${composer()}`:S.tab==='info'?`<div style="padding:6px 22px;overflow:auto;flex:1;background:#fff">${metaBlocks(t)}</div>`
+  :`<div style="padding:16px 22px;flex:1;background:#fff">${t.guest?`<div class="link" style="font-size:13.5px"><b>${t.guest}</b> · 可填写说明 · 还剩 28 天 · 已用 3 次<div class="u">http://tb.lan/g/7Kq2…</div><div style="margin-top:8px"><button class="btn ghost sm">复制转发文案</button> <button class="btn plain sm">停用</button></div></div>`:'<span class="muted">还没有访客链接</span>'}<div style="margin-top:14px"><button class="btn sm">＋ 新建访客链接</button></div></div>`
+ return `<div class="mask" onclick="set({open:false})"></div><div class="drawer" style="width:${wide?62:88}%"><div class="dhead"><div style="display:flex;gap:6px;align-items:center">${kind(t)}<span class="small muted">${t.no}</span>${waitTx(t)}<span style="margin-left:auto;cursor:pointer;font-size:18px;color:#6b7280" onclick="set({open:false})">✕</span></div><h2>${esc(t.title)}</h2><div class="acts">${actBtns()}</div></div>
+ <div class="tabs">${tb.map(([k,n])=>`<span class="${S.tab===k?'on':''}" onclick="set({tab:'${k}'})">${n}</span>`).join('')}</div><div style="flex:1;display:flex;flex-direction:column;overflow:hidden">${body}</div></div>`}
+function view(){const wide=S.w>=1280;if(S.sv===undefined)S.sv=0
+ if(S.view==='guest')return `<div style="flex:1;display:flex;flex-direction:column">${guestHead()}<div style="flex:1;overflow:auto"><div style="max-width:860px;margin:0 auto;padding:16px 0"><div class="card"><div class="small muted">陈工 请你反馈</div><div style="font-weight:700;font-size:16px;margin-top:2px">${T[0].title}</div></div>
+  <div class="tabs" style="background:none;padding:0;margin:10px 0"><span class="${S.tab!=='brief'?'on':''}" onclick="set({tab:'convo'})">对话</span><span class="${S.tab==='brief'?'on':''}" onclick="set({tab:'brief'})">我填写的说明</span></div>
+  ${S.tab==='brief'?`<div class="card qa">${MSGS[1].qa.map(([q,a])=>`<div class="q">${q}</div><div class="a">${a}</div>`).join('')}<div class="files">${MSGS[1].files.map(f=>`<span class="file">${f}</span>`).join('')}</div><button class="btn ghost sm" style="margin-top:12px">修改说明</button></div>`:convo(1,'你提交了说明（在「我填写的说明」里）')}</div></div>
+  ${S.tab==='brief'?'':`<div style="max-width:860px;margin:0 auto;width:100%">${composer(1)}</div>`}<div class="gfoot">工单板 ${VER}</div></div>`
+ if(S.view==='detail'){S.view='list';S.open=true}
+ const nav=wide?side(subs()):rail()
+ if(S.view==='other')return nav+other()
+ const ids=S.view==='inbox'?INBOX:S.sv===0?INBOX:S.sv===4?[7]:S.sv===2?[2]:S.sv===3?[4]:[0,2,3,6]
+ const title=S.view==='inbox'?'收件箱':VIEWS[S.sv][0]
+ return nav+`<div class="dcol" style="position:relative"><div class="dhead" style="padding:14px 20px"><div style="display:flex;align-items:center;gap:10px"><b style="font-size:18px">${title}</b><span class="muted small">${ids.length} 张</span><input class="search" style="width:280px;margin-left:auto" placeholder="搜索标题、编号、标签…"><button class="btn plain sm">筛选 ▾</button></div>
+ ${!wide&&S.view!=='inbox'?`<div class="fchips">${VIEWS.map(([n],i)=>`<span class="fc ${S.sv===i?'on':''}" onclick="set({sv:${i}})">${n}</span>`).join('')}</div>`:''}</div>
+ <div style="flex:1;overflow:auto;background:#fff">${lrows(ids)}</div>${S.open?drawer(wide):''}</div>`}
+draw()
+</script>
+</body></html>

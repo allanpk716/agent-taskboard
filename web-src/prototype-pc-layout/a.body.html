@@ -1,0 +1,21 @@
+<div class="proto" id="bar"></div><div id="stage"><div id="pc"></div></div>
+<script>
+const NAME='候选 A · 邮件式三栏'
+const DESC0='侧栏 | 列表 | 详情 同屏'
+const DESC='像邮箱：左边侧栏，中间是工单列表，右边是选中工单的对话，最右是信息栏（标签、指派、访客链接）。点列表里的工单，右边直接切换，不用跳页。宽度 ≥1280：完整侧栏 + 信息栏；1024–1279：侧栏缩成图标，信息栏收进标题下的一行；<768：还是现在的手机布局（底部标签栏），不变。建议横屏看，可双指放大。'
+function lrows(ids){return ids.map(i=>{const t=T[i];return `<div class="row ${t.unread?'unread':''} ${S.sel===i?'on':''}" onclick="set({sel:${i}})">
+ <div style="display:flex;gap:6px;align-items:center">${kind(t)}<span class="tiny muted">${t.no}</span><span class="tiny muted" style="margin-left:auto">${t.upd}</span></div>
+ <div class="t">${esc(t.title)}</div><div class="m">${waitTx(t)} · 指派 ${t.assignee||'未指派'}</div><div style="margin-top:4px">${chips(t.labels)}</div></div>`}).join('')}
+function view(){const wide=S.w>=1280
+ if(S.view==='guest')return `<div style="flex:1;display:flex;flex-direction:column">${guestHead()}<div style="flex:1;overflow:auto"><div style="max-width:720px;margin:0 auto;padding:18px 0"><div class="card" style="margin-bottom:12px"><div class="small muted">陈工 请你反馈</div><div style="font-weight:700;font-size:16px;margin-top:2px">${T[0].title}</div></div>${convo(1)}</div></div><div style="max-width:720px;margin:0 auto;width:100%">${composer(1)}</div><div class="gfoot">工单板 ${VER}</div></div>`
+ const nav=wide?side():rail()
+ if(S.view==='other')return nav+other()
+ const ids=S.view==='inbox'?INBOX:T.map((_,i)=>i);if(!ids.includes(S.sel))S.sel=ids[0]
+ const t=T[S.sel]
+ return nav+`<div class="lcol" style="width:${wide?380:320}px"><div class="lhead"><div style="display:flex;align-items:center;margin-bottom:8px"><b style="font-size:16px">${S.view==='inbox'?'收件箱':'工单'}</b><span class="muted small" style="margin-left:8px">${ids.length} 张</span></div>
+ <input class="search" placeholder="搜索标题、编号、标签…"><div class="fchips">${S.view==='inbox'?'<span class="fc on">等我处理</span><span class="fc">访客新回复</span>':'<span class="fc on">进行中</span><span class="fc">已关闭</span><span class="fc">指派给我</span><span class="fc">等访客</span><span class="fc">更多筛选 ▾</span>'}</div></div>
+ <div class="lbody">${lrows(ids)}</div></div>
+ <div class="dcol"><div class="dhead"><div style="display:flex;gap:6px;align-items:center">${kind(t)}<span class="small muted">${t.no}</span></div><h2>${esc(t.title)}</h2><div class="acts">${actBtns()}</div></div>
+ ${wide?'':stripMeta(t)}<div class="dmain"><div style="flex:1;display:flex;flex-direction:column;min-width:0"><div class="convo">${convo()}</div>${composer()}</div>${wide?`<div class="meta">${metaBlocks(t)}</div>`:''}</div></div>`}
+draw()
+</script>

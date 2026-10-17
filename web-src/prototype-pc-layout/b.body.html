@@ -1,0 +1,24 @@
+<div class="proto" id="bar"></div><div id="stage"><div id="pc"></div></div>
+<script>
+const NAME='候选 B · 表格 + 整页详情'
+const DESC0='列表是表格，点开进整页'
+const DESC='像后台系统：列表是一张表，一屏能看十几二十张工单，一行一张，各列能扫读。点一行进整页详情：左边是对话，右边是固定的信息栏，看完用「‹ 返回列表」回来。宽度 ≥1280：完整侧栏、表格全部列；1024–1279：侧栏缩成图标，表格去掉「类型」「发起人」两列，信息栏收进标题下的一行；<768：手机布局不变。访客页也是双栏：左边对话，右边是「这张工单」卡片。'
+function table(ids,wide){return `<table class="tt"><thead><tr><th style="width:74px">编号</th><th>标题</th>${wide?'<th style="width:60px">类型</th>':''}<th style="width:130px">等待</th><th style="width:76px">指派</th>${wide?'<th style="width:120px">发起人</th>':''}<th style="width:84px">更新</th></tr></thead><tbody>
+ ${ids.map(i=>{const t=T[i];return `<tr class="${t.unread?'unread':''}" onclick="set({view:'detail',sel:${i}})"><td class="muted">${t.no}</td><td class="tl">${wide?'':kind(t)+' '}${t.unread?'<span style="color:#2a6fdb">● </span>':''}${esc(t.title)}<div style="margin-top:3px">${chips(t.labels)}</div></td>${wide?`<td>${kind(t)}</td>`:''}<td>${t.closed?kind(t):waitTx(t)}</td><td>${t.assignee||'<span class="muted">未指派</span>'}</td>${wide?`<td class="muted">${t.creator}</td>`:''}<td class="muted small">${t.upd}</td></tr>`}).join('')}</tbody></table>`}
+function view(){const wide=S.w>=1280
+ if(S.view==='guest'){const t=T[0];return `<div style="flex:1;display:flex;flex-direction:column">${guestHead()}<div style="flex:1;display:flex;overflow:hidden;max-width:1160px;width:100%;margin:0 auto;gap:18px;padding:16px 20px 0">
+  <div style="flex:1;display:flex;flex-direction:column;min-width:0"><div class="convo" style="padding:0">${convo(1,'你提交了说明（见右侧）')}</div>${composer(1)}</div>
+  <div style="width:330px;flex:none;overflow:auto"><div class="card"><div class="small muted">陈工 请你反馈</div><div style="font-weight:700;font-size:15px;margin:3px 0 10px">${t.title}</div>
+  <div class="small" style="font-weight:600">你填写的说明 <a style="color:#2a6fdb;font-weight:400;float:right">修改</a></div><div class="qa small">${MSGS[1].qa.map(([q,a])=>`<div class="q">${q}</div><div class="a">${a}</div>`).join('')}</div>
+  <div class="small" style="font-weight:600;margin-top:12px">附件</div><div class="files">${MSGS[1].files.concat(MSGS[3].files).map(f=>`<span class="file">${f}</span>`).join('')}</div>
+  <div class="tiny muted" style="margin-top:12px">链接还剩 28 天有效</div></div></div></div><div class="gfoot">工单板 ${VER}</div></div>`}
+ const nav=wide?side():rail()
+ if(S.view==='other')return nav+other()
+ if(S.view==='detail'){const t=T[S.sel];return nav+`<div class="dcol"><div class="dhead"><a class="small" style="color:#2a6fdb;cursor:pointer" onclick="go('list')">‹ 返回列表</a><div style="display:flex;gap:6px;align-items:center;margin-top:6px">${kind(t)}<span class="small muted">${t.no}</span></div><h2>${esc(t.title)}</h2><div class="acts">${actBtns()}</div></div>
+  ${wide?'':stripMeta(t)}<div class="dmain"><div style="flex:1;display:flex;flex-direction:column;min-width:0"><div class="convo" style="padding:16px 28px">${convo()}</div>${composer()}</div>${wide?`<div class="meta" style="width:310px">${metaBlocks(t)}</div>`:''}</div></div>`}
+ const ids=S.view==='inbox'?INBOX:T.map((_,i)=>i)
+ return nav+`<div class="dcol"><div class="dhead" style="padding:14px 22px"><div style="display:flex;align-items:center;gap:10px"><b style="font-size:18px">${S.view==='inbox'?'收件箱':'工单'}</b><span class="muted small">${ids.length} 张</span><input class="search" style="width:300px;margin-left:auto" placeholder="搜索标题、编号、标签…"></div>
+ <div class="fchips">${S.view==='inbox'?'<span class="fc on">等我处理 3</span><span class="fc">访客新回复</span>':'<span class="fc on">状态：进行中</span><span class="fc">类型：全部</span><span class="fc">指派：全部</span><span class="fc">等待方：全部</span><span class="fc">标签 ▾</span><span class="fc">模板 ▾</span><span class="fc">时间 ▾</span>'}</div></div>
+ <div style="flex:1;overflow:auto;padding:0 22px 22px">${table(ids,wide)}</div></div>`}
+draw()
+</script>

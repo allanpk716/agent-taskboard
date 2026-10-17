@@ -1,0 +1,30 @@
+<div class="proto" id="bar"></div><div id="stage"><div id="pc"></div></div>
+<script>
+const NAME='候选 C · 视图侧栏 + 抽屉详情'
+const DESC0='侧栏直接分好类，详情从右边滑出'
+const DESC='侧栏的「工单」下面直接列出常用视图（等我处理 / 我发起的 / 等访客回复 / 部门未指派 / 已关闭），点一下就筛好。列表占满宽度，一行一张。点工单从右边滑出抽屉，分「对话 / 信息 / 访客链接」三个标签页，点遮罩或 ✕ 关掉回到原位置。宽度 ≥1280：完整侧栏，抽屉占 62%；1024–1279：侧栏缩成图标（视图改成列表顶上的标签），抽屉占 88%；<768：手机布局不变。访客页是居中单栏，「对话」和「我填写的说明」分成两个标签页。'
+const VIEWS=[['等我处理',3],['我发起的',5],['等访客回复',1],['部门未指派',1],['已关闭','']]
+function subs(){return VIEWS.map(([n,c],i)=>`<div class="it sub ${S.nav==='list'&&S.sv===i?'on':''}" onclick="set({view:'list',nav:'list',sv:${i},open:false})">${n}<span class="n">${c}</span></div>`).join('')}
+function lrows(ids){return ids.map(i=>{const t=T[i];return `<div class="row ${t.unread?'unread':''}" style="display:flex;gap:14px;align-items:center;padding:11px 20px" onclick="set({open:true,sel:${i},tab:'convo'})">
+ <span class="tiny muted" style="width:52px">${t.no}</span><span style="width:110px">${kind(t)}</span><div style="flex:1;min-width:0"><div class="t" style="margin:0">${esc(t.title)}</div><div style="margin-top:3px">${chips(t.labels)}</div></div>
+ <span style="width:130px">${waitTx(t)}</span><span class="small" style="width:70px">${t.assignee||'<span class="muted">未指派</span>'}</span><span class="tiny muted" style="width:72px;text-align:right">${t.upd}</span></div>`}).join('')}
+function drawer(wide){const t=T[S.sel];const tb=[['convo','对话'],['info','信息'],['links','访客链接']]
+ const body=S.tab==='convo'?`<div class="convo">${convo()}</div>${composer()}`:S.tab==='info'?`<div style="padding:6px 22px;overflow:auto;flex:1;background:#fff">${metaBlocks(t)}</div>`
+  :`<div style="padding:16px 22px;flex:1;background:#fff">${t.guest?`<div class="link" style="font-size:13.5px"><b>${t.guest}</b> · 可填写说明 · 还剩 28 天 · 已用 3 次<div class="u">http://tb.lan/g/7Kq2…</div><div style="margin-top:8px"><button class="btn ghost sm">复制转发文案</button> <button class="btn plain sm">停用</button></div></div>`:'<span class="muted">还没有访客链接</span>'}<div style="margin-top:14px"><button class="btn sm">＋ 新建访客链接</button></div></div>`
+ return `<div class="mask" onclick="set({open:false})"></div><div class="drawer" style="width:${wide?62:88}%"><div class="dhead"><div style="display:flex;gap:6px;align-items:center">${kind(t)}<span class="small muted">${t.no}</span>${waitTx(t)}<span style="margin-left:auto;cursor:pointer;font-size:18px;color:#6b7280" onclick="set({open:false})">✕</span></div><h2>${esc(t.title)}</h2><div class="acts">${actBtns()}</div></div>
+ <div class="tabs">${tb.map(([k,n])=>`<span class="${S.tab===k?'on':''}" onclick="set({tab:'${k}'})">${n}</span>`).join('')}</div><div style="flex:1;display:flex;flex-direction:column;overflow:hidden">${body}</div></div>`}
+function view(){const wide=S.w>=1280;if(S.sv===undefined)S.sv=0
+ if(S.view==='guest')return `<div style="flex:1;display:flex;flex-direction:column">${guestHead()}<div style="flex:1;overflow:auto"><div style="max-width:860px;margin:0 auto;padding:16px 0"><div class="card"><div class="small muted">陈工 请你反馈</div><div style="font-weight:700;font-size:16px;margin-top:2px">${T[0].title}</div></div>
+  <div class="tabs" style="background:none;padding:0;margin:10px 0"><span class="${S.tab!=='brief'?'on':''}" onclick="set({tab:'convo'})">对话</span><span class="${S.tab==='brief'?'on':''}" onclick="set({tab:'brief'})">我填写的说明</span></div>
+  ${S.tab==='brief'?`<div class="card qa">${MSGS[1].qa.map(([q,a])=>`<div class="q">${q}</div><div class="a">${a}</div>`).join('')}<div class="files">${MSGS[1].files.map(f=>`<span class="file">${f}</span>`).join('')}</div><button class="btn ghost sm" style="margin-top:12px">修改说明</button></div>`:convo(1,'你提交了说明（在「我填写的说明」里）')}</div></div>
+  ${S.tab==='brief'?'':`<div style="max-width:860px;margin:0 auto;width:100%">${composer(1)}</div>`}<div class="gfoot">工单板 ${VER}</div></div>`
+ if(S.view==='detail'){S.view='list';S.open=true}
+ const nav=wide?side(subs()):rail()
+ if(S.view==='other')return nav+other()
+ const ids=S.view==='inbox'?INBOX:S.sv===0?INBOX:S.sv===4?[7]:S.sv===2?[2]:S.sv===3?[4]:[0,2,3,6]
+ const title=S.view==='inbox'?'收件箱':VIEWS[S.sv][0]
+ return nav+`<div class="dcol" style="position:relative"><div class="dhead" style="padding:14px 20px"><div style="display:flex;align-items:center;gap:10px"><b style="font-size:18px">${title}</b><span class="muted small">${ids.length} 张</span><input class="search" style="width:280px;margin-left:auto" placeholder="搜索标题、编号、标签…"><button class="btn plain sm">筛选 ▾</button></div>
+ ${!wide&&S.view!=='inbox'?`<div class="fchips">${VIEWS.map(([n],i)=>`<span class="fc ${S.sv===i?'on':''}" onclick="set({sv:${i}})">${n}</span>`).join('')}</div>`:''}</div>
+ <div style="flex:1;overflow:auto;background:#fff">${lrows(ids)}</div>${S.open?drawer(wide):''}</div>`}
+draw()
+</script>
