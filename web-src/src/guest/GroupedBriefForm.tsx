@@ -5,7 +5,7 @@
 // 旧逻辑：草稿实时写本机、一次 PATCH（带 base_revision）+ 幂等键重试、版本
 // 冲突时重读重试；文件立即上传拿 att: 引用写进字段值（统一附件区挂到最后
 // 一个文本字段）。必填校验只在前端拦提交，服务端规则不变。无模板的工单
-// （#66 自由描述）合成一组「情况说明」，修订时提交 brief_md。
+// （#66 自由格式）合成一组「情况说明」，修订时提交 brief_md。
 // 视觉参考 prototype/guest-fill 的 c.html（原型代码不合并）。
 import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api'
@@ -28,16 +28,16 @@ const NUDGE_MIN_CHARS = 20
  *  时间/操作/现象同在一组）；模板里没有时退回最后一组组末。 */
 const ATTACH_AREA_GROUP_TITLE = '发生了什么'
 
-/** 自由描述（#66）：无模板工单合成的一组「情况说明」的大文本框，
+/** 自由格式（#66）：无模板工单合成的一组「情况说明」的大文本框，
  *  上方列出可以按哪几点写；tips / nudgeExample 只在前端用，服务端不下发。 */
 export interface FillField extends TemplateField {
   /** 提示点列表（照原型，大文本框上方逐条列出） */
   tips?: string[]
-  /** 追问提示的内容（没有时取示例 / 引导说明；自由描述取提示点） */
+  /** 追问提示的内容（没有时取示例 / 引导说明；自由格式取提示点） */
   nudgeExample?: string
 }
 
-/** 自由描述字段的键（草稿与统一附件区都用它；不与模板字段键冲突）。
+/** 自由格式字段的键（草稿与统一附件区都用它；不与模板字段键冲突）。
  *  值 __brief__ 是写进本机草稿的持久键，改了会让旧草稿读不回来，保持不变。 */
 export const NO_TEMPLATE_FIELD_KEY = '__brief__'
 
@@ -71,7 +71,7 @@ export interface GroupedBriefFormProps {
 }
 
 /** 展示用的一组字段：模板的分组；不分组时全部字段合成一组「填写说明」；
- *  无模板（自由描述）合成一组「情况说明」（#66）。 */
+ *  无模板（自由格式）合成一组「情况说明」（#66）。 */
 export interface FieldGroup {
   title: string
   subtitle?: string
@@ -395,7 +395,7 @@ function AttachArea({
 }
 
 export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBack, onLinkDead }: GroupedBriefFormProps) {
-  // 自由描述（#66）：无模板工单只有一个合成字段，初值取整块说明。
+  // 自由格式（#66）：无模板工单只有一个合成字段，初值取整块说明。
   const templateFields = ticket.brief.template_fields ?? []
   const free = templateFields.length === 0
   const fields: FillField[] = free ? [FREE_FIELD] : templateFields
@@ -504,7 +504,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
       pendingRef.current = true
       saveFormDraft(key, { fields: valuesRef.current, author: authorRef.current, idemKey: idemKeyRef.current, pending: true })
       const name = authorRef.current.trim()
-      // 自由描述提交整块 brief_md（非模板工单）；模板工单逐字段提交。
+      // 自由格式提交整块 brief_md（非模板工单）；模板工单逐字段提交。
       const body = free
         ? { brief_md: valuesRef.current[NO_TEMPLATE_FIELD_KEY] ?? '', base_revision: baseRevisionRef.current, ...(name ? { author_name: name } : {}) }
         : (() => {
@@ -605,7 +605,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
   }
 
   // 整张工单的附件区（手机）的组：有「发生了什么」组时在它组末，否则退回
-  // 最后一组组末（不分组模板与自由描述都只有一组）。附件引用仍挂最后一个
+  // 最后一组组末（不分组模板与自由格式都只有一组）。附件引用仍挂最后一个
   // 文本字段（areaField 不变）。
   const areaGroup = groups.findIndex((g) => g.title === ATTACH_AREA_GROUP_TITLE)
   const areaGroupIndex = areaGroup >= 0 ? areaGroup : groups.length - 1

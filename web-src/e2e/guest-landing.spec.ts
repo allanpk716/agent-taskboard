@@ -1,12 +1,12 @@
 import { test, expect, type APIRequestContext, type Browser, type Page } from '@playwright/test'
 import { ADMIN, login, loginAdmin } from './helpers'
 
-// 访客落地页与自由描述（#66）：持「可填写说明」链接的访客第一次打开链接
-// 先看到落地页（谁请你补充什么、几个问题几个必填、可以传照片日志、写到
-// 一半关掉也不丢），「开始填写」进分组填写页，「只想留言」直接进对话页；
-// 补全过说明（时间线上已有访客的修订事件）或链接没有「可填写说明」权限时，
-// 直接进对话页。无模板的「自由描述」工单显示成一组「情况说明」。对真实
-// 服务 + 构建好的前端跑用例，造数据全部通过 HTTP API 完成。
+// 访客落地页与自由格式（#66）：持「可填写说明」链接的访客第一次打开链接
+// 先看到落地页（谁请你补充哪张反馈的说明、共几项、几项必填、可以传照片日志、
+// 写到一半关掉也不丢），「开始填写」进分组填写页，「先不填，直接回复」直接
+// 进对话页；补全过说明（时间线上已有访客的修订事件）或链接没有「可填写
+// 说明」权限时，直接进对话页。无模板的「自由格式」工单显示成一组「情况
+// 说明」。对真实服务 + 构建好的前端跑用例，造数据全部通过 HTTP API 完成。
 
 interface Seed {
   number: string
@@ -78,21 +78,21 @@ test.describe('落地页', () => {
 
     const landing = page.locator('.guest-landing')
     await expect(landing).toBeVisible()
-    await expect(landing.locator('.landing-lead')).toHaveText('管理员 请你补充一个问题的情况')
+    await expect(landing.locator('.landing-lead')).toHaveText('管理员 请你补充这张反馈的说明')
     await expect(landing.getByRole('heading', { name: 'UD-2300 质控时报警 E-203' })).toBeVisible()
-    await expect(landing.locator('.landing-info')).toContainText('9 个问题（6 个必填）')
+    await expect(landing.locator('.landing-info')).toContainText('9 项（6 项必填）')
     await expect(landing.locator('.landing-info')).toContainText('可以上传照片、截图和日志')
     await expect(landing.locator('.landing-info')).toContainText('内容保存在这台设备上')
     await expect(landing.getByLabel('你的称呼（管理员会看到）')).toHaveValue('检验科-张三')
     await expect(landing.getByRole('button', { name: '开始填写' })).toBeVisible()
-    await expect(landing.getByRole('button', { name: '只想留言，不填了 →' })).toBeVisible()
+    await expect(landing.getByRole('button', { name: '先不填，直接回复 →' })).toBeVisible()
   })
 
-  // 2. 「只想留言，不填了 →」直接进对话页，能回复。
-  test('「只想留言」直接进对话页，能回复', async ({ page, request }) => {
-    const seed = await requestFeedback(request, { title: '只想留言的工单' })
+  // 2. 「先不填，直接回复 →」直接进对话页，能回复。
+  test('「先不填，直接回复」直接进对话页，能回复', async ({ page, request }) => {
+    const seed = await requestFeedback(request, { title: '先不填直接回复的工单' })
     await page.goto(`/g/${seed.linkKey}`)
-    await page.getByRole('button', { name: '只想留言，不填了 →' }).click()
+    await page.getByRole('button', { name: '先不填，直接回复 →' }).click()
 
     // 对话页：说明卡片 + 回复框；不再有落地页
     await expect(page.locator('[data-bubble="brief"]')).toBeVisible()
@@ -149,12 +149,12 @@ test.describe('落地页', () => {
   })
 })
 
-// 5. 自由描述工单显示一组「情况说明」：大文本框上方列提示点、有追问提示、
+// 5. 自由格式工单显示一组「情况说明」：大文本框上方列提示点、有追问提示、
 //    下面是附件区；提交后说明里能看到内容。
-test.describe('自由描述', () => {
+test.describe('自由格式', () => {
   test.use({ viewport: { width: 390, height: 844 } })
 
-  test('自由描述工单显示「情况说明」组，能上传附件，提交后说明里有内容', async ({ page, request }) => {
+  test('自由格式工单显示「情况说明」组，能上传附件，提交后说明里有内容', async ({ page, request }) => {
     const seed = await requestFeedback(request, { title: '生化仪结果漂移', free: true, note: '门诊-李四' })
     await page.goto(`/g/${seed.linkKey}`)
 
@@ -246,7 +246,7 @@ async function runFullUseCase(
   // 落地页（成员名 + 标题 + 称呼预填）→ 开始填写 → 填完必填 → 提交 → 确认页 → 查看对话
   const landing = guest.locator('.guest-landing')
   await expect(landing).toBeVisible()
-  await expect(landing.locator('.landing-lead')).toHaveText('管理员 请你补充一个问题的情况')
+  await expect(landing.locator('.landing-lead')).toHaveText('管理员 请你补充这张反馈的说明')
   await expect(landing.getByRole('heading', { name: '完整用例：UD-2300 质控报 E-203' })).toBeVisible()
   await expect(landing.getByLabel('你的称呼（管理员会看到）')).toHaveValue('检验科-张三')
   await guest.getByRole('button', { name: '开始填写' }).click()

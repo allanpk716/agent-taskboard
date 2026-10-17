@@ -135,14 +135,14 @@ func Test请人反馈建单同时生成访客链接(t *testing.T) {
 	}
 }
 
-// 用「请人反馈」生成的链接，访客能读到工单并 PATCH 修订说明（自由描述的
+// 用「请人反馈」生成的链接，访客能读到工单并 PATCH 修订说明（自由格式的
 // report 工单；模板工单的 fields 修订同一链接同样可用）。
 func Test用请人反馈的链接能读工单并修订说明(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")
 	web := s.Login("陈工", "secret-pass")
 
-	// 自由描述：不用模板的 report 工单，说明为空。
+	// 自由格式：不用模板的 report 工单，说明为空。
 	res := createWithGuestLink(t, s, web, map[string]any{
 		"kind": "report",
 		"title": "生化仪打印异常",
@@ -165,7 +165,7 @@ func Test用请人反馈的链接能读工单并修订说明(t *testing.T) {
 		t.Fatalf("访客读工单状态码 = %d, 想 200", res.StatusCode)
 	}
 	if got.Kind != "report" || got.Template != nil {
-		t.Errorf("自由描述应是 report 且不用模板：kind=%q template=%v", got.Kind, got.Template)
+		t.Errorf("自由格式应是 report 且不用模板：kind=%q template=%v", got.Kind, got.Template)
 	}
 
 	// 访客 PATCH 修订说明（带自报署名），版本推进到 2。
