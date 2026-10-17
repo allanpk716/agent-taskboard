@@ -133,3 +133,27 @@ func Test命令行拒绝未知子命令(t *testing.T) {
 		t.Fatalf("报错应包含子命令名：%s", out)
 	}
 }
+
+// check-exe 子命令：发布流水线构建完核对产物平台（server/v0.1.4 的
+// taskboard.exe 其实是 Linux 二进制）。拿 release 自己的二进制当样本：
+// 按本平台检查通过，按别的平台或对纯文本检查失败。
+func Test命令行核对产物平台(t *testing.T) {
+	if testing.Short() {
+		t.Skip("短模式跳过：需要编译真实二进制")
+	}
+	bin := buildReleaseBinary(t)
+	runRelease(t, bin, "check-exe", "-goos", runtime.GOOS, "-goarch", runtime.GOARCH, bin)
+
+	other := map[string]string{"windows": "linux", "linux": "windows", "darwin": "linux"}[runtime.GOOS]
+	if out, err := exec.Command(bin, "check-exe", "-goos", other, "-goarch", runtime.GOARCH, bin).CombinedOutput(); err == nil {
+		t.Fatalf("按 %s 检查 %s 的二进制应失败：%s", other, runtime.GOOS, out)
+	}
+	text := filepath.Join(t.TempDir(), "taskboard.exe")
+	if err := os.WriteFile(text, []byte("not an exe"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(bin, "check-exe", "-goos", "windows", "-goarch", "amd64", text).CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "taskboard.exe") {
+		t.Fatalf("纯文本应检查失败且报出文件名：%v\n%s", err, out)
+	}
+}

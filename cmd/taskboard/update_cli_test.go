@@ -151,13 +151,44 @@ func sha256Hex(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// newFakeUpdateSource 发布 serverVer 的后端（按本机 GOOS 给 exe）和 webVer 的前端。
+// platformArtifact 是本机更新时会下载的后端产物名。
+func platformArtifact() string {
+	if runtime.GOOS == "windows" {
+		return "taskboard.exe"
+	}
+	return "taskboard-linux-amd64"
+}
+
+// platformExe 造一份本平台真能运行的“新版本 exe”：测试二进制自身的字节，
+// 末尾追加版本号区分版本（更新器替换前会检查产物能否在本机运行）。
+func platformExe(t *testing.T, ver string) []byte {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(data, []byte("\ntaskboard "+ver)...)
+}
+
+// newFakeUpdateSource 发布 serverVer 的后端（本平台的产物是真可执行文件）和
+// webVer 的前端。
 func newFakeUpdateSource(t *testing.T, serverVer, webVer, webMinServer string) (*fakeUpdateSource, map[string][]byte) {
+	t.Helper()
+	return newFakeUpdateSourceWithExe(t, serverVer, webVer, webMinServer, platformExe(t, serverVer))
+}
+
+// newFakeUpdateSourceWithExe 同上，但本平台的后端产物用 exe（哈希照常登记）。
+func newFakeUpdateSourceWithExe(t *testing.T, serverVer, webVer, webMinServer string, exe []byte) (*fakeUpdateSource, map[string][]byte) {
 	t.Helper()
 	files := map[string][]byte{
 		"taskboard.exe":         []byte("new windows exe " + serverVer),
 		"taskboard-linux-amd64": []byte("new linux exe " + serverVer),
 	}
+	files[platformArtifact()] = exe
 	webZip := makeWebZip(t, webVer)
 	files["taskboard-web-"+webVer+".zip"] = webZip
 
@@ -319,11 +350,7 @@ func Test命令行更新哈希不符时拒绝(t *testing.T) {
 	f.writeConfig(updateTomlGitHub(src.server.URL))
 
 	// 篡改当前平台实际会下载的后端产物（Linux 上取的是 taskboard-linux-amd64）。
-	serverArtifact := "taskboard.exe"
-	if runtime.GOOS != "windows" {
-		serverArtifact = "taskboard-linux-amd64"
-	}
-	for _, corrupt := range []string{serverArtifact, "taskboard-web-1.4.0.zip"} {
+	for _, corrupt := range []string{platformArtifact(), "taskboard-web-1.4.0.zip"} {
 		src.corrupt[corrupt] = true
 		out, err := runUpdate(f)
 		if err == nil {
@@ -388,6 +415,35 @@ func Test命令行更新备份失败时中止不换exe(t *testing.T) {
 	}
 	if _, err := os.Stat(f.exePath + ".prev"); !os.IsNotExist(err) {
 		t.Errorf("备份失败时不应产生 .prev")
+	}
+}
+
+// 新版本产物哈希都对、但不能在本机运行（server/v0.1.4：Ubuntu 上没设 GOOS
+// 构建出的“taskboard.exe”其实是 Linux 二进制，换上后服务起不来）：替换前
+// 就拒绝，exe 不动，也不做更新前备份。
+func Test命令行更新拒绝不能在本机运行的后端产物(t *testing.T) {
+	if testing.Short() {
+		t.Skip("短模式跳过：需要编译真实二进制")
+	}
+	f := startUpdateFixture(t)
+	src, _ := newFakeUpdateSourceWithExe(t, "1.2.3", "1.4.0", "1.0.0", []byte("ELF? 不，这只是一段文本"))
+	f.writeConfig(updateTomlGitHub(src.server.URL))
+
+	out, err := runUpdate(f)
+	if err == nil {
+		t.Fatalf("产物不能在本机运行时应拒绝更新：%s", out)
+	}
+	if !strings.Contains(out, "不能在本机运行") {
+		t.Errorf("错误信息应说明产物不能在本机运行：%s", out)
+	}
+	if got := readExe(t, f.exePath); got != "old taskboard exe 0.0.0 build" {
+		t.Errorf("不应替换 exe，得到 %q", got)
+	}
+	if _, err := os.Stat(f.exePath + ".prev"); !os.IsNotExist(err) {
+		t.Errorf("不应产生 .prev")
+	}
+	if matches, _ := filepath.Glob(filepath.Join(f.dataDir, "backups", "*preupdate*")); len(matches) > 0 {
+		t.Errorf("检查在备份之前，不应做更新前备份：%v", matches)
 	}
 }
 

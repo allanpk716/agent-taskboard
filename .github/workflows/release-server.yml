@@ -32,8 +32,15 @@ jobs:
           VERSION="${GITHUB_REF_NAME#server/v}"
           mkdir -p dist
           # 后端版本注入 internal/version.Server，更新器靠它对比当前版本。
-          go build -trimpath -ldflags="-s -w -X github.com/allanpk716/agent-taskboard/internal/version.Server=$VERSION" -o dist/taskboard.exe ./cmd/taskboard
+          # 构建机是 Ubuntu：两个产物都必须显式指定平台。server/v0.1.4 漏了
+          # GOOS=windows，taskboard.exe 其实是 Linux 二进制，换上后服务起不来。
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X github.com/allanpk716/agent-taskboard/internal/version.Server=$VERSION" -o dist/taskboard.exe ./cmd/taskboard
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X github.com/allanpk716/agent-taskboard/internal/version.Server=$VERSION" -o dist/taskboard-linux-amd64 ./cmd/taskboard
+
+      - name: 核对产物平台
+        run: |
+          go run ./cmd/release check-exe -goos windows -goarch amd64 dist/taskboard.exe
+          go run ./cmd/release check-exe -goos linux -goarch amd64 dist/taskboard-linux-amd64
 
       - name: 生成 manifest.json
         run: |

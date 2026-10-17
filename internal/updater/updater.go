@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/config"
+	"github.com/allanpk716/agent-taskboard/internal/release"
 	"github.com/allanpk716/agent-taskboard/internal/version"
 )
 
@@ -174,6 +175,12 @@ func Apply(ctx context.Context, opt Options) (*Result, error) {
 		data, err := latest.Server.File(ctx, name)
 		if err != nil {
 			return nil, err // 哈希不符在这里拒绝
+		}
+		// 哈希只证明“是发布的那个文件”；换上去之前再确认它能在本机运行，
+		// 否则 NSSM 拉不起来、rollback 也执行不了（server/v0.1.4 的教训）。
+		if err := release.CheckExecutable(data, runtime.GOOS, runtime.GOARCH); err != nil {
+			return nil, fmt.Errorf("后端 %s 的 %s 不能在本机运行，拒绝更新（未备份、未替换 exe），请检查发布产物：%w",
+				latest.Server.Manifest.Version, name, err)
 		}
 		serverExe = data
 	}
