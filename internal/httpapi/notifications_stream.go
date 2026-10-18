@@ -40,10 +40,6 @@ func (a *API) handleNotificationsStream(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	flush(w)
-	unread, err := a.notifications.Unread(r.Context(), viewer.Member.ID)
-	if err != nil {
-		panic(err)
-	}
 	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
 		replay, err := a.notifications.List(r.Context(), notifications.ListQuery{
 			MemberID: viewer.Member.ID, After: &last, Limit: -1,
@@ -53,14 +49,22 @@ func (a *API) handleNotificationsStream(w http.ResponseWriter, r *http.Request) 
 		}
 		for _, it := range replay.Items {
 			writeSSEData(w, strconv.FormatInt(it.ID, 10), "notification", newNotificationItemView(it))
+			if it.ID > last {
+				last = it.ID
+			}
 		}
 	}
-	last = unread.LatestID
+	unread, err := a.notifications.Unread(r.Context(), viewer.Member.ID)
+	if err != nil {
+		panic(err)
+	}
+	if unread.LatestID > last {
+		last = unread.LatestID
+	}
 	writeSSEData(w, "", "hello", map[string]any{
-		"unread_count": unread.Count, "latest_id": unread.LatestID,
+		"unread_count": unread.Count, "latest_id": last,
 	})
 	flush(w)
-	last = unread.LatestID
 	flush(w)
 	ping := a.notifications.After(notificationPingInterval)
 	for {
@@ -68,11 +72,17 @@ func (a *API) handleNotificationsStream(w http.ResponseWriter, r *http.Request) 
 		case <-r.Context().Done():
 			return
 		case <-ping:
+			if !a.streamViewerValid(r, viewer.Member.ID) {
+				return
+			}
 			fmt.Fprint(w, ": ping\n\n")
 			flush(w)
 			ping = a.notifications.After(notificationPingInterval)
 		case ev, ok := <-events:
 			if !ok {
+				return
+			}
+			if ev.Kind == "disconnect" || !a.streamViewerValid(r, viewer.Member.ID) {
 				return
 			}
 			switch ev.Kind {
@@ -99,6 +109,17 @@ func (a *API) handleNotificationsStream(w http.ResponseWriter, r *http.Request) 
 }
 
 const notificationPingInterval = 25 * time.Second
+
+func (a *API) streamViewerValid(r *http.Request, memberID int64) bool {
+	viewer, ok := a.viewerFromRequest(noopResponseWriter{}, r)
+	return ok && viewer.Kind == identity.ViewerMember && viewer.Member.ID == memberID
+}
+
+type noopResponseWriter struct{}
+
+func (noopResponseWriter) Header() http.Header       { return http.Header{} }
+func (noopResponseWriter) Write([]byte) (int, error) { return 0, nil }
+func (noopResponseWriter) WriteHeader(int)           {}
 
 func writeSSEData(w http.ResponseWriter, id, event string, data any) {
 	if id != "" {

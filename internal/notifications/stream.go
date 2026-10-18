@@ -12,48 +12,107 @@ type StreamEvent struct {
 	UnreadCount int
 }
 
+type subscriber struct {
+	mu      sync.Mutex
+	pending []string
+	read    StreamEvent
+	wake    chan struct{}
+	done    chan struct{}
+	out     chan StreamEvent
+}
+
 type streamBroker struct {
 	mu     sync.Mutex
-	subs   map[int64]map[chan StreamEvent]struct{}
+	subs   map[int64]map[*subscriber]struct{}
 	closed bool
 }
 
 func newStreamBroker() *streamBroker {
-	return &streamBroker{subs: make(map[int64]map[chan StreamEvent]struct{})}
+	return &streamBroker{subs: make(map[int64]map[*subscriber]struct{})}
 }
 
 func (b *streamBroker) subscribe(memberID int64) (<-chan StreamEvent, func()) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	ch := make(chan StreamEvent, 1)
+	sub := &subscriber{
+		wake: make(chan struct{}, 1), done: make(chan struct{}), out: make(chan StreamEvent, 1),
+	}
 	if b.closed {
-		close(ch)
-		return ch, func() {}
+		close(sub.out)
+		return sub.out, func() {}
 	}
 	if b.subs[memberID] == nil {
-		b.subs[memberID] = make(map[chan StreamEvent]struct{})
+		b.subs[memberID] = make(map[*subscriber]struct{})
 	}
-	b.subs[memberID][ch] = struct{}{}
-	return ch, func() {
+	b.subs[memberID][sub] = struct{}{}
+	go sub.run()
+	return sub.out, func() {
 		b.mu.Lock()
 		defer b.mu.Unlock()
-		if _, ok := b.subs[memberID][ch]; ok {
-			delete(b.subs[memberID], ch)
-			close(ch)
+		if _, ok := b.subs[memberID][sub]; ok {
+			delete(b.subs[memberID], sub)
+			close(sub.done)
 		}
 	}
 }
 
-func (b *streamBroker) publish(memberID int64, ev StreamEvent) {
+func (b *streamBroker) publish(memberID int64, ev StreamEvent, kind string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.closed {
 		return
 	}
-	for ch := range b.subs[memberID] {
+	for sub := range b.subs[memberID] {
+		sub.enqueue(ev, kind)
 		select {
-		case ch <- ev:
+		case sub.wake <- struct{}{}:
 		default:
+		}
+	}
+}
+
+func (s *subscriber) enqueue(ev StreamEvent, kind string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if kind == "read" {
+		s.read = ev
+		for _, pending := range s.pending {
+			if pending == kind {
+				return
+			}
+		}
+		s.pending = append(s.pending, kind)
+		return
+	}
+	if len(s.pending) == 0 || s.pending[len(s.pending)-1] != kind {
+		s.pending = append(s.pending, kind)
+	}
+}
+
+func (s *subscriber) run() {
+	for {
+		select {
+		case <-s.done:
+			close(s.out)
+			return
+		case <-s.wake:
+			s.mu.Lock()
+			pending := s.pending
+			read := s.read
+			s.pending = nil
+			s.mu.Unlock()
+			for _, kind := range pending {
+				ev := StreamEvent{Kind: kind}
+				if kind == "read" {
+					ev = read
+				}
+				select {
+				case s.out <- ev:
+				case <-s.done:
+					close(s.out)
+					return
+				}
+			}
 		}
 	}
 }
@@ -66,11 +125,11 @@ func (b *streamBroker) close() {
 	}
 	b.closed = true
 	for _, memberSubs := range b.subs {
-		for ch := range memberSubs {
-			close(ch)
+		for sub := range memberSubs {
+			close(sub.done)
 		}
 	}
-	b.subs = make(map[int64]map[chan StreamEvent]struct{})
+	b.subs = make(map[int64]map[*subscriber]struct{})
 }
 
 // Subscribe 订阅该成员的唤醒信号；返回的取消函数由 SSE 连接结束时调用。
@@ -89,13 +148,19 @@ func (m *Manager) Wake(memberIDs []int64) {
 			continue
 		}
 		seen[id] = struct{}{}
-		m.streams.publish(id, StreamEvent{Kind: "notify"})
+		m.streams.publish(id, StreamEvent{Kind: "notify"}, "notify")
 	}
 }
 
 // WakeRead 在已读事务提交后广播具体读状态。
 func (m *Manager) WakeRead(memberID int64, result MarkReadResult) {
-	m.streams.publish(memberID, StreamEvent{Kind: "read", ReadIDs: result.IDs, UnreadCount: result.UnreadCount})
+	m.streams.publish(memberID,
+		StreamEvent{Kind: "read", ReadIDs: result.IDs, UnreadCount: result.UnreadCount}, "read")
+}
+
+// WakeDisconnect 要求该成员的连接立刻重新校验凭证。
+func (m *Manager) WakeDisconnect(memberID int64) {
+	m.streams.publish(memberID, StreamEvent{Kind: "disconnect"}, "disconnect")
 }
 
 // Close 结束所有订阅，用于服务停机。

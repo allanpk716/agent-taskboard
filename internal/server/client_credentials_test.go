@@ -189,7 +189,15 @@ func Test账号事件对客户端凭证的撤销规则(t *testing.T) {
 		t.Fatal("前置：客户端凭证应可用")
 	}
 
+	var wrongOld errorBody
 	res := s.Do(t, web, http.MethodPost, "/api/v1/me/password",
+		map[string]string{"old_password": "wrong-pass", "new_password": "new-member-pass"}, &wrongOld)
+	if res.StatusCode != http.StatusUnprocessableEntity || wrongOld.Error.Code != "invalid_old_password" {
+		t.Fatalf("原密码错误状态码/错误码 = %d/%q, 想 422/invalid_old_password",
+			res.StatusCode, wrongOld.Error.Code)
+	}
+
+	res = s.Do(t, web, http.MethodPost, "/api/v1/me/password",
 		map[string]string{"old_password": "member-pass", "new_password": "new-member-pass"}, nil)
 	if res.StatusCode != http.StatusNoContent {
 		t.Fatalf("自助改密状态码 = %d", res.StatusCode)

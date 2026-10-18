@@ -93,6 +93,7 @@ func (a *API) resetMemberPassword(w http.ResponseWriter, r *http.Request, idStr 
 	case err != nil:
 		panic(err)
 	default:
+		a.wakeMemberStreams(id)
 		writeJSON(w, http.StatusOK, map[string]string{"initial_password": password})
 	}
 }
@@ -245,5 +246,6 @@ func (a *API) deactivateMember(w http.ResponseWriter, r *http.Request, idStr str
 		}
 		panic(err)
 	}
+	a.wakeMemberStreams(id)
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "active": false, "deactivated": changed})
 }

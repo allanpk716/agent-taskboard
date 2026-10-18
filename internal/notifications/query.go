@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +35,9 @@ type ListQuery struct {
 	Before   *int64
 	Unread   bool
 	Limit    int
+	// RequestedLimit 与 Format 只用于构造对外 next 链接。
+	RequestedLimit int
+	Format         string
 }
 
 type ListResult struct {
@@ -129,7 +133,18 @@ func (m *Manager) List(ctx context.Context, q ListQuery) (ListResult, error) {
 	}
 	next := ""
 	if !ascending && hasMore && len(items) > 0 {
-		next = "/api/v1/notifications?before=" + strconv.FormatInt(items[len(items)-1].ID, 10)
+		query := url.Values{}
+		query.Set("before", strconv.FormatInt(items[len(items)-1].ID, 10))
+		if q.Unread {
+			query.Set("unread", "1")
+		}
+		if q.RequestedLimit > 0 {
+			query.Set("limit", strconv.Itoa(q.RequestedLimit))
+		}
+		if q.Format != "" {
+			query.Set("format", q.Format)
+		}
+		next = "/api/v1/notifications?" + query.Encode()
 	}
 	unread, err := m.Unread(ctx, q.MemberID)
 	if err != nil {

@@ -131,8 +131,9 @@ const (
 	CodeInvalidActorKind = "invalid_actor_kind" // actor_kind 只能是 member/agent
 
 	// #78：成员标通知已读。
-	CodeInvalidReadRequest  = "invalid_read_request"   // 请求体不是 ids/ticket/up_to 三选一
-	CodeAgentCannotMarkRead = "agent_cannot_mark_read" // 成员 Agent 不能替主人消费未读
+	CodeInvalidReadRequest     = "invalid_read_request"   // 请求体不是 ids/ticket/up_to 三选一
+	CodeAgentCannotMarkRead    = "agent_cannot_mark_read" // 成员 Agent 不能替主人消费未读
+	CodeTooManyNotificationIDs = "too_many_notification_ids"
 
 	// #80：桌面客户端凭证。
 	CodeInvalidClientPort        = "invalid_client_port"
@@ -140,8 +141,10 @@ const (
 	CodeInvalidClientCode        = "invalid_client_code"
 	CodeClientCredentialNotFound = "client_credential_not_found"
 	CodeClientScope              = "client_scope"
+	CodeAgentNotAllowed          = "agent_not_allowed"
 	CodeClientNotAvailable       = "client_not_available"
 	CodePasswordTooShort         = "password_too_short"
+	CodeInvalidOldPassword       = "invalid_old_password"
 	CodeCannotResetSelf          = "cannot_reset_self"
 )
 

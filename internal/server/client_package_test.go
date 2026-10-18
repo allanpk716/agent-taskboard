@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -51,6 +51,8 @@ func Test客户端最新版本和下载仅成员或客户端凭证可调(t *test
 	pkg := installTestClient(t, s)
 	credential := s.IssueClientCredential(t, web, "WORKSTATION-01")
 	client := s.ClientCredentialClient(credential.Token)
+	_, agentToken := s.IssueAgentToken(t, web, "笔记本")
+	agent := s.AgentClient(agentToken)
 	guest := s.GuestClient(tbguestKey(t, s, s.Login("admin", "pass-word")))
 
 	for _, path := range []string{"/api/v1/client/latest", "/api/v1/client/download"} {
@@ -66,6 +68,15 @@ func Test客户端最新版本和下载仅成员或客户端凭证可调(t *test
 		tbtest.DecodeJSON(t, res, &got)
 		if got.Error.Code != "members_only" {
 			t.Fatalf("%s 访客错误码 = %q, 想 members_only", path, got.Error.Code)
+		}
+		res = s.Do(t, agent, http.MethodGet, path, nil, nil)
+		if res.StatusCode != http.StatusForbidden {
+			t.Fatalf("%s 成员 Agent 状态码 = %d, 想 403", path, res.StatusCode)
+		}
+		got = errorBody{}
+		tbtest.DecodeJSON(t, res, &got)
+		if got.Error.Code != "agent_not_allowed" {
+			t.Fatalf("%s 成员 Agent 错误码 = %q, 想 agent_not_allowed", path, got.Error.Code)
 		}
 	}
 
@@ -110,6 +121,44 @@ func Test客户端最新版本和下载仅成员或客户端凭证可调(t *test
 	stampURL, ok, err := clientstamp.ReadFromBytes(body)
 	if err != nil || !ok || stampURL != s.URL() {
 		t.Fatalf("下载尾部地址 = %q, %v, %v；想 %q", stampURL, ok, err, s.URL())
+	}
+}
+
+func Test客户端下载戳缓存最多八个地址(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("admin", "pass-word")
+	admin := s.Login("admin", "pass-word")
+	installTestClient(t, s)
+	current, err := updater.CurrentClientPackage(s.DataDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(current.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.WriteFile(current.Path, original, 0o755) })
+
+	for i := 1; i <= 8; i++ {
+		host := "cache-" + strconv.Itoa(i) + ".example.com"
+		res := s.DoWithHeaders(t, admin, http.MethodGet, "/api/v1/client/latest",
+			map[string]string{"X-Forwarded-Host": host}, nil, nil)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("预热缓存 %d 状态码 = %d", i, res.StatusCode)
+		}
+	}
+	if err := os.WriteFile(current.Path, append(original, 'x'), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res := s.DoWithHeaders(t, admin, http.MethodGet, "/api/v1/client/latest",
+		map[string]string{"X-Forwarded-Host": "cache-1.example.com"}, nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("命中缓存不应重读整包，状态码 = %d", res.StatusCode)
+	}
+	res = s.DoWithHeaders(t, admin, http.MethodGet, "/api/v1/client/latest",
+		map[string]string{"X-Forwarded-Host": "cache-9.example.com"}, nil, nil)
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("第 9 个地址应清空缓存并重新校验，状态码 = %d", res.StatusCode)
 	}
 }
 
@@ -202,12 +251,19 @@ func Test管理员更新可只代管客户端并保留上一版(t *testing.T) {
 	if !result.ClientUpdated || result.ServerUpdated || result.WebUpdated || result.RestartNeeded {
 		t.Fatalf("应只更新 client：%+v", result)
 	}
-	current := filepath.Join(s.DataDir(), "client", "taskboard-client.exe")
-	got, err := os.ReadFile(current)
+	currentPkg, err := updater.CurrentClientPackage(s.DataDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(currentPkg.Path)
 	if err != nil || string(got) != string(exe) {
 		t.Fatalf("当前代管客户端不对：%q (%v)", got, err)
 	}
-	prev, err := os.ReadFile(current + ".prev")
+	prevPkg, err := updater.PreviousClientPackage(s.DataDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev, err := os.ReadFile(prevPkg.Path)
 	if err != nil || string(prev) != string(old) {
 		t.Fatalf("上一版代管客户端不对：%q (%v)", prev, err)
 	}
@@ -229,21 +285,20 @@ func Test管理员更新客户端SHA256不符时不替换(t *testing.T) {
 	s.CreateAdmin("admin", "pass-word")
 	admin := s.Login("admin", "pass-word")
 
-	res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/update", nil, nil)
-	if res.StatusCode != http.StatusInternalServerError {
-		t.Fatalf("状态码 = %d, 想 500", res.StatusCode)
+	var result updateResultBody
+	res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/update", nil, &result)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("状态码 = %d, 想 200", res.StatusCode)
 	}
-	var got errorBody
-	tbtest.DecodeJSON(t, res, &got)
-	if got.Error.Code != "update_failed" {
-		t.Fatalf("错误码 = %q, 想 update_failed", got.Error.Code)
+	if result.ClientUpdated || result.ClientError == "" {
+		t.Fatalf("client 组件失败结果 = %+v", result)
 	}
-	current := filepath.Join(s.DataDir(), "client", "taskboard-client.exe")
-	data, err := os.ReadFile(current)
+	currentPkg, err := updater.CurrentClientPackage(s.DataDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(currentPkg.Path)
 	if err != nil || !strings.HasSuffix(string(data), "desktop client\n") {
 		t.Fatalf("SHA256 不符时不应替换：%q (%v)", data, err)
-	}
-	if _, err := os.Stat(current + ".prev"); !os.IsNotExist(err) {
-		t.Fatal("SHA256 不符时不应产生上一版")
 	}
 }

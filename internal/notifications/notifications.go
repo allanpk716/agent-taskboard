@@ -50,7 +50,7 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 		}
 	case "reply":
 		turn := tickets.WaitingOnOf(in.After)
-		if turn.Party == "department" {
+		if turn.Party == "department" && in.Actor.MemberID == 0 {
 			for _, id := range in.Triagers {
 				if !selfAction(in.Actor, id) && !hasDecisionFor(out, id) {
 					out = append(out, Decision{

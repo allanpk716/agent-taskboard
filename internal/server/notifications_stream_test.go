@@ -67,6 +67,38 @@ func Test通知流按LastEventID升序补发后发送hello(t *testing.T) {
 	_ = first
 }
 
+func Test重连补发后游标继续前进不重复推送(t *testing.T) {
+	w := newHandoffWorld(t)
+	w.createHandoffTicket(t, w.webWang, "重连前", "李工")
+	second := w.createHandoffTicket(t, w.webWang, "补发", "李工").Number
+	got := notificationsOf(t, w, w.webLi, "?after=0")
+	firstID, secondID := got.Items[0].ID, got.Items[1].ID
+	stream := w.s.OpenSSE(t, w.webLi, strconv.FormatInt(firstID, 10))
+	if ev := stream.Event(t); ev.ID != strconv.FormatInt(secondID, 10) {
+		t.Fatalf("补发事件 = %+v, 想 %d", ev, secondID)
+	}
+	if ev := stream.Event(t); ev.Name != "hello" {
+		t.Fatalf("补发后应先收到 hello：%+v", ev)
+	}
+
+	third := w.createHandoffTicket(t, w.webWang, "在线一", "李工").Number
+	ev := stream.Event(t)
+	var thirdBody notificationBody
+	decodeSSEData(t, ev, &thirdBody)
+	if ev.Name != "notification" || thirdBody.Ticket.Number != third {
+		t.Fatalf("第一条在线通知 = %+v/%+v, 想 %s", ev, thirdBody, third)
+	}
+
+	fourth := w.createHandoffTicket(t, w.webWang, "在线二", "李工").Number
+	ev = stream.Event(t)
+	var fourthBody notificationBody
+	decodeSSEData(t, ev, &fourthBody)
+	if ev.Name != "notification" || fourthBody.Ticket.Number != fourth {
+		t.Fatalf("后续通知 = %+v/%+v, 想 %s；可能重复推送了旧通知", ev, fourthBody, fourth)
+	}
+	_ = second
+}
+
 func Test新通知实时推送到成员的全部连接且不推给其他成员(t *testing.T) {
 	w := newHandoffWorld(t)
 	liFirst := w.s.OpenSSE(t, w.webLi, "")
@@ -124,6 +156,77 @@ func Test一处标已读向成员的其他连接广播read(t *testing.T) {
 		}
 	}
 	_ = second
+}
+
+func Test快速标已读与新通知交错时不丢read事件(t *testing.T) {
+	w := newHandoffWorld(t)
+	for i := 0; i < 8; i++ {
+		w.createHandoffTicket(t, w.webWang, "批量通知"+strconv.Itoa(i), "李工")
+	}
+	list := notificationsOf(t, w, w.webLi, "?limit=20")
+	if len(list.Items) != 8 {
+		t.Fatalf("通知数 = %d, 想 8", len(list.Items))
+	}
+	stream := w.s.OpenSSE(t, w.webLi, "")
+	if ev := stream.Event(t); ev.Name != "hello" {
+		t.Fatalf("首帧 = %q, 想 hello", ev.Name)
+	}
+
+	for _, it := range list.Items {
+		res := w.s.Do(t, w.webLi, http.MethodPost, "/api/v1/notifications/read",
+			map[string]any{"ids": []int64{it.ID}}, nil)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("标已读 %d 状态码 = %d", it.ID, res.StatusCode)
+		}
+	}
+	created := w.createHandoffTicket(t, w.webWang, "交错新通知", "李工")
+
+	seen := make(map[int64]bool)
+	for {
+		ev := stream.Event(t)
+		if ev.Name == "notification" {
+			var body notificationBody
+			decodeSSEData(t, ev, &body)
+			if body.Ticket.Number == created.Number {
+				break
+			}
+			continue
+		}
+		if ev.Name != "read" {
+			t.Fatalf("收到意外事件 = %+v", ev)
+		}
+		var body struct {
+			IDs []int64 `json:"ids"`
+		}
+		decodeSSEData(t, ev, &body)
+		for _, id := range body.IDs {
+			if seen[id] {
+				t.Fatalf("read id %d 重复推送", id)
+			}
+			seen[id] = true
+		}
+	}
+	if len(seen) != len(list.Items) {
+		t.Fatalf("收到的 read ids = %d 个，想 %d 个", len(seen), len(list.Items))
+	}
+}
+
+func Test撤销客户端凭证后通知流立即结束(t *testing.T) {
+	w := newHandoffWorld(t)
+	issued := w.s.IssueClientCredential(t, w.webLi, "WORKSTATION-01")
+	client := w.s.ClientCredentialClient(issued.Token)
+	stream := w.s.OpenSSE(t, client, "")
+	if ev := stream.Event(t); ev.Name != "hello" {
+		t.Fatalf("首帧 = %q, 想 hello", ev.Name)
+	}
+
+	clients := listClientsForStream(t, w.s, w.webLi)
+	res := w.s.Do(t, w.webLi, http.MethodDelete,
+		"/api/v1/me/clients/"+strconv.FormatInt(clients[0], 10), nil, nil)
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("撤销客户端凭证状态码 = %d, 想 204", res.StatusCode)
+	}
+	stream.Closed(t)
 }
 
 func Test通知流按假时钟间隔发送保活注释(t *testing.T) {
@@ -206,4 +309,18 @@ func decodeSSEData(t testing.TB, ev tbtest.SSEEvent, out any) {
 	if err := json.Unmarshal(ev.Data, out); err != nil {
 		t.Fatalf("解析 SSE data 失败：%v", err)
 	}
+}
+
+func listClientsForStream(t testing.TB, s *tbtest.Server, c *http.Client) []int64 {
+	t.Helper()
+	var body struct {
+		Clients []struct {
+			ID int64 `json:"id"`
+		} `json:"clients"`
+	}
+	s.Do(t, c, http.MethodGet, "/api/v1/me/clients", nil, &body)
+	if len(body.Clients) == 0 {
+		t.Fatal("找不到已连接电脑")
+	}
+	return []int64{body.Clients[0].ID}
 }

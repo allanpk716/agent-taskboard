@@ -145,6 +145,7 @@ func (a *API) revokeCurrentClient(w http.ResponseWriter, r *http.Request) {
 		}
 		panic(err)
 	}
+	a.wakeMemberStreams(viewer.Member.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -166,7 +167,14 @@ func (a *API) revokeClient(w http.ResponseWriter, r *http.Request) {
 		}
 		panic(err)
 	}
+	a.wakeMemberStreams(viewer.Member.ID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) wakeMemberStreams(memberID int64) {
+	if a.notifications != nil {
+		a.notifications.WakeDisconnect(memberID)
+	}
 }
 
 func clientPort(raw any) (int, error) {

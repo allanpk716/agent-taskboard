@@ -244,6 +244,20 @@ func Test通知增量倒序未读和Markdown拉取(t *testing.T) {
 		}
 	}
 
+	readRes := w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/notifications/read",
+		map[string]any{"ids": []int64{clamped.Items[2].ID}}, nil)
+	if readRes.StatusCode != http.StatusOK {
+		t.Fatalf("标已读状态码 = %d", readRes.StatusCode)
+	}
+	page := notificationsOf(t, w, w.webWang, "?unread=1&limit=1")
+	if len(page.Items) != 1 || page.Items[0].ReadAt != nil || page.Next == "" {
+		t.Fatalf("未读第一页 = %+v, next = %q", page.Items, page.Next)
+	}
+	secondPage := notificationsOf(t, w, w.webWang, strings.TrimPrefix(page.Next, "/api/v1/notifications"))
+	if len(secondPage.Items) != 1 || secondPage.Items[0].ReadAt != nil {
+		t.Fatalf("unread 翻页后混入已读：%+v", secondPage.Items)
+	}
+
 	var unreadCount struct {
 		UnreadCount int   `json:"unread_count"`
 		LatestID    int64 `json:"latest_id"`
@@ -374,7 +388,7 @@ func Test成员标通知已读的三种方式与边界(t *testing.T) {
 	if res.StatusCode != http.StatusForbidden {
 		t.Fatalf("Agent 标已读状态码 = %d, 想 403", res.StatusCode)
 	}
-	var got errorBody
+	got := errorBody{}
 	tbtest.DecodeJSON(t, res, &got)
 	if got.Error.Code != "agent_cannot_mark_read" {
 		t.Errorf("Agent 标已读错误码 = %q, 想 agent_cannot_mark_read", got.Error.Code)
@@ -389,6 +403,20 @@ func Test成员标通知已读的三种方式与边界(t *testing.T) {
 	tbtest.DecodeJSON(t, res, &got)
 	if got.Error.Code != "members_only" {
 		t.Errorf("访客标已读错误码 = %q, 想 members_only", got.Error.Code)
+	}
+
+	tooMany := make([]int64, 501)
+	for i := range tooMany {
+		tooMany[i] = int64(i + 1)
+	}
+	res = w.s.Do(t, w.webLi, http.MethodPost, "/api/v1/notifications/read",
+		map[string]any{"ids": tooMany}, nil)
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("501 个 ids 状态码 = %d, 想 400", res.StatusCode)
+	}
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "too_many_notification_ids" {
+		t.Fatalf("501 个 ids 错误码 = %q, 想 too_many_notification_ids", got.Error.Code)
 	}
 }
 

@@ -81,9 +81,13 @@ func (a *API) handleNotifications(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		q.Limit = n
+		q.RequestedLimit = n
 	}
 	if q.Limit > 200 {
 		q.Limit = 200
+	}
+	if raw := r.URL.Query().Get("format"); raw != "" {
+		q.Format = raw
 	}
 	result, err := a.notifications.List(r.Context(), q)
 	if err != nil {
@@ -167,6 +171,11 @@ func (a *API) handleNotificationsRead(w http.ResponseWriter, r *http.Request) {
 	if req.IDs != nil {
 		if len(*req.IDs) == 0 {
 			WriteError(w, http.StatusBadRequest, CodeInvalidReadRequest, "ids 不能为空", "至少带一个通知 id")
+			return
+		}
+		if len(*req.IDs) > 500 {
+			WriteError(w, http.StatusBadRequest, CodeTooManyNotificationIDs,
+				"ids 最多 500 个", "分多次标已读，或改用 up_to / ticket")
 			return
 		}
 		unique := make(map[int64]struct{}, len(*req.IDs))

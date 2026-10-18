@@ -25,19 +25,21 @@ const SessionCookieName = "tb_session"
 
 // API 挂载 /api/v1 下的接口。
 type API struct {
-	ident          *identity.Manager
-	tickets        *tickets.Manager
-	templates      *templates.Manager
-	idem           *idempotency.Manager
-	atts           *attachments.Manager
-	backups        *ops.Backups
-	notifications  *notifications.Manager
-	cfg            config.Config
-	stampedClients sync.Map
+	ident           *identity.Manager
+	tickets         *tickets.Manager
+	templates       *templates.Manager
+	idem            *idempotency.Manager
+	atts            *attachments.Manager
+	backups         *ops.Backups
+	notifications   *notifications.Manager
+	cfg             config.Config
+	stampedClientMu sync.Mutex
+	stampedClients  map[string]*stampedClient
 }
 
 func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager, backups *ops.Backups, cfg config.Config) *API {
-	return &API{ident: ident, tickets: tk, templates: tpl, idem: idem, atts: atts, backups: backups, cfg: cfg}
+	return &API{ident: ident, tickets: tk, templates: tpl, idem: idem, atts: atts, backups: backups,
+		cfg: cfg, stampedClients: make(map[string]*stampedClient)}
 }
 
 // Handler 返回 /api/v1 前缀的 http.Handler（带 panic 恢复，统一错误格式）。
@@ -179,6 +181,7 @@ func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 		if err := a.ident.DeleteSession(r.Context(), sess.ID); err != nil {
 			panic(err)
 		}
+		a.wakeMemberStreams(sess.Member.ID)
 	}
 	// 无论是否登录过，都清掉 cookie，幂等返回 204。
 	http.SetCookie(w, sessionCookie(identity.Session{}, timeZero()))
@@ -206,7 +209,7 @@ func (a *API) handleOwnPassword(w http.ResponseWriter, r *http.Request) {
 	err := a.ident.ChangeOwnPassword(r.Context(), viewer.Member.ID, req.OldPassword, req.NewPassword)
 	switch {
 	case errors.Is(err, identity.ErrInvalidOldPassword):
-		WriteError(w, http.StatusUnauthorized, CodeInvalidCredentials, "原密码不正确", "")
+		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidOldPassword, "原密码不正确", "")
 	case errors.Is(err, identity.ErrPasswordTooShort):
 		WriteError(w, http.StatusUnprocessableEntity, CodePasswordTooShort, "新密码至少 8 位", "")
 	case err != nil:

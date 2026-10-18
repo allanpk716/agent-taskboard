@@ -117,5 +117,6 @@ func (a *API) revokeAgentToken(w http.ResponseWriter, r *http.Request) {
 		}
 		panic(err)
 	}
+	a.wakeMemberStreams(viewer.Member.ID)
 	w.WriteHeader(http.StatusNoContent)
 }

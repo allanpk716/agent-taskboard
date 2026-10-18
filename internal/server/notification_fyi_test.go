@@ -135,13 +135,23 @@ func Test未指派工单通知初筛人并进入收件箱(t *testing.T) {
 		}
 	}
 
+	res := w.s.Do(t, w.webZhao, http.MethodPost, "/api/v1/tickets/"+number+"/replies",
+		map[string]string{"body_md": "成员补充信息。"}, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("成员回复状态码 = %d, 想 201", res.StatusCode)
+	}
+	for _, c := range []*http.Client{w.webLi, w.webZhao} {
+		assertDepartment("成员回复未指派工单", c, 1)
+	}
+
 	link := w.s.CreateGuestLink(t, w.webWang, number, map[string]any{"note": "检验科-张三"})
 	w.s.Do(t, w.s.GuestClient(link.Key(t)), http.MethodPost, "/api/v1/tickets/"+number+"/replies",
 		map[string]string{"body_md": "补充材料。"}, nil)
 	assertDepartment("访客回复未指派工单", w.webLi, 2)
 	assertDepartment("访客回复未指派工单", w.webZhao, 2)
-	if got := notificationsOf(t, w, w.webWang, ""); len(got.Items) != 0 {
-		t.Fatalf("创建者不应收到本部门轮次通知：%+v", got.Items)
+	if got := notificationsOf(t, w, w.webWang, ""); len(got.Items) != 1 ||
+		got.Items[0].Kind != "fyi" || got.Items[0].Reason != "third_party_reply" {
+		t.Fatalf("创建者只应收到第三方回复知会：%+v", got.Items)
 	}
 }
 
