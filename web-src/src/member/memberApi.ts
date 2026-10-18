@@ -18,6 +18,13 @@ export interface InboxItem {
   since_seq: number | null
   read_new: string
   read_full: string
+  kind: string
+  creator: string
+  assignee: string
+  labels: string[]
+  waiting_on: string
+  who: string
+  updated_at: string
 }
 
 export interface InboxResponse {

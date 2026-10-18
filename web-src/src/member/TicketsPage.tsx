@@ -2,11 +2,11 @@
 // 关键词搜索 + 卡片；「更多筛选」里是标签（别名可用）、模板、创建人与
 // 时间范围（评审 P2-11）。「操作方」用查询接口的 actor_kind（本人/Agent，
 // 按创建者署名区分）；翻页跟着响应里的 next 走。
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError } from '../api'
 import { closeReasonText, fmtShort } from '../shared/format'
 import { api } from '../api'
-import { nav } from './ui'
+import { nav, useInvalidate, useLocationSearch } from './ui'
 
 export interface ListFilters {
   status: 'open' | 'closed' | 'all'
@@ -25,23 +25,7 @@ export interface ListFilters {
   timeBefore: string // YYYY-MM-DD（含当天；查询用次日 00:00，API 的 before 不含时刻）
 }
 
-const DEFAULT_FILTERS: ListFilters = {
-  status: 'open',
-  kind: '',
-  assignee: '',
-  waiting: '',
-  actor: '',
-  q: '',
-  label: '',
-  template: '',
-  creatorKind: '',
-  creatorName: '',
-  timeField: '',
-  timeAfter: '',
-  timeBefore: '',
-}
-
-interface TicketListItem {
+export interface TicketListItem {
   number: string
   seq: number
   kind: string
@@ -73,7 +57,7 @@ function nextDay(dateStr: string): string {
   return `${next.getUTCFullYear()}-${pad(next.getUTCMonth() + 1)}-${pad(next.getUTCDate())}`
 }
 
-function toQuery(f: ListFilters): string {
+export function toQuery(f: ListFilters): string {
   const q = new URLSearchParams()
   q.set('status', f.status)
   if (f.kind) q.set('kind', f.kind)
@@ -90,6 +74,52 @@ function toQuery(f: ListFilters): string {
   return q.toString()
 }
 
+export function filtersFromSearch(search: string): ListFilters {
+  const q = new URLSearchParams(search)
+  const get = <K extends keyof ListFilters>(key: K, fallback: ListFilters[K]) => {
+    const value = q.get(String(key))
+    return (value === null ? fallback : value) as ListFilters[K]
+  }
+  const filters: ListFilters = {
+    status: (get('status', 'open') || 'all') as ListFilters['status'],
+    kind: get('kind', '') as ListFilters['kind'],
+    assignee: get('assignee', '') as ListFilters['assignee'],
+    waiting: (q.get('waiting_on') ?? '') as ListFilters['waiting'],
+    actor: (q.get('actor_kind') ?? '') as ListFilters['actor'],
+    q: get('q', ''),
+    label: get('label', ''),
+    template: get('template', ''),
+    creatorKind: '',
+    creatorName: '',
+    timeField: '',
+    timeAfter: '',
+    timeBefore: '',
+  }
+  for (const field of ['created', 'updated', 'closed'] as const) {
+    const after = q.get(`${field}_after`)
+    const before = q.get(`${field}_before`)
+    if (after || before) {
+      filters.timeField = field
+      filters.timeAfter = after ?? ''
+      filters.timeBefore = before ? prevDay(before) : ''
+      break
+    }
+  }
+  const creator = q.get('creator') ?? ''
+  if (creator === 'me' || creator === 'guest') filters.creatorKind = creator
+  else filters.creatorName = creator
+  return filters
+}
+
+function prevDay(dateStr: string): string {
+  const y = parseInt(dateStr.slice(0, 4), 10)
+  const m = parseInt(dateStr.slice(5, 7), 10)
+  const d = parseInt(dateStr.slice(8, 10), 10)
+  const prev = new Date(Date.UTC(y, m - 1, d) - 86400_000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${prev.getUTCFullYear()}-${pad(prev.getUTCMonth() + 1)}-${pad(prev.getUTCDate())}`
+}
+
 /** 标签 chip 配色：按维度在种子维度表中的位置循环取色（只影响观感）。 */
 const DIMENSIONS = ['产品线', '系统', '机型', '部门', '算法', '立项', '子项目']
 export function chipClass(label: string): string {
@@ -103,7 +133,7 @@ export function LabelChips({ labels }: { labels: string[] }) {
   return (
     <>
       {labels.map((l) => (
-        <span key={l} className={chipClass(l)}>
+        <span key={l} className={`${chipClass(l)}${l.includes(':') ? ' dimension' : ''}`}>
           {l}
         </span>
       ))}
@@ -111,34 +141,71 @@ export function LabelChips({ labels }: { labels: string[] }) {
   )
 }
 
-export function TicketCard({ item }: { item: TicketListItem }) {
+export function TicketCard({
+  item,
+  href,
+  selected,
+  desktop,
+  me,
+}: {
+  item: TicketListItem
+  href?: string
+  selected?: boolean
+  desktop?: boolean
+  me?: { name: string }
+}) {
+  const target = href ?? `/t/${item.number}`
   return (
     <a
-      className="tcard"
-      href={`/t/${item.number}`}
+      className={`tcard${desktop ? ' pc-row' : ''}${selected ? ' selected' : ''}`}
+      aria-current={selected ? 'true' : undefined}
+      href={target}
       onClick={(e) => {
         e.preventDefault()
-        nav(`/t/${item.number}`)
+        nav(target)
       }}
     >
-      <div className="tc-top">
-        <span className="badge kind">{item.kind === 'task' ? '任务' : '反馈'}</span>
-        {item.status === 'closed' ? (
-          <span className="badge closed">已关闭 · {closeReasonText(item.close_reason)}</span>
-        ) : (
-          <span className="hint">等待 {item.waiting_on.text}</span>
-        )}
-        <span className="hint" style={{ marginLeft: 'auto' }}>
-          {fmtShort(item.updated_at)}
-        </span>
-      </div>
-      <div className="tc-title">{item.title}</div>
-      <div className="tc-meta">
-        {item.number} · 发起人 {item.creator} · 指派 {item.assignee ?? '未指派'}
-      </div>
-      <div className="tc-foot">
-        <LabelChips labels={item.labels} />
-      </div>
+      {desktop ? (
+        <>
+          <div className="pc-row-top">
+            <span className="badge kind">{item.kind === 'task' ? '任务' : '反馈'}</span>
+            <span className="pc-row-number">{item.number}</span>
+            <span className="pc-row-time">{fmtShort(item.updated_at)}</span>
+          </div>
+          <div className="pc-row-title">
+            <i className="unread-dot" aria-hidden="true" />
+            {item.title}
+          </div>
+          <div className={`pc-row-turn${item.waiting_on.member === me?.name ? ' mine' : ''}`}>
+            {item.status === 'closed' ? '已关闭' : `等待 ${item.waiting_on.text}`} · 指派{' '}
+            {item.assignee ?? '未指派'}
+          </div>
+          <div className="pc-row-labels">
+            <LabelChips labels={item.labels} />
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="tc-top">
+            <span className="badge kind">{item.kind === 'task' ? '任务' : '反馈'}</span>
+            {item.status === 'closed' ? (
+              <span className="badge closed">已关闭 · {closeReasonText(item.close_reason)}</span>
+            ) : (
+              <span className="hint">等待 {item.waiting_on.text}</span>
+            )}
+            <span className="hint" style={{ marginLeft: 'auto' }}>
+              {fmtShort(item.updated_at)}
+            </span>
+          </div>
+          <div className="tc-title">{item.title}</div>
+          <div className="tc-meta">
+            {item.number} · 发起人 {item.creator} · 指派 {item.assignee ?? '未指派'}
+          </div>
+          <div className="tc-foot">
+            <LabelChips labels={item.labels} />
+          </div>
+        </>
+      )}
     </a>
   )
 }
@@ -172,8 +239,19 @@ function FilterGroup({
   )
 }
 
-export function TicketsPage() {
-  const [filters, setFilters] = useState<ListFilters>(DEFAULT_FILTERS)
+export function TicketsPage({
+  desktop,
+  selected,
+  me,
+}: {
+  desktop?: boolean
+  selected?: string
+  me?: { name: string }
+}) {
+  const search = useLocationSearch()
+  const filters = useMemo(() => filtersFromSearch(search), [search])
+  const [draftTimeField, setDraftTimeField] = useState<ListFilters['timeField']>(filters.timeField)
+  useEffect(() => setDraftTimeField(filters.timeField), [filters.timeField])
   const [data, setData] = useState<ListResponse | null>(null)
   const [extra, setExtra] = useState<TicketListItem[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -214,6 +292,18 @@ export function TicketsPage() {
   useEffect(() => {
     void load()
   }, [load])
+  useInvalidate(() => {
+    void load()
+  })
+
+  useEffect(() => {
+    const refresh = (e: Event) => {
+      if (!(e as CustomEvent<string>).detail) return
+      void load()
+    }
+    window.addEventListener('tb:ticket-changed', refresh)
+    return () => window.removeEventListener('tb:ticket-changed', refresh)
+  })
 
   // 模板筛选的选项（含已停用：历史工单还能按它筛）。
   useEffect(() => {
@@ -234,14 +324,248 @@ export function TicketsPage() {
     }
   }
 
+  function update(patch: Partial<ListFilters>) {
+    const next = { ...filters, ...patch }
+    const base = window.location.pathname.startsWith('/t/') ? window.location.pathname : '/tickets'
+    nav(`${base}?${toQuery(next)}`)
+  }
+
   function set<K extends keyof ListFilters>(key: K, value: ListFilters[K]) {
-    setFilters({ ...filters, [key]: value })
+    update({ [key]: value } as Partial<ListFilters>)
   }
 
   const hasMoreFilters =
     !!filters.label.trim() || !!filters.template || !!filters.creatorKind || !!filters.creatorName.trim() || !!filters.timeField
 
   const items = [...(data?.items ?? []), ...extra]
+  const changeFilter = update
+  const detailHref = (number: string) => `/t/${number}?${toQuery(filters)}`
+
+  if (desktop) {
+    return (
+      <div className="pc-list-pane" data-testid="ticket-list-pane">
+        <header className="pc-list-head">
+          <div>
+            <h2>工单</h2>
+            <span>{data?.total ?? '…'} 张</span>
+          </div>
+          <input
+            placeholder="搜索"
+            aria-label="搜索"
+            defaultValue={filters.q}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') changeFilter({ q: (e.target as HTMLInputElement).value })
+            }}
+            onBlur={(e) => {
+              if (e.target.value !== filters.q) changeFilter({ q: e.target.value })
+            }}
+          />
+        </header>
+        <div className="pc-filter-row">
+          <button
+            type="button"
+            className={`fchip${filters.status === 'open' ? ' on' : ''}`}
+            aria-pressed={filters.status === 'open'}
+            onClick={() => changeFilter({ status: 'open' })}
+          >
+            进行中
+          </button>
+          <button
+            type="button"
+            className={`fchip${filters.status === 'closed' ? ' on' : ''}`}
+            aria-pressed={filters.status === 'closed'}
+            onClick={() => changeFilter({ status: 'closed' })}
+          >
+            已关闭
+          </button>
+          <button
+            type="button"
+            className={`fchip${filters.assignee === 'me' ? ' on' : ''}`}
+            aria-pressed={filters.assignee === 'me'}
+            onClick={() => changeFilter({ assignee: filters.assignee === 'me' ? '' : 'me' })}
+          >
+            指派给我
+          </button>
+          <button
+            type="button"
+            className={`fchip${filters.waiting === 'guest' ? ' on' : ''}`}
+            aria-pressed={filters.waiting === 'guest'}
+            onClick={() => changeFilter({ waiting: filters.waiting === 'guest' ? '' : 'guest' })}
+          >
+            等访客
+          </button>
+          <button
+            type="button"
+            className={`fchip${moreOpen || hasMoreFilters ? ' on' : ''}`}
+            aria-pressed={moreOpen}
+            aria-expanded={moreOpen}
+            onClick={() => setMoreOpen(!moreOpen)}
+          >
+            更多筛选 ▾
+          </button>
+        </div>
+        {moreOpen && (
+          <div className="pc-more-filters">
+            {/* #105 会在这里接管动态标签筛选；本票只保留既有条件。 */}
+            <label>
+              类型
+              <select value={filters.kind} onChange={(e) => changeFilter({ kind: e.target.value as ListFilters['kind'] })}>
+                <option value="">全部</option>
+                <option value="task">任务</option>
+                <option value="report">反馈</option>
+              </select>
+            </label>
+            <label>
+              指派
+              <select
+                value={filters.assignee}
+                onChange={(e) => changeFilter({ assignee: e.target.value as ListFilters['assignee'] })}
+              >
+                <option value="">全部</option>
+                <option value="me">指派给我</option>
+                <option value="none">未指派</option>
+              </select>
+            </label>
+            <label>
+              等待方
+              <select
+                value={filters.waiting}
+                onChange={(e) => changeFilter({ waiting: e.target.value as ListFilters['waiting'] })}
+              >
+                <option value="">全部</option>
+                <option value="assignee">指派人</option>
+                <option value="creator">发起人</option>
+                <option value="guest">访客</option>
+                <option value="department">本部门</option>
+              </select>
+            </label>
+            <label>
+              操作方
+              <select
+                value={filters.actor}
+                onChange={(e) => changeFilter({ actor: e.target.value as ListFilters['actor'] })}
+              >
+                <option value="">全部</option>
+                <option value="member">本人</option>
+                <option value="agent">Agent</option>
+              </select>
+            </label>
+            <label>
+              标签
+              <input
+                list="pc-label-suggestions"
+                placeholder="如 机型:UD-2300"
+                aria-label="标签"
+                defaultValue={filters.label}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') changeFilter({ label: (e.target as HTMLInputElement).value })
+                }}
+                onBlur={(e) => {
+                  if (e.target.value !== filters.label) changeFilter({ label: e.target.value })
+                }}
+              />
+              <datalist id="pc-label-suggestions">
+                {labelHints.map((l) => (
+                  <option key={l} value={l} />
+                ))}
+              </datalist>
+            </label>
+            <label>
+              模板
+              <select value={filters.template} onChange={(e) => changeFilter({ template: e.target.value })}>
+                <option value="">全部</option>
+                {templates.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              创建人
+              <select
+                value={filters.creatorKind}
+                onChange={(e) => changeFilter({ creatorKind: e.target.value as ListFilters['creatorKind'], creatorName: '' })}
+              >
+                <option value="">全部</option>
+                <option value="me">我</option>
+                <option value="guest">访客（经入口）</option>
+              </select>
+            </label>
+            <label>
+              按姓名
+              <input
+                aria-label="按姓名"
+                placeholder="成员姓名"
+                defaultValue={filters.creatorName}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') changeFilter({ creatorName: (e.target as HTMLInputElement).value })
+                }}
+                onBlur={(e) => {
+                  if (e.target.value !== filters.creatorName) changeFilter({ creatorName: e.target.value })
+                }}
+              />
+            </label>
+            <label>
+              时间
+              <select
+                aria-label="时间字段"
+                value={draftTimeField}
+                onChange={(e) => setDraftTimeField(e.target.value as ListFilters['timeField'])}
+              >
+                <option value="">不限</option>
+                <option value="created">创建于</option>
+                <option value="updated">更新于</option>
+                <option value="closed">关闭于</option>
+              </select>
+            </label>
+            <label>
+              从
+              <input
+                type="date"
+                aria-label="从（含当天）"
+                disabled={!draftTimeField}
+                value={filters.timeAfter}
+                onChange={(e) => changeFilter({ timeField: draftTimeField, timeAfter: e.target.value })}
+              />
+            </label>
+            <label>
+              到
+              <input
+                type="date"
+                aria-label="到（含当天）"
+                disabled={!draftTimeField}
+                value={filters.timeBefore}
+                onChange={(e) => changeFilter({ timeField: draftTimeField, timeBefore: e.target.value })}
+              />
+            </label>
+          </div>
+        )}
+        <div className="pc-list-scroll" data-testid="ticket-list-scroll">
+          {error && <div className="ecard">{error}</div>}
+          {!error && items.length === 0 && data && <div className="ecard">没有符合条件的工单</div>}
+          {items.map((it) => (
+            <TicketCard
+              key={it.number}
+              item={it}
+              desktop
+              me={me}
+              selected={selected === it.number}
+              href={detailHref(it.number)}
+            />
+          ))}
+          {data?.next && (
+            <div className="submitrow">
+              <button className="btn ghost" onClick={() => void loadMore()}>
+                加载更多
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="bpage">
       <div className="sticky-fb">
@@ -400,8 +724,8 @@ export function TicketsPage() {
                 <select
                   className="sel finput"
                   aria-label="时间字段"
-                  value={filters.timeField}
-                  onChange={(e) => set('timeField', e.target.value as ListFilters['timeField'])}
+                  value={draftTimeField}
+                  onChange={(e) => setDraftTimeField(e.target.value as ListFilters['timeField'])}
                 >
                   <option value="">不限</option>
                   <option value="created">创建于</option>
@@ -412,18 +736,18 @@ export function TicketsPage() {
                   type="date"
                   className="finput"
                   aria-label="从（含当天）"
-                  disabled={!filters.timeField}
+                  disabled={!draftTimeField}
                   value={filters.timeAfter}
-                  onChange={(e) => set('timeAfter', e.target.value)}
+                  onChange={(e) => update({ timeField: draftTimeField, timeAfter: e.target.value })}
                 />
                 <span className="flbl">到</span>
                 <input
                   type="date"
                   className="finput"
                   aria-label="到（含当天）"
-                  disabled={!filters.timeField}
+                  disabled={!draftTimeField}
                   value={filters.timeBefore}
-                  onChange={(e) => set('timeBefore', e.target.value)}
+                  onChange={(e) => update({ timeField: draftTimeField, timeBefore: e.target.value })}
                 />
                 <span className="flbl">（含当天）</span>
               </span>
@@ -437,7 +761,7 @@ export function TicketsPage() {
       {error && <div className="ecard">{error}</div>}
       {!error && items.length === 0 && data && <div className="ecard">没有符合条件的工单</div>}
       {items.map((it) => (
-        <TicketCard key={it.number} item={it} />
+        <TicketCard key={it.number} item={it} href={detailHref(it.number)} />
       ))}
       {data?.next && (
         <div className="submitrow">

@@ -25,7 +25,7 @@ test('登录后进入成员网页，收件箱按原因显示卡片', async ({ pa
   await expect(card.locator('.badge.reason')).toHaveText('新指派给你')
   await expect(card).toContainText('收件箱原因卡片的工单')
   await card.click()
-  await expect(page).toHaveURL(new RegExp(`/t/${number}$`))
+  await expect(page).toHaveURL(new RegExp(`/t/${number}(\\?|$)`))
 })
 
 // 2. 工单列表：按状态、指派、操作方（本人/Agent）筛选，按关键词搜索。

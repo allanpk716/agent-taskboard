@@ -527,9 +527,11 @@ type ActorFilter = 'all' | 'member' | 'agent'
 export function TicketDetailPage({
   ticketRef,
   me,
+  returnTo = '/tickets',
 }: {
   ticketRef: string
   me?: Me
+  returnTo?: string
 }) {
   const [ticket, setTicket] = useState<MemberTicket | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -566,6 +568,7 @@ export function TicketDetailPage({
   function changed() {
     void load()
     invalidate()
+    if (ticket) window.dispatchEvent(new CustomEvent('tb:ticket-changed', { detail: ticket.number }))
   }
 
   if (error) {
@@ -605,10 +608,10 @@ export function TicketDetailPage({
       <div className="dhead">
         <a
           className="back"
-          href="/tickets"
+          href={returnTo}
           onClick={(e) => {
             e.preventDefault()
-            nav('/tickets')
+            nav(returnTo)
           }}
         >
           ‹ 列表

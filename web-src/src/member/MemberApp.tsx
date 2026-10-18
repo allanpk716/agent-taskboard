@@ -15,7 +15,7 @@ import { TemplatesPage } from './TemplatesPage'
 import { TemplateEditPage } from './TemplateEditPage'
 import { MePage } from './MePage'
 import { AdminPage } from './AdminPage'
-import { nav, useNavSeq, useRoute, type Route } from './ui'
+import { nav, useLocationSearch, useNavSeq, useRoute, type Route } from './ui'
 import { useLayoutTier } from './useLayoutTier'
 
 function pageTitle(route: Route): string {
@@ -45,6 +45,7 @@ function pageTitle(route: Route): string {
 
 export function MemberApp() {
   const route = useRoute()
+  const search = useLocationSearch()
   const navSeq = useNavSeq()
   const tier = useLayoutTier()
   const [me, setMe] = useState<Me | null>(null)
@@ -103,13 +104,20 @@ export function MemberApp() {
   const meOn = h.page === 'me' || h.page === 'admin'
   const centered =
     ['tools', 'me', 'admin', 'new', 'templates', 'templateEdit', 'feedback'].includes(h.page)
+  const detailParams = new URLSearchParams(search)
+  const fromInbox = detailParams.get('list') === 'inbox'
+  detailParams.delete('list')
+  const detailQuery = detailParams.toString()
+  const detailReturnTo = fromInbox ? '/' : `/tickets${detailQuery ? '?' + detailQuery : ''}`
   const page = (
     <>
-      {route.page === 'inbox' && <InboxPage key={navSeq} />}
-      {route.page === 'tickets' && <TicketsPage key={navSeq} />}
+      {route.page === 'inbox' && <InboxPage key={route.page} />}
+      {route.page === 'tickets' && <TicketsPage key={route.page} />}
       {route.page === 'new' && <NewTicketPage key={navSeq} />}
       {route.page === 'feedback' && <FeedbackRequestPage key={navSeq} me={me} />}
-      {route.page === 'detail' && <TicketDetailPage key={navSeq} ticketRef={route.ref} me={me} />}
+      {route.page === 'detail' && (
+        <TicketDetailPage key={navSeq} ticketRef={route.ref} me={me} returnTo={detailReturnTo} />
+      )}
       {route.page === 'tools' && <ToolsPage key={navSeq} />}
       {route.page === 'me' && <MePage key={navSeq} me={me} serverVersion={serverVersion} />}
       {route.page === 'templates' && <TemplatesPage key={navSeq} />}
@@ -156,30 +164,60 @@ export function MemberApp() {
         {!!badge && <b>{badge}</b>}
       </a>
     )
+    const sidebar = (
+      <nav className="pc-sidebar" aria-label="侧栏">
+        <a className="pc-wordmark" href="/">
+          工单板
+        </a>
+        {item('/feedback', '✚', '＋ 请人反馈', '请人反馈', h.page === 'feedback', undefined, true)}
+        {item('/', '📥', '收件箱', '收件箱', h.page === 'inbox' || h.page === 'detail', inboxCount)}
+        {item('/tickets', '🗂', '工单', '工单', h.page === 'tickets')}
+        {item('/new', '📝', '建单（高级）', '建单', h.page === 'new')}
+        {item('/tools', '🧰', '工具', '工具', toolsOn)}
+        {item('/me', '👤', '我的', '我的', meOn)}
+        {me.is_admin && item('/admin', '🛡', '管理', '管理', h.page === 'admin')}
+        <div className="pc-side-foot">
+          {!compact && (
+            <div>
+              {me.name} · {me.is_admin ? '管理员' : '成员'}
+            </div>
+          )}
+          {serverVersion && <small>工单板 v{serverVersion}</small>}
+        </div>
+      </nav>
+    )
+    if (h.page === 'detail' && (tier === 'wide' || tier === 'medium')) {
+      return (
+        <div className={`pc-shell${compact ? ' compact' : ''}`}>
+          {sidebar}
+          <div className="pc-split">
+            {fromInbox ? (
+              <InboxPage desktop selected={route.page === 'detail' ? route.ref : undefined} me={me} />
+            ) : (
+              <TicketsPage desktop selected={route.page === 'detail' ? route.ref : undefined} me={me} />
+            )}
+            <main className="pc-detail">
+              {route.page === 'detail' && (
+                <TicketDetailPage ticketRef={route.ref} me={me} returnTo={detailReturnTo} />
+              )}
+            </main>
+          </div>
+        </div>
+      )
+    }
     return (
       <div className={`pc-shell${compact ? ' compact' : ''}`}>
-        <nav className="pc-sidebar" aria-label="侧栏">
-          <a className="pc-wordmark" href="/">
-            工单板
-          </a>
-          {item('/feedback', '✚', '＋ 请人反馈', '请人反馈', h.page === 'feedback', undefined, true)}
-          {item('/', '📥', '收件箱', '收件箱', h.page === 'inbox' || h.page === 'detail', inboxCount)}
-          {item('/tickets', '🗂', '工单', '工单', h.page === 'tickets')}
-          {item('/new', '📝', '建单（高级）', '建单', h.page === 'new')}
-          {item('/tools', '🧰', '工具', '工具', toolsOn)}
-          {item('/me', '👤', '我的', '我的', meOn)}
-          {me.is_admin && item('/admin', '🛡', '管理', '管理', h.page === 'admin')}
-          <div className="pc-side-foot">
-            {!compact && (
-              <div>
-                {me.name} · {me.is_admin ? '管理员' : '成员'}
-              </div>
-            )}
-            {serverVersion && <small>工单板 v{serverVersion}</small>}
-          </div>
-        </nav>
+        {sidebar}
         <main className="pc-main">
-          <div className={centered ? 'pc-centered' : undefined}>{page}</div>
+          <div className={centered ? 'pc-centered' : undefined}>
+            {h.page === 'tickets' ? (
+              <TicketsPage desktop me={me} />
+            ) : h.page === 'inbox' ? (
+              <InboxPage desktop me={me} />
+            ) : (
+              page
+            )}
+          </div>
         </main>
       </div>
     )
