@@ -182,6 +182,9 @@ spec 用户故事 84），没有 `inbox`：
   并把名下全部未撤销 Agent token 写入撤销时间（与单个撤销同用 `revoked_at`，之后请求 401）；
   账号、历史署名与事件保留（停用不是删除）。错误码：`422 cannot_deactivate_self`
   （不能停用自己的账号）、`404 member_not_found`。
+- 重置密码成功 `200 {"initial_password": "只出现一次"}`，同时删除该成员已有网页会话、
+  撤销全部客户端凭证，Agent token 不变。已停用账号不能重置：`422 member_inactive`
+  （hint「先恢复账号再重置密码」）；重置自己仍是 `422 cannot_reset_self`。
 - 恢复 `{"id": …, "active": true, "reactivated": 是否这次发生}`；幂等，只清除停用标记。
   密码沿用停用前的值，可重新登录；已撤销的 Agent token、已删除的会话和已撤销的客户端凭证
   都不会复活，指派给该成员的开启工单会按等待方规则回到收件箱。错误码：`404 member_not_found`。

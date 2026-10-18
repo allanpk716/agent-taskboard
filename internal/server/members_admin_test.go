@@ -409,6 +409,84 @@ func Test管理员可停用并恢复其他管理员(t *testing.T) {
 	}
 }
 
+// 管理员不能给已停用账号重置密码：先恢复才能发新的初始密码。
+func Test重置已停用成员密码被拒绝(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	s.CreateMember("赵工", "old-member-pass")
+	zhao := s.Login("赵工", "old-member-pass")
+
+	var zhaoSession sessionBody
+	s.Do(t, zhao, http.MethodGet, "/api/v1/session", nil, &zhaoSession)
+	path := "/api/v1/members/" + itoa(zhaoSession.Viewer.Member.ID)
+	if res := s.Do(t, admin, http.MethodPost, path+"/deactivate", nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("停用赵工状态码 = %d, 想 200", res.StatusCode)
+	}
+
+	var errBody errorBody
+	res := s.Do(t, admin, http.MethodPost, path+"/reset-password", nil, &errBody)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("重置已停用成员状态码 = %d, 想 422", res.StatusCode)
+	}
+	if errBody.Error.Code != "member_inactive" {
+		t.Errorf("重置已停用成员错误码 = %q, 想 member_inactive", errBody.Error.Code)
+	}
+	if errBody.Error.Hint != "先恢复账号再重置密码" {
+		t.Errorf("重置已停用成员 hint = %q, 想 \"先恢复账号再重置密码\"", errBody.Error.Hint)
+	}
+}
+
+// 管理员可以重置另一位管理员：旧会话立即失效，Agent token 不受影响；
+// 自己仍不能走管理页重置密码。
+func Test管理员可重置另一位管理员密码(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	_, err := s.Identity().CreateAdmin(context.Background(), "backup", "备用管理员", "backup-pass")
+	if err != nil {
+		t.Fatalf("创建备用管理员失败：%v", err)
+	}
+	backup := s.Login("backup", "backup-pass")
+	_, laptopToken := s.IssueAgentToken(t, backup, "备用笔记本")
+	laptop := s.AgentClient(laptopToken)
+
+	var backupSession sessionBody
+	s.Do(t, backup, http.MethodGet, "/api/v1/session", nil, &backupSession)
+	path := "/api/v1/members/" + itoa(backupSession.Viewer.Member.ID)
+	var reset struct {
+		InitialPassword string `json:"initial_password"`
+	}
+	if res := s.Do(t, admin, http.MethodPost, path+"/reset-password", nil, &reset); res.StatusCode != http.StatusOK {
+		t.Fatalf("重置其他管理员状态码 = %d, 想 200", res.StatusCode)
+	}
+	if reset.InitialPassword == "" || reset.InitialPassword == "backup-pass" {
+		t.Fatalf("重置响应应返回新的初始密码：%q", reset.InitialPassword)
+	}
+	if res := s.Do(t, backup, http.MethodGet, "/api/v1/session", nil, nil); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("重置后备用管理员旧会话状态码 = %d, 想 401", res.StatusCode)
+	}
+	if res := s.Do(t, laptop, http.MethodGet, "/api/v1/session", nil, nil); res.StatusCode != http.StatusOK {
+		t.Errorf("重置后 Agent token 状态码 = %d, 想 200", res.StatusCode)
+	}
+	if res := s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/session",
+		map[string]string{"username": "backup", "password": reset.InitialPassword}, nil); res.StatusCode != http.StatusOK {
+		t.Errorf("备用管理员用新密码登录状态码 = %d, 想 200", res.StatusCode)
+	}
+
+	var adminSession sessionBody
+	s.Do(t, admin, http.MethodGet, "/api/v1/session", nil, &adminSession)
+	var errBody errorBody
+	res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/members/"+itoa(adminSession.Viewer.Member.ID)+"/reset-password", nil, &errBody)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("管理员重置自己状态码 = %d, 想 422", res.StatusCode)
+	}
+	if errBody.Error.Code != "cannot_reset_self" {
+		t.Errorf("管理员重置自己错误码 = %q, 想 cannot_reset_self", errBody.Error.Code)
+	}
+}
+
 // 停用的成员不能再被指派（评审 P1-6，#42）：建单指派与改派都 422
 // assignee_deactivated——账号停用即时生效，名单里的「不在岗」成员不该接到新工单。
 func Test停用成员不能被指派(t *testing.T) {

@@ -92,6 +92,43 @@ test('管理员停用后可显示并恢复已停用成员', async ({ page, reque
   await expect(page.locator('tr[data-member="admin"]').getByRole('button', { name: '停用' })).toHaveCount(0)
 })
 
+test('管理员重置成员密码后可用新密码登录', async ({ page, request }) => {
+  const loginRes = await request.post('/api/v1/session', { data: ADMIN })
+  expect(loginRes.ok()).toBeTruthy()
+  const cookie = (loginRes.headers()['set-cookie'] ?? '').split(';')[0]
+  const username = `reset-${Date.now() % 1_000_000}`
+  const created = await request.post('/api/v1/members', {
+    data: { username, name: '待重置工' },
+    headers: { Cookie: cookie },
+  })
+  expect(created.ok(), `创建成员失败：${await created.text()}`).toBeTruthy()
+
+  await login(page, ADMIN)
+  await page.goto('/admin')
+  const row = page.locator(`tr[data-member="${username}"]`)
+  await expect(row).toBeVisible()
+  const adminRow = page.locator('tr[data-member="admin"]')
+  await expect(adminRow).toBeVisible()
+  await expect(adminRow.getByRole('button', { name: '重置密码' })).toHaveCount(0)
+  await expect(adminRow.getByRole('button', { name: '停用' })).toHaveCount(0)
+  await expect(adminRow).toContainText('改自己的密码请去『我的』')
+  await row.getByRole('button', { name: '重置密码' }).click()
+  const confirmDialog = page.locator('.modal')
+  await expect(confirmDialog).toContainText('将生成新的初始密码，并让 TA 在所有浏览器上退出登录')
+  await confirmDialog.getByRole('button', { name: '重置密码', exact: true }).click()
+
+  const passwordDialog = page.locator('.modal')
+  await expect(passwordDialog).toContainText('初始密码只显示这一次')
+  await expect(passwordDialog).toContainText('请登录后在『我的』里改密码')
+  const password = (await passwordDialog.locator('[data-initial-password]').textContent()) ?? ''
+  expect(password).not.toBe('')
+  await passwordDialog.getByRole('button', { name: '复制' }).click()
+  await passwordDialog.getByRole('button', { name: '关闭' }).click()
+
+  await login(page, { username, password })
+  await expect(page.getByText('待重置工')).toBeVisible()
+})
+
 // 普通成员看不到面板：e2e 环境里 wang 是普通成员但管理页入口对非管理员隐藏、
 // 后端 403 admin_required，这个场景由 internal/server 的黑盒测试覆盖
 // （Test管理员可检查更新）与 AdminPage 的 is_admin 判断保证。

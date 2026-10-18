@@ -96,6 +96,9 @@ func (a *API) resetMemberPassword(w http.ResponseWriter, r *http.Request, idStr 
 			"自助改密请使用「我的」页面")
 	case errors.Is(err, identity.ErrMemberNotFound):
 		WriteError(w, http.StatusNotFound, CodeMemberNotFound, "没有这位成员", "")
+	case errors.Is(err, identity.ErrMemberInactive):
+		WriteError(w, http.StatusUnprocessableEntity, CodeMemberInactive, "成员账号已停用",
+			"先恢复账号再重置密码")
 	case err != nil:
 		panic(err)
 	default:
