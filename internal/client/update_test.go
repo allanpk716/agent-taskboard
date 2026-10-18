@@ -82,8 +82,14 @@ func Test自动更新三十秒无就绪时结束新进程并换回旧版(t *test
 	fake.clock.Advance(31 * time.Second)
 
 	waitCondition(t, func() bool { return len(fx.updater.stoppedList()) == 1 })
-	if got := readFile(t, fx.exePath); string(got) != string(oldExe) {
-		t.Fatalf("回滚后的 exe 内容不符：前缀 %q", string(got[:len(oldExe)]))
+	var rolledBack []byte
+	waitCondition(t, func() bool {
+		data, err := os.ReadFile(fx.exePath)
+		rolledBack = data
+		return err == nil && string(data) == string(oldExe)
+	})
+	if string(rolledBack) != string(oldExe) {
+		t.Fatalf("回滚后的 exe 内容不符：%q", string(rolledBack))
 	}
 	if _, err := os.Stat(fx.exePath + ".prev"); !os.IsNotExist(err) {
 		t.Fatalf(".prev 应随回滚换回：%v", err)
