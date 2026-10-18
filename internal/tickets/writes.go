@@ -175,11 +175,15 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 	if err != nil {
 		return ReplyResult{}, err
 	}
+	turn, err := m.WaitingOn(ctx, after)
+	if err != nil {
+		return ReplyResult{}, err
+	}
 	return ReplyResult{
 		ReplyNo:     replyNo,
 		TimelineSeq: eventSeq,
 		AuthorName:  author.DisplayName(),
-		WaitingOn:   WaitingOnOf(after),
+		WaitingOn:   turn,
 	}, nil
 }
 

@@ -148,7 +148,11 @@ func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assig
 		}
 	}
 	if full.AssigneeID == 0 && toID == 0 {
-		return AssignResult{Ticket: full.Ticket, WaitingOn: WaitingOnOf(full)}, nil
+		turn, err := m.WaitingOn(ctx, full)
+		if err != nil {
+			return AssignResult{}, err
+		}
+		return AssignResult{Ticket: full.Ticket, WaitingOn: turn}, nil
 	}
 	if toID == full.AssigneeID {
 		return AssignResult{}, &AlreadyAssignedError{Name: toName}
@@ -195,5 +199,9 @@ func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assig
 	if err != nil {
 		return AssignResult{}, err
 	}
-	return AssignResult{Ticket: after.Ticket, WaitingOn: WaitingOnOf(after)}, nil
+	turn, err := m.WaitingOn(ctx, after)
+	if err != nil {
+		return AssignResult{}, err
+	}
+	return AssignResult{Ticket: after.Ticket, WaitingOn: turn}, nil
 }
