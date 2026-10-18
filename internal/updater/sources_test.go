@@ -81,8 +81,8 @@ func newFakeGitHub(t *testing.T, latest release.Latest, bySuffix map[string][]by
 
 // githubFixture 一次造出 latest.json、两份 manifest 和全部产物。
 type githubFixture struct {
-	latest     release.Latest
-	bySuffix   map[string][]byte
+	latest      release.Latest
+	bySuffix    map[string][]byte
 	serverFiles map[string][]byte
 }
 
@@ -154,6 +154,46 @@ func TestGitHub源经镜像取得最新版本并校验产物(t *testing.T) {
 	}
 }
 
+func TestGitHub源把客户端当作可选组件(t *testing.T) {
+	fx := newGitHubFixture("1.0.0", "1.0.0", "1.0.0")
+	files := map[string][]byte{"taskboard-client.exe": []byte("client exe")}
+	m := testManifest("client", "1.0.0", "", files)
+	data, _ := json.Marshal(m)
+	fx.bySuffix["releases/download/client/v1.0.0/manifest.json"] = data
+	fx.bySuffix["releases/download/client/v1.0.0/taskboard-client.exe"] = files["taskboard-client.exe"]
+	fx.latest.Client = &release.LatestEntry{
+		Version: "1.0.0", Tag: "client/v1.0.0",
+		ManifestURL: "https://github.com/example/example/releases/download/client/v1.0.0/manifest.json",
+	}
+	fake := newFakeGitHub(t, fx.latest, fx.bySuffix)
+
+	src := &GitHubSource{Repo: "example/example", Mirror: []string{fake.server.URL + "/m/"}}
+	latest, err := src.Latest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.Client == nil || latest.Client.Manifest.Version != "1.0.0" {
+		t.Fatalf("client 最新版本 = %+v", latest.Client)
+	}
+	if latest.Client.Manifest.MinServer != "" {
+		t.Fatalf("client 的 min_server 应为空：%q", latest.Client.Manifest.MinServer)
+	}
+}
+
+func Test客户端尚未发布不影响其余组件(t *testing.T) {
+	fx := newGitHubFixture("1.0.0", "1.0.0", "1.0.0")
+	fake := newFakeGitHub(t, fx.latest, fx.bySuffix)
+
+	src := &GitHubSource{Repo: "example/example", Mirror: []string{fake.server.URL + "/m/"}}
+	latest, err := src.Latest(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.Client != nil || latest.Server == nil || latest.Web == nil {
+		t.Fatalf("client 未发布不应导致整体失败：%+v", latest)
+	}
+}
+
 // 镜像前缀按顺序尝试：第一个连不上时用第二个。
 func TestGitHub源镜像按顺序回退(t *testing.T) {
 	fx := newGitHubFixture("1.0.0", "1.1.0", "1.0.0")
@@ -195,9 +235,9 @@ func TestUpdateHub源按SHA1与SHA256双重校验(t *testing.T) {
 
 // fakeUpdateHub 伪装 UpdateHub 的公开查询接口：feed 与 nupkg 下载。
 type fakeUpdateHub struct {
-	t      *testing.T
-	base   string
-	mux    *http.ServeMux
+	t    *testing.T
+	base string
+	mux  *http.ServeMux
 }
 
 func newFakeUpdateHub(t *testing.T) *fakeUpdateHub {
@@ -250,9 +290,9 @@ func Test更新源按顺序回退并记录实际源(t *testing.T) {
 	fake := newFakeGitHub(t, fx.latest, fx.bySuffix)
 
 	cfg := config.Update{
-		Sources:  []string{"updatehub", "github"},
+		Sources:   []string{"updatehub", "github"},
 		UpdateHub: config.UpdateHub{BaseURL: "http://127.0.0.1:1/", Channel: "stable"},
-		GitHub:   config.UpdateGitHub{Repo: "example/example", Mirror: []string{fake.server.URL + "/m/"}},
+		GitHub:    config.UpdateGitHub{Repo: "example/example", Mirror: []string{fake.server.URL + "/m/"}},
 	}
 	latest, err := resolveLatest(context.Background(), cfg, nil)
 	if err != nil {
@@ -277,9 +317,9 @@ func Test没有配置更新源时报错(t *testing.T) {
 // 所有源都连不上时报错，并把每个源的失败原因带上。
 func Test所有源都连不上时报错带原因(t *testing.T) {
 	cfg := config.Update{
-		Sources: []string{"updatehub", "github"},
+		Sources:   []string{"updatehub", "github"},
 		UpdateHub: config.UpdateHub{BaseURL: "http://127.0.0.1:1/", Channel: "stable"},
-		GitHub:   config.UpdateGitHub{Repo: "example/example", Mirror: []string{"http://127.0.0.1:1/m/"}},
+		GitHub:    config.UpdateGitHub{Repo: "example/example", Mirror: []string{"http://127.0.0.1:1/m/"}},
 	}
 	_, err := resolveLatest(context.Background(), cfg, nil)
 	if err == nil {

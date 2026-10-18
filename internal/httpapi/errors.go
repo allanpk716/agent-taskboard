@@ -140,6 +140,7 @@ const (
 	CodeInvalidClientCode        = "invalid_client_code"
 	CodeClientCredentialNotFound = "client_credential_not_found"
 	CodeClientScope              = "client_scope"
+	CodeClientNotAvailable       = "client_not_available"
 	CodePasswordTooShort         = "password_too_short"
 	CodeCannotResetSelf          = "cannot_reset_self"
 )

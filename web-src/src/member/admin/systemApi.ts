@@ -21,6 +21,7 @@ export interface UpdateStatus {
   source_used: string
   server: ComponentStatus
   web: ComponentStatus
+  client: ComponentStatus
   web_needs_newer_server: boolean
 }
 
@@ -30,6 +31,7 @@ export interface UpdateResult {
   message?: string
   server_updated: boolean
   web_updated: boolean
+  client_updated: boolean
   restart_needed: boolean
   preupdate_backup?: string
 }

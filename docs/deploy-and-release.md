@@ -77,7 +77,7 @@ max_ticket_mb       = 50
 只由管理员手动触发，有三个入口：管理页按钮、`taskboard update` 命令、管理 API（`GET`/`POST /api/v1/admin/update`），背后是同一套逻辑（`internal/updater`）。服务不会自动安装更新，只在管理页提示有新版本。命令行先看一眼：`taskboard update -check` 只查不装，`taskboard version` 显示当前前后端版本（后端版本是发布流水线注入二进制的；前端版本在 `web/version.json` 里，手动部署的首个前端没有它，视为未知）。
 
 1. 按配置的更新源顺序检查，用第一个连得上的源，并记录实际用的是哪个（源全不可用时明确报错，不会去连没配置的地址）。
-2. 前端和后端分别对比当前版本和最新版本。前端的 manifest 写着它需要的最低后端版本 `min_server`；后端版本不够时，先升级后端（最新的后端也不够时拒绝这次前端更新，等发布满足要求的后端）。
+2. 前端、后端和桌面客户端分别对比当前版本和最新版本，版本互相独立。客户端尚未发布只是该组件「不可用」，不影响前后端检查和更新。前端的 manifest 写着它需要的最低后端版本 `min_server`；后端版本不够时，先升级后端（最新的后端也不够时拒绝这次前端更新，等发布满足要求的后端）。
 3. **后端**：
    1. 下载新版本（按当前平台取 `taskboard.exe` 或 `taskboard-linux-amd64`），按 manifest 的 SHA256 校验，不符就拒绝；
    2. 做一次更新前备份（见「备份与恢复」），备份失败就中止更新，不替换 exe；
@@ -85,7 +85,8 @@ max_ticket_mb       = 50
    4. 管理页/管理 API 触发时：写完响应后进程退出，由 NSSM 拉起新版本；命令行触发时：提示执行 `nssm restart <服务名>`；
    5. 新版本启动时执行迁移（serve 打开库时自动做），再做健康检查：对自身的 `GET /api/v1/health` 自检一次，通过则打印版本，不通过只警告不退出（是否重启交给 NSSM；新版本起不来时回滚见下）。
 4. **前端**：下载 zip，校验 SHA256，解压到 `web-<version>/`（连同写入 `version.json` 版本标记），再原子地切换 `web/`（重建目录链接），服务不用重启。刚换下的版本目录再保留两代：翻到一半的旧页面还能取到旧哈希资源，不会半新半旧。UpdateHub 源取到的是 nupkg：先按 feed 里的 SHA1 校验整包，解包后再按里面的 manifest 的 SHA256 校验产物。
-5. **回滚**：在服务器上执行 `taskboard rollback`（服务必须已停止，配置的端口上仍在监听时拒绝执行），换回 `.prev` 版本和最近一次更新前的备份（先恢复库再换 exe，两步都完成后才启动服务；更新之后新产生的数据会回滚掉）。新版本起不来时网页上的按钮不可用，只能这样回滚。如果新 exe 连运行都运行不了（`taskboard rollback` 本身也执行不了），就手动处理：服务停着时把 `taskboard.exe` 改名挪开，复制 `taskboard.exe.prev` 为 `taskboard.exe`，再 `nssm start`。新版本没启动过就没跑过迁移，库不用恢复。更新器替换前会检查新 exe 能否在本机运行，挡住了这类产物（2026-10-17 的 server/v0.1.4 在 Ubuntu 上漏设 GOOS，`taskboard.exe` 其实是 Linux 二进制，生产因此中断约 2 分钟，就是这样手动换回的）；流水线构建后也会用 `release check-exe` 核对产物平台。
+5. **桌面客户端**：下载 `taskboard-client.exe`，按 manifest 的 SHA256 和大小校验并确认是 Windows/amd64 PE 后，存入 `data_dir/client/taskboard-client.exe`；旧版本保留为 `taskboard-client.exe.prev`。成员从「我的」页面下载，客户端自动更新时调 `GET /api/v1/client/latest` 与下载接口。所有组件都先下载并校验，之后才开始替换磁盘文件。
+6. **回滚**：在服务器上执行 `taskboard rollback`（服务必须已停止，配置的端口上仍在监听时拒绝执行），换回 `.prev` 版本和最近一次更新前的备份（先恢复库再换 exe，两步都完成后才启动服务；更新之后新产生的数据会回滚掉）。新版本起不来时网页上的按钮不可用，只能这样回滚。如果新 exe 连运行都运行不了（`taskboard rollback` 本身也执行不了），就手动处理：服务停着时把 `taskboard.exe` 改名挪开，复制 `taskboard.exe.prev` 为 `taskboard.exe`，再 `nssm start`。新版本没启动过就没跑过迁移，库不用恢复。更新器替换前会检查新 exe 能否在本机运行，挡住了这类产物（2026-10-17 的 server/v0.1.4 在 Ubuntu 上漏设 GOOS，`taskboard.exe` 其实是 Linux 二进制，生产因此中断约 2 分钟，就是这样手动换回的）；流水线构建后也会用 `release check-exe` 核对产物平台。
 
 配置示意：
 
@@ -105,11 +106,11 @@ proxy  = ""                         # http:// 或 socks5://；为空时读取 HT
 
 ## 发布
 
-仓库里的实现：`.github/workflows/release-server.yml` 和 `release-web.yml`（CI）；`cmd/release`（manifest 和 latest 子命令，CI 与本地演练共用）；`cmd/publish-updatehub`（开发机转发脚本）；`web-src/server-compat.json`（前端声明的 `min_server`）。
+仓库里的实现：`.github/workflows/release-server.yml`、`release-web.yml` 和 `release-client.yml`（CI）；`cmd/release`（manifest、latest 和 check-exe 子命令，CI 与本地演练共用）；`cmd/publish-updatehub`（开发机转发脚本）；`web-src/server-compat.json`（前端声明的 `min_server`）。
 
 ### GitHub Release（唯一构建来源）
 
-- 后端打 `server/vX.Y.Z` tag，前端打 `web/vX.Y.Z` tag，各自触发 GitHub Actions 构建并发布 Release。
+- 后端打 `server/vX.Y.Z` tag，前端打 `web/vX.Y.Z` tag，桌面客户端打 `client/vX.Y.Z` tag，各自触发 GitHub Actions 构建并发布 Release。
 - 每个 Release 都附带构建产物和 `manifest.json`：
 
   ```json
@@ -117,7 +118,7 @@ proxy  = ""                         # http:// 或 socks5://；为空时读取 HT
     "files": [{ "name": "taskboard-web-1.4.0.zip", "sha256": "..." }] }
   ```
 
-- 固定 tag `channel-stable` 下的 Release 里放一个 `latest.json`，记录前后端各自的最新版本。CI 每次发布后自动更新它。前后端分开打 tag 后，`releases/latest` 只指向最近发布的那一个，所以不能依赖它。
+- 固定 tag `channel-stable` 下的 Release 里放一个 `latest.json`，记录后端、前端、桌面客户端各自的最新版本。CI 每次发布后自动更新它。组件分开打 tag 后，`releases/latest` 只指向最近发布的那一个，所以不能依赖它。
 - 客户端**不调用 `api.github.com`**，只使用固定地址：
   - `https://github.com/<repo>/releases/download/channel-stable/latest.json`
   - `https://github.com/<repo>/releases/download/<tag>/<file>`
@@ -141,6 +142,14 @@ go run ./cmd/release manifest -component server -version 0.1.0 -dir dist
 go run ./cmd/release latest -component server -version 0.1.0 -tag server/v0.1.0 -repo OWNER/REPO -file latest.json
 go run ./cmd/release latest -component web -version 0.2.0 -tag web/v0.2.0 -repo OWNER/REPO -file latest.json
 
+# 桌面客户端：Ubuntu 上显式交叉构建 Windows/amd64（#81 的入口包）
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath \
+  -ldflags='-s -w -H=windowsgui -X github.com/allanpk716/agent-taskboard/internal/version.Client=0.1.0' \
+  -o dist/taskboard-client.exe ./cmd/taskboard-client
+go run ./cmd/release check-exe -goos windows -goarch amd64 dist/taskboard-client.exe
+go run ./cmd/release manifest -component client -version 0.1.0 -dir dist
+go run ./cmd/release latest -component client -version 0.1.0 -tag client/v0.1.0 -repo OWNER/REPO -file latest.json
+
 # 前端：构建 + 打包 + 清单（min_server 来自 web-src/server-compat.json）
 cd web-src && npm ci && npm run build && cd ..
 (cd web && zip -r ../dist/taskboard-web-0.2.0.zip .)
@@ -158,7 +167,7 @@ go run ./cmd/publish-updatehub -tag server/v0.1.0 \
 
 UpdateHub 是部门已有的内网更新服务，实现了 Velopack 协议。GitHub Actions 的构建机访问不到内网，所以由开发机上的 `publish-updatehub` 脚本完成：下载指定 Release 的产物，包装成 nupkg，上传到 UpdateHub。
 
-- 应用名：`agent-taskboard-server`、`agent-taskboard-web`；通道：`stable`。
+- 应用名：`agent-taskboard-server`、`agent-taskboard-web`、`agent-taskboard-client`；通道：`stable`。
 - 第一次上传时自动建应用。appId 只能用字母、数字和连字符；feed 里的 `PackageId` 必须和 appId 一致，不区分大小写。
 - 上传：`POST /api/apps/{appId}/channels/{channel}/releases`，带 `Authorization: Bearer <token>`，multipart 一次上传 nupkg 和 `releases.win.json`，可附 `notes`，单次不超过 200MB。token 只放在开发机的环境变量里。
 - 查询：`GET /{appId}/{channel}/releases.win.json`，不需要认证。返回格式为 `{"Assets":[{PackageId,Version,Type,FileName,SHA1,Size}]}`，再按 `FileName` 下载。
@@ -171,7 +180,10 @@ UpdateHub 是部门已有的内网更新服务，实现了 Velopack 协议。Git
 # 需要：UPDATEHUB_BASE_URL、UPDATEHUB_TOKEN；可选：GITHUB_TOKEN、GITHUB_MIRROR（镜像前缀）
 go run ./cmd/publish-updatehub -tag server/v1.2.3            # 或 web/v1.4.0
 go run ./cmd/publish-updatehub -tag web/v1.4.0 -notes "修复访客链接过期提示"
+go run ./cmd/publish-updatehub -tag client/v1.0.0 -notes "转发桌面客户端"
 ```
+
+客户端发布后，管理员不需要逐台分发：在管理页看到客户端新版本后执行「立即更新」（或在服务器执行 `taskboard update`），服务端会把 exe 拉回、校验并代管；之后「我的」页面的下载按钮和 `/api/v1/client/latest` 都指向这份文件。
 
 脚本流程：下载该 Release 的 `manifest.json` 和全部产物，逐一校验 SHA256；生成 `.nuspec`（id 与 appId 一致）后把产物和 `manifest.json` 一起打成 nupkg，布局为：
 

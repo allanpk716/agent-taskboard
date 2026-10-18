@@ -54,6 +54,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/notifications/stream", a.handleNotificationsStream)
 	mux.HandleFunc("/api/v1/client/connect", a.handleClientConnect)
 	mux.HandleFunc("/api/v1/client/token", a.handleClientToken)
+	mux.HandleFunc("/api/v1/client/latest", a.handleClientLatest)
+	mux.HandleFunc("/api/v1/client/download", a.handleClientDownload)
 	mux.HandleFunc("/api/v1/me/clients", a.handleClients)
 	mux.HandleFunc("/api/v1/me/clients/", a.handleClient)
 	mux.HandleFunc("/api/v1/members", a.handleMembersRoot)
@@ -89,6 +91,7 @@ func (a *API) clientScopeMiddleware(next http.Handler) http.Handler {
 		}
 		allowed := strings.HasPrefix(r.URL.Path, "/api/v1/notifications") ||
 			(r.Method == http.MethodGet && r.URL.Path == "/api/v1/session") ||
+			(r.Method == http.MethodGet && (r.URL.Path == "/api/v1/client/latest" || r.URL.Path == "/api/v1/client/download")) ||
 			(r.Method == http.MethodDelete && r.URL.Path == "/api/v1/me/clients/self")
 		if !allowed {
 			WriteError(w, http.StatusForbidden, CodeClientScope, "客户端凭证只能读取通知和身份",

@@ -15,8 +15,8 @@ import (
 	"crypto/sha1" //nolint:gosec // UpdateHub/Velopack feed 协议使用 SHA1
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -36,6 +36,7 @@ type Latest struct {
 	Source string
 	Server *Component
 	Web    *Component
+	Client *Component
 }
 
 // Component 是一个组件在某个源上的最新版本。File 返回产物内容并按
@@ -173,7 +174,10 @@ func (s *GitHubSource) Latest(ctx context.Context) (*Latest, error) {
 	if out.Web, err = component(latest.Web); err != nil {
 		return nil, err
 	}
-	if out.Server == nil && out.Web == nil {
+	if out.Client, err = component(latest.Client); err != nil {
+		return nil, err
+	}
+	if out.Server == nil && out.Web == nil && out.Client == nil {
 		return nil, fmt.Errorf("latest.json 里还没有任何组件的版本")
 	}
 	return out, nil
@@ -425,10 +429,14 @@ func (s *UpdateHubSource) Latest(ctx context.Context) (*Latest, error) {
 	if err != nil {
 		return nil, err
 	}
-	if server == nil && web == nil {
+	client, err := s.latestFeed(ctx, release.ComponentClient)
+	if err != nil {
+		return nil, err
+	}
+	if server == nil && web == nil && client == nil {
 		return nil, fmt.Errorf("UpdateHub 源上还没有任何组件的版本")
 	}
-	return &Latest{Source: s.Name(), Server: server, Web: web}, nil
+	return &Latest{Source: s.Name(), Server: server, Web: web, Client: client}, nil
 }
 
 // unpackNupkg 解开 nupkg（就是 zip）：读出 manifest.json 和 payload/ 下的
