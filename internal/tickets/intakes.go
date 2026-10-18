@@ -430,6 +430,16 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	if err := m.insertLinkEvent(ctx, tx, t.Seq, author, "guest_link_created", note, "", now); err != nil {
 		return SubmissionResult{}, err
 	}
+	if m.notifier != nil {
+		t.Number = number
+		after := Full{Ticket: t}
+		after.Timeline = []Event{{Seq: 1, At: now, Actor: author, Type: "created"}}
+		if err := m.notifier.NotifyTx(ctx, tx, NotificationInput{
+			After: after, Actor: author, Event: after.Timeline[0],
+		}); err != nil {
+			return SubmissionResult{}, err
+		}
+	}
 	for _, l := range labels {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO ticket_labels (ticket_seq, label) VALUES (?, ?)`, t.Seq, l); err != nil {
