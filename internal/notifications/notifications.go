@@ -54,7 +54,7 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 	out := []Decision{}
 	switch in.Event.Type {
 	case "created":
-		turn := tickets.WaitingOnOf(in.After)
+		turn := tickets.WaitingOnOf(in.After, in.GuestLinks, in.Now)
 		if turn.Party != "department" {
 			break
 		}
@@ -66,7 +66,7 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 				Text: "新工单「" + in.After.Title + "」轮到本部门，待初筛"})
 		}
 	case ReasonAssigned:
-		turn := tickets.WaitingOnOf(in.After)
+		turn := tickets.WaitingOnOf(in.After, in.GuestLinks, in.Now)
 		if turn.Party == "assignee" && turn.MemberID != 0 && !selfAction(in.Actor, turn.MemberID) {
 			out = append(out, Decision{
 				MemberID: turn.MemberID, Kind: KindTurn, Reason: ReasonAssigned,
@@ -81,7 +81,7 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 			})
 		}
 	case "reply":
-		turn := tickets.WaitingOnOf(in.After)
+		turn := tickets.WaitingOnOf(in.After, in.GuestLinks, in.Now)
 		if turn.Party == "department" && in.Actor.MemberID == 0 {
 			for _, id := range in.Triagers {
 				if !selfAction(in.Actor, id) && !hasDecisionFor(out, id) {
@@ -207,7 +207,15 @@ func NewManager(db *sql.DB, c clock.Clock) *Manager {
 }
 
 func (m *Manager) NotifyTx(ctx context.Context, tx *sql.Tx, in tickets.NotificationInput) ([]int64, error) {
-	created := m.clk.Now()
+	now := m.clk.Now()
+	in.Now = now
+	if in.After.Seq != 0 {
+		links, err := tickets.GuestLinksForTicket(ctx, tx, in.After.Seq)
+		if err != nil {
+			return nil, err
+		}
+		in.GuestLinks = links
+	}
 	if in.Event.Type == "created" || in.Event.Type == "assigned" || in.Event.Type == "reply" {
 		triagers, err := tickets.EffectiveTriagers(ctx, tx)
 		if err != nil {
@@ -234,7 +242,7 @@ func (m *Manager) NotifyTx(ctx context.Context, tx *sql.Tx, in tickets.Notificat
 			d.MemberID, in.After.Seq, in.After.Number, in.After.Title, d.Kind, d.Reason, d.Text,
 			in.Event.Seq, in.Event.Type, actorKind, actorName,
 			nullInt(in.Actor.MemberID), nullInt(in.Actor.AgentID), d.Summary,
-			created.Format(time.RFC3339Nano)); err != nil {
+			now.Format(time.RFC3339Nano)); err != nil {
 			return nil, err
 		}
 		memberIDs = append(memberIDs, d.MemberID)

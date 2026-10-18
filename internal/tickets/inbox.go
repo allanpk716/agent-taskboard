@@ -51,7 +51,10 @@ func (m *Manager) Inbox(ctx context.Context, memberID int64) ([]InboxItem, error
 		if err != nil {
 			return nil, err
 		}
-		turn := WaitingOnOf(full)
+		turn, err := m.WaitingOn(ctx, full)
+		if err != nil {
+			return nil, err
+		}
 		isTurn := turn.MemberID == memberID
 		isDepartmentTurn := triager && turn.Party == "department"
 		if !isTurn && !isDepartmentTurn {
