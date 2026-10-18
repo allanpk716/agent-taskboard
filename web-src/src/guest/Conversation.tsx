@@ -26,22 +26,30 @@ export function TurnBadge({ ticket }: { ticket: TicketView }) {
 
 /** 头部。 */
 export function GuestHeader({ ticket }: { ticket: TicketView }) {
+  const inviter = ticket.creator.member?.name ?? '同事'
   return (
-    <header className="head">
-      <div className="meta">
-        部门工单平台 · {ticket.kind === 'task' ? '任务' : '反馈'} · {ticket.number}（#{ticket.seq}）
-      </div>
-      <h1>{ticket.title}</h1>
-      <div className="badges">
-        <TurnBadge ticket={ticket} />
-        {ticket.viewer.link_note && (
-          <span className="meta link-meta">
-            你的链接：{ticket.viewer.link_note}
-            {ticket.viewer.link_expires_at && ` · ${fmtDateCN(ticket.viewer.link_expires_at)}到期`}
-          </span>
-        )}
-      </div>
-    </header>
+    <>
+      <header className="guest-top">
+        <span>
+          工单板 · {ticket.number} · {inviter} 请你反馈
+        </span>
+      </header>
+      <section className="head guest-title-card">
+        <div className="meta">
+          {ticket.kind === 'task' ? '任务' : '反馈'} · #{ticket.seq}
+        </div>
+        <h1>{ticket.title}</h1>
+        <div className="badges">
+          <TurnBadge ticket={ticket} />
+          {ticket.viewer.link_note && (
+            <span className="meta link-meta">
+              你的链接：{ticket.viewer.link_note}
+              {ticket.viewer.link_expires_at && ` · ${fmtDateCN(ticket.viewer.link_expires_at)}到期`}
+            </span>
+          )}
+        </div>
+      </section>
+    </>
   )
 }
 

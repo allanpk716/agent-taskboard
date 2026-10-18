@@ -10,6 +10,7 @@ import { GroupedBriefForm } from './GroupedBriefForm'
 import { LandingPage } from './LandingPage'
 import { guestApi } from './guestApi'
 import { fmtDateCN } from '../shared/format'
+import { api } from '../api'
 import type { GuestSession, TicketView } from '../shared/types'
 
 type Mode = 'land' | 'talk' | 'fill'
@@ -49,6 +50,7 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
   const decidedRef = useRef(false)
   // 落地页「你的称呼」带进填写页的署名初值。
   const [authorSeed, setAuthorSeed] = useState<string | undefined>()
+  const [serverVersion, setServerVersion] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -79,6 +81,12 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    api('/api/v1/health')
+      .then((health: { server_version?: string }) => setServerVersion(health.server_version ?? null))
+      .catch(() => setServerVersion(null))
+  }, [])
 
   if (phase.kind === 'invalid') {
     return (
@@ -159,6 +167,7 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
           onLinkDead={(code) => setPhase({ kind: 'invalid', code })}
         />
       )}
+      {serverVersion && <footer className="guest-version">工单板 v{serverVersion}</footer>}
     </main>
   )
 }
