@@ -48,6 +48,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/notifications", a.handleNotifications)
 	mux.HandleFunc("/api/v1/notifications/unread", a.handleNotificationsUnread)
 	mux.HandleFunc("/api/v1/notifications/read", a.handleNotificationsRead)
+	mux.HandleFunc("/api/v1/notifications/stream", a.handleNotificationsStream)
 	mux.HandleFunc("/api/v1/members", a.handleMembersRoot)
 	mux.HandleFunc("/api/v1/members/", a.handleMembersRef)
 	mux.HandleFunc("/api/v1/labels", a.handleLabelsRoot)

@@ -106,18 +106,21 @@ func replySuffix(why string) string {
 
 // Manager 提供通知写入（由工单事务调用）与读取。
 type Manager struct {
-	db   *sql.DB
-	clk  clock.Clock
-	rule TurnRules
+	db      *sql.DB
+	clk     clock.Clock
+	rule    TurnRules
+	streams *streamBroker
 }
 
 func NewManager(db *sql.DB, c clock.Clock) *Manager {
-	return &Manager{db: db, clk: c, rule: TurnRules{}}
+	return &Manager{db: db, clk: c, rule: TurnRules{}, streams: newStreamBroker()}
 }
 
-func (m *Manager) NotifyTx(ctx context.Context, tx *sql.Tx, in tickets.TurnNotificationInput) error {
+func (m *Manager) NotifyTx(ctx context.Context, tx *sql.Tx, in tickets.TurnNotificationInput) ([]int64, error) {
 	created := m.clk.Now()
-	for _, d := range m.rule.Decide(in) {
+	decisions := m.rule.Decide(in)
+	memberIDs := make([]int64, 0, len(decisions))
+	for _, d := range decisions {
 		actorKind := "member"
 		if in.Actor.MemberID == 0 {
 			actorKind = "guest"
@@ -135,10 +138,11 @@ func (m *Manager) NotifyTx(ctx context.Context, tx *sql.Tx, in tickets.TurnNotif
 			in.Event.Seq, in.Event.Type, actorKind, actorName,
 			nullInt(in.Actor.MemberID), nullInt(in.Actor.AgentID), d.Summary,
 			created.Format(time.RFC3339Nano)); err != nil {
-			return err
+			return nil, err
 		}
+		memberIDs = append(memberIDs, d.MemberID)
 	}
-	return nil
+	return memberIDs, nil
 }
 
 func nullInt(n int64) any {

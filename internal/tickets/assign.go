@@ -143,6 +143,7 @@ func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assig
 		return AssignResult{}, &AlreadyAssignedError{Name: toName}
 	}
 	fromName := full.AssigneeName
+	var notified []int64
 
 	now := m.clk.Now()
 	tx, err := m.db.BeginTx(ctx, nil)
@@ -167,13 +168,18 @@ func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assig
 			Seq: eventSeq, At: now, Actor: authorOf(viewer), Type: "assigned",
 			AssignFrom: fromName, AssignTo: toName,
 		})
-		if err := m.turnNotifier.NotifyTx(ctx, tx, TurnNotificationInput{Before: full, After: after,
-			Actor: authorOf(viewer), Event: after.Timeline[len(after.Timeline)-1]}); err != nil {
+		var err error
+		notified, err = m.turnNotifier.NotifyTx(ctx, tx, TurnNotificationInput{Before: full, After: after,
+			Actor: authorOf(viewer), Event: after.Timeline[len(after.Timeline)-1]})
+		if err != nil {
 			return AssignResult{}, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return AssignResult{}, err
+	}
+	if m.turnNotifier != nil {
+		m.turnNotifier.Wake(notified)
 	}
 
 	after, err := m.ByRef(ctx, ref)

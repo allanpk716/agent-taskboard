@@ -188,7 +188,8 @@ type TurnNotificationInput struct {
 
 // TurnNotifier 在工单事件同一事务里生成「轮到我」通知。
 type TurnNotifier interface {
-	NotifyTx(context.Context, *sql.Tx, TurnNotificationInput) error
+	NotifyTx(context.Context, *sql.Tx, TurnNotificationInput) ([]int64, error)
+	Wake([]int64)
 }
 
 func NewManager(db *sql.DB, c clock.Clock, lm *labels.Manager, tm *templates.Manager, am *attachments.Manager) *Manager {
@@ -317,6 +318,7 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, err
 
 	now := m.clk.Now()
 	date := now.Format("20060102")
+	var notified []int64
 
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -414,8 +416,10 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, err
 				{Seq: 1, At: now, Actor: creator, Type: "created"},
 				{Seq: eventSeq, At: now, Actor: creator, Type: "assigned", AssignTo: assigneeName},
 			}
-			if err := m.turnNotifier.NotifyTx(ctx, tx, TurnNotificationInput{After: after, Actor: creator,
-				Event: after.Timeline[1]}); err != nil {
+			var err error
+			notified, err = m.turnNotifier.NotifyTx(ctx, tx, TurnNotificationInput{After: after, Actor: creator,
+				Event: after.Timeline[1]})
+			if err != nil {
 				return CreateResult{}, err
 			}
 		}
@@ -440,6 +444,9 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, err
 
 	if err := tx.Commit(); err != nil {
 		return CreateResult{}, err
+	}
+	if m.turnNotifier != nil {
+		m.turnNotifier.Wake(notified)
 	}
 	full, err := m.ByRef(ctx, number)
 	if err != nil {

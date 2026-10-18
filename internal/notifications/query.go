@@ -47,6 +47,8 @@ func (m *Manager) List(ctx context.Context, q ListQuery) (ListResult, error) {
 	if q.Limit <= 0 {
 		q.Limit = 50
 	}
+	// SSE 重连补发没有公开分页游标；Limit < 0 表示这次取完剩余全部。
+	unlimited := q.Limit < 0
 	where := []string{"member_id = ?"}
 	args := []any{q.MemberID}
 	ascending := q.After != nil
@@ -69,7 +71,13 @@ func (m *Manager) List(ctx context.Context, q ListQuery) (ListResult, error) {
 		trigger_seq, trigger_type, actor_kind, actor_name, actor_member_id, actor_agent_id, created_at, read_at
 		FROM notifications WHERE ` + strings.Join(where, " AND ") + `
 		ORDER BY id ` + order + ` LIMIT ?`
-	rows, err := m.db.QueryContext(ctx, query, append(args, q.Limit+1)...)
+	sqlArgs := args
+	if !unlimited {
+		sqlArgs = append(args, q.Limit+1)
+	} else {
+		query = strings.TrimSuffix(query, " LIMIT ?")
+	}
+	rows, err := m.db.QueryContext(ctx, query, sqlArgs...)
 	if err != nil {
 		return ListResult{}, err
 	}
@@ -106,7 +114,7 @@ func (m *Manager) List(ctx context.Context, q ListQuery) (ListResult, error) {
 		return ListResult{}, err
 	}
 	hasMore := false
-	if len(items) > q.Limit {
+	if !unlimited && len(items) > q.Limit {
 		hasMore = true
 		items = items[:q.Limit]
 	}
@@ -223,6 +231,9 @@ func (m *Manager) MarkRead(ctx context.Context, memberID int64, target ReadTarge
 	}
 	if err := tx.Commit(); err != nil {
 		return MarkReadResult{}, err
+	}
+	if len(ids) > 0 {
+		m.WakeRead(memberID, MarkReadResult{IDs: ids, UnreadCount: unread})
 	}
 	return MarkReadResult{IDs: ids, UnreadCount: unread}, nil
 }

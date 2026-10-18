@@ -118,6 +118,7 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 
 	now := m.clk.Now()
 	author := authorOf(viewer)
+	var notified []int64
 	if viewer.Kind == identity.ViewerGuest {
 		author = guestAuthorOf(viewer, in.AuthorName, in.ViaAgent)
 	}
@@ -158,14 +159,19 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 			Seq: eventSeq, Change: change, At: now, Actor: author, Type: "reply",
 			BodyMD: in.BodyMD, ReplyNo: replyNo, Deliver: in.Deliver,
 		})
-		if err := m.turnNotifier.NotifyTx(ctx, tx, TurnNotificationInput{
+		var err error
+		notified, err = m.turnNotifier.NotifyTx(ctx, tx, TurnNotificationInput{
 			Before: full, After: after, Actor: author, Event: after.Timeline[len(after.Timeline)-1],
-		}); err != nil {
+		})
+		if err != nil {
 			return ReplyResult{}, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return ReplyResult{}, err
+	}
+	if m.turnNotifier != nil {
+		m.turnNotifier.Wake(notified)
 	}
 
 	after, err := m.ByRef(ctx, ref)

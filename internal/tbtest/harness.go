@@ -19,8 +19,8 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
-	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
+	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
 	"github.com/allanpk716/agent-taskboard/internal/server"
 	"github.com/allanpk716/agent-taskboard/internal/store"
@@ -154,6 +154,16 @@ func (s *Server) URL() string { return s.url }
 
 // Clock 返回注入的假时钟。
 func (s *Server) Clock() *clock.Fake { return s.clk }
+
+// Shutdown 显式优雅停机；测试结束时的自动关闭会再执行一次，幂等。
+func (s *Server) Shutdown(t testing.TB) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), server.ShutdownTimeout)
+	defer cancel()
+	if err := s.srv.Shutdown(ctx); err != nil {
+		t.Fatalf("停机失败：%v", err)
+	}
+}
 
 // DataDir 返回本测试独占的数据目录。
 func (s *Server) DataDir() string { return s.dataDir }

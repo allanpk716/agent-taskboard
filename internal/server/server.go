@@ -28,12 +28,13 @@ import (
 
 // Server 是一个运行中的 taskboard 服务实例。
 type Server struct {
-	cfg     config.Config
-	Ident   *identity.Manager
-	Store   *store.Store
-	Atts    *attachments.Manager
-	Backups *ops.Backups
-	Idem    *idempotency.Manager
+	cfg           config.Config
+	Ident         *identity.Manager
+	Store         *store.Store
+	Atts          *attachments.Manager
+	Backups       *ops.Backups
+	Idem          *idempotency.Manager
+	Notifications *notifications.Manager
 
 	handler  http.Handler
 	web      *webapp.Handler
@@ -84,14 +85,15 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	mux.Handle("/", web)
 
 	return &Server{
-		cfg:     cfg,
-		Ident:   ident,
-		Store:   st,
-		Atts:    atts,
-		Backups: backups,
-		Idem:    idem,
-		handler: mux,
-		web:     web,
+		cfg:           cfg,
+		Ident:         ident,
+		Store:         st,
+		Atts:          atts,
+		Backups:       backups,
+		Idem:          idem,
+		Notifications: notificationStore,
+		handler:       mux,
+		web:           web,
 	}, nil
 }
 
@@ -194,6 +196,7 @@ func (s *Server) selfHealthCheck() {
 
 // Shutdown 优雅停机。
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.Notifications.Close()
 	if s.httpSrv == nil {
 		return nil
 	}
