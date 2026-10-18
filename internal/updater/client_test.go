@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -244,11 +245,13 @@ func Test客户端失败不阻断服务端和前端更新(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(webDir, "version.json"), []byte(`{"component":"web","version":"0.0.0"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	logs := make([]string, 0, 4)
 	res, err := Apply(context.Background(), Options{
 		Update: config.Update{Sources: []string{"github"}, GitHub: config.UpdateGitHub{
 			Repo: "example/example", Mirror: []string{fake.server.URL + "/m/"},
 		}}, DataDir: dataDir, WebDir: webDir, ExePath: exePath, ServerVersion: "0.0.0",
 		Preupdate: func(context.Context) (string, error) { return "backup.sql", nil },
+		Log:       func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) },
 	})
 	if err != nil {
 		t.Fatalf("client 失败不应让整次更新失败：%v", err)
@@ -264,5 +267,14 @@ func Test客户端失败不阻断服务端和前端更新(t *testing.T) {
 	}
 	if got := ClientVersion(dataDir); got != "" {
 		t.Fatalf("client 不应被替换，当前版本 = %q", got)
+	}
+	foundBackupLog := false
+	for _, line := range logs {
+		if strings.Contains(line, "backup.sql") {
+			foundBackupLog = true
+		}
+	}
+	if !foundBackupLog {
+		t.Fatalf("后端更新日志缺少备份文件名：%v", logs)
 	}
 }
