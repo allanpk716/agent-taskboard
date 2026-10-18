@@ -10,6 +10,8 @@ test('wide viewport shows sidebar, version and centered main area', async ({ pag
   const sidebar = page.getByRole('navigation', { name: '侧栏' })
   await expect(sidebar).toBeVisible()
   const nav = sidebar.getByRole('link').filter({ hasNotText: '工单板' })
+  // 收件箱角标是异步拉取的，先等它出现再取整列文本，免得快照抢在角标之前。
+  await expect(nav.nth(1)).toHaveText(/^📥收件箱[1-9]\d*$/)
   expect(await nav.evaluateAll((els) => els.map((e) => e.textContent))).toEqual([
     expect.stringMatching(/^✚＋ 请人反馈$/),
     expect.stringMatching(/^📥收件箱[1-9]\d*$/),
