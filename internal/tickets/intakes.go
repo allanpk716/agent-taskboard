@@ -422,6 +422,7 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	}
 	author.LinkID, author.LinkNote = linkID, note
 	t.Creator = author
+	t.CreatorLinkID = linkID
 
 	// created 事件（actor 是提交的访客）与 guest_link_created 事件，同事务推进
 	// 变更序号；insertLinkEvent 顺带把工单 last_change 推到最新一条。

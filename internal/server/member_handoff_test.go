@@ -33,6 +33,7 @@ type waitingOnBody struct {
 	Member *string `json:"member"`
 	Text   string  `json:"text"`
 	Reason string  `json:"reason"`
+	Why    string  `json:"why"`
 }
 
 // handoffWorld 是成员交接场景的固定班底：王工建单派活，李工接活，
@@ -216,6 +217,7 @@ func (w *handoffWorld) waitOf(t testing.TB, c *http.Client, number string) waiti
 	return waitingOnBody{
 		Party: body.WaitingOn.Party, Member: body.WaitingOn.Member,
 		Text: body.WaitingOn.Text, Reason: body.WaitingOn.Reason,
+		Why: body.WaitingOn.Why,
 	}
 }
 
@@ -241,6 +243,9 @@ func assertWaitingOn(t testing.TB, got waitingOnBody, want waitingOnBody, note s
 	}
 	if want.Reason != "" && got.Reason != want.Reason {
 		t.Errorf("%s：reason = %q, 想 %q", note, got.Reason, want.Reason)
+	}
+	if want.Why != "" && got.Why != want.Why {
+		t.Errorf("%s：why = %q, 想 %q", note, got.Why, want.Why)
 	}
 }
 

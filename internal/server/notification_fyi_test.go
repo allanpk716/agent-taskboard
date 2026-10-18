@@ -59,17 +59,16 @@ func Test知会通知覆盖说明修订和第三方回复(t *testing.T) {
 	})
 	w.s.Do(t, w.s.GuestClient(link.Key(t)), http.MethodPatch, "/api/v1/tickets/"+number,
 		map[string]any{"brief_md": "补充试剂批号。", "base_revision": 1}, nil)
-	for _, c := range []*http.Client{w.webWang, w.webLi} {
-		got := notificationsOf(t, w, c, "")
-		if (c == w.webWang && len(got.Items) != 1) || (c == w.webLi && len(got.Items) != 2) {
-			t.Fatalf("说明修订通知 = %+v，想 fyi/brief_revised", got.Items)
-		}
-		if got.Items[0].Kind != "fyi" || got.Items[0].Reason != "brief_revised" {
-			t.Errorf("说明修订通知 = %s/%s，想 fyi/brief_revised", got.Items[0].Kind, got.Items[0].Reason)
-		}
-		if got.Items[0].Summary != "第 2 版" {
-			t.Errorf("说明修订 summary = %q, 想 第 2 版", got.Items[0].Summary)
-		}
+	wang := notificationsOf(t, w, w.webWang, "")
+	if len(wang.Items) != 1 || wang.Items[0].Kind != "fyi" || wang.Items[0].Reason != "brief_revised" {
+		t.Fatalf("创建者说明修订通知 = %+v，想 fyi/brief_revised", wang.Items)
+	}
+	li := notificationsOf(t, w, w.webLi, "")
+	if len(li.Items) != 2 || li.Items[0].Kind != "turn" || li.Items[0].Reason != "guest_completed" {
+		t.Fatalf("指派人说明修订通知 = %+v，想 turn/guest_completed", li.Items)
+	}
+	if li.Items[0].Summary != "第 2 版" {
+		t.Errorf("说明修订 summary = %q，想 第 2 版", li.Items[0].Summary)
 	}
 
 	w.s.Do(t, w.zhaoA, http.MethodPost, "/api/v1/tickets/"+number+"/replies",

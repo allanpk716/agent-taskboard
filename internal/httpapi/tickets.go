@@ -562,6 +562,7 @@ type waitingOnView struct {
 	Member *string `json:"member"`
 	Text   string  `json:"text"`
 	Reason string  `json:"reason"`
+	Why    string  `json:"why"`
 }
 
 type briefView struct {

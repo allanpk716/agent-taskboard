@@ -775,13 +775,16 @@ type WaitingOn struct {
 
 // 等待方推导的原因码 → 收件箱文案（原型 WHY 表）。
 const (
-	WhyNew            = "new"              // 新指派给你
-	WhyGuestReplied   = "guest_replied"    // 访客回复了
-	WhyDelivered      = "delivered"        // 已交付，待你验收
-	WhyAssigneeReply  = "assignee_replied" // 指派人回复了，待你答复
-	WhySentBack       = "sent_back"        // 发起人退回修改
-	WhyCreatorReplied = "creator_replied"  // 发起人回复了
-	WhyAgentReplied   = "agent_replied"    // 你的 Agent 回复了
+	WhyNew            = "new"                 // 新指派给你
+	WhyGuestReplied   = "guest_replied"       // 访客回复了
+	WhyGuestCompleted = "guest_completed"     // 访客补全了说明
+	WhyGuestRevised   = "guest_revised"       // 访客修订了说明
+	WhyGuestMissing   = "guest_not_completed" // 访客未补全说明
+	WhyDelivered      = "delivered"           // 已交付，待你验收
+	WhyAssigneeReply  = "assignee_replied"    // 指派人回复了，待你答复
+	WhySentBack       = "sent_back"           // 发起人退回修改
+	WhyCreatorReplied = "creator_replied"     // 发起人回复了
+	WhyAgentReplied   = "agent_replied"       // 你的 Agent 回复了
 )
 
 // WhyText 把原因码翻成收件箱/等待方文案。
@@ -791,6 +794,12 @@ func WhyText(why string) string {
 		return "新指派给你"
 	case WhyGuestReplied:
 		return "访客回复了"
+	case WhyGuestCompleted:
+		return "访客补全了说明"
+	case WhyGuestRevised:
+		return "访客修订了说明"
+	case WhyGuestMissing:
+		return "访客未补全说明"
 	case WhyDelivered:
 		return "已交付，待你验收"
 	case WhyAssigneeReply:
@@ -818,7 +827,8 @@ func WhyText(why string) string {
 //	其余情况（反馈、自派自）成员回复 → 访客
 //	成员 Agent 的回复算其所属成员一方；改派后，原指派人的回复按当前指派人重新计算、不再参与推导
 //
-// 相关回复集 = type=reply 且（访客 或 无对手 或 actor∈{指派人, 对手}）。
+// 相关事件集 = type=reply 且（访客 或 无对手 或 actor∈{指派人, 对手}），
+// 加上访客的 brief_revised（成员修订说明不算轮次事件）。
 // 未指派轮到本部门时原因只写「尚未指派」或「访客回复了」（prototype/ticket-query
 // 的修正：不能写「新指派给你」）。
 func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
@@ -838,9 +848,16 @@ func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 		since          int64
 		deliveredPrior bool // last 之前有没有指派人的带交付标记的相关回复
 	)
+	guestRevisions := 0
 	for i := range t.Timeline {
 		e := &t.Timeline[i]
-		if e.Type != "reply" {
+		if e.Type == "brief_revised" {
+			if e.Actor.MemberID != 0 {
+				continue
+			}
+			guestRevisions++
+		}
+		if e.Type != "reply" && !(e.Type == "brief_revised" && e.Actor.MemberID == 0) {
 			continue
 		}
 		isGuest := e.Actor.MemberID == 0
@@ -861,13 +878,22 @@ func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 		if a == 0 {
 			// 未指派：原因只写 尚未指派（why=new/creator_replied）或 访客回复了。
 			reason := "尚未指派"
-			if why == WhyGuestReplied {
-				reason = "访客回复了"
+			switch why {
+			case WhyGuestReplied, WhyGuestCompleted, WhyGuestRevised, WhyGuestMissing:
+				reason = WhyText(why)
 			}
 			return WaitingOn{Party: "department", Text: "本部门（未指派）", Reason: reason, Why: why, SinceSeq: since}
 		}
 		return WaitingOn{Party: "assignee", MemberID: a, Member: t.AssigneeName,
 			Text: t.AssigneeName + "（指派人）", Reason: WhyText(why), Why: why, SinceSeq: since}
+	}
+	if last == nil && guestRevisions == 0 && t.CreatorLinkID == 0 {
+		if hasActiveEditGuestLink(guestLinks, now) {
+			return WaitingOn{Party: "guest", Text: "访客补全说明"}
+		}
+		if hasEditGuestLink(guestLinks) {
+			return toAssignee(WhyGuestMissing)
+		}
 	}
 	if last == nil {
 		return toAssignee(WhyNew)
@@ -916,7 +942,14 @@ func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 		return toAssignee(why)
 	}
 	if last.Actor.MemberID == 0 {
-		return toAssignee(WhyGuestReplied)
+		why := WhyGuestReplied
+		if last.Type == "brief_revised" {
+			why = WhyGuestRevised
+			if guestRevisions == 1 {
+				why = WhyGuestCompleted
+			}
+		}
+		return toAssignee(why)
 	}
 	if c == 0 {
 		return WaitingOn{Party: "guest", Text: "访客", SinceSeq: since}
@@ -935,6 +968,24 @@ func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 		why = WhySentBack
 	}
 	return toAssignee(why)
+}
+
+func hasActiveEditGuestLink(links []GuestLinkInfo, now time.Time) bool {
+	for _, l := range links {
+		if l.CanEditBrief && l.RevokedAt == nil && now.Before(l.ExpiresAt) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEditGuestLink(links []GuestLinkInfo) bool {
+	for _, l := range links {
+		if l.CanEditBrief {
+			return true
+		}
+	}
+	return false
 }
 
 // dedupe 去重并保持顺序。
