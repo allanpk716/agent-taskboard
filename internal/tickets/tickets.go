@@ -814,23 +814,20 @@ func WhyText(why string) string {
 	return ""
 }
 
-// WaitingOnOf 推导当前轮到谁。规则照抄 prototype/member-handoff 的 turnOf
-// （spec「等待方与收件箱」，#37 的查询也复用这一个函数）：
-// guestLinks 与 now 是轮次规则的输入；#126 只打通输入，不改变下面的规则。
+// WaitingOnOf 按 GLOSSARY「等待方」推导当前轮到谁。guestLinks 与 now 是
+// 轮次规则的输入；访客的 brief_revised 与访客回复同属访客一方行动。
 //
-//	已关闭                     → 无等待方
-//	尚无回复 或 最后是访客回复    → 指派人（未指派 → department）
-//	任务 且 创建者是成员 且 创建者≠指派人（“有对手”）：
-//	    指派人一方回复            → 创建者（why = delivered 若该回复带 deliver，否则 assignee_replied）
-//	    创建者一方回复            → 指派人（why = sent_back 若此前存在指派人的 deliver，否则 creator_replied）
-//	    第三位成员回复            → 不改变轮次（不参与相关回复集）
-//	其余情况（反馈、自派自）成员回复 → 访客
-//	成员 Agent 的回复算其所属成员一方；改派后，原指派人的回复按当前指派人重新计算、不再参与推导
-//
-// 相关事件集 = type=reply 且（访客 或 无对手 或 actor∈{指派人, 对手}），
-// 加上访客的 brief_revised（成员修订说明不算轮次事件）。
-// 未指派轮到本部门时原因只写「尚未指派」或「访客回复了」（prototype/ticket-query
-// 的修正：不能写「新指派给你」）。
+//	已关闭 → 无等待方
+//	仍有效的「可填写说明」链接、访客未填过且尚无回复 → 访客（待补全）
+//	可填写说明链接全部失效、访客仍未填且尚无回复 → 指派人/department（访客未补全说明）
+//	尚无其他回复 → 指派人/department（新指派或尚未指派）
+//	最后是访客一方行动 → 指派人/department
+//	有对手任务：指派人一方回复 → 创建者；创建者一方回复 → 指派人
+//	自派自：交付后 → 本人验收；有有效访客链接时普通回复 → 访客；
+//	  无链接时按 Agent/本人/退回规则留在本人
+//	反馈工单成员回复 → 访客
+//	第三位成员的回复不参与推导；成员 Agent 算所属成员一方；
+//	改派后原指派人的旧回复不再参与推导
 func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 	if t.Status == "closed" {
 		return WaitingOn{Party: "none", Text: "无（已关闭）"}
