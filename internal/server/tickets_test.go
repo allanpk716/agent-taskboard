@@ -363,7 +363,9 @@ type ticketResponseBody struct {
 			Assign           bool `json:"assign"`
 		} `json:"can"`
 	} `json:"viewer"`
-	Timeline []timelineEventBody `json:"timeline"`
+	HandoffText      string              `json:"handoff_text"`
+	HandoffShareText *string             `json:"handoff_share_text"`
+	Timeline         []timelineEventBody `json:"timeline"`
 }
 
 // 用工单编号和用序号读到的是同一张工单；响应里标题、类型、状态、创建者、标签、

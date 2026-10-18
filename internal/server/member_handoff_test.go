@@ -6,6 +6,7 @@ package server_test
 // 现有接口改写：交付回复不带附件引用，建单用 brief_md 而不是模板。
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -94,10 +95,19 @@ func Test建单时指派成员(t *testing.T) {
 	if created.Assignee == nil || created.Assignee.Name != "李工" {
 		t.Fatalf("assignee = %+v, 想 李工", created.Assignee)
 	}
-	wantShare := "李工：给你派了一张工单「整理 Q3 质控规则对照表」，让你的 Agent 读一下 /t/" +
-		created.Number + "（它也会出现在你的收件箱里）"
-	if created.ShareText == nil || *created.ShareText != wantShare {
-		t.Errorf("share_text = %v, 想 %q", created.ShareText, wantShare)
+	wantHuman := fmt.Sprintf("李工：给你派了一张工单 %s「整理 Q3 质控规则对照表」，网页 %s/t/%s（也在你的收件箱里）。下面这段交给你的 Agent：\n\n",
+		created.Number, w.s.URL(), created.Number)
+	if created.ShareText == nil || !strings.HasPrefix(*created.ShareText, wantHuman) {
+		t.Errorf("share_text 的人话行 = %v, 想 %q", created.ShareText, wantHuman)
+	}
+	for _, want := range []string{
+		w.s.URL() + "/agent.md", "Authorization: Bearer <token>",
+		w.s.URL() + "/api/v1/tickets/" + created.Number + "?format=markdown",
+		w.s.URL() + "/api/v1/inbox",
+	} {
+		if !strings.Contains(*created.ShareText, want) {
+			t.Errorf("share_text 应包含 %q：%q", want, *created.ShareText)
+		}
 	}
 	if created.WaitingOn.Party != "assignee" || created.WaitingOn.Member == nil || *created.WaitingOn.Member != "李工" {
 		t.Errorf("waiting_on = %+v, 想 party=assignee member=李工", created.WaitingOn)
@@ -477,9 +487,10 @@ func Test改派接口的边界(t *testing.T) {
 	if view.Assignee.Name != "赵工" || view.WaitingOn.Member == nil || *view.WaitingOn.Member != "赵工" {
 		t.Errorf("改派响应 assignee/waiting_on 不对：%+v", view)
 	}
-	wantShare := "赵工：工单「整理对照表」转给你了，让你的 Agent 读一下 /t/" + task
-	if view.ShareText == nil || *view.ShareText != wantShare {
-		t.Errorf("改派 share_text = %v, 想 %q", view.ShareText, wantShare)
+	wantHuman := fmt.Sprintf("赵工：工单 %s「整理对照表」转给你了，网页 %s/t/%s（也在你的收件箱里）。下面这段交给你的 Agent：\n\n",
+		task, w.s.URL(), task)
+	if view.ShareText == nil || !strings.HasPrefix(*view.ShareText, wantHuman) {
+		t.Errorf("改派 share_text 的人话行 = %v, 想 %q", view.ShareText, wantHuman)
 	}
 	var body ticketResponseBody
 	w.s.Do(t, w.webZhao, http.MethodGet, "/api/v1/tickets/"+task, nil, &body)
