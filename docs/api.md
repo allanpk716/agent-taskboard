@@ -261,8 +261,9 @@ spec 用户故事 84），没有 `inbox`：
   handoff_text, handoff_share_text`；`handoff_text` 是与建单/改派 `share_text`
   共用的 Agent 段，总是有值；`handoff_share_text` 用建单版人话行，工单有指派人时
   才有值，否则为 null。访客视角没有这两个字段；`format=markdown` 也不加入这两项。
-  - 作者结构统一 `{member: {id, name}, agent: {id, name, revoked}|null}`，本人操作
-    `agent` 为 `null`；`agent.revoked` 为 `true` 表示这个具名 Agent 已被撤销——
+  - 作者结构统一 `{member: {id, name, deactivated?}, agent: {id, name, revoked}|null}`，本人操作
+    `agent` 为 `null`；`member.deactivated` 只在成员账号已停用时为 `true`（#115），
+    正常成员与访客视角都不出现该字段；`agent.revoked` 为 `true` 表示这个具名 Agent 已被撤销——
     历史署名照实标注「（已停用）」（#28 评审修正：撤销不删历史，展示反映现状）。
     时间线事件带 `seq`（单内递增）、`change`、`at`、`actor`、`type`。
   - `viewer`：`{kind, member, agent, role(assignee|creator|member|guest), your_turn, can}`；
@@ -278,6 +279,7 @@ spec 用户故事 84），没有 `inbox`：
    （防枚举）。`?format=markdown` 同样过滤（无标签行、无标签事件）。
 - `?format=markdown` 返回 `text/markdown`：头部信息（含指派人，#36）、说明、附件（占位）、
   时间线和「下一步」；署名按 ADR 0003：成员 `陈某`，成员 Agent `陈某 的 Agent · 名字`。
+  成员账号已停用时，成员视角在发起人、指派人与历史署名后追加「（已停用）」；访客视角署名不变。
   时间线里回复单独成节（`### [seq] 时间 · 作者 回复|**交付**` + 正文），
   说明修订/关闭/重开等事件写成 `- [seq] 时间 · 作者 事件文案`（如
   `修订说明（第 2 版）`、`关闭工单（重复：与 20261016-001 重复）`、
@@ -410,7 +412,8 @@ spec 用户故事 84），没有 `inbox`：
 - 列出「现在轮到我」的**开启**工单，按工单序号；同一成员名下所有 Agent 共用一份
   （Agent 定时轮询它即可，不靠人口头转告）；未指派的工单不出现在任何人的收件箱里
   （要用查询接口找，#37）。响应：`{member, count, items}`，每项：
-  - `{number, title, role(assignee|creator), reason, since_seq, read_new, read_full}`。
+  - `{number, title, role(assignee|creator), reason, since_seq, read_new, read_full, assignee}`；
+    `assignee` 为作者结构，指派给已停用成员时其 `member.deactivated` 为 `true`（#115）。
   - `reason` 文案：新指派给你 / 已交付，待你验收 / 指派人回复了，待你答复 /
     发起人退回修改 / 发起人回复了 / 访客回复了。
   - `since_seq` 是推导所依据的那条回复的事件 seq（无相关回复时为 null，即新指派）。
@@ -457,6 +460,8 @@ spec 用户故事 84），没有 `inbox`：
   labels, waiting_on, created_at, updated_at, closed_at, reply_count, last_change,
   read_full`（时间线不在列表里给）；`include=brief` 附带 `brief`（拼好的 Markdown、
   模板工单的 `fields`）；`q` 命中附 `matched_in/snippet`。
+  摘要中的 `creator` 与 `assignee` 保持原有姓名字符串；该成员已停用时改为
+  `{id, name, deactivated: true}`（#115，正常账号不出现 `deactivated` 字段）。
 - `format=markdown` 返回 `text/markdown`：一张表格（编号/标题/状态/指派人/轮到/标签/更新，
   命中信息内联在标题行）+ 末尾「下一步」（读全文、跟 `next` 翻页、`changed_after` 增量）。
 

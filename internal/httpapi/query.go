@@ -614,8 +614,8 @@ type ticketListItemView struct {
 	Status      string        `json:"status"`
 	CloseReason *string       `json:"close_reason"`
 	Template    *string       `json:"template"`
-	Creator     string        `json:"creator"`
-	Assignee    *string       `json:"assignee"`
+	Creator     any           `json:"creator"`
+	Assignee    any           `json:"assignee"`
 	Labels      []string      `json:"labels"`
 	WaitingOn   waitingOnView `json:"waiting_on"`
 	CreatedAt   time.Time     `json:"created_at"`
@@ -647,12 +647,12 @@ func newTicketListItem(row *tickets.ListRow, include string) ticketListItemView 
 		ReadFull:   "/api/v1/tickets/" + t.Number + "?format=markdown",
 	}
 	if t.Creator.MemberID != 0 {
-		v.Creator = t.Creator.MemberName
+		v.Creator = memberSummary(t.Creator.MemberID, t.Creator.MemberName, t.Creator.MemberDeactivated)
 	} else {
 		v.Creator = "访客"
 	}
 	if t.AssigneeID != 0 {
-		v.Assignee = &t.AssigneeName
+		v.Assignee = memberSummary(t.AssigneeID, t.AssigneeName, t.AssigneeDeactivated)
 	}
 	if t.CloseReason != "" {
 		v.CloseReason = &t.CloseReason
@@ -686,6 +686,19 @@ func newTicketListItem(row *tickets.ListRow, include string) ticketListItemView 
 	return v
 }
 
+type deactivatedMemberSummary struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Deactivated bool   `json:"deactivated"`
+}
+
+func memberSummary(id int64, name string, deactivated bool) any {
+	if deactivated {
+		return deactivatedMemberSummary{ID: id, Name: name, Deactivated: true}
+	}
+	return name
+}
+
 // listMarkdownRows 把本页行转成 Markdown 表格的行输入。
 func listMarkdownRows(page []tickets.ListRow) []markdownview.ListRow {
 	out := make([]markdownview.ListRow, 0, len(page))
@@ -696,7 +709,7 @@ func listMarkdownRows(page []tickets.ListRow) []markdownview.ListRow {
 			Title:         row.Full.Title,
 			Status:        row.Full.Status,
 			CloseReason:   row.Full.CloseReason,
-			Assignee:      row.Full.AssigneeName,
+			Assignee:      row.Full.AssigneeName + markdownDeactivated(row.Full.AssigneeDeactivated),
 			WaitingOnText: row.WaitingOn.Text,
 			Labels:        row.Full.Labels,
 			UpdatedAt:     row.Meta.UpdatedAt,
@@ -708,6 +721,13 @@ func listMarkdownRows(page []tickets.ListRow) []markdownview.ListRow {
 		out = append(out, item)
 	}
 	return out
+}
+
+func markdownDeactivated(deactivated bool) string {
+	if deactivated {
+		return "（已停用）"
+	}
+	return ""
 }
 
 func containsStringIn(list []string, s string) bool {

@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api'
 import { closeReasonText, fmtShort } from '../shared/format'
+import type { MemberSummary } from '../shared/types'
 import { api } from '../api'
 import { nav } from './ui'
 
@@ -48,8 +49,8 @@ interface TicketListItem {
   title: string
   status: string
   close_reason?: string | null
-  creator: string
-  assignee?: string | null
+  creator: MemberSummary
+  assignee?: MemberSummary | null
   labels: string[]
   waiting_on: { party: string; member?: string | null; text: string; reason: string }
   updated_at: string
@@ -112,6 +113,8 @@ export function LabelChips({ labels }: { labels: string[] }) {
 }
 
 export function TicketCard({ item }: { item: TicketListItem }) {
+  const creator = memberSummaryText(item.creator)
+  const assignee = item.assignee == null ? '未指派' : memberSummaryText(item.assignee)
   return (
     <a
       className="tcard"
@@ -134,13 +137,20 @@ export function TicketCard({ item }: { item: TicketListItem }) {
       </div>
       <div className="tc-title">{item.title}</div>
       <div className="tc-meta">
-        {item.number} · 发起人 {item.creator} · 指派 {item.assignee ?? '未指派'}
+        {item.number} · 发起人 {creator} · 指派 {assignee}
+        {typeof item.assignee === 'object' && item.assignee?.deactivated && (
+          <span className="badge closed deactivated-inline">已停用</span>
+        )}
       </div>
       <div className="tc-foot">
         <LabelChips labels={item.labels} />
       </div>
     </a>
   )
+}
+
+function memberSummaryText(member: MemberSummary): string {
+  return typeof member === 'string' ? member : member.name
 }
 
 function FilterGroup({

@@ -4,6 +4,8 @@
 export interface MemberRef {
   id: number
   name: string
+  /** 成员账号已停用（#115）；正常账号没有这个字段。 */
+  deactivated?: boolean
 }
 
 export interface AgentRef {
@@ -68,6 +70,8 @@ export interface TimelineEvent {
   to?: string
   label?: string
 }
+
+export type MemberSummary = string | MemberRef
 
 export interface Brief {
   fields?: Record<string, string> | null

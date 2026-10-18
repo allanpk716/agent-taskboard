@@ -15,6 +15,11 @@ export function Avatar({ author }: { author: Author | undefined | null }) {
   )
 }
 
+/** 已停用成员署名旁的灰色小徽标（#115）。 */
+export function DeactivatedBadge() {
+  return <span className="deactivated-badge">已停用</span>
+}
+
 /** 附件条：列在气泡底部；点击打开（图片/PDF/txt/log 在线预览，其余由服务端按下载返回）。 */
 export function AttachmentChips({ attachments }: { attachments: Attachment[] }) {
   if (attachments.length === 0) return null

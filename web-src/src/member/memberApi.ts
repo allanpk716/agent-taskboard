@@ -1,7 +1,7 @@
 // 成员网页调用的 API（网页会话 cookie；错误结构见 api.ts）。
 import { api, ApiError } from '../api'
 import { compressImage } from '../shared/compress'
-import type { TicketView } from '../shared/types'
+import type { Author, TicketView } from '../shared/types'
 
 export interface Me {
   id: number
@@ -18,6 +18,7 @@ export interface InboxItem {
   since_seq: number | null
   read_new: string
   read_full: string
+  assignee?: Author | null
 }
 
 export interface InboxResponse {

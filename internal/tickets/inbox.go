@@ -18,6 +18,10 @@ type InboxItem struct {
 	SinceSeq int64  // 推导所依据的回复事件 seq；0 = 无相关回复（新指派）
 	ReadNew  string // /api/v1/tickets/<编号>/timeline?after=<我在该单最后一条事件的 seq>
 	ReadFull string // /api/v1/tickets/<编号>?format=markdown
+	// Assignee：当前指派人摘要。账号停用时保留指派并带标记（#115）。
+	AssigneeID          int64
+	AssigneeName        string
+	AssigneeDeactivated bool
 }
 
 // Inbox 列出 memberID 当前轮到的全部开启工单（按工单序号）。
@@ -74,13 +78,16 @@ func (m *Manager) Inbox(ctx context.Context, memberID int64) ([]InboxItem, error
 			reason = "待初筛"
 		}
 		items = append(items, InboxItem{
-			Number:   full.Number,
-			Title:    full.Title,
-			Role:     role,
-			Reason:   reason,
-			SinceSeq: turn.SinceSeq,
-			ReadNew:  "/api/v1/tickets/" + full.Number + "/timeline?after=" + strconv.FormatInt(after, 10),
-			ReadFull: "/api/v1/tickets/" + full.Number + "?format=markdown",
+			Number:              full.Number,
+			Title:               full.Title,
+			Role:                role,
+			Reason:              reason,
+			SinceSeq:            turn.SinceSeq,
+			ReadNew:             "/api/v1/tickets/" + full.Number + "/timeline?after=" + strconv.FormatInt(after, 10),
+			ReadFull:            "/api/v1/tickets/" + full.Number + "?format=markdown",
+			AssigneeID:          full.AssigneeID,
+			AssigneeName:        full.AssigneeName,
+			AssigneeDeactivated: full.AssigneeDeactivated,
 		})
 	}
 	return items, nil
