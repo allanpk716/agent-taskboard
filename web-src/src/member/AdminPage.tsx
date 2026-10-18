@@ -377,7 +377,8 @@ function InitialPasswordDialog({
       </div>
       <div className="hint">
         登录名 <span className="mono">{member.username}</span>
-        。请把登录名和初始密码交给这位成员；请登录后在『我的』里改密码。
+        。请把登录名和初始密码交给这位成员；首次登录后即以本人身份操作。
+        请登录后在『我的』里改密码。
       </div>
       <div className="mrow">
         <button className="btn ghost" onClick={onClose}>

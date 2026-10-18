@@ -41,7 +41,7 @@ export function EventLine({ event }: { event: TimelineEvent }) {
     <div className="event">
       {authorName(event.actor)}
       {event.actor.member?.deactivated && <DeactivatedBadge />}
-      {eventText(event)} · {fmtShort(event.at)}
+        {' '}{eventText(event)} · {fmtShort(event.at)}
     </div>
   )
 }

@@ -71,7 +71,7 @@ export interface TimelineEvent {
   label?: string
 }
 
-export type MemberSummary = string | MemberRef
+export type MemberSummary = string
 
 export interface Brief {
   fields?: Record<string, string> | null

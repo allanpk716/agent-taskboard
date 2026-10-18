@@ -247,7 +247,7 @@ func (m *Manager) ReactivateMember(ctx context.Context, id int64) (bool, error) 
 	if err != nil {
 		return false, err
 	}
-	if !deactivated.Valid || deactivated.String == "" {
+	if !nullStringSet(deactivated) {
 		return false, nil
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE members SET deactivated_at = NULL WHERE id = ?`, id); err != nil {
@@ -305,17 +305,6 @@ func (m *Manager) AdminResetMemberPassword(ctx context.Context, adminID, memberI
 	if adminID == memberID {
 		return "", ErrCannotResetSelf
 	}
-	var deactivated sql.NullString
-	if err := m.db.QueryRowContext(ctx,
-		`SELECT deactivated_at FROM members WHERE id = ?`, memberID).Scan(&deactivated); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", ErrMemberNotFound
-		}
-		return "", err
-	}
-	if deactivated.Valid {
-		return "", ErrMemberInactive
-	}
 	password, err := GenerateInitialPassword()
 	if err != nil {
 		return "", err
@@ -329,7 +318,9 @@ func (m *Manager) AdminResetMemberPassword(ctx context.Context, adminID, memberI
 		return "", err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `UPDATE members SET password_hash = ? WHERE id = ?`, string(hash), memberID)
+	res, err := tx.ExecContext(ctx,
+		`UPDATE members SET password_hash = ? WHERE id = ? AND deactivated_at IS NULL`,
+		string(hash), memberID)
 	if err != nil {
 		return "", err
 	}
@@ -338,7 +329,27 @@ func (m *Manager) AdminResetMemberPassword(ctx context.Context, adminID, memberI
 		return "", err
 	}
 	if n == 0 {
+		var deactivated sql.NullString
+		err := tx.QueryRowContext(ctx,
+			`SELECT deactivated_at FROM members WHERE id = ?`, memberID).Scan(&deactivated)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrMemberNotFound
+		}
+		if err != nil {
+			return "", err
+		}
+		if nullStringSet(deactivated) {
+			return "", ErrMemberInactive
+		}
 		return "", ErrMemberNotFound
+	}
+	var deactivated sql.NullString
+	if err := tx.QueryRowContext(ctx,
+		`SELECT deactivated_at FROM members WHERE id = ?`, memberID).Scan(&deactivated); err != nil {
+		return "", err
+	}
+	if nullStringSet(deactivated) {
+		return "", ErrMemberInactive
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE member_id = ?`, memberID); err != nil {
 		return "", err
@@ -443,4 +454,8 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+func nullStringSet(v sql.NullString) bool {
+	return v.Valid && v.String != ""
 }

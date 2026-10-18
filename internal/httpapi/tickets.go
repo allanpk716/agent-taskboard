@@ -710,13 +710,10 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 		Attachments: []attachmentView{},
 	}
 	if full.AssigneeID != 0 {
-		assignee := authorView{}
-		if full.AssigneeDeactivated && !isGuest {
-			deactivated := true
-			assignee.Member = &memberRef{ID: full.AssigneeID, Name: full.AssigneeName, Deactivated: &deactivated}
-		} else {
-			assignee.Member = &memberRef{ID: full.AssigneeID, Name: full.AssigneeName}
-		}
+		assignee := newAuthorView(tickets.Author{
+			MemberID: full.AssigneeID, MemberName: full.AssigneeName,
+			MemberDeactivated: full.AssigneeDeactivated,
+		}, !isGuest)
 		v.Assignee = &assignee
 	}
 	if !isGuest {

@@ -70,7 +70,7 @@ func (m *Manager) resolveAssignee(ctx context.Context, ref string) (int64, strin
 		return m.rejectAgentRef(ctx, ref)
 	case err != nil:
 		return 0, "", err
-	case deactivated.Valid && deactivated.String != "":
+	case nullStringSet(deactivated):
 		return 0, "", &AssigneeDeactivatedError{Name: name}
 	}
 	return id, name, nil

@@ -198,8 +198,13 @@ func (a *API) handleOwnPassword(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
 		return
 	}
-	sess, ok := a.sessionFromRequest(w, r)
+	viewer, ok := a.webSessionFromRequest(w, r)
 	if !ok {
+		return
+	}
+	// Viewer 只带身份；ChangeOwnPassword 还需要当前会话 id 来保留这次登录。
+	sess, ok := a.sessionFromRequest(w, r)
+	if !ok || sess.Member.ID != viewer.Member.ID {
 		return
 	}
 	var req struct {

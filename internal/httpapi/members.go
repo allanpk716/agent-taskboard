@@ -54,7 +54,7 @@ func (a *API) handleMembersRoot(w http.ResponseWriter, r *http.Request) {
 func (a *API) handleMembersRef(w http.ResponseWriter, r *http.Request) {
 	ref := strings.TrimPrefix(r.URL.Path, "/api/v1/members/")
 	id, sub, hasSub := strings.Cut(ref, "/")
-	if !hasSub || (sub != "deactivate" && sub != "reactivate" && sub != "triager" && sub != "reset-password") {
+	if !hasSub {
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
 			"成员账号接口：GET|POST /api/v1/members、POST /api/v1/members/{id}/deactivate|reactivate|triager|reset-password")
 		return
@@ -64,19 +64,22 @@ func (a *API) handleMembersRef(w http.ResponseWriter, r *http.Request) {
 			"停用/恢复账号、设置初筛人和重置密码都用 POST")
 		return
 	}
-	if sub == "triager" {
+	switch sub {
+	case "triager":
 		a.setTriager(w, r, id)
 		return
-	}
-	if sub == "reset-password" {
+	case "reset-password":
 		a.resetMemberPassword(w, r, id)
 		return
-	}
-	if sub == "reactivate" {
+	case "reactivate":
 		a.reactivateMember(w, r, id)
 		return
+	case "deactivate":
+		a.deactivateMember(w, r, id)
+	default:
+		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
+			"成员账号接口：GET|POST /api/v1/members、POST /api/v1/members/{id}/deactivate|reactivate|triager|reset-password")
 	}
-	a.deactivateMember(w, r, id)
 }
 
 func (a *API) resetMemberPassword(w http.ResponseWriter, r *http.Request, idStr string) {

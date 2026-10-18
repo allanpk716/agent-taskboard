@@ -67,8 +67,14 @@ func Test工单视图标记已停用成员(t *testing.T) {
 
 	listRaw, _ := io.ReadAll(s.Do(t, admin, http.MethodGet,
 		"/api/v1/tickets?status=all&q="+url.QueryEscape("管理员发给王工的停用标记工单"), nil, nil).Body)
-	if !strings.Contains(string(listRaw), `"assignee":{"id":2,"name":"王工","deactivated":true}`) {
-		t.Errorf("列表摘要未标记已停用指派人：%s", listRaw)
+	if !strings.Contains(string(listRaw), `"creator":"陈工"`) || strings.Contains(string(listRaw), `"creator_deactivated"`) {
+		t.Errorf("正常 creator 应保持姓名字符串且不带停用字段：%s", listRaw)
+	}
+	if !strings.Contains(string(listRaw), `"assignee":"王工","assignee_deactivated":true`) {
+		t.Errorf("列表摘要 assignee 应保持姓名字符串并带停用兄弟字段：%s", listRaw)
+	}
+	if strings.Contains(string(listRaw), `"assignee":{"id":`) {
+		t.Errorf("列表摘要 assignee 不应改成对象：%s", listRaw)
 	}
 	var inbox inboxBody
 	s.Do(t, admin, http.MethodGet, "/api/v1/inbox", nil, &inbox)

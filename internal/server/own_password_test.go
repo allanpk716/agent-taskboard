@@ -62,3 +62,16 @@ func Test自助改密注销其他网页会话(t *testing.T) {
 		t.Fatalf("改密后 Agent token 状态码 = %d，想 200", res.StatusCode)
 	}
 }
+
+// 成员 Agent 不能自助改密：这个接口只认本人网页会话（#99 评审修正）。
+func Test成员Agent不能自助改密(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateMember("wang", "member-pass")
+	web := s.Login("wang", "member-pass")
+	_, token := s.IssueAgentToken(t, web, "笔记本")
+
+	status, code := changeOwnPassword(s, t, s.AgentClient(token), "member-pass", "new-member-pass")
+	if status != http.StatusForbidden || code != "web_session_required" {
+		t.Fatalf("Agent 自助改密状态码/错误码 = %d/%q，想 403/web_session_required", status, code)
+	}
+}

@@ -595,11 +595,11 @@ func (m *Manager) ByRef(ctx context.Context, ref string) (Full, error) {
 	t.DuplicateOfSeq = duplicateOfSeq.Int64
 	t.AssigneeID = assigneeID.Int64
 	t.AssigneeName = assigneeName.String
-	t.AssigneeDeactivated = assigneeDeactivated.Valid && assigneeDeactivated.String != ""
+	t.AssigneeDeactivated = nullStringSet(assigneeDeactivated)
 	t.Creator = Author{
 		MemberID:          memberID.Int64,
 		MemberName:        memberName.String,
-		MemberDeactivated: memberDeactivated.Valid && memberDeactivated.String != "",
+		MemberDeactivated: nullStringSet(memberDeactivated),
 		AgentID:           agentID.Int64,
 		AgentName:         agentName.String,
 		AgentRevoked:      agentRevoked.Valid && agentRevoked.String != "",
@@ -734,7 +734,7 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 		e.Actor = Author{
 			MemberID:          actorMemberID.Int64,
 			MemberName:        actorMemberName.String,
-			MemberDeactivated: actorMemberDeactivated.Valid && actorMemberDeactivated.String != "",
+			MemberDeactivated: nullStringSet(actorMemberDeactivated),
 			AgentID:           actorAgentID.Int64,
 			AgentName:         actorAgentName.String,
 			AgentRevoked:      actorAgentRevoked.Valid && actorAgentRevoked.String != "",
@@ -763,6 +763,10 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 		events = append(events, e)
 	}
 	return events, rows.Err()
+}
+
+func nullStringSet(v sql.NullString) bool {
+	return v.Valid && v.String != ""
 }
 
 // WaitingOn 是「等待方」推导结果，由时间线推导、不单独存储。

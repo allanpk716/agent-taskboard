@@ -463,8 +463,9 @@ spec 用户故事 84），没有 `inbox`：
   labels, waiting_on, created_at, updated_at, closed_at, reply_count, last_change,
   read_full`（时间线不在列表里给）；`include=brief` 附带 `brief`（拼好的 Markdown、
   模板工单的 `fields`）；`q` 命中附 `matched_in/snippet`。
-  摘要中的 `creator` 与 `assignee` 保持原有姓名字符串；该成员已停用时改为
-  `{id, name, deactivated: true}`（#115，正常账号不出现 `deactivated` 字段）。
+  摘要中的 `creator` 与 `assignee` 保持原有姓名字符串。成员已停用时额外出现
+  `creator_deactivated: true` 或 `assignee_deactivated: true`（只在停用时出现；
+  访客视图不出现），正常账号没有这两个兄弟字段。
 - `format=markdown` 返回 `text/markdown`：一张表格（编号/标题/状态/指派人/轮到/标签/更新，
   命中信息内联在标题行）+ 末尾「下一步」（读全文、跟 `next` 翻页、`changed_after` 增量）。
 
