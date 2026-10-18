@@ -226,6 +226,78 @@
   min-width: 0;
   overflow-y: auto;
 }
+/* #102：宽屏详情 = 标题区 + 对话主体 + 右侧固定宽信息栏。 */
+.pc-detail .detail .back {
+  display: none;
+}
+.detail-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding-top: 10px;
+}
+.detail-main {
+  flex: 1;
+  min-width: 0;
+}
+.dinfo {
+  width: 290px;
+  box-sizing: border-box;
+  flex: none;
+  background: #fff;
+  border: 1px solid #e6e9f0;
+  border-radius: 8px;
+  padding: 4px 14px 12px;
+}
+.dinfo section + section {
+  border-top: 1px solid #edf0f5;
+  margin-top: 8px;
+  padding-top: 2px;
+}
+.dinfo .sec-t {
+  margin: 10px 0 5px;
+  font-size: 13px;
+  color: #697386;
+}
+.dinfo .ival {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  min-height: 28px;
+}
+.link-card {
+  border: 1px solid #e6e9f0;
+  border-radius: 7px;
+  padding: 9px 10px;
+  margin: 7px 0;
+  display: grid;
+  gap: 4px;
+}
+.link-card .btn {
+  justify-self: start;
+}
+.short-link {
+  color: #24589f;
+  font-size: 12.5px;
+  word-break: break-all;
+}
+.pc-shell.compact .dsummary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 9px;
+  color: #55607a;
+  font-size: 12.5px;
+}
+.pc-shell.compact .dsummary .btn {
+  margin-left: auto;
+}
+.pc-shell.compact .dinfo {
+  width: calc(100% - 24px);
+  margin: 10px 12px 0;
+}
 .tcard.pc-row {
   border-radius: 8px;
   border-left: 3px solid transparent;

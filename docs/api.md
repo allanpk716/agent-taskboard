@@ -696,10 +696,11 @@ spec 用户故事 84），没有 `inbox`：
   都不填时默认 30 天，**没有永久有效的选项**（显式 `valid_days: 0`、非法天数、
   `expires_at` 不晚于现在或格式错误分别返回 422 `invalid_valid_days` /
   `invalid_expires_at`）。`can_edit_brief` 授予「可填写说明」权限（默认 false）。
-- 创建成功 `201`：`{id, url: "/g/<密钥>", note, expires_at, can_edit_brief}`。配置了
+- 创建成功 `201`：`{id, url: "/g/<密钥>", note, expires_at, can_edit_brief, use_count}`。配置了
   `[server] public_url` 时 `url` 是绝对地址（`https://…/g/<密钥>`，评审 P2-7）。
   完整密钥只在创建响应里出现一次（库中只存 SHA-256 哈希）；列表项是
-  `{id, note, expires_at, revoked_at?, can_edit_brief, created_by, created_at}`。
+  `{id, note, expires_at, revoked_at?, can_edit_brief, use_count, created_by, created_at}`；
+  `use_count` 是经这条链接写入的回复 / 说明修订数量（从时间线溯源，不记录单纯打开页面）。
 - 创建、撤销、延期各记一条时间线事件（`guest_link_created` / `guest_link_revoked` /
   `guest_link_extended`，都带 `note`；延期另带新 `expires_at`），并推进全局变更序号。
   这些事件对访客也可见（访客看不到的只有标签事件）。
