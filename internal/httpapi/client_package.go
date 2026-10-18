@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/allanpk716/agent-taskboard/internal/clientstamp"
+	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/updater"
 )
 
@@ -26,10 +27,10 @@ func (a *API) handleClientLatest(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
 		return
 	}
-	if _, ok := a.memberFromRequestFor(w, r, "桌面客户端只对成员开放"); !ok {
+	if !a.clientPackageViewer(w, r) {
 		return
 	}
-	pkg, err := updater.CurrentClientPackage(a.cfg.DataDir)
+	pkg, err := updater.CurrentClientMetadata(a.cfg.DataDir)
 	if err != nil {
 		a.writeClientUnavailable(w, err)
 		return
@@ -49,10 +50,10 @@ func (a *API) handleClientDownload(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
 		return
 	}
-	if _, ok := a.memberFromRequestFor(w, r, "桌面客户端只对成员开放"); !ok {
+	if !a.clientPackageViewer(w, r) {
 		return
 	}
-	pkg, err := updater.CurrentClientPackage(a.cfg.DataDir)
+	pkg, err := updater.CurrentClientMetadata(a.cfg.DataDir)
 	if err != nil {
 		a.writeClientUnavailable(w, err)
 		return
@@ -75,6 +76,23 @@ func (a *API) handleClientDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = w.Write(stamped.trailer)
+}
+
+func (a *API) clientPackageViewer(w http.ResponseWriter, r *http.Request) bool {
+	viewer, ok := a.viewerFromRequest(w, r)
+	if !ok {
+		return false
+	}
+	if viewer.Kind != identity.ViewerMember {
+		WriteError(w, http.StatusForbidden, CodeMembersOnly, "桌面客户端只对成员开放", "")
+		return false
+	}
+	if viewer.Agent != nil {
+		WriteError(w, http.StatusForbidden, CodeAgentNotAllowed,
+			"成员 Agent 不能查询或下载桌面客户端", "请在网页登录后下载，或使用客户端凭证")
+		return false
+	}
+	return true
 }
 
 func (a *API) publicURL(r *http.Request) string {
@@ -101,8 +119,11 @@ func (a *API) stampedClient(pkg *updater.ClientPackage, rawURL string) (*stamped
 		return nil, err
 	}
 	key := pkg.Version + "\x00" + pkg.Sha256 + "\x00" + rawURL
-	if cached, ok := a.stampedClients.Load(key); ok {
-		return cached.(*stampedClient), nil
+	a.stampedClientMu.Lock()
+	cached, ok := a.stampedClients[key]
+	a.stampedClientMu.Unlock()
+	if ok {
+		return cached, nil
 	}
 	f, err := os.Open(pkg.Path)
 	if err != nil {
@@ -114,12 +135,21 @@ func (a *API) stampedClient(pkg *updater.ClientPackage, rawURL string) (*stamped
 	if err != nil {
 		return nil, err
 	}
+	gotSha := hex.EncodeToString(hash.Sum(nil))
+	if gotSha != pkg.Sha256 || size != pkg.Size {
+		return nil, errors.New("代管客户端与清单不符，拒绝提供下载")
+	}
 	_, _ = hash.Write(trailer)
 	out := &stampedClient{
 		sha256: hex.EncodeToString(hash.Sum(nil)), size: size + int64(len(trailer)), trailer: trailer,
 	}
-	actual, _ := a.stampedClients.LoadOrStore(key, out)
-	return actual.(*stampedClient), nil
+	a.stampedClientMu.Lock()
+	if len(a.stampedClients) >= 8 {
+		a.stampedClients = make(map[string]*stampedClient)
+	}
+	a.stampedClients[key] = out
+	a.stampedClientMu.Unlock()
+	return out, nil
 }
 
 func (a *API) writeClientUnavailable(w http.ResponseWriter, err error) {

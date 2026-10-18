@@ -44,6 +44,7 @@ type updateResultBody struct {
 	ServerUpdated   bool     `json:"server_updated"`
 	WebUpdated      bool     `json:"web_updated"`
 	ClientUpdated   bool     `json:"client_updated"`
+	ClientError     string   `json:"client_error"`
 	RestartNeeded   bool     `json:"restart_needed"`
 	PreupdateBackup string   `json:"preupdate_backup"`
 }

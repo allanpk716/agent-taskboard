@@ -135,6 +135,8 @@ type Result struct {
 	ServerUpdated bool
 	WebUpdated    bool
 	ClientUpdated bool
+	// ClientError 是 client 组件的独立失败原因；server/web 不受它影响。
+	ClientError string
 	// RestartNeeded 报告是否需要重启服务（换了后端 exe 后由 NSSM 拉起新版本）。
 	RestartNeeded bool
 	// PreupdateBackup 是更新前备份的文件名。
@@ -217,19 +219,24 @@ func Apply(ctx context.Context, opt Options) (*Result, error) {
 		name := clientFileName
 		data, err := latest.Client.File(ctx, name)
 		if err != nil {
-			return nil, err
+			res.ClientError = err.Error()
+			needClient = false
 		}
-		fe := latest.Client.Manifest.FileEntry(name)
-		if fe == nil {
-			return nil, fmt.Errorf("client manifest 里没有产物 %s", name)
+		if needClient {
+			fe := latest.Client.Manifest.FileEntry(name)
+			if fe == nil {
+				res.ClientError = fmt.Sprintf("client manifest 里没有产物 %s", name)
+				needClient = false
+			} else {
+				clientPkg = ClientPackage{Version: latest.Client.Manifest.Version, Sha256: fe.Sha256, Size: fe.Size}
+				clientExe = data
+			}
 		}
-		clientPkg = ClientPackage{Version: latest.Client.Manifest.Version, Sha256: fe.Sha256, Size: fe.Size}
-		clientExe = data
 	}
 
 	var backup string
 	if needServer {
-		backup, err := opt.preupdate(ctx)
+		backup, err = opt.preupdate(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("更新前备份失败，更新中止（未替换 exe）：%w", err)
 		}
@@ -237,11 +244,15 @@ func Apply(ctx context.Context, opt Options) (*Result, error) {
 	}
 	if needClient {
 		if err := InstallClient(opt.DataDir, clientExe, clientPkg); err != nil {
-			return nil, err
+			res.ClientError = err.Error()
+		} else {
+			res.ClientUpdated = true
+			res.Steps = append(res.Steps, fmt.Sprintf("客户端 %s → %s", orUnknown(clientCur), latest.Client.Manifest.Version))
+			opt.logf("客户端已代管 %s → %s", orUnknown(clientCur), latest.Client.Manifest.Version)
 		}
-		res.ClientUpdated = true
-		res.Steps = append(res.Steps, fmt.Sprintf("客户端 %s → %s", orUnknown(clientCur), latest.Client.Manifest.Version))
-		opt.logf("客户端已代管 %s → %s", orUnknown(clientCur), latest.Client.Manifest.Version)
+	} else if res.ClientError != "" {
+		res.Steps = append(res.Steps, fmt.Sprintf("客户端 %s → %s 失败：%s",
+			orUnknown(clientCur), latest.Client.Manifest.Version, res.ClientError))
 	}
 	if needServer {
 		if err := swapExe(opt.exePath(), serverExe); err != nil {

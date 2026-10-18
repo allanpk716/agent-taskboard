@@ -1,6 +1,8 @@
 package updater
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -14,6 +16,23 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/release"
 )
+
+func testWebZip(t *testing.T, version string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	fw, err := zw.Create("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write([]byte("web " + version)); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
 
 // windowsAMD64Exe 构造 debug/pe 能识别的最小 PE 文件；代管包永远是
 // windows/amd64 产物，测试不能依赖宿主平台。
@@ -54,12 +73,16 @@ func Test安装代管客户端校验并保留上一版(t *testing.T) {
 	if pkg.Version != "2.0.0" || string(got) != string(v2) {
 		t.Fatalf("当前客户端不对：%s %+v", got, pkg)
 	}
-	prev, err := os.ReadFile(pkg.Path + ".prev")
+	prevPkg, err := PreviousClientPackage(dataDir)
 	if err != nil {
-		t.Fatalf("上一版应保留：%v", err)
+		t.Fatalf("读取上一版：%v", err)
 	}
-	if string(prev) != string(v1) {
-		t.Fatalf("上一版内容不对：%q", prev)
+	if prevPkg.Version != "1.0.0" || prevPkg.Path != filepath.Join(dataDir, clientDirName, "taskboard-client-1.0.0.exe") {
+		t.Fatalf("上一版 = %+v, 想 1.0.0 的版本化文件", prevPkg)
+	}
+	prev, err := os.ReadFile(prevPkg.Path)
+	if err != nil || string(prev) != string(v1) {
+		t.Fatalf("上一版内容不对：%q, %v", prev, err)
 	}
 }
 
@@ -100,6 +123,24 @@ func Test没有代管客户端时版本为空(t *testing.T) {
 	}
 	if got := ClientVersion(dataDir); got != "" {
 		t.Fatalf("未代管版本 = %q, 想空串", got)
+	}
+}
+
+func Test客户端版本查询只读元数据(t *testing.T) {
+	dataDir := t.TempDir()
+	current := windowsAMD64Exe(t)
+	if err := InstallClient(dataDir, current, clientManifest("1.0.0", current)); err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := CurrentClientPackage(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(pkg.Path); err != nil {
+		t.Fatal(err)
+	}
+	if got := ClientVersion(dataDir); got != "1.0.0" {
+		t.Fatalf("只读元数据时版本 = %q, 想 1.0.0", got)
 	}
 }
 func clientOnlyFixture(t *testing.T) *githubFixture {
@@ -155,11 +196,73 @@ func Test客户端SHA256不符时不替换(t *testing.T) {
 		Update:  config.Update{Sources: []string{"github"}, GitHub: config.UpdateGitHub{Repo: "example/example", Mirror: []string{fake.server.URL + "/m/"}}},
 		DataDir: dataDir, WebDir: t.TempDir(), ServerVersion: "0.0.0",
 	}
-	if _, err := Apply(context.Background(), opt); err == nil || !strings.Contains(err.Error(), "SHA256") {
-		t.Fatalf("SHA256 不符应拒绝：%v", err)
+	res, err := Apply(context.Background(), opt)
+	if err != nil || !strings.Contains(res.ClientError, "SHA256") {
+		t.Fatalf("SHA256 不符应成为组件失败：%v/%+v", err, res)
 	}
 	got, pkg := readClient(t, dataDir)
 	if pkg.Version != "0.9.0" || string(got) != string(before) {
 		t.Fatalf("拒绝后不应替换：%+v", pkg)
+	}
+}
+
+func Test客户端失败不阻断服务端和前端更新(t *testing.T) {
+	fx := newGitHubFixture("1.0.0", "1.0.0", "")
+	serverExe := windowsAMD64Exe(t)
+	serverFiles := map[string][]byte{
+		"taskboard.exe": serverExe, "taskboard-linux-amd64": serverExe,
+	}
+	serverManifest := testManifest("server", "1.0.0", "1.0.0", serverFiles)
+	serverManifestRaw, _ := json.Marshal(serverManifest)
+	fx.bySuffix["releases/download/server/v1.0.0/manifest.json"] = serverManifestRaw
+	for name, content := range serverFiles {
+		fx.bySuffix["releases/download/server/v1.0.0/"+name] = content
+	}
+	webZip := testWebZip(t, "1.0.0")
+	webFiles := map[string][]byte{"taskboard-web-1.0.0.zip": webZip}
+	webManifest := testManifest("web", "1.0.0", "", webFiles)
+	webManifestRaw, _ := json.Marshal(webManifest)
+	fx.bySuffix["releases/download/web/v1.0.0/manifest.json"] = webManifestRaw
+	fx.bySuffix["releases/download/web/v1.0.0/taskboard-web-1.0.0.zip"] = webZip
+	clientExe := windowsAMD64Exe(t)
+	clientFiles := map[string][]byte{"taskboard-client.exe": clientExe}
+	clientManifest := testManifest("client", "1.0.0", "", clientFiles)
+	clientManifestRaw, _ := json.Marshal(clientManifest)
+	fx.bySuffix["releases/download/client/v1.0.0/manifest.json"] = clientManifestRaw
+	fx.bySuffix["releases/download/client/v1.0.0/taskboard-client.exe"] = append(windowsAMD64Exe(t), "tampered"...)
+	fx.latest.Client = &release.LatestEntry{
+		Version: "1.0.0", Tag: "client/v1.0.0",
+		ManifestURL: "https://github.com/example/example/releases/download/client/v1.0.0/manifest.json",
+	}
+	fake := newFakeGitHub(t, fx.latest, fx.bySuffix)
+
+	dataDir, webDir, exeDir := t.TempDir(), t.TempDir(), t.TempDir()
+	exePath := filepath.Join(exeDir, "taskboard.exe")
+	if err := os.WriteFile(exePath, windowsAMD64Exe(t), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(webDir, "version.json"), []byte(`{"component":"web","version":"0.0.0"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Apply(context.Background(), Options{
+		Update: config.Update{Sources: []string{"github"}, GitHub: config.UpdateGitHub{
+			Repo: "example/example", Mirror: []string{fake.server.URL + "/m/"},
+		}}, DataDir: dataDir, WebDir: webDir, ExePath: exePath, ServerVersion: "0.0.0",
+		Preupdate: func(context.Context) (string, error) { return "backup.sql", nil },
+	})
+	if err != nil {
+		t.Fatalf("client 失败不应让整次更新失败：%v", err)
+	}
+	if !res.ServerUpdated || !res.WebUpdated || res.ClientUpdated {
+		t.Fatalf("组件更新结果 = %+v, 想 server/web 成功且 client 失败", res)
+	}
+	if !strings.Contains(res.ClientError, "SHA256") {
+		t.Fatalf("client 组件错误 = %q, 想包含 SHA256", res.ClientError)
+	}
+	if got := WebVersion(webDir); got != "1.0.0" {
+		t.Fatalf("前端版本 = %q, 想 1.0.0", got)
+	}
+	if got := ClientVersion(dataDir); got != "" {
+		t.Fatalf("client 不应被替换，当前版本 = %q", got)
 	}
 }

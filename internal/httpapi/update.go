@@ -75,6 +75,7 @@ func (a *API) handleAdminUpdate(w http.ResponseWriter, r *http.Request) {
 			SourceUsed: res.SourceUsed, Steps: res.Steps,
 			ServerUpdated: res.ServerUpdated, WebUpdated: res.WebUpdated,
 			ClientUpdated: res.ClientUpdated,
+			ClientError:   res.ClientError,
 			RestartNeeded: res.RestartNeeded, PreupdateBackup: res.PreupdateBackup,
 		}
 		if len(res.Steps) == 0 {
@@ -131,6 +132,7 @@ type updateResultView struct {
 	ServerUpdated   bool     `json:"server_updated"`
 	WebUpdated      bool     `json:"web_updated"`
 	ClientUpdated   bool     `json:"client_updated"`
+	ClientError     string   `json:"client_error,omitempty"`
 	RestartNeeded   bool     `json:"restart_needed"`
 	PreupdateBackup string   `json:"preupdate_backup,omitempty"`
 }
