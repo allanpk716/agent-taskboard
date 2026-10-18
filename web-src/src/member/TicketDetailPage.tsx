@@ -30,13 +30,8 @@ import { Lightbox } from '../shared/widgets'
 import { absoluteUrl, authorName, closeReasonText, fmtLinkExpiry, linkExpired } from '../shared/format'
 import { Confirm, Modal, copyText, invalidate, nav, toast, useLocationSearch } from './ui'
 import { HandoffDialog } from './HandoffDialog'
-import {
-  LabelChips,
-  chipClass,
-  filtersFromSearch,
-  toQuery,
-} from './TicketsPage'
-import { toggleLabelCondition } from './LabelFacets'
+import { LabelChips, chipClass } from './TicketsPage'
+import { filtersFromSearch, toQuery, toggleLabelCondition } from './listFilters'
 import { useLayoutTier } from './useLayoutTier'
 
 /* ---------------- 弹窗：打标签 ---------------- */

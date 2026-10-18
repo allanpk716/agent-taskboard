@@ -1,34 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import type { Dictionary } from './memberApi'
-import { toQuery, type ListFilters } from './TicketsPage'
-
-export type LabelConditionMode = 'include' | 'exclude'
-
-/** #106 复用：点一个标签 chip 时，在 URL 筛选里加入或移除对应条件。 */
-export function toggleLabelCondition(
-  filters: ListFilters,
-  label: string,
-  mode: LabelConditionMode = 'include',
-): Partial<ListFilters> {
-  const dimension = label.includes(':') ? label.split(':', 1)[0] : ''
-  if (mode === 'include') {
-    return {
-      label: dimension ? filters.label.filter((l) => l !== label) : toggleIn(filters.label, label),
-      labelAny: dimension ? toggleIn(filters.labelAny, label) : filters.labelAny,
-      noLabel: filters.noLabel.filter((l) => l !== label),
-    }
-  }
-  return {
-    label: filters.label.filter((l) => l !== label),
-    labelAny: filters.labelAny.filter((l) => l !== label),
-    noLabel: toggleIn(filters.noLabel, label),
-  }
-}
-
-function toggleIn(values: string[], value: string): string[] {
-  return values.includes(value) ? values.filter((v) => v !== value) : [...values, value]
-}
+import {
+  toQuery,
+  toggleLabelCondition,
+  type LabelConditionMode,
+  type ListFilters,
+} from './listFilters'
 
 interface CountsResponse {
   groups: { value: string; count: number }[]
@@ -105,7 +83,7 @@ export function LabelFacetPanel({
     void Promise.all(
       active.map(async (group) => {
         const body = await api(
-          `/api/v1/tickets/counts?group_by=${encodeURIComponent(group.undimensioned ? 'undimensioned' : group.name)}&${labelQuery(draft)}`,
+          `/api/v1/tickets/counts?group_by=${encodeURIComponent(group.undimensioned ? 'undimensioned' : group.name)}&${toQuery(draft)}`,
         ) as CountsResponse
         return [group.name, Object.fromEntries(body.groups.map((g) => [g.value, g.count]))] as const
       }),
@@ -123,7 +101,7 @@ export function LabelFacetPanel({
 
   useEffect(() => {
     let alive = true
-    void api(`/api/v1/tickets?${labelQuery(draft)}&limit=1`)
+    void api(`/api/v1/tickets?${toQuery(draft)}&limit=1`)
       .then((body: { total: number }) => {
         if (alive) setPreviewTotal(body.total)
       })
@@ -254,10 +232,6 @@ export function LabelFacetPanel({
       </footer>
     </section>
   )
-}
-
-function labelQuery(filters: ListFilters): string {
-  return toQuery(filters)
 }
 
 export function LabelFilterSummary({

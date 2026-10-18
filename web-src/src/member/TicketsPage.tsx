@@ -7,27 +7,17 @@ import { ApiError } from '../api'
 import { closeReasonText, fmtShort } from '../shared/format'
 import { api } from '../api'
 import { nav, useInvalidate, useLocationSearch } from './ui'
-import { LabelFacetPanel, LabelFilterSummary, toggleLabelCondition } from './LabelFacets'
+import { LabelFacetPanel, LabelFilterSummary } from './LabelFacets'
+import {
+  filtersFromSearch,
+  toQuery,
+  toggleLabelCondition,
+  type ListFilters,
+} from './listFilters'
 import { useLayoutTier } from './useLayoutTier'
 
-export interface ListFilters {
-  status: 'open' | 'closed' | 'all'
-  kind: '' | 'task' | 'report'
-  assignee: '' | 'me' | 'none'
-  waiting: '' | 'assignee' | 'creator' | 'guest' | 'department'
-  actor: '' | 'member' | 'agent'
-  q: string
-  // 更多筛选（评审 P2-11）
-  label: string[] // 标签（可重复）：维度:值 / 值 / 别名，服务端解析后回显标准值
-  labelAny: string[] // 维度:值；同一维度取或（#104）
-  noLabel: string[] // 排除条件（可重复）
-  template: string // 模板 key
-  creatorKind: '' | 'me' | 'guest'
-  creatorName: string // 成员姓名（填了优先于 creatorKind）
-  timeField: '' | 'created' | 'updated' | 'closed'
-  timeAfter: string // YYYY-MM-DD（含当天）
-  timeBefore: string // YYYY-MM-DD（含当天；查询用次日 00:00，API 的 before 不含时刻）
-}
+export { filtersFromSearch, toQuery, toggleLabelCondition } from './listFilters'
+export type { ListFilters } from './listFilters'
 
 export interface TicketListItem {
   number: string
@@ -48,84 +38,6 @@ interface ListResponse {
   count: number
   items: TicketListItem[]
   next: string | null
-}
-
-/** 日期字符串（YYYY-MM-DD）+1 天：查询的 *_before 不含时刻，填「到某天（含）」
- *  时用次日 00:00，让所选那天整天都在范围内。日历运算不经过本地时区。 */
-function nextDay(dateStr: string): string {
-  const y = parseInt(dateStr.slice(0, 4), 10)
-  const m = parseInt(dateStr.slice(5, 7), 10)
-  const d = parseInt(dateStr.slice(8, 10), 10)
-  const next = new Date(Date.UTC(y, m - 1, d) + 86400_000)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${next.getUTCFullYear()}-${pad(next.getUTCMonth() + 1)}-${pad(next.getUTCDate())}`
-}
-
-export function toQuery(f: ListFilters): string {
-  const q = new URLSearchParams()
-  q.set('status', f.status)
-  if (f.kind) q.set('kind', f.kind)
-  if (f.assignee) q.set('assignee', f.assignee)
-  if (f.waiting) q.set('waiting_on', f.waiting)
-  if (f.actor) q.set('actor_kind', f.actor)
-  if (f.q.trim()) q.set('q', f.q.trim())
-  for (const label of f.label) if (label.trim()) q.append('label', label.trim())
-  for (const label of f.labelAny) q.append('label_any', label)
-  for (const label of f.noLabel) q.append('no_label', label)
-  if (f.template) q.set('template', f.template)
-  if (f.creatorName.trim()) q.set('creator', f.creatorName.trim())
-  else if (f.creatorKind) q.set('creator', f.creatorKind)
-  if (f.timeField && f.timeAfter) q.set(`${f.timeField}_after`, f.timeAfter)
-  if (f.timeField && f.timeBefore) q.set(`${f.timeField}_before`, nextDay(f.timeBefore))
-  return q.toString()
-}
-
-export function filtersFromSearch(search: string): ListFilters {
-  const q = new URLSearchParams(search)
-  const get = <K extends keyof ListFilters>(key: K, fallback: ListFilters[K]) => {
-    const value = q.get(String(key))
-    return (value === null ? fallback : value) as ListFilters[K]
-  }
-  const filters: ListFilters = {
-    status: (get('status', 'open') || 'all') as ListFilters['status'],
-    kind: get('kind', '') as ListFilters['kind'],
-    assignee: get('assignee', '') as ListFilters['assignee'],
-    waiting: (q.get('waiting_on') ?? '') as ListFilters['waiting'],
-    actor: (q.get('actor_kind') ?? '') as ListFilters['actor'],
-    q: get('q', ''),
-    label: q.getAll('label').filter(Boolean),
-    labelAny: q.getAll('label_any').filter(Boolean),
-    noLabel: q.getAll('no_label').filter(Boolean),
-    template: get('template', ''),
-    creatorKind: '',
-    creatorName: '',
-    timeField: '',
-    timeAfter: '',
-    timeBefore: '',
-  }
-  for (const field of ['created', 'updated', 'closed'] as const) {
-    const after = q.get(`${field}_after`)
-    const before = q.get(`${field}_before`)
-    if (after || before) {
-      filters.timeField = field
-      filters.timeAfter = after ?? ''
-      filters.timeBefore = before ? prevDay(before) : ''
-      break
-    }
-  }
-  const creator = q.get('creator') ?? ''
-  if (creator === 'me' || creator === 'guest') filters.creatorKind = creator
-  else filters.creatorName = creator
-  return filters
-}
-
-function prevDay(dateStr: string): string {
-  const y = parseInt(dateStr.slice(0, 4), 10)
-  const m = parseInt(dateStr.slice(5, 7), 10)
-  const d = parseInt(dateStr.slice(8, 10), 10)
-  const prev = new Date(Date.UTC(y, m - 1, d) - 86400_000)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${prev.getUTCFullYear()}-${pad(prev.getUTCMonth() + 1)}-${pad(prev.getUTCDate())}`
 }
 
 /** 标签 chip 配色：按维度在种子维度表中的位置循环取色（只影响观感）。 */
