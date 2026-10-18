@@ -124,6 +124,42 @@ func (m *Manager) ClaimTx(ctx context.Context, tx *sql.Tx, ticketSeq int64,
 	return nil
 }
 
+// ValidateBriefIDsTx 校验说明 attachment_ids 里的每个附件：要么是本次凭证
+// 上传的待用附件，要么已经挂在这张工单的说明上（从列表删掉后仍可再挂回）。
+func (m *Manager) ValidateBriefIDsTx(ctx context.Context, tx *sql.Tx, ticketSeq int64,
+	principal Principal, ids []string) error {
+	for _, id := range ids {
+		parsed, err := ParseRef(id)
+		if err != nil {
+			return notUsable(id)
+		}
+		var (
+			state       string
+			attachedTo  sql.NullString
+			memberID    sql.NullInt64
+			linkID      sql.NullInt64
+			otherTicket int64
+		)
+		err = tx.QueryRowContext(ctx, `
+			SELECT ticket_seq, state, attached_to, uploader_member_id, uploader_link_id
+			FROM attachments WHERE id = ?`, parsed).
+			Scan(&otherTicket, &state, &attachedTo, &memberID, &linkID)
+		if err != nil || otherTicket != ticketSeq {
+			return notUsable(id)
+		}
+		if state == "pending" {
+			if !principal.owns(memberID.Int64, linkID.Int64) {
+				return notUsable(id)
+			}
+			continue
+		}
+		if state != "attached" || attachedTo.String != "说明" {
+			return notUsable(id)
+		}
+	}
+	return nil
+}
+
 func notUsable(id string) error {
 	return fmt.Errorf("%w（%s）", ErrNotUsable, id)
 }

@@ -568,6 +568,7 @@ type briefView struct {
 	Fields         *map[string]string  `json:"fields"`
 	Markdown       string              `json:"markdown"`
 	Revision       int64               `json:"revision"`
+	AttachmentIDs  []string            `json:"attachment_ids"`
 	LastRevised    lastRevisedView     `json:"last_revised"`
 	Template       *string             `json:"template"`
 	TemplateFields []templateFieldView `json:"template_fields,omitempty"` // 创建时版本的字段定义（访客网页按问句渲染说明气泡，#38）
@@ -729,14 +730,17 @@ type attachmentUsage struct {
 func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.Request, waitingOn tickets.WaitingOn) ticketView {
 	isGuest := viewer.Kind == identity.ViewerGuest
 	v := ticketView{
-		Number:      full.Number,
-		Seq:         full.Seq,
-		URL:         "/t/" + full.Number,
-		Kind:        full.Kind,
-		Title:       full.Title,
-		Status:      full.Status,
-		Creator:     newAuthorView(full.Creator),
-		Brief:       briefView{Markdown: full.BriefMD, Revision: full.BriefRevision, LastRevised: newLastRevisedView(full)},
+		Number:  full.Number,
+		Seq:     full.Seq,
+		URL:     "/t/" + full.Number,
+		Kind:    full.Kind,
+		Title:   full.Title,
+		Status:  full.Status,
+		Creator: newAuthorView(full.Creator),
+		Brief: briefView{
+			Markdown: full.BriefMD, Revision: full.BriefRevision,
+			AttachmentIDs: full.BriefAttachmentIDs, LastRevised: newLastRevisedView(full),
+		},
 		Attachments: []attachmentView{},
 	}
 	if full.AssigneeID != 0 {

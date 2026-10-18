@@ -269,6 +269,8 @@ spec 用户故事 84），没有 `inbox`：
     `role`：本人是指派人 → `assignee`（自派自时优先算指派人），否则创建者一方 → `creator`，
     其他成员 → `member`，访客 → `guest`（#36）。`your_turn` = 等待方轮到的成员是不是本人
     （成员按成员 id，访客看等待方是不是访客）。
+  - `brief.attachment_ids` 是整张工单的附件（有序；没有时为 `[]`）。字段和
+    `brief_md` 里的 `att:` 引用仍表示各自位置上的附件，不出现在这个数组里。
     访客：`member`/`agent` 为 `null`，另带 `link_note`/`link_expires_at`；能力表：`reply`/`upload` 需工单开启，
     `edit_brief` 需开启且链接带「可填写说明」，其余恒 false。
   - `waiting_on` 由时间线推导（规则见下「等待方与收件箱（#36）」），不单独存储。
@@ -317,20 +319,27 @@ spec 用户故事 84），没有 `inbox`：
 
 ### 修订标题/说明（#30；#34 起支持按字段修订）
 
-- 请求体 `{"title?": "…", "brief_md?": "…", "fields?": {…}, "base_revision": N}`，
+- 请求体 `{"title?": "…", "brief_md?": "…", "fields?": {…}, "attachment_ids?": ["att_N", …], "base_revision": N}`，
   只需传改动的部分。`brief_md` 只用于非模板工单；模板工单用 `fields` 传**改动的字段**
   （键是小节标题（问句）原文，未传的字段保持不变），两类修订按工单类型互斥：
   用错时分别返回 `422 fields_without_template` / `422 brief_md_with_template`。
 - `base_revision` 必填（`422 base_revision_required`），不等于当前版本时返回
   `409 revision_conflict`（附 `current_revision`，重读合并后再提交）。
   只有 title 或什么都没改的修订同样推进版本号。
+  `attachment_ids` 不传就沿用上一版；传了就整体替换，`[]` 表示清空；只改这个数组
+  也推进版本号。数组里的每个附件必须是本次凭证上传的待用附件，或已经挂在这张工单
+  说明上的附件，否则返回 `422 attachment_not_usable`（hint 指向上传接口）。保存时
+  待用附件认领为「说明」；从数组删掉的附件仍挂在说明上，可下载并出现在 Markdown
+  视图的附件小节，只是卡片底部不再显示。日志这类不属于某个字段的文件放进这个数组，
+  不要拼进字段或说明正文。
 - 权限：创建者本人及其任意 Agent（其他成员 `403 not_brief_owner`，用回复补充内容）；
   持「可填写说明」链接的访客（工单需开启；无权限的链接 `403 link_cannot_edit_brief`，
   关闭后 `409 ticket_closed`）；反馈入口的提交者视同创建者，靠提交响应里那条带
   「可填写说明」的访客链接行使这项权限（入口在 #35 落地）。修订不再做必填校验，
   但标题改成空白返回 `422 title_required`。访客修订可自报 `author_name`/`via_agent`
   （记在修订事件的作者上）。
-- 成功 `200`：`{"revision": N}`；每次修订记一条 `brief_revised` 事件（带 `revision`）。
+- 成功 `200`：`{"revision": N}`；每次修订记一条 `brief_revised` 事件（带 `revision`
+  和这一版的 `attachment_ids`）。
   字段修订的取值仍做结构校验：键必须是模板（创建时版本）里的字段（`422 unknown_field`）、
   单选值必须在选项里（`422 invalid_field_option`）、维度值必须是字典里在用的值
   （`422 unknown_label_value`；「不确定」除外）；但**不做必填校验**，可以把字段清空。

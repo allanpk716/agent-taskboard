@@ -62,7 +62,9 @@ export function BriefBubble({
   const atts = attachmentsOf(ticket)
   const fields = ticket.brief.template_fields ?? []
   const values = ticket.brief.fields ?? {}
-  const briefAtts = ticket.attachments.filter((a) => a.attached_to === '说明')
+  const briefAtts = ticket.brief.attachment_ids
+    .map((id) => ticket.attachments.find((a) => a.id === id))
+    .filter((a): a is Attachment => !!a)
   const reviser = ticket.brief.last_revised
   const reviserName =
     reviser.type === 'guest' ? `${reviser.display_name}（访客）` : reviser.display_name
