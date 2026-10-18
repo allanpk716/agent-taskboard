@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/allanpk716/agent-taskboard/internal/clientstamp"
 	"github.com/allanpk716/agent-taskboard/internal/release"
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
 	"github.com/allanpk716/agent-taskboard/internal/updater"
@@ -78,12 +79,17 @@ func Test客户端最新版本和下载仅成员或客户端凭证可调(t *test
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("客户端凭证查 latest 状态码 = %d", res.StatusCode)
 	}
+	data := testClientExe(t)
+	stamped, err := clientstamp.Append(data, s.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if latest != (struct {
 		Version     string `json:"version"`
 		Sha256      string `json:"sha256"`
 		Size        int64  `json:"size"`
 		DownloadURL string `json:"download_url"`
-	}{pkg.Version, pkg.Sha256, pkg.Size, "/api/v1/client/download"}) {
+	}{pkg.Version, sha256Sum(stamped), int64(len(stamped)), "/api/v1/client/download"}) {
 		t.Fatalf("latest 响应不对：%+v", latest)
 	}
 
@@ -98,8 +104,51 @@ func Test客户端最新版本和下载仅成员或客户端凭证可调(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(string(body), "desktop client\n") {
-		t.Fatalf("下载内容不对：%q", body)
+	if string(body) != string(stamped) {
+		t.Fatalf("下载内容不含请求地址的尾部戳")
+	}
+	stampURL, ok, err := clientstamp.ReadFromBytes(body)
+	if err != nil || !ok || stampURL != s.URL() {
+		t.Fatalf("下载尾部地址 = %q, %v, %v；想 %q", stampURL, ok, err, s.URL())
+	}
+}
+
+func Test客户端下载尾部使用public_url并与latest一致(t *testing.T) {
+	s := tbtest.Start(t, tbtest.WithPublicURL("https://taskboard.example.com"))
+	s.CreateMember("wang", "pass-word")
+	web := s.Login("wang", "pass-word")
+	data := testClientExe(t)
+	if err := updater.InstallClient(s.DataDir(), data, updater.ClientPackage{
+		Version: "1.2.0", Sha256: sha256Sum(data), Size: int64(len(data)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var latest struct {
+		Sha256 string `json:"sha256"`
+		Size   int64  `json:"size"`
+	}
+	res := s.Do(t, web, http.MethodGet, "/api/v1/client/latest", nil, &latest)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("latest 状态码 = %d", res.StatusCode)
+	}
+	res = s.Do(t, web, http.MethodGet, "/api/v1/client/download", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("下载状态码 = %d", res.StatusCode)
+	}
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamped, err := clientstamp.Append(data, "https://taskboard.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != string(stamped) {
+		t.Fatal("下载内容应使用 public_url 的尾部戳")
+	}
+	if latest.Sha256 != sha256Sum(body) || latest.Size != int64(len(body)) {
+		t.Fatalf("latest 元数据与下载内容不一致：%+v，下载 %d 字节", latest, len(body))
 	}
 }
 

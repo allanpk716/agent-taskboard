@@ -1,13 +1,23 @@
 package httpapi
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net/http"
 	"os"
+	"strings"
 
+	"github.com/allanpk716/agent-taskboard/internal/clientstamp"
 	"github.com/allanpk716/agent-taskboard/internal/updater"
 )
+
+type stampedClient struct {
+	sha256  string
+	size    int64
+	trailer []byte
+}
 
 // handleClientLatest 处理 GET /api/v1/client/latest：成员会话、成员 Agent
 // token 和客户端凭证都可查询服务端当前代管的桌面客户端。
@@ -24,8 +34,12 @@ func (a *API) handleClientLatest(w http.ResponseWriter, r *http.Request) {
 		a.writeClientUnavailable(w, err)
 		return
 	}
+	stamped, err := a.stampedClient(pkg, a.publicURL(r))
+	if err != nil {
+		panic(err)
+	}
 	writeJSON(w, http.StatusOK, clientLatestView{
-		Version: pkg.Version, Sha256: pkg.Sha256, Size: pkg.Size,
+		Version: pkg.Version, Sha256: stamped.sha256, Size: stamped.size,
 		DownloadURL: "/api/v1/client/download",
 	})
 }
@@ -43,6 +57,10 @@ func (a *API) handleClientDownload(w http.ResponseWriter, r *http.Request) {
 		a.writeClientUnavailable(w, err)
 		return
 	}
+	stamped, err := a.stampedClient(pkg, a.publicURL(r))
+	if err != nil {
+		panic(err)
+	}
 	f, err := os.Open(pkg.Path)
 	if err != nil {
 		panic(err)
@@ -56,6 +74,52 @@ func (a *API) handleClientDownload(w http.ResponseWriter, r *http.Request) {
 		// 响应已开始，只能中断连接；客户端会按 SHA256 重新校验。
 		return
 	}
+	_, _ = w.Write(stamped.trailer)
+}
+
+func (a *API) publicURL(r *http.Request) string {
+	if configured := a.cfg.Server.PublicURL; configured != "" {
+		return strings.TrimRight(configured, "/")
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if s := r.Header.Get("X-Forwarded-Proto"); s == "http" || s == "https" {
+		scheme = s
+	}
+	host := r.Host
+	if forwarded := r.Header.Get("X-Forwarded-Host"); forwarded != "" {
+		host = forwarded
+	}
+	return scheme + "://" + host
+}
+
+func (a *API) stampedClient(pkg *updater.ClientPackage, rawURL string) (*stampedClient, error) {
+	trailer, err := clientstamp.Append(nil, rawURL)
+	if err != nil {
+		return nil, err
+	}
+	key := pkg.Version + "\x00" + pkg.Sha256 + "\x00" + rawURL
+	if cached, ok := a.stampedClients.Load(key); ok {
+		return cached.(*stampedClient), nil
+	}
+	f, err := os.Open(pkg.Path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	hash := sha256.New()
+	size, err := io.Copy(hash, f)
+	if err != nil {
+		return nil, err
+	}
+	_, _ = hash.Write(trailer)
+	out := &stampedClient{
+		sha256: hex.EncodeToString(hash.Sum(nil)), size: size + int64(len(trailer)), trailer: trailer,
+	}
+	actual, _ := a.stampedClients.LoadOrStore(key, out)
+	return actual.(*stampedClient), nil
 }
 
 func (a *API) writeClientUnavailable(w http.ResponseWriter, err error) {

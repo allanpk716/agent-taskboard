@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
@@ -24,14 +25,15 @@ const SessionCookieName = "tb_session"
 
 // API 挂载 /api/v1 下的接口。
 type API struct {
-	ident         *identity.Manager
-	tickets       *tickets.Manager
-	templates     *templates.Manager
-	idem          *idempotency.Manager
-	atts          *attachments.Manager
-	backups       *ops.Backups
-	notifications *notifications.Manager
-	cfg           config.Config
+	ident          *identity.Manager
+	tickets        *tickets.Manager
+	templates      *templates.Manager
+	idem           *idempotency.Manager
+	atts           *attachments.Manager
+	backups        *ops.Backups
+	notifications  *notifications.Manager
+	cfg            config.Config
+	stampedClients sync.Map
 }
 
 func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager, backups *ops.Backups, cfg config.Config) *API {
