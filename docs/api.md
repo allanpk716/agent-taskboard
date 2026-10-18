@@ -428,6 +428,11 @@ spec 用户故事 84），没有 `inbox`：
     （自动换成标准值，解析结果在 `resolved_aliases` 里回显，如 `"7600 → 机型:UD-2300"`；
     解析不到 422 `unknown_label_value` + `suggestions`，未知维度 422 `unknown_dimension`；
     筛选解析含已停用值，便于统计历史工单）。
+  - `label_any`（可重复）：表达「同一维度取或」。每个值必须写成 `维度:值`，可写
+    别名并自动换成标准值；同一维度多个值之间取「或」，不同维度之间、以及它和
+    `label`、`no_label` 及其他条件之间都取「且」。不带维度、`维度:*`、未知维度或
+    未知值返回 400；错误码沿用 `invalid_label_any` / `wildcard_not_allowed` /
+    `unknown_dimension` / `unknown_label_value`，不带维度时的 `hint` 指向改用 `label`。
   - `assignee=<名|id>|me|none`、`creator=<名|id>|me|guest`（经反馈入口提交）、
     `waiting_on=assignee|creator|guest|department|me`（不存在的成员 422 `unknown_member`）。
   - `actor_kind=member|agent`（orchestrator 决议 5，「本人 / Agent」筛选）：按**创建者**
@@ -447,7 +452,7 @@ spec 用户故事 84），没有 `inbox`：
   翻页用偏移量 `page_token=p<offset>`（已接受的取舍：翻页可能漏项/重复，
   需要完整拉取时用 `sort=created` 或 `changed_after`），跟着响应里的 `next` 走。
 - 响应：`{total, count, items, next(下一页完整地址，没有时为 null), cursor,
-  filters(解析后的标准条件 + 实际 sort), resolved_aliases?}`。每项是**摘要**：
+  filters(解析后的标准条件，含 `label_any` + 实际 sort), resolved_aliases?}`。每项是**摘要**：
   `number, seq, url, kind, title, status, close_reason, template, creator, assignee,
   labels, waiting_on, created_at, updated_at, closed_at, reply_count, last_change,
   read_full`（时间线不在列表里给）；`include=brief` 附带 `brief`（拼好的 Markdown、
@@ -466,10 +471,16 @@ spec 用户故事 84），没有 `inbox`：
 
 ### GET /api/v1/tickets/counts?group_by=…
 
-- `group_by` = 一个标签维度 | `status|kind|assignee|close_reason|waiting_on`
+- `group_by` = 一个标签维度 | `status|kind|assignee|close_reason|waiting_on|undimensioned`
   （缺 `group_by` 422 `group_by_required`；非法 422 `invalid_group_by`）。
 - 筛选条件与列表相同；不接受 `sort/limit/page_token/include/format`
   （422 `unknown_parameter`）。
+- **分面计数**：`group_by` 是某个标签维度时，筛选里属于该维度的 `label_any` 和
+  `no_label` 在这次计数中忽略，其余条件照常生效。注意这是行为变化：原来按维度分组时，
+  同维度的 `no_label` 会参与筛选，现在改成忽略，用于回答「其他条件不变时，这个维度的
+  各个值各有几张」。
+- `group_by=undimensioned` 统计不带维度的标签各有几张；这时不带维度的 `label` 和
+  `no_label` 忽略，维度条件和其他条件照常生效。
 - 一张工单在该维度有多个值时每个值各算一次（附 `note` 说明各组之和可大于
   `total`）；没有该维度计入 `(无)`；`assignee` 无 → `(未指派)`、`close_reason`
   无 → `(未关闭)`、`waiting_on` 用中文描述分组。
