@@ -142,3 +142,87 @@ func (m *Manager) Unread(ctx context.Context, memberID int64) (UnreadResult, err
 		memberID).Scan(&out.Count, &out.LatestID)
 	return out, err
 }
+
+// ReadTarget 是一次标已读请求的三选一目标。
+type ReadTarget struct {
+	IDs    []int64
+	Ticket string
+	UpTo   int64
+}
+
+// MarkReadResult 返回这次真正从未读改为已读的通知 id，以及提交后的未读数。
+// #79 的 read 广播应从这一个返回值取数据。
+type MarkReadResult struct {
+	IDs         []int64
+	UnreadCount int
+}
+
+func (m *Manager) MarkRead(ctx context.Context, memberID int64, target ReadTarget) (MarkReadResult, error) {
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return MarkReadResult{}, err
+	}
+	defer tx.Rollback()
+
+	where := "member_id = ? AND read_at IS NULL"
+	args := []any{memberID}
+	switch {
+	case target.Ticket != "":
+		where += " AND ticket_number = ?"
+		args = append(args, target.Ticket)
+	case len(target.IDs) > 0:
+		ph := make([]string, len(target.IDs))
+		for i, id := range target.IDs {
+			ph[i] = "?"
+			args = append(args, id)
+		}
+		where += " AND id IN (" + strings.Join(ph, ",") + ")"
+	default:
+		where += " AND id <= ?"
+		args = append(args, target.UpTo)
+	}
+
+	rows, err := tx.QueryContext(ctx, "SELECT id FROM notifications WHERE "+where+" ORDER BY id", args...)
+	if err != nil {
+		return MarkReadResult{}, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return MarkReadResult{}, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return MarkReadResult{}, err
+	}
+	rows.Close()
+	if len(ids) > 0 {
+		readAt := m.clk.Now().Format(time.RFC3339Nano)
+		ph := make([]string, len(ids))
+		updateArgs := make([]any, 0, len(ids)+1)
+		updateArgs = append(updateArgs, readAt, memberID)
+		for i, id := range ids {
+			ph[i] = "?"
+			updateArgs = append(updateArgs, id)
+		}
+		if _, err := tx.ExecContext(ctx,
+			"UPDATE notifications SET read_at = ? WHERE member_id = ? AND id IN ("+strings.Join(ph, ",")+")",
+			updateArgs...); err != nil {
+			return MarkReadResult{}, err
+		}
+	}
+	var unread int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT COALESCE(SUM(read_at IS NULL), 0) FROM notifications WHERE member_id = ?", memberID,
+	).Scan(&unread); err != nil {
+		return MarkReadResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return MarkReadResult{}, err
+	}
+	return MarkReadResult{IDs: ids, UnreadCount: unread}, nil
+}
