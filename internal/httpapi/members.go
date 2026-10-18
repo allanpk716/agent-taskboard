@@ -48,16 +48,21 @@ func (a *API) handleMembersRoot(w http.ResponseWriter, r *http.Request) {
 // handleMembersRef 处理单个成员：
 //
 //	POST /api/v1/members/{id}/deactivate  停用（管理员网页会话，幂等）
+//	POST /api/v1/members/{id}/triager     设置初筛人（管理员网页会话，幂等）
 func (a *API) handleMembersRef(w http.ResponseWriter, r *http.Request) {
 	ref := strings.TrimPrefix(r.URL.Path, "/api/v1/members/")
 	id, sub, hasSub := strings.Cut(ref, "/")
-	if !hasSub || sub != "deactivate" {
+	if !hasSub || (sub != "deactivate" && sub != "triager") {
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
-			"成员账号接口：GET|POST /api/v1/members、POST /api/v1/members/{id}/deactivate")
+			"成员账号接口：GET|POST /api/v1/members、POST /api/v1/members/{id}/deactivate|triager")
 		return
 	}
 	if r.Method != http.MethodPost {
 		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "停用账号用 POST")
+		return
+	}
+	if sub == "triager" {
+		a.setTriager(w, r, id)
 		return
 	}
 	a.deactivateMember(w, r, id)
@@ -70,6 +75,7 @@ type memberListItem struct {
 	Username string `json:"username"`
 	Name     string `json:"name"`
 	Active   *bool  `json:"active,omitempty"`
+	Triager  bool   `json:"triager"`
 }
 
 func (a *API) listMembers(w http.ResponseWriter, r *http.Request) {
@@ -89,11 +95,36 @@ func (a *API) listMembers(w http.ResponseWriter, r *http.Request) {
 	refs := make([]memberListItem, 0, len(rows))
 	for _, m := range rows {
 		active := m.Active()
-		refs = append(refs, memberListItem{ID: m.ID, Username: m.Username, Name: m.Name, Active: &active})
+		refs = append(refs, memberListItem{ID: m.ID, Username: m.Username, Name: m.Name, Active: &active, Triager: m.Triager})
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Members []memberListItem `json:"members"`
 	}{Members: refs})
+}
+
+func (a *API) setTriager(w http.ResponseWriter, r *http.Request, idStr string) {
+	if _, ok := a.adminWebSessionFromRequest(w, r, "初筛人只能由管理员在网页上指定"); !ok {
+		return
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		WriteError(w, http.StatusNotFound, CodeMemberNotFound, "没有这位成员", "")
+		return
+	}
+	var req struct {
+		Triager bool `json:"triager"`
+	}
+	if !decodeJSON(w, r, &req, `{"triager": true}`) {
+		return
+	}
+	if err := a.ident.SetTriager(r.Context(), id, req.Triager); err != nil {
+		if errors.Is(err, identity.ErrMemberNotFound) {
+			WriteError(w, http.StatusNotFound, CodeMemberNotFound, "没有这位成员", "")
+			return
+		}
+		panic(err)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "triager": req.Triager})
 }
 
 // createMemberRequest 是 POST /api/v1/members 的请求体；密码不收（服务器生成

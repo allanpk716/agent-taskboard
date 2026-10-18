@@ -103,6 +103,7 @@ type MemberRow struct {
 	Member
 	// DeactivatedAt 非空表示已停用。
 	DeactivatedAt *time.Time
+	Triager       bool
 }
 
 // Active 报告账号是否启用。
@@ -112,7 +113,7 @@ func (r MemberRow) Active() bool { return r.DeactivatedAt == nil }
 // 停用的成员仍列出：历史署名与事件保留，页面上要能对上人。
 func (m *Manager) ListMembersDetailed(ctx context.Context) ([]MemberRow, error) {
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT id, username, name, is_admin, deactivated_at FROM members ORDER BY id`)
+		SELECT id, username, name, is_admin, deactivated_at, triager FROM members ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -123,11 +124,13 @@ func (m *Manager) ListMembersDetailed(ctx context.Context) ([]MemberRow, error) 
 			r           MemberRow
 			isAdmin     int
 			deactivated sql.NullString
+			triager     int
 		)
-		if err := rows.Scan(&r.ID, &r.Username, &r.Name, &isAdmin, &deactivated); err != nil {
+		if err := rows.Scan(&r.ID, &r.Username, &r.Name, &isAdmin, &deactivated, &triager); err != nil {
 			return nil, err
 		}
 		r.IsAdmin = isAdmin == 1
+		r.Triager = triager == 1
 		if deactivated.Valid && deactivated.String != "" {
 			t, err := time.ParseInLocation(time.RFC3339Nano, deactivated.String, clock.Beijing)
 			if err != nil {
@@ -138,6 +141,23 @@ func (m *Manager) ListMembersDetailed(ctx context.Context) ([]MemberRow, error) 
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// SetTriager 设置成员的显式初筛人标记（#75）。停用成员也可以保留标记；
+// 是否生效由调用方按启用状态过滤。
+func (m *Manager) SetTriager(ctx context.Context, id int64, triager bool) error {
+	res, err := m.db.ExecContext(ctx, `UPDATE members SET triager = ? WHERE id = ?`, boolToInt(triager), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrMemberNotFound
+	}
+	return nil
 }
 
 // GenerateInitialPassword 生成一位新成员的初始密码（创建成员账号时由服务器
