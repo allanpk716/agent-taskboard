@@ -119,8 +119,8 @@ test('派活到验收：A建单指派B，B收件箱交付，A验收关闭', asyn
   await page.getByLabel('指派给').selectOption('王工')
   await page.getByRole('button', { name: '创建工单' }).click()
   await expect(page.locator('.donet')).toContainText('已创建')
-  const shareText = (await page.locator('.linkbox').textContent()) ?? ''
-  const number = shareText.match(/\/t\/(\d{8}-\d+)/)![1]
+  const doneText = (await page.locator('.donet').textContent()) ?? ''
+  const number = doneText.match(/(\d{8}-\d{3})/)![1]
 
   // B（王工）登录：收件箱出现「新指派给你」
   await login(page, await wang())
@@ -258,11 +258,12 @@ test('详情页打标签改派关闭与重开', async ({ page, request }) => {
   await page.getByText('标签 · 指派 · 访客链接').click()
   await expect(page.locator('.mmeta .chip', { hasText: '机型:XYZ-999' })).toBeVisible()
 
-  // 指派给王工：出现 share_text
+  // 指派给王工：弹窗原地切换成交接文案
   await page.locator('.actrow').getByRole('button', { name: /指派|改派/ }).click()
   await page.getByLabel('指派给').selectOption('王工')
   await page.getByRole('button', { name: /确认指派|确认改派/ }).click()
-  await expect(page.locator('.linkbox')).toContainText('转给你了')
+  await expect(page.locator('.modal')).toContainText('发给王工（含人话行）')
+  await expect(page.locator('[data-handoff-preview]')).toContainText('转给你了')
   await page.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(page.locator('.mmeta')).toContainText('王工')
 
@@ -277,8 +278,8 @@ test('详情页打标签改派关闭与重开', async ({ page, request }) => {
 })
 
 // 7. 建单（自由格式）：缺维度标签被拦下，补上后创建成功并指派，
-//    完成页显示可复制的 share_text。
-test('建单（自由格式）：缺维度标签被拦，指派后显示 share_text', async ({ page }) => {
+//    完成页显示交接入口。
+test('建单（自由格式）：缺维度标签被拦，指派后显示交接入口', async ({ page }) => {
   await login(page, ADMIN)
   await page.locator('.b-tabs').getByRole('link', { name: '建单' }).click()
 
@@ -304,10 +305,10 @@ test('建单（自由格式）：缺维度标签被拦，指派后显示 share_t
   await page.getByLabel('指派给').selectOption('王工')
   await page.getByRole('button', { name: '创建工单' }).click()
 
-  // 完成页：编号、share_text 与复制按钮
+  // 完成页：编号与交接文案
   await expect(page.locator('.donet')).toContainText('已创建')
-  const share = page.locator('.linkbox')
-  await expect(share).toContainText('王工')
+  const share = page.locator('[data-handoff-preview]')
+  await expect(share).toContainText('给你派了一张工单')
   await expect(share).toContainText('下面这段交给你的 Agent')
   const shareText = ((await share.textContent()) ?? '').trim()
   expect(shareText).toMatch(/\/t\/\d{8}-\d{3}/)

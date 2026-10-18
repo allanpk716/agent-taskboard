@@ -149,16 +149,18 @@ function LabelDialog({
 function AssignDialog({
   ticket,
   members,
+  me,
   onChanged,
   onClose,
 }: {
   ticket: MemberTicket
   members: MemberRef[]
+  me?: { id: number; name: string }
   onChanged: () => void
   onClose: () => void
 }) {
   const [choice, setChoice] = useState('')
-  const [share, setShare] = useState<string | null>(null)
+  const [handoff, setHandoff] = useState<{ text: string; shareText: string; assignee: string } | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const changing = !!ticket.assignee?.member
 
@@ -167,40 +169,33 @@ function AssignDialog({
     try {
       const res = await assignTicket(ticket.number, choice)
       onChanged()
-      if (res.share_text) {
-        setShare(res.share_text)
+      if (choice === me?.name) {
+        onClose()
+        toast(`已指派给 ${choice}`)
         return
       }
-      onClose()
-      toast(`已指派给 ${choice}`)
+      const agentText = res.share_text?.split(/\n\s*\n/).slice(1).join('\n\n')
+      if (!res.share_text || !agentText) {
+        onClose()
+        toast(`已指派给 ${choice}`)
+        return
+      }
+      setHandoff({ text: agentText, shareText: res.share_text, assignee: choice })
     } catch (e) {
       setErr(e instanceof ApiError ? `${e.code}：${e.message}` : '指派失败，请重试')
     }
   }
 
-  if (share !== null) {
+  if (handoff !== null) {
     return (
-      <Modal title={`已指派给 ${choice}`} onClose={onClose}>
-        <div className="hint">改派响应里带一句可直接转发的 share_text：</div>
-        <div className="linkbox">{share}</div>
-        <div className="mrow">
-          <span className="sp" />
-          <button
-            className="btn ghost"
-            onClick={onClose}
-          >
-            关闭
-          </button>
-          <button
-            className="btn"
-            onClick={() => {
-              void copyText(share).then((ok) => toast(ok ? '✓ 已复制到剪贴板' : '复制失败，请手动选择文字复制'))
-            }}
-          >
-            复制 share_text
-          </button>
-        </div>
-      </Modal>
+      <HandoffDialog
+        handoffText={handoff.text}
+        handoffShareText={handoff.shareText}
+        assigneeName={handoff.assignee}
+        isAssignee={false}
+        defaultMode="share"
+        onClose={onClose}
+      />
     )
   }
 
@@ -790,7 +785,13 @@ export function TicketDetailPage({
 
       {dialog === 'label' && <LabelDialog ticket={ticket} onChanged={changed} onClose={() => setDialog(null)} />}
       {dialog === 'assign' && (
-        <AssignDialog ticket={ticket} members={members} onChanged={changed} onClose={() => setDialog(null)} />
+        <AssignDialog
+          ticket={ticket}
+          members={members}
+          me={me}
+          onChanged={changed}
+          onClose={() => setDialog(null)}
+        />
       )}
       {dialog === 'links' && <LinksDialog ticket={ticket} onChanged={changed} onClose={() => setDialog(null)} />}
       {dialog === 'handoff' && (
