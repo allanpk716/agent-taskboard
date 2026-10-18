@@ -78,7 +78,8 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 - 列表响应 `{items, cursor, unread_count, next}`；`next` 保留 `unread`、`limit`、`format`，只替换 `before`。
 - 通知项含 `id, ticket{number,title,url}, kind, reason, text, event, summary, read_new, read_full, created_at, read_at`。
 - 轮到类通知的 `reason` 取固定值：`assigned`、`delivered`、`assignee_replied`、
-  `returned`、`creator_replied`、`guest_replied`、`guest_completed`、`guest_revised`、`department`。
+  `returned`、`creator_replied`、`agent_replied`、`guest_replied`、`guest_completed`、
+  `guest_revised`、`department`。
 - 游标格式错误：400 `invalid_after` / `invalid_before`；SSE 重连头错误：400 `invalid_last_event_id`。
 
 ## 桌面客户端凭证与服务端代管（#74）
