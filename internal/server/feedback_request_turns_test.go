@@ -81,8 +81,11 @@ func Test未指派请人反馈由初筛人接收补全通知(t *testing.T) {
 		t.Errorf("初筛人收件箱原因 = %q, 想 访客补全了说明", got)
 	}
 	li := notificationsOf(t, w, w.webLi, "")
-	if len(li.Items) != 1 || li.Items[0].Kind != "turn" || li.Items[0].Reason != "guest_completed" {
-		t.Fatalf("初筛人通知 = %+v, 想 turn/guest_completed", li.Items)
+	if len(li.Items) != 1 || li.Items[0].Kind != "turn" || li.Items[0].Reason != "department" {
+		t.Fatalf("初筛人通知 = %+v, 想 turn/department", li.Items)
+	}
+	if li.Items[0].Text != "工单「未指派的反馈」轮到本部门，待初筛" {
+		t.Fatalf("初筛人通知文案 = %q", li.Items[0].Text)
 	}
 }
 

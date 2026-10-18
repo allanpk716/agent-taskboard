@@ -120,8 +120,10 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 			for _, id := range in.Triagers {
 				if !hasDecisionFor(out, id) {
 					out = append(out, Decision{
-						MemberID: id, Kind: KindTurn, Reason: notificationReason(turn.Why),
-						Text: notificationTextActor(in.Actor) + replySuffix(turn.Why) + "「" + in.After.Title + "」",
+						MemberID: id,
+						Kind:     KindTurn,
+						Reason:   ReasonDepartment,
+						Text:     "工单「" + in.After.Title + "」轮到本部门，待初筛",
 					})
 				}
 			}
