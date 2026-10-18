@@ -264,6 +264,25 @@ export async function revokeAgentToken(id: number): Promise<void> {
   await api(`/api/v1/me/agent-tokens/${id}`, { method: 'DELETE' })
 }
 
+/* ---------------- 桌面客户端（#80） ---------------- */
+
+export interface ClientCredentialRow {
+  id: number
+  hostname: string
+  created_at: string
+  last_used_at: string
+  client_version: string
+}
+
+export async function fetchClients(): Promise<ClientCredentialRow[]> {
+  const body = await api('/api/v1/me/clients')
+  return (body.clients ?? []) as ClientCredentialRow[]
+}
+
+export async function revokeClient(id: number): Promise<void> {
+  await api(`/api/v1/me/clients/${id}`, { method: 'DELETE' })
+}
+
 /* ---------------- 成员账号（#42，仅管理员） ---------------- */
 
 export interface MemberAccount {

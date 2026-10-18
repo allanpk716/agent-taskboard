@@ -56,6 +56,12 @@ form button:disabled {
   color: #b91c1c;
 }
 
+.client-hostname {
+  margin: -1rem 0 1.5rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
 .shell header {
   display: flex;
   justify-content: space-between;

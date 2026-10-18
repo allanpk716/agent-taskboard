@@ -129,6 +129,15 @@ const (
 	CodeGroupByRequired  = "group_by_required"  // 计数缺 group_by
 	CodeInvalidGroupBy   = "invalid_group_by"   // 不能按这个维度分组
 	CodeInvalidActorKind = "invalid_actor_kind" // actor_kind 只能是 member/agent
+
+	// #80：桌面客户端凭证。
+	CodeInvalidClientPort        = "invalid_client_port"
+	CodeInvalidClientConnect     = "invalid_client_connect"
+	CodeInvalidClientCode        = "invalid_client_code"
+	CodeClientCredentialNotFound = "client_credential_not_found"
+	CodeClientScope              = "client_scope"
+	CodePasswordTooShort         = "password_too_short"
+	CodeCannotResetSelf          = "cannot_reset_self"
 )
 
 // ErrorBody 是统一错误格式 {error:{code, message, hint?}} 的内层；

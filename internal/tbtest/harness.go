@@ -6,10 +6,13 @@ package tbtest
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,8 +22,8 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
-	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
+	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
 	"github.com/allanpk716/agent-taskboard/internal/server"
 	"github.com/allanpk716/agent-taskboard/internal/store"
@@ -280,6 +283,79 @@ func (s *Server) IssueAgentToken(t testing.TB, c *http.Client, name string) (int
 	}
 	return issued.ID, issued.Token
 }
+
+// ClientConnect 是一次「连接这台电脑」请求得到的一次性 code 和回调信息。
+type ClientConnect struct {
+	Code         string
+	State        string
+	RedirectURL  string
+	CodeVerifier string
+}
+
+// IssuedClientCredential 是客户端凭证的签发结果；明文 token 只出现一次。
+type IssuedClientCredential struct {
+	ID        int64  `json:"id"`
+	Token     string `json:"token"`
+	Hostname  string `json:"hostname"`
+	CreatedAt string `json:"created_at"`
+}
+
+// StartClientConnect 模拟桌面客户端打开浏览器并由成员点击「连接」。
+func (s *Server) StartClientConnect(t testing.TB, c *http.Client, hostname string) ClientConnect {
+	t.Helper()
+	var created struct {
+		RedirectURL string `json:"redirect_url"`
+	}
+	res := s.Do(t, c, http.MethodPost, "/api/v1/client/connect", map[string]any{
+		"port": 49161, "state": "client-state", "code_challenge": testClientChallenge(), "hostname": hostname,
+	}, &created)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("创建客户端连接 code 失败：状态码 %d", res.StatusCode)
+	}
+	u, err := url.Parse(created.RedirectURL)
+	if err != nil {
+		t.Fatalf("解析客户端回调失败：%v", err)
+	}
+	code := u.Query().Get("code")
+	state := u.Query().Get("state")
+	if code == "" || state == "" {
+		t.Fatalf("客户端回调缺 code/state：%q", created.RedirectURL)
+	}
+	return ClientConnect{Code: code, State: state, RedirectURL: created.RedirectURL, CodeVerifier: testClientVerifier}
+}
+
+// ExchangeClientCode 模拟客户端用 code + PKCE verifier 换取凭证。
+func (s *Server) ExchangeClientCode(t testing.TB, connect ClientConnect, verifier string) IssuedClientCredential {
+	t.Helper()
+	var issued IssuedClientCredential
+	res := s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/client/token",
+		map[string]string{"code": connect.Code, "code_verifier": verifier}, &issued)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("换取客户端凭证失败：状态码 %d", res.StatusCode)
+	}
+	if issued.Token == "" {
+		t.Fatal("换取客户端凭证成功但没有 token")
+	}
+	return issued
+}
+
+// IssueClientCredential 走完整 PKCE 流程，为当前网页成员签发客户端凭证。
+func (s *Server) IssueClientCredential(t testing.TB, c *http.Client, hostname string) IssuedClientCredential {
+	t.Helper()
+	return s.ExchangeClientCode(t, s.StartClientConnect(t, c, hostname), testClientVerifier)
+}
+
+// ClientCredentialClient 模拟桌面客户端调用 API。
+func (s *Server) ClientCredentialClient(token string) *http.Client {
+	return &http.Client{Transport: bearerTransport{token: token}}
+}
+
+func testClientChallenge() string {
+	sum := sha256.Sum256([]byte(testClientVerifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+const testClientVerifier = "test-verifier-with-enough-characters-for-pkce-1234567890"
 
 type cookieTransport struct {
 	cookie string
