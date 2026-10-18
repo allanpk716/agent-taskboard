@@ -21,7 +21,7 @@ import { fmtShort } from '../shared/format'
 import { copyText, nav, toast } from './ui'
 import { Confirm, Modal } from './ui'
 
-export function MePage({ me }: { me: Me }) {
+export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }) {
   const [tokens, setTokens] = useState<AgentTokenRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [issuing, setIssuing] = useState(false)
@@ -225,6 +225,12 @@ export function MePage({ me }: { me: Me }) {
           </button>
         </div>
       </div>
+
+      {serverVersion && (
+        <div className="member-version" data-testid="member-version">
+          工单板 v{serverVersion}
+        </div>
+      )}
 
       {issuing && (
         <IssueTokenDialog

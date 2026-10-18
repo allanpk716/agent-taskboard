@@ -7,7 +7,7 @@ export default defineConfig({
   testDir: 'e2e',
   timeout: 30_000,
   fullyParallel: false, // 同一个服务实例，串行跑
-  use: { baseURL },
+  use: { baseURL, viewport: { width: 390, height: 844 } },
   outputDir: 'test-results',
   reporter: [['list'], ['html', { open: 'never', outputFolder: '../playwright-report' }]],
   webServer: {

@@ -4,7 +4,7 @@
 // 与管理页入口（仅管理员，#42）；收件箱顶部是「请人反馈」向导入口（#64）。
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '../api'
-import { fetchInbox, fetchSession, type Me } from './memberApi'
+import { fetchInbox, fetchServerVersion, fetchSession, type Me } from './memberApi'
 import { InboxPage } from './InboxPage'
 import { TicketsPage } from './TicketsPage'
 import { TicketDetailPage } from './TicketDetailPage'
@@ -16,6 +16,7 @@ import { TemplateEditPage } from './TemplateEditPage'
 import { MePage } from './MePage'
 import { AdminPage } from './AdminPage'
 import { nav, useNavSeq, useRoute, type Route } from './ui'
+import { useLayoutTier } from './useLayoutTier'
 
 function pageTitle(route: Route): string {
   switch (route.page) {
@@ -45,9 +46,11 @@ function pageTitle(route: Route): string {
 export function MemberApp() {
   const route = useRoute()
   const navSeq = useNavSeq()
+  const tier = useLayoutTier()
   const [me, setMe] = useState<Me | null>(null)
   const [denied, setDenied] = useState(false)
   const [inboxCount, setInboxCount] = useState(0)
+  const [serverVersion, setServerVersion] = useState<string | undefined>()
 
   useEffect(() => {
     fetchSession()
@@ -59,6 +62,10 @@ export function MemberApp() {
         }
         setDenied(true)
       })
+  }, [])
+
+  useEffect(() => {
+    fetchServerVersion().then(setServerVersion).catch(() => {})
   }, [])
 
   const refreshInbox = useCallback(() => {
@@ -94,6 +101,22 @@ export function MemberApp() {
   const h = route
   const toolsOn = h.page === 'tools' || h.page === 'templates' || h.page === 'templateEdit'
   const meOn = h.page === 'me' || h.page === 'admin'
+  const centered =
+    ['tools', 'me', 'admin', 'new', 'templates', 'templateEdit', 'feedback'].includes(h.page)
+  const page = (
+    <>
+      {route.page === 'inbox' && <InboxPage key={navSeq} />}
+      {route.page === 'tickets' && <TicketsPage key={navSeq} />}
+      {route.page === 'new' && <NewTicketPage key={navSeq} />}
+      {route.page === 'feedback' && <FeedbackRequestPage key={navSeq} me={me} />}
+      {route.page === 'detail' && <TicketDetailPage key={navSeq} ticketRef={route.ref} me={me} />}
+      {route.page === 'tools' && <ToolsPage key={navSeq} />}
+      {route.page === 'me' && <MePage key={navSeq} me={me} serverVersion={serverVersion} />}
+      {route.page === 'templates' && <TemplatesPage key={navSeq} />}
+      {route.page === 'templateEdit' && <TemplateEditPage key={navSeq} templateKey={route.key} />}
+      {route.page === 'admin' && <AdminPage key={navSeq} me={me} />}
+    </>
+  )
   const tab = (k: Route['page'], icon: string, name: string, badge?: number, on?: boolean) => (
     <a
       className={`tabbtn${(on ?? h.page === k) ? ' on' : ''}`}
@@ -109,6 +132,59 @@ export function MemberApp() {
     </a>
   )
 
+  if (tier !== 'mobile') {
+    const compact = tier !== 'wide'
+    const item = (
+      href: string,
+      icon: string,
+      full: string,
+      short: string,
+      on: boolean,
+      badge?: number,
+      primary?: boolean,
+    ) => (
+      <a
+        className={`pc-nav-item${primary ? ' primary' : ''}${on ? ' on' : ''}`}
+        href={href}
+        onClick={(e) => {
+          e.preventDefault()
+          nav(href)
+        }}
+      >
+        <span aria-hidden="true">{icon}</span>
+        <span>{compact ? short : full}</span>
+        {!!badge && <b>{badge}</b>}
+      </a>
+    )
+    return (
+      <div className={`pc-shell${compact ? ' compact' : ''}`}>
+        <nav className="pc-sidebar" aria-label="侧栏">
+          <a className="pc-wordmark" href="/">
+            工单板
+          </a>
+          {item('/feedback', '✚', '＋ 请人反馈', '请人反馈', h.page === 'feedback', undefined, true)}
+          {item('/', '📥', '收件箱', '收件箱', h.page === 'inbox' || h.page === 'detail', inboxCount)}
+          {item('/tickets', '🗂', '工单', '工单', h.page === 'tickets')}
+          {item('/new', '📝', '建单（高级）', '建单', h.page === 'new')}
+          {item('/tools', '🧰', '工具', '工具', toolsOn)}
+          {item('/me', '👤', '我的', '我的', meOn)}
+          {me.is_admin && item('/admin', '🛡', '管理', '管理', h.page === 'admin')}
+          <div className="pc-side-foot">
+            {!compact && (
+              <div>
+                {me.name} · {me.is_admin ? '管理员' : '成员'}
+              </div>
+            )}
+            {serverVersion && <small>工单板 v{serverVersion}</small>}
+          </div>
+        </nav>
+        <main className="pc-main">
+          <div className={centered ? 'pc-centered' : undefined}>{page}</div>
+        </main>
+      </div>
+    )
+  }
+
   return (
     <main className="member-root">
       <div className="b-app">
@@ -119,19 +195,8 @@ export function MemberApp() {
             <i>{me.is_admin ? '管理员' : '成员'}</i>
           </div>
         </header>
-        <div className="b-body">
-          {route.page === 'inbox' && <InboxPage key={navSeq} />}
-          {route.page === 'tickets' && <TicketsPage key={navSeq} />}
-          {route.page === 'new' && <NewTicketPage key={navSeq} />}
-          {route.page === 'feedback' && <FeedbackRequestPage key={navSeq} me={me} />}
-          {route.page === 'detail' && <TicketDetailPage key={navSeq} ticketRef={route.ref} me={me} />}
-          {route.page === 'tools' && <ToolsPage key={navSeq} />}
-          {route.page === 'me' && <MePage key={navSeq} me={me} />}
-          {route.page === 'templates' && <TemplatesPage key={navSeq} />}
-          {route.page === 'templateEdit' && <TemplateEditPage key={navSeq} templateKey={route.key} />}
-          {route.page === 'admin' && <AdminPage key={navSeq} me={me} />}
-        </div>
-        <nav className="b-tabs">
+        <div className="b-body">{page}</div>
+        <nav className="b-tabs" aria-label="主导航">
           {tab('inbox', '📥', '收件箱', inboxCount)}
           {tab('tickets', '🗂', '工单')}
           <a

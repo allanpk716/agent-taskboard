@@ -55,6 +55,10 @@ export async function fetchInbox(): Promise<InboxResponse> {
   return api('/api/v1/inbox')
 }
 
+export async function fetchServerVersion(): Promise<string> {
+  return (await api('/api/v1/health')).server_version as string
+}
+
 export async function fetchMembers(): Promise<MemberRef[]> {
   const body = await api('/api/v1/members')
   return body.members as MemberRef[]

@@ -177,6 +177,7 @@ test('维度下拉框输入别名能选中对应的标准值', async ({ page, re
 //    对话，时间线出现修订事件，插图挂在说明里。必填项在建单时已填齐，提交
 //    不会被拦。
 test('修改说明提交后回到对话，时间线出现修订事件', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
   const seed = await seedEditableTicket(request)
   await page.goto(`/g/${seed.linkKey}`)
 
