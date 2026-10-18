@@ -77,6 +77,8 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 
 - 列表响应 `{items, cursor, unread_count, next}`；`next` 保留 `unread`、`limit`、`format`，只替换 `before`。
 - 通知项含 `id, ticket{number,title,url}, kind, reason, text, event, summary, read_new, read_full, created_at, read_at`。
+- 轮到类通知的 `reason` 取固定值：`assigned`、`delivered`、`assignee_replied`、
+  `returned`、`creator_replied`、`guest_replied`、`guest_completed`、`guest_revised`、`department`。
 - 游标格式错误：400 `invalid_after` / `invalid_before`；SSE 重连头错误：400 `invalid_last_event_id`。
 
 ## 桌面客户端凭证与服务端代管（#74）
@@ -385,6 +387,13 @@ spec 用户故事 84），没有 `inbox`：
 ```
 已关闭                        → 无等待方（party=none）
 尚无回复 或 最后是访客回复     → 指派人（未指派 → department）
+开启 且 有仍有效的 can_edit_brief 访客链接 且 访客未修订说明 且 尚无回复
+                               → 访客（text=访客补全说明；不进收件箱）
+访客修订说明                   → 与访客回复同属访客一方行动；首次为 guest_completed
+                                 （访客补全了说明），之后为 guest_revised（访客修订了说明）
+can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无回复
+                               → 指派人/department，原因 guest_not_completed（访客未补全说明）；
+                                 过期只在读取时重新推导，不产生事件或通知
 任务 且 创建者是成员 且 创建者≠指派人（“有对手”）：
     指派人一方回复             → 创建者（原因：已交付待验收 若带 deliver，否则 指派人回复了）
     创建者一方回复             → 指派人（原因：此前有交付则 发起人退回修改，否则 发起人回复了）
@@ -393,9 +402,10 @@ spec 用户故事 84），没有 `inbox`：
 成员 Agent 的回复算其所属成员一方；改派后按当前指派人重算，原指派人的回复不再参与
 ```
 
-- `waiting_on = {party, member, text, reason}`；`text` 示例：`李工（指派人）`、
-  `王工（发起人）`、`访客`、`本部门（未指派）`、`无（已关闭）`。未指派时原因只写
-  「尚未指派」或「访客回复了」（ticket-query 原型的修正：不能写「新指派给你」）。
+- `waiting_on = {party, member, text, reason, why}`；`text` 示例：`李工（指派人）`、
+  `王工（发起人）`、`访客`、`访客补全说明`、`本部门（未指派）`、`无（已关闭）`。
+  原因码：`new`、`guest_replied`、`guest_completed`、`guest_revised`、
+  `guest_not_completed`、`delivered`、`assignee_replied`、`sent_back`、`creator_replied`。
 - 已接受边界：任务同时发了访客链接时，指派人的回复一律算作交给创建者；
   重新开启后按最后一条相关回复推导，Markdown「下一步」提示重开者回复说明原因。
 
@@ -403,11 +413,12 @@ spec 用户故事 84），没有 `inbox`：
 
 - 访客 403 `members_only`（决议 4），匿名 401。
 - 列出「现在轮到我」的**开启**工单，按工单序号；同一成员名下所有 Agent 共用一份
-  （Agent 定时轮询它即可，不靠人口头转告）；未指派的工单不出现在任何人的收件箱里
-  （要用查询接口找，#37）。响应：`{member, count, items}`，每项：
+  （Agent 定时轮询它即可，不靠人口头转告）；未指派、轮到本部门的工单进入有效
+  初筛人的收件箱。响应：`{member, count, items}`，每项：
   - `{number, title, role(assignee|creator), reason, since_seq, read_new, read_full}`。
   - `reason` 文案：新指派给你 / 已交付，待你验收 / 指派人回复了，待你答复 /
-    发起人退回修改 / 发起人回复了 / 访客回复了。
+    发起人退回修改 / 发起人回复了 / 访客回复了 / 访客补全了说明 /
+    访客修订了说明 / 访客未补全说明。
   - `since_seq` 是推导所依据的那条回复的事件 seq（无相关回复时为 null，即新指派）。
   - `read_new` = `/api/v1/tickets/<编号>/timeline?after=<我在该单最后一条任意事件的 seq>`
     （不只回复——要读的是「上次我看过之后别人做了什么」）；`read_full` =

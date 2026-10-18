@@ -24,6 +24,8 @@ const (
 	ReasonReturned        = "returned"
 	ReasonCreatorReplied  = "creator_replied"
 	ReasonGuestReplied    = "guest_replied"
+	ReasonGuestCompleted  = "guest_completed"
+	ReasonGuestRevised    = "guest_revised"
 	ReasonDepartment      = "department"
 	ReasonClosed          = "closed"
 	ReasonReopened        = "reopened"
@@ -40,6 +42,8 @@ type notificationStyle struct {
 var notificationStyles = map[string]notificationStyle{
 	tickets.WhyNew:            {ReasonAssigned, " 回复了"},
 	tickets.WhyGuestReplied:   {ReasonGuestReplied, " 回复了"},
+	tickets.WhyGuestCompleted: {ReasonGuestCompleted, " 补全了说明"},
+	tickets.WhyGuestRevised:   {ReasonGuestRevised, " 修订了说明"},
 	tickets.WhyDelivered:      {ReasonDelivered, " 交付了"},
 	tickets.WhyAssigneeReply:  {ReasonAssigneeReplied, " 回复了"},
 	tickets.WhySentBack:       {ReasonReturned, " 退回"},
@@ -109,12 +113,31 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 		if in.Actor.MemberID != 0 {
 			break
 		}
-		out = append(out, fyiForStakeholders(in, ReasonBriefRevised,
-			notificationTextActor(in.Actor)+" 修订了「"+in.After.Title+"」的说明")...)
-		for i := range out {
-			if out[i].Reason == ReasonBriefRevised {
-				out[i].Summary = "第 " + strconv.FormatInt(in.Event.Revision, 10) + " 版"
+		turn := tickets.WaitingOnOf(in.After, in.GuestLinks, in.Now)
+		if turn.Party == "department" {
+			for _, id := range in.Triagers {
+				if !hasDecisionFor(out, id) {
+					out = append(out, Decision{
+						MemberID: id, Kind: KindTurn, Reason: notificationReason(turn.Why),
+						Text: notificationTextActor(in.Actor) + replySuffix(turn.Why) + "「" + in.After.Title + "」",
+					})
+				}
 			}
+		} else if turn.MemberID != 0 && !hasDecisionFor(out, turn.MemberID) {
+			out = append(out, Decision{
+				MemberID: turn.MemberID, Kind: KindTurn, Reason: notificationReason(turn.Why),
+				Text: notificationTextActor(in.Actor) + replySuffix(turn.Why) + "「" + in.After.Title + "」",
+			})
+		}
+		fyiText := notificationTextActor(in.Actor) + " 修订了「" + in.After.Title + "」的说明"
+		for _, id := range []int64{in.After.Creator.MemberID, in.After.AssigneeID} {
+			if id == 0 || hasDecisionFor(out, id) {
+				continue
+			}
+			out = append(out, Decision{MemberID: id, Kind: KindFYI, Reason: ReasonBriefRevised, Text: fyiText})
+		}
+		for i := range out {
+			out[i].Summary = "第 " + strconv.FormatInt(in.Event.Revision, 10) + " 版"
 		}
 	case ReasonClosed:
 		out = append(out, fyiForStakeholders(in, ReasonClosed,
@@ -216,7 +239,8 @@ func (m *Manager) NotifyTx(ctx context.Context, tx *sql.Tx, in tickets.Notificat
 		}
 		in.GuestLinks = links
 	}
-	if in.Event.Type == "created" || in.Event.Type == "assigned" || in.Event.Type == "reply" {
+	if in.Event.Type == "created" || in.Event.Type == "assigned" || in.Event.Type == "reply" ||
+		in.Event.Type == ReasonBriefRevised {
 		triagers, err := tickets.EffectiveTriagers(ctx, tx)
 		if err != nil {
 			return nil, err

@@ -234,10 +234,15 @@ async function runFullUseCase(
   const number = ((await done.locator('b').textContent()) ?? '').trim()
   expect(number).toMatch(/^\d{8}-\d{3,}$/)
 
-  // 只复制链接；访客在独立上下文打开（同一视口）
+  // 只复制链接，供访客在独立上下文打开（同一视口）
   await page.getByRole('button', { name: '只复制链接' }).click()
   const linkUrl = await page.evaluate(() => navigator.clipboard.readText())
   expect(linkUrl).toMatch(/\/g\/tbg_/)
+
+  // #127：访客还没补全说明时，这张单不占跟进人的收件箱。
+  await page.goto('/')
+  await expect(page.getByText('现在轮到你处理的工单。')).toBeVisible()
+  await expect(page.locator('.tcard', { hasText: number })).toHaveCount(0)
 
   const ctx = await browser.newContext({ viewport, baseURL: new URL(page.url()).origin })
   const guest = await ctx.newPage()
@@ -257,12 +262,16 @@ async function runFullUseCase(
   await expect(guest.locator('.fill-done')).toContainText('已提交给管理员')
   await guest.getByRole('button', { name: '查看对话' }).click()
 
+  // #127：访客补全说明后，工单以固定原因进入跟进人收件箱。
+  await page.goto('/')
+  await expect(page.locator('.tcard', { hasText: number })).toContainText('访客补全了说明')
+
   // 访客对话页：说明卡片有内容，时间线有「修订了说明」事件
   await expect(guest.locator('[data-bubble="brief"]')).toContainText('UD-2300')
   await expect(guest.locator('.event', { hasText: '修订了说明' })).toContainText('检验科 张三', { timeout: 15000 })
 
   // 成员在工单上看到说明和事件
-  await page.getByRole('button', { name: '打开工单' }).click()
+  await page.goto(`/t/${number}`)
   await expect(page.locator('[data-bubble="brief"]')).toContainText('UD-2300')
   await expect(page.locator('.event', { hasText: '修订了说明' })).toContainText('检验科 张三', { timeout: 15000 })
   await ctx.close()

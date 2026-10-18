@@ -73,7 +73,7 @@ func (m *Manager) Inbox(ctx context.Context, memberID int64) ([]InboxItem, error
 			role = "triager"
 		}
 		reason := WhyText(turn.Why)
-		if isDepartmentTurn {
+		if isDepartmentTurn && (turn.Why == WhyNew || turn.Why == WhyGuestReplied) {
 			reason = "待初筛"
 		}
 		items = append(items, InboxItem{

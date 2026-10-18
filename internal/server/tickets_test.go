@@ -327,6 +327,7 @@ type ticketResponseBody struct {
 		Member *string `json:"member"`
 		Text   string  `json:"text"`
 		Reason string  `json:"reason"`
+		Why    string  `json:"why"`
 	} `json:"waiting_on"`
 	Labels []string `json:"labels"` // 访客视角没有这个字段（解码为 nil；另用原始 JSON 断言字段不存在）
 	Brief  struct {

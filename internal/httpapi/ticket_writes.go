@@ -281,7 +281,7 @@ func duplicateRefOf(w http.ResponseWriter, v any) (string, bool) {
 
 // newWaitingOnView 把推导结果转成对外结构（member 为 null 时省略）。
 func newWaitingOnView(waitingOn tickets.WaitingOn) waitingOnView {
-	v := waitingOnView{Party: waitingOn.Party, Text: waitingOn.Text, Reason: waitingOn.Reason}
+	v := waitingOnView{Party: waitingOn.Party, Text: waitingOn.Text, Reason: waitingOn.Reason, Why: waitingOn.Why}
 	if waitingOn.Member != "" {
 		m := waitingOn.Member
 		v.Member = &m
