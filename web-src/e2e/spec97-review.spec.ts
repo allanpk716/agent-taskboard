@@ -75,14 +75,23 @@ test('wide detail highlights tickets rather than inbox', async ({ page, request 
   await login(page, ADMIN)
   await page.goto(`/t/${number}?status=open`)
   const sidebar = page.getByRole('navigation', { name: '侧栏' })
-  await expect(sidebar.getByRole('link', { name: '工单', exact: true })).toHaveAttribute(
-    'aria-current',
-    'page',
-  )
-  await expect(sidebar.getByRole('link', { name: '收件箱', exact: true })).not.toHaveAttribute(
-    'aria-current',
-    'page',
-  )
+  await expect(page).toHaveURL(new RegExp(`/t/${number}`))
+  await expect(page.getByRole('heading', { name: '侧栏高亮的工单' })).toBeVisible()
+  await expect
+    .poll(() =>
+      sidebar.evaluate((nav) => {
+        const state = (name: string) =>
+          Array.from(nav.querySelectorAll('a'))
+            .find((a) => (a.textContent ?? '').trim().replace(/\d+$/, '').endsWith(name))
+            ?.className ?? ''
+        return {
+          path: window.location.pathname,
+          tickets: state('工单').includes(' on'),
+          inbox: state('收件箱').includes(' on'),
+        }
+      }),
+    )
+    .toEqual({ path: `/t/${number}`, tickets: true, inbox: false })
 })
 
 test('wide detail header omits the mobile metadata block', async ({ page, request }) => {

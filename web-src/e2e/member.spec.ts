@@ -69,6 +69,7 @@ test('工单列表按状态、指派与本人/Agent筛选，支持关键词', as
 
   // 指派 = 指派给我：只剩 B
   await grp('指派').getByRole('button', { name: '指派给我' }).click()
+  await expect(page).toHaveURL(/assignee=me/)
   await expect(page.locator('.tcard', { hasText: b })).toBeVisible()
   await expect(page.locator('.tcard', { hasText: a })).toHaveCount(0)
   await grp('指派').getByRole('button', { name: '全部' }).click()
@@ -77,6 +78,7 @@ test('工单列表按状态、指派与本人/Agent筛选，支持关键词', as
   await grp('状态').getByRole('button', { name: '全部' }).click()
   await page.getByPlaceholder(/搜索/).fill('随后被关闭')
   await page.getByPlaceholder(/搜索/).press('Enter')
+  await expect(page).toHaveURL(/q=/)
   await expect(page.locator('.tcard', { hasText: c })).toBeVisible()
   await expect(page.locator('.tcard', { hasText: a })).toHaveCount(0)
 })
