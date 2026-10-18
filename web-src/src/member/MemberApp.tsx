@@ -15,6 +15,7 @@ import { TemplatesPage } from './TemplatesPage'
 import { TemplateEditPage } from './TemplateEditPage'
 import { MePage } from './MePage'
 import { AdminPage } from './AdminPage'
+import { detailListSource } from './listFilters'
 import { nav, useLocationSearch, useNavSeq, useRoute, type Route } from './ui'
 import { useLayoutTier } from './useLayoutTier'
 
@@ -104,10 +105,7 @@ export function MemberApp() {
   const meOn = h.page === 'me' || h.page === 'admin'
   const centered =
     ['tools', 'me', 'admin', 'new', 'templates', 'templateEdit', 'feedback'].includes(h.page)
-  const detailParams = new URLSearchParams(search)
-  const fromInbox = detailParams.get('list') === 'inbox'
-  detailParams.delete('list')
-  const detailQuery = detailParams.toString()
+  const { fromInbox, query: detailQuery } = detailListSource(search)
   const detailReturnTo = fromInbox
     ? `/${detailQuery ? '?' + detailQuery : ''}`
     : `/tickets${detailQuery ? '?' + detailQuery : ''}`

@@ -31,7 +31,7 @@ import { absoluteUrl, authorName, closeReasonText, fmtLinkExpiry, linkExpired } 
 import { Confirm, Modal, copyText, invalidate, nav, toast, useLocationSearch } from './ui'
 import { HandoffDialog } from './HandoffDialog'
 import { LabelChips, chipClass } from './TicketsPage'
-import { filtersFromSearch, toQuery, toggleLabelCondition } from './listFilters'
+import { detailListSource, filtersFromSearch, toQuery, toggleLabelCondition } from './listFilters'
 import { useLayoutTier } from './useLayoutTier'
 
 /* ---------------- 弹窗：打标签 ---------------- */
@@ -691,12 +691,10 @@ export function TicketDetailPage({
     open && ticket.viewer.your_turn && ticket.waiting_on.reason.includes('交付') && ticket.waiting_on.reason.includes('验收')
 
   function toggleDetailLabel(label: string) {
-    const params = new URLSearchParams(search)
-    const fromInbox = params.get('list') === 'inbox'
-    params.delete('list')
+    const { fromInbox, query: sourceQuery } = detailListSource(search)
     const filters = fromInbox
       ? filtersFromSearch('status=open')
-      : filtersFromSearch(params.toString())
+      : filtersFromSearch(sourceQuery)
     const query = toQuery({ ...filters, ...toggleLabelCondition(filters, label) })
     if (tier === 'narrow' || tier === 'mobile') {
       nav(`/tickets?${query}`)

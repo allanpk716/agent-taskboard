@@ -114,3 +114,10 @@ export function toggleLabelCondition(
 export function labelDimension(label: string): string {
   return label.includes(':') ? label.split(':', 1)[0] : ''
 }
+
+export function detailListSource(search: string): { fromInbox: boolean; query: string } {
+  const params = new URLSearchParams(search)
+  const fromInbox = params.get('list') === 'inbox'
+  params.delete('list')
+  return { fromInbox, query: params.toString() }
+}
