@@ -772,6 +772,7 @@ const (
 	WhyAssigneeReply  = "assignee_replied" // 指派人回复了，待你答复
 	WhySentBack       = "sent_back"        // 发起人退回修改
 	WhyCreatorReplied = "creator_replied"  // 发起人回复了
+	WhyAgentReplied   = "agent_replied"    // 你的 Agent 回复了
 )
 
 // WhyText 把原因码翻成收件箱/等待方文案。
@@ -789,6 +790,8 @@ func WhyText(why string) string {
 		return "发起人退回修改"
 	case WhyCreatorReplied:
 		return "发起人回复了"
+	case WhyAgentReplied:
+		return "你的 Agent 回复了"
 	}
 	return ""
 }
@@ -814,6 +817,7 @@ func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 		return WaitingOn{Party: "none", Text: "无（已关闭）"}
 	}
 	a := t.AssigneeID
+	selfAssigned := t.Kind == "task" && t.Creator.MemberID != 0 && t.Creator.MemberID == a
 	// 对手：任务、创建者是成员、且与指派人不是同一人时，创建者一方就是对手。
 	// 未指派时创建者≠指派人也成立，对手仍是创建者（照抄原型 counterpartMember）。
 	c := int64(0)
@@ -831,7 +835,11 @@ func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 			continue
 		}
 		isGuest := e.Actor.MemberID == 0
-		if !(isGuest || c == 0 || e.Actor.MemberID == a || e.Actor.MemberID == c) {
+		memberRelevant := e.Actor.MemberID == a || e.Actor.MemberID == c
+		if selfAssigned {
+			memberRelevant = e.Actor.MemberID == a
+		}
+		if !(isGuest || (!selfAssigned && c == 0) || memberRelevant) {
 			continue // 第三位成员的回复不改变轮次
 		}
 		if last != nil && last.Deliver && last.Actor.MemberID == a && a != 0 {
@@ -854,6 +862,49 @@ func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 	}
 	if last == nil {
 		return toAssignee(WhyNew)
+	}
+	if selfAssigned && last.Actor.MemberID == a {
+		if last.Deliver {
+			return toAssignee(WhyDelivered)
+		}
+		hasGuestLink := false
+		for _, l := range guestLinks {
+			if l.RevokedAt == nil && now.Before(l.ExpiresAt) {
+				hasGuestLink = true
+				break
+			}
+		}
+		if hasGuestLink {
+			return WaitingOn{Party: "guest", Text: "访客", SinceSeq: since}
+		}
+		if last.Actor.AgentID != 0 {
+			return toAssignee(WhyAgentReplied)
+		}
+		why := WhyNew
+		deliveredBefore := false
+		for i := range t.Timeline {
+			e := &t.Timeline[i]
+			if e.Type != "reply" || e.Seq >= last.Seq {
+				continue
+			}
+			if e.Actor.MemberID == 0 {
+				why = WhyGuestReplied
+				continue
+			}
+			if e.Actor.MemberID != a {
+				continue
+			}
+			if e.Deliver {
+				deliveredBefore = true
+				why = WhyDelivered
+			} else if e.Actor.AgentID != 0 {
+				why = WhyAgentReplied
+			}
+		}
+		if deliveredBefore {
+			why = WhySentBack
+		}
+		return toAssignee(why)
 	}
 	if last.Actor.MemberID == 0 {
 		return toAssignee(WhyGuestReplied)
