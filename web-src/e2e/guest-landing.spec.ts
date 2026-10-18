@@ -225,7 +225,7 @@ async function runFullUseCase(
 
   // 成员向导：收件箱卡片进入，两项必填（默认 Bug 反馈），生成链接
   await page.getByRole('button', { name: '＋ 请人反馈' }).click()
-  await expect(page.getByRole('heading', { name: '请人反馈' })).toBeVisible()
+  await expect(page.getByLabel('请谁反馈')).toBeVisible()
   await page.getByLabel('请谁反馈').fill('检验科-张三')
   await page.getByLabel('什么事').fill('完整用例：UD-2300 质控报 E-203')
   await page.getByRole('button', { name: '生成链接' }).click()

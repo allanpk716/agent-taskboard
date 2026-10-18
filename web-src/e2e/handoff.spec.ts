@@ -11,6 +11,7 @@ async function issueToken(request: APIRequestContext, who: { username: string; p
 }
 
 test('发起人打开交给Agent：默认含人话行，可切换并复制', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
   const number = await createTicket(request, { title: '要交给王工Agent的工单', assignee: '王工' })
   await issueToken(request, ADMIN, '发起人交接')
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
@@ -35,6 +36,7 @@ test('发起人打开交给Agent：默认含人话行，可切换并复制', asy
 })
 
 test('指派人本人打开交给Agent：只有Agent段且没有单选', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
   const number = await createTicket(request, { title: '指派人自己的Agent工单', assignee: '王工' })
   await login(page, await wang())
   await page.goto(`/t/${number}`)
@@ -47,6 +49,7 @@ test('指派人本人打开交给Agent：只有Agent段且没有单选', async (
 })
 
 test('没有Agent token时提示去签发，签发后提示消失', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
   const number = await createTicket(request, { title: '还没签发token的成员工单' })
   await login(page, await wang())
   await page.goto(`/t/${number}`)
@@ -133,6 +136,7 @@ test('建单指派给同事后完成区域有交接入口', async ({ page }) => 
 })
 
 test('指派人按成员id判断而不是重名判断', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
   const session = await request.post('/api/v1/session', { data: ADMIN })
   const adminName = (await session.json()).viewer.member.name
   const suffix = Date.now().toString(36)
