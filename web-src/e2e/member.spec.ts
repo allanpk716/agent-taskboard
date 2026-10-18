@@ -393,11 +393,12 @@ test('建单（模板）：缺必填项弹出确认，仍创建后逐项提示',
   await expect(page.locator('.warnbox')).toContainText('必填未填')
 
   // 打开工单：说明气泡按字段显示，未填的显示（未填写），机型值同时进了标签；
-  // 暂存的附件建单后已上传并写进说明
+  // 暂存的附件建单后挂到整单附件条，不进入任何字段
   await page.getByRole('button', { name: '打开工单' }).click()
   await expect(page.locator('[data-bubble="brief"]')).toContainText('BM-10vet')
   await expect(page.getByText('（未填写）').first()).toBeVisible()
-  await expect(page.locator('[data-bubble="brief"]')).toContainText('现场日志.log')
+  await expect(page.locator('[data-bubble="brief"] .atts .att')).toHaveCount(1)
+  await expect(page.locator('[data-bubble="brief"] .atts .att')).toContainText('现场日志.log')
 })
 
 // 9. 访客链接的「指定日期」：创建与延期都能选日期（当天有效，评审 P2-9）；

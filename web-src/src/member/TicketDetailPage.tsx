@@ -4,7 +4,7 @@
 // 带「交付」标记的回复输入区、时间线按「本人 / Agent」筛选（客户端筛，与
 // 服务端 actor_kind 同一语义：成员 Agent 的回复算 Agent 一方）。
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ApiError } from '../api'
+import { api, ApiError } from '../api'
 import type { MemberTicket } from './memberApi'
 import {
   assignTicket,
@@ -524,6 +524,124 @@ function CloseDialog({
 
 type ActorFilter = 'all' | 'member' | 'agent'
 
+function BriefEditDialog({
+  ticket,
+  onChanged,
+  onClose,
+}: {
+  ticket: MemberTicket
+  onChanged: () => void
+  onClose: () => void
+}) {
+  const templateFields = ticket.brief.template_fields ?? []
+  const [fields, setFields] = useState<Record<string, string>>(ticket.brief.fields ?? {})
+  const [markdown, setMarkdown] = useState(ticket.brief.markdown)
+  const [attachmentIds, setAttachmentIds] = useState(ticket.brief.attachment_ids)
+  const [uploadedNames, setUploadedNames] = useState<Record<string, string>>({})
+  const [uploading, setUploading] = useState(0)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  async function addFiles(files: File[]) {
+    for (const file of files) {
+      setUploading((n) => n + 1)
+      try {
+        const att = await uploadMemberAttachment(ticket.number, file)
+        setAttachmentIds((ids) => [...ids, att.id])
+        setUploadedNames((names) => ({ ...names, [att.id]: file.name }))
+      } catch (e) {
+        setErr(e instanceof ApiError ? `${e.code}：${e.message}${e.hint ? `（${e.hint}）` : ''}` : `${file.name} 上传失败`)
+      } finally {
+        setUploading((n) => n - 1)
+      }
+    }
+  }
+
+  async function save() {
+    setSaving(true)
+    setErr(null)
+    try {
+      const body = templateFields.length
+        ? { fields, attachment_ids: attachmentIds, base_revision: ticket.brief.revision }
+        : { brief_md: markdown, attachment_ids: attachmentIds, base_revision: ticket.brief.revision }
+      await api(`/api/v1/tickets/${encodeURIComponent(ticket.number)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+        idempotencyKey: crypto.randomUUID(),
+      })
+      onChanged()
+      onClose()
+    } catch (e) {
+      setErr(e instanceof ApiError ? `${e.code}：${e.message}${e.hint ? `（${e.hint}）` : ''}` : '保存失败，请重试')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const attachmentsById = new Map(ticket.attachments.map((a) => [a.id, a]))
+  return (
+    <Modal title={`修改说明 · ${ticket.number}`} onClose={onClose} wide>
+      <div className="brief-edit-dialog">
+        {templateFields.length > 0 ? (
+          templateFields.map((f) => (
+            <div className="fld" key={f.key}>
+              <label htmlFor={`be-${f.key}`}>{f.title}</label>
+              <textarea
+                id={`be-${f.key}`}
+                value={fields[f.key] ?? ''}
+                onChange={(e) => setFields({ ...fields, [f.key]: e.target.value })}
+              />
+            </div>
+          ))
+        ) : (
+          <div className="fld">
+            <label htmlFor="be-markdown">说明（一整块 Markdown）</label>
+            <textarea id="be-markdown" style={{ minHeight: 160 }} value={markdown} onChange={(e) => setMarkdown(e.target.value)} />
+          </div>
+        )}
+        <div className="fld">
+          <label>附件</label>
+          <div className="atts edit-atts">
+            {attachmentIds.length === 0 && <span className="hint">还没有整张工单的附件。</span>}
+            {attachmentIds.map((id) => {
+              const att = attachmentsById.get(id)
+              const name = att?.filename ?? uploadedNames[id] ?? id
+              return (
+                <span key={id} className="att">
+                  📎 {name}
+                  <button type="button" aria-label={`删除 ${name}`} onClick={() => setAttachmentIds((ids) => ids.filter((x) => x !== id))}>
+                    ×
+                  </button>
+                </span>
+              )
+            })}
+          </div>
+          <input
+            aria-label="添加附件"
+            type="file"
+            multiple
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? [])
+              e.target.value = ''
+              void addFiles(files)
+            }}
+          />
+        </div>
+        {err && <div className="errbox">{err}</div>}
+        <div className="mrow">
+          <button type="button" className="btn ghost" onClick={onClose}>
+            取消
+          </button>
+          <span className="sp" />
+          <button type="button" className="btn" disabled={saving || uploading > 0} onClick={() => void save()}>
+            {uploading > 0 ? '上传附件中…' : '保存修改'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 export function TicketDetailPage({
   ticketRef,
   me,
@@ -535,7 +653,7 @@ export function TicketDetailPage({
   const [error, setError] = useState<string | null>(null)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const [actor, setActor] = useState<ActorFilter>('all')
-  const [dialog, setDialog] = useState<'label' | 'assign' | 'links' | 'close' | 'reopen' | 'handoff' | null>(null)
+  const [dialog, setDialog] = useState<'label' | 'brief' | 'assign' | 'links' | 'close' | 'reopen' | 'handoff' | null>(null)
   const [mobileMenu, setMobileMenu] = useState(false)
   const [members, setMembers] = useState<MemberRef[]>([])
   const markedRef = useRef<string | null>(null)
@@ -755,7 +873,11 @@ export function TicketDetailPage({
           </span>
           <span className="hint">（访客与系统事件始终显示；成员 Agent 的回复算它所属成员一方；访客自报「由 Agent 写成」的算 Agent）</span>
         </div>
-        <BriefBubble ticket={ticket} onImageClick={setLightbox} />
+        <BriefBubble
+          ticket={ticket}
+          onImageClick={setLightbox}
+          onEditBrief={open && can.edit_brief ? () => setDialog('brief') : undefined}
+        />
         {ticket.timeline.map((e) =>
           e.type === 'reply' ? (
             (actor === 'all' || (actor === 'agent') === (!!e.actor.agent || !!e.actor.via_agent) ? (
@@ -789,6 +911,7 @@ export function TicketDetailPage({
       )}
 
       {dialog === 'label' && <LabelDialog ticket={ticket} onChanged={changed} onClose={() => setDialog(null)} />}
+      {dialog === 'brief' && <BriefEditDialog ticket={ticket} onChanged={changed} onClose={() => setDialog(null)} />}
       {dialog === 'assign' && (
         <AssignDialog
           ticket={ticket}
