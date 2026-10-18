@@ -568,9 +568,38 @@ type briefView struct {
 	Fields         *map[string]string  `json:"fields"`
 	Markdown       string              `json:"markdown"`
 	Revision       int64               `json:"revision"`
+	AttachmentIDs  []string            `json:"attachment_ids"`
+	LastRevised    lastRevisedView     `json:"last_revised"`
 	Template       *string             `json:"template"`
 	TemplateFields []templateFieldView `json:"template_fields,omitempty"` // 创建时版本的字段定义（访客网页按问句渲染说明气泡，#38）
 	TemplateGroups []templateGroupView `json:"template_groups,omitempty"` // 创建时版本的分组（#63）；不分组时省略
+}
+
+type lastRevisedView struct {
+	Type        string    `json:"type"`
+	DisplayName string    `json:"display_name"`
+	Revision    int64     `json:"revision"`
+	At          time.Time `json:"at"`
+}
+
+func newLastRevisedView(full tickets.Full) lastRevisedView {
+	actor, at, revision := full.Creator, full.CreatedAt, full.BriefRevision
+	for i := len(full.Timeline) - 1; i >= 0; i-- {
+		if full.Timeline[i].Type == "brief_revised" {
+			e := full.Timeline[i]
+			actor, at, revision = e.Actor, e.At, e.Revision
+			break
+		}
+	}
+	v := lastRevisedView{Revision: revision, At: at}
+	if actor.MemberID != 0 {
+		v.Type = "member"
+		v.DisplayName = actor.DisplayName()
+		return v
+	}
+	v.Type = "guest"
+	v.DisplayName = actor.LinkNote
+	return v
 }
 
 // fieldViewsOf 把工单保存的模板快照字段定义转成对外结构（与模板接口同形；
@@ -701,14 +730,17 @@ type attachmentUsage struct {
 func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.Request, waitingOn tickets.WaitingOn) ticketView {
 	isGuest := viewer.Kind == identity.ViewerGuest
 	v := ticketView{
-		Number:      full.Number,
-		Seq:         full.Seq,
-		URL:         "/t/" + full.Number,
-		Kind:        full.Kind,
-		Title:       full.Title,
-		Status:      full.Status,
-		Creator:     newAuthorView(full.Creator),
-		Brief:       briefView{Markdown: full.BriefMD, Revision: full.BriefRevision},
+		Number:  full.Number,
+		Seq:     full.Seq,
+		URL:     "/t/" + full.Number,
+		Kind:    full.Kind,
+		Title:   full.Title,
+		Status:  full.Status,
+		Creator: newAuthorView(full.Creator),
+		Brief: briefView{
+			Markdown: full.BriefMD, Revision: full.BriefRevision,
+			AttachmentIDs: full.BriefAttachmentIDs, LastRevised: newLastRevisedView(full),
+		},
 		Attachments: []attachmentView{},
 	}
 	if full.AssigneeID != 0 {

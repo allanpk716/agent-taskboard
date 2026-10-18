@@ -1,4 +1,5 @@
 import { test, expect, type APIRequestContext, type Locator, type Page } from '@playwright/test'
+import { login } from './helpers'
 
 // 访客分组填写页（#65）：持「可填写说明」链接的访客第一次打开链接先看到
 // 落地页（#66），「开始填写」进入分组清单式填写页；补全过说明后再打开链接
@@ -261,6 +262,38 @@ test.describe('上传与提交', () => {
     await expect(submit).toBeEnabled()
     await submit.click()
     await expect(page.locator('.fill-done')).toContainText('已提交给管理员')
+  })
+
+  // 5b. 访客提交说明后：成员端和访客端都按最后修订者署名，信息栏发起人不变。
+  test('说明卡片按最后修订者署名，发起人不变', async ({ page, request, browser }) => {
+    const seed = await seedFillTicket(request)
+    await page.goto(`/g/${seed.linkKey}`)
+    await page.getByRole('button', { name: '开始填写' }).click()
+
+    await page.getByRole('combobox', { name: '哪台仪器？' }).click()
+    await page.getByRole('option', { name: '不确定' }).click()
+    await page.getByRole('button', { name: '下一组：发生了什么 ›' }).click()
+    for (const q of ['什么时候发生的？', '你做了哪些操作？', '实际看到了什么？', '你期望看到什么？']) {
+      await page.locator(`.cf[data-field="${q}"]`).getByRole('button', { name: '不清楚', exact: true }).click()
+    }
+    await page.locator('.grp').nth(2).locator('.grp-hd').click()
+    await page.locator('.cf[data-field="出现得频繁吗？"]').getByRole('radio', { name: '每次' }).check()
+    await page.getByRole('button', { name: /^提交给管理员/ }).click()
+    await page.getByRole('button', { name: '查看对话' }).click()
+
+    const guestBrief = page.locator('[data-bubble="brief"]')
+    await expect(guestBrief.locator('.who')).toContainText(/检验科-张三（访客）填写 · .+ · 第 2 版/)
+
+    const base = `http://127.0.0.1:${process.env.E2E_PORT || '8901'}`
+    const member = await browser.newPage({ baseURL: base })
+    await login(member, ADMIN)
+    await member.goto(`/t/${seed.number}`)
+    const memberBrief = member.locator('[data-bubble="brief"]')
+    await expect(memberBrief.locator('.who')).toContainText(/检验科-张三（访客）填写 · .+ · 第 2 版/)
+    await expect(memberBrief).not.toContainText('管理员填写')
+    const meta = member.locator('.mmeta .kv', { hasText: '发起人' })
+    await expect(meta).toContainText('管理员')
+    await member.close()
   })
 
   // 6.（手机视口）刷新页面后草稿还在（字段值和署名都保存在本机）。

@@ -23,6 +23,6 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
 
 - 所有写请求都带 `Idempotency-Key: <每次业务操作固定的随机值>`，重试不会重复建单或重复回复。
 - Windows 下请求体必须是 UTF-8。把 JSON 写入文件后用 `curl --data-binary @body.json` 发送；PowerShell 用 `[Text.Encoding]::UTF8.GetBytes(...)` 作为 `-Body`。
-- 附件先 `POST {{BASE}}/api/v1/tickets/<工单编号>/attachments` 上传（multipart 字段名 `file`），再用返回的 `att_N` 引用：图片嵌正文，普通文件写 `[名字](att:att_N)`；不属于某个字段的文件放进回复的 `attachment_ids`。
+- 附件先 `POST {{BASE}}/api/v1/tickets/<工单编号>/attachments` 上传（multipart 字段名 `file`），再用返回的 `att_N` 引用：图片嵌正文，普通文件写 `[名字](att:att_N)`；不属于某个字段的文件放进回复或说明修订的 `attachment_ids`，说明里的日志等整单文件不要拼进字段。
 
 完整接口参考见 `{{BASE}}/api.md`。
