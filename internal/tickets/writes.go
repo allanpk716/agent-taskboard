@@ -152,7 +152,7 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 	if err := touchLastChange(ctx, tx, full.Seq, change); err != nil {
 		return ReplyResult{}, err
 	}
-	if m.turnNotifier != nil {
+	if m.notifier != nil {
 		after := full
 		after.LastChange = change
 		after.Timeline = append(append([]Event{}, full.Timeline...), Event{
@@ -160,7 +160,7 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 			BodyMD: in.BodyMD, ReplyNo: replyNo, Deliver: in.Deliver,
 		})
 		var err error
-		notified, err = m.turnNotifier.NotifyTx(ctx, tx, TurnNotificationInput{
+		notified, err = m.notifier.NotifyTx(ctx, tx, NotificationInput{
 			Before: full, After: after, Actor: author, Event: after.Timeline[len(after.Timeline)-1],
 		})
 		if err != nil {
@@ -170,8 +170,8 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 	if err := tx.Commit(); err != nil {
 		return ReplyResult{}, err
 	}
-	if m.turnNotifier != nil {
-		m.turnNotifier.Wake(notified)
+	if m.notifier != nil {
+		m.notifier.Wake(notified)
 	}
 
 	after, err := m.ByRef(ctx, ref)
@@ -286,6 +286,7 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 		return Ticket{}, err
 	}
 	defer tx.Rollback()
+	var notified []int64
 
 	revision := full.BriefRevision + 1
 	var fieldsJSON any
@@ -321,8 +322,29 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 	if err := touchLastChange(ctx, tx, full.Seq, change); err != nil {
 		return Ticket{}, err
 	}
+	if m.notifier != nil {
+		after := full
+		after.Title = title
+		after.BriefMD = brief
+		after.Fields = fields
+		after.BriefRevision = revision
+		after.LastChange = change
+		after.Timeline = append(append([]Event{}, full.Timeline...), Event{
+			Seq: eventSeq, Change: change, At: now, Actor: author, Type: "brief_revised",
+			Revision: revision,
+		})
+		notified, err = m.notifier.NotifyTx(ctx, tx, NotificationInput{
+			Before: full, After: after, Actor: author, Event: after.Timeline[len(after.Timeline)-1],
+		})
+		if err != nil {
+			return Ticket{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return Ticket{}, err
+	}
+	if m.notifier != nil {
+		m.notifier.Wake(notified)
 	}
 
 	full.Title = title
@@ -372,6 +394,7 @@ func (m *Manager) Close(ctx context.Context, viewer identity.Viewer, ref string,
 		return Ticket{}, err
 	}
 	defer tx.Rollback()
+	var notified []int64
 
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE tickets SET status = 'closed', close_reason = ?, duplicate_of_seq = ? WHERE seq = ?`,
@@ -390,8 +413,29 @@ func (m *Manager) Close(ctx context.Context, viewer identity.Viewer, ref string,
 	if err := touchLastChange(ctx, tx, full.Seq, change); err != nil {
 		return Ticket{}, err
 	}
+	actor := authorOf(viewer)
+	if m.notifier != nil {
+		after := full
+		after.Status = "closed"
+		after.CloseReason = in.Reason
+		after.DuplicateOfSeq = duplicateSeq
+		after.LastChange = change
+		after.Timeline = append(append([]Event{}, full.Timeline...), Event{
+			Seq: eventSeq, Change: change, At: now, Actor: actor, Type: "closed",
+			Reason: in.Reason, DuplicateOf: duplicateNumber,
+		})
+		notified, err = m.notifier.NotifyTx(ctx, tx, NotificationInput{
+			Before: full, After: after, Actor: actor, Event: after.Timeline[len(after.Timeline)-1],
+		})
+		if err != nil {
+			return Ticket{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return Ticket{}, err
+	}
+	if m.notifier != nil {
+		m.notifier.Wake(notified)
 	}
 
 	full.Status = "closed"
@@ -417,19 +461,42 @@ func (m *Manager) Reopen(ctx context.Context, viewer identity.Viewer, ref string
 		return Full{}, err
 	}
 	defer tx.Rollback()
+	var notified []int64
 
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE tickets SET status = 'open', close_reason = NULL, duplicate_of_seq = NULL WHERE seq = ?`,
 		full.Seq); err != nil {
 		return Full{}, fmt.Errorf("重新开启工单失败：%w", err)
 	}
-	if _, change, err := m.appendEvent(ctx, tx, full.Seq, now, authorOf(viewer), "reopened"); err != nil {
+	actor := authorOf(viewer)
+	eventSeq, change, err := m.appendEvent(ctx, tx, full.Seq, now, actor, "reopened")
+	if err != nil {
 		return Full{}, err
-	} else if err := touchLastChange(ctx, tx, full.Seq, change); err != nil {
+	}
+	if err := touchLastChange(ctx, tx, full.Seq, change); err != nil {
 		return Full{}, err
+	}
+	if m.notifier != nil {
+		after := full
+		after.Status = "open"
+		after.CloseReason = ""
+		after.DuplicateOfSeq = 0
+		after.LastChange = change
+		after.Timeline = append(append([]Event{}, full.Timeline...), Event{
+			Seq: eventSeq, Change: change, At: now, Actor: actor, Type: "reopened",
+		})
+		notified, err = m.notifier.NotifyTx(ctx, tx, NotificationInput{
+			Before: full, After: after, Actor: actor, Event: after.Timeline[len(after.Timeline)-1],
+		})
+		if err != nil {
+			return Full{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return Full{}, err
+	}
+	if m.notifier != nil {
+		m.notifier.Wake(notified)
 	}
 
 	// 重开后的等待方按最后一条相关回复推导（spec：重开后照常推导）。

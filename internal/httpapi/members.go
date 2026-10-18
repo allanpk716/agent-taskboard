@@ -49,10 +49,11 @@ func (a *API) handleMembersRoot(w http.ResponseWriter, r *http.Request) {
 //
 //	POST /api/v1/members/{id}/deactivate  停用（管理员网页会话，幂等）
 //	POST /api/v1/members/{id}/triager     设置初筛人（管理员网页会话，幂等）
+//	POST /api/v1/members/{id}/reset-password 重置密码（管理员网页会话）
 func (a *API) handleMembersRef(w http.ResponseWriter, r *http.Request) {
 	ref := strings.TrimPrefix(r.URL.Path, "/api/v1/members/")
 	id, sub, hasSub := strings.Cut(ref, "/")
-	if !hasSub || (sub != "deactivate" && sub != "triager") {
+	if !hasSub || (sub != "deactivate" && sub != "triager" && sub != "reset-password") {
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
 			"成员账号接口：GET|POST /api/v1/members、POST /api/v1/members/{id}/deactivate|triager")
 		return
@@ -65,7 +66,35 @@ func (a *API) handleMembersRef(w http.ResponseWriter, r *http.Request) {
 		a.setTriager(w, r, id)
 		return
 	}
+	if sub == "reset-password" {
+		a.resetMemberPassword(w, r, id)
+		return
+	}
 	a.deactivateMember(w, r, id)
+}
+
+func (a *API) resetMemberPassword(w http.ResponseWriter, r *http.Request, idStr string) {
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		WriteError(w, http.StatusNotFound, CodeMemberNotFound, "没有这位成员", "")
+		return
+	}
+	admin, ok := a.adminWebSessionFromRequest(w, r, "管理员不能在管理页重置自己的密码")
+	if !ok {
+		return
+	}
+	password, err := a.ident.AdminResetMemberPassword(r.Context(), admin.Member.ID, id)
+	switch {
+	case errors.Is(err, identity.ErrCannotResetSelf):
+		WriteError(w, http.StatusUnprocessableEntity, CodeCannotResetSelf, "不能重置自己的密码",
+			"自助改密请使用「我的」页面")
+	case errors.Is(err, identity.ErrMemberNotFound):
+		WriteError(w, http.StatusNotFound, CodeMemberNotFound, "没有这位成员", "")
+	case err != nil:
+		panic(err)
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{"initial_password": password})
+	}
 }
 
 // memberListItem 是成员名单（GET /api/v1/members）的条目；active 供 #42 管理页

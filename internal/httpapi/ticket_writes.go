@@ -309,7 +309,7 @@ func (a *API) assignTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		return
 	}
 	var req assignTicketRequest
-	if !decodeJSON(w, r, &req, `{"assignee": "成员 id 或姓名"}`) {
+	if !decodeJSON(w, r, &req, `{"assignee": "成员 id 或姓名；空字符串取消指派"}`) {
 		return
 	}
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
@@ -319,11 +319,13 @@ func (a *API) assignTicket(w http.ResponseWriter, r *http.Request, ref string) {
 			return
 		}
 		view := assignTicketView{
-			Assignee:  &memberRef{ID: result.AssigneeID, Name: result.AssigneeName},
 			WaitingOn: newWaitingOnView(result.WaitingOn),
 		}
+		if result.AssigneeID != 0 {
+			view.Assignee = &memberRef{ID: result.AssigneeID, Name: result.AssigneeName}
+		}
 		// 改派给自己不需要通知，share_text 为空。
-		if result.AssigneeID != viewer.Member.ID {
+		if result.AssigneeID != 0 && result.AssigneeID != viewer.Member.ID {
 			share := a.reassignShareText(result.AssigneeName, result.Title, result.Number)
 			view.ShareText = &share
 		}

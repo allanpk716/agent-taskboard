@@ -47,13 +47,14 @@ type Viewer struct {
 	Kind      ViewerKind
 	Member    Member     // kind == member 时的成员；Agent 凭证指向其所属成员
 	Agent     *Agent     // 凭证是 Agent token 时非 nil；本人（网页会话）为 nil
+	Client    *Client    // 凭证是客户端凭证时非 nil
 	GuestLink *GuestLink // 凭证是访客链接密钥时非 nil（#32）
 }
 
 // IsWebSession 报告 v 是否为成员本人在网页会话下的操作。
 // 创建和撤销 Agent token、创建成员账号只接受这种凭证（ADR 0003）。
 func (v Viewer) IsWebSession() bool {
-	return v.Kind == ViewerMember && v.Agent == nil
+	return v.Kind == ViewerMember && v.Agent == nil && v.Client == nil
 }
 
 // IssueAgentToken 为 member 签发一个具名 Agent token。名字未撤销时不能重复。

@@ -170,25 +170,27 @@ type Full struct {
 
 // Manager 是工单核心的对外入口：「以某个 Viewer 建单」「读某张工单」。
 type Manager struct {
-	db           *sql.DB
-	clk          clock.Clock
-	labels       *labels.Manager
-	templates    *templates.Manager
-	atts         *attachments.Manager // 附件认领在回复/说明修订的同一事务里（#33）
-	turnNotifier TurnNotifier
+	db        *sql.DB
+	clk       clock.Clock
+	labels    *labels.Manager
+	templates *templates.Manager
+	atts      *attachments.Manager // 附件认领在回复/说明修订的同一事务里（#33）
+	notifier  Notifier
 }
 
-// TurnNotificationInput 是通知规则模块的输入：事件前后的完整工单状态与操作者。
-type TurnNotificationInput struct {
-	Before Full
-	After  Full
-	Actor  Author
-	Event  Event
+// NotificationInput 是通知规则模块的输入：事件前后的完整工单状态、操作者
+// 与有效初筛人。
+type NotificationInput struct {
+	Before   Full
+	After    Full
+	Actor    Author
+	Event    Event
+	Triagers []int64
 }
 
-// TurnNotifier 在工单事件同一事务里生成「轮到我」通知。
-type TurnNotifier interface {
-	NotifyTx(context.Context, *sql.Tx, TurnNotificationInput) ([]int64, error)
+// Notifier 在工单事件同一事务里生成成员通知。
+type Notifier interface {
+	NotifyTx(context.Context, *sql.Tx, NotificationInput) ([]int64, error)
 	Wake([]int64)
 }
 
@@ -196,7 +198,7 @@ func NewManager(db *sql.DB, c clock.Clock, lm *labels.Manager, tm *templates.Man
 	return &Manager{db: db, clk: c, labels: lm, templates: tm, atts: am}
 }
 
-func (m *Manager) SetTurnNotifier(n TurnNotifier) { m.turnNotifier = n }
+func (m *Manager) SetNotifier(n Notifier) { m.notifier = n }
 
 // Labels 返回标签字典模块（HTTP 层组 hint 用；完整字典接口在 #31）。
 func (m *Manager) Labels() *labels.Manager { return m.labels }
@@ -410,18 +412,27 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, err
 		if err != nil {
 			return CreateResult{}, err
 		}
-		if m.turnNotifier != nil {
+		if m.notifier != nil {
 			after := Full{Ticket: t}
 			after.Timeline = []Event{
 				{Seq: 1, At: now, Actor: creator, Type: "created"},
-				{Seq: eventSeq, At: now, Actor: creator, Type: "assigned", AssignTo: assigneeName},
+				{Seq: eventSeq, At: now, Actor: creator, Type: "assigned", AssignTo: assigneeName, Change: t.LastChange},
 			}
 			var err error
-			notified, err = m.turnNotifier.NotifyTx(ctx, tx, TurnNotificationInput{After: after, Actor: creator,
+			notified, err = m.notifier.NotifyTx(ctx, tx, NotificationInput{After: after, Actor: creator,
 				Event: after.Timeline[1]})
 			if err != nil {
 				return CreateResult{}, err
 			}
+		}
+	} else if m.notifier != nil {
+		after := Full{Ticket: t}
+		after.Timeline = []Event{{Seq: 1, At: now, Actor: creator, Type: "created", Change: t.LastChange}}
+		var err error
+		notified, err = m.notifier.NotifyTx(ctx, tx, NotificationInput{After: after, Actor: creator,
+			Event: after.Timeline[0]})
+		if err != nil {
+			return CreateResult{}, err
 		}
 	}
 	for _, l := range in.Labels {
@@ -445,8 +456,8 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, err
 	if err := tx.Commit(); err != nil {
 		return CreateResult{}, err
 	}
-	if m.turnNotifier != nil {
-		m.turnNotifier.Wake(notified)
+	if m.notifier != nil {
+		m.notifier.Wake(notified)
 	}
 	full, err := m.ByRef(ctx, number)
 	if err != nil {

@@ -6,7 +6,6 @@ package tickets
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"strconv"
 )
 
@@ -90,31 +89,48 @@ func (m *Manager) Inbox(ctx context.Context, memberID int64) ([]InboxItem, error
 // isTriager 判定成员当前是否有效初筛人：有启用中的显式初筛人时只有这些
 // 成员生效；一个都没有时所有管理员兜底（#75）。
 func (m *Manager) isTriager(ctx context.Context, memberID int64) (bool, error) {
-	var explicit int
-	if err := m.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM members WHERE triager = 1 AND deactivated_at IS NULL`).Scan(&explicit); err != nil {
-		return false, err
-	}
-	if explicit > 0 {
-		var triager int
-		err := m.db.QueryRowContext(ctx,
-			`SELECT triager FROM members WHERE id = ? AND deactivated_at IS NULL`, memberID).Scan(&triager)
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		return triager == 1, nil
-	}
-	var isAdmin int
-	err := m.db.QueryRowContext(ctx,
-		`SELECT is_admin FROM members WHERE id = ? AND deactivated_at IS NULL`, memberID).Scan(&isAdmin)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
+	ids, err := EffectiveTriagers(ctx, m.db)
 	if err != nil {
 		return false, err
 	}
-	return isAdmin == 1, nil
+	for _, id := range ids {
+		if id == memberID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// Queryer 是读取初筛人所需的最小 SQL 接口；db 与写事务都能提供。
+type Queryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// EffectiveTriagers 返回当前有效的初筛人：有启用中的显式初筛人时只有这些
+// 成员；一个都没有时所有管理员兜底（#75）。
+func EffectiveTriagers(ctx context.Context, q Queryer) ([]int64, error) {
+	var explicit int
+	if err := q.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM members WHERE triager = 1 AND deactivated_at IS NULL`).Scan(&explicit); err != nil {
+		return nil, err
+	}
+	column := "triager"
+	if explicit == 0 {
+		column = "is_admin"
+	}
+	rows, err := q.QueryContext(ctx, `SELECT id FROM members WHERE `+column+` = 1 AND deactivated_at IS NULL ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }

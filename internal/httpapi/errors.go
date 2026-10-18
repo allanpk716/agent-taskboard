@@ -133,6 +133,15 @@ const (
 	// #78：成员标通知已读。
 	CodeInvalidReadRequest  = "invalid_read_request"   // 请求体不是 ids/ticket/up_to 三选一
 	CodeAgentCannotMarkRead = "agent_cannot_mark_read" // 成员 Agent 不能替主人消费未读
+
+	// #80：桌面客户端凭证。
+	CodeInvalidClientPort        = "invalid_client_port"
+	CodeInvalidClientConnect     = "invalid_client_connect"
+	CodeInvalidClientCode        = "invalid_client_code"
+	CodeClientCredentialNotFound = "client_credential_not_found"
+	CodeClientScope              = "client_scope"
+	CodePasswordTooShort         = "password_too_short"
+	CodeCannotResetSelf          = "cannot_reset_self"
 )
 
 // ErrorBody 是统一错误格式 {error:{code, message, hint?}} 的内层；

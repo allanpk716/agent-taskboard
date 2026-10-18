@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
@@ -30,6 +31,9 @@ var ErrMemberNotFound = errors.New("没有这位成员")
 
 // ErrCannotDeactivateSelf 表示不能停用自己的账号（#42：防止管理员把自己锁在门外）。
 var ErrCannotDeactivateSelf = errors.New("不能停用自己的账号")
+var ErrCannotResetSelf = errors.New("不能重置自己的密码")
+var ErrInvalidOldPassword = errors.New("原密码不正确")
+var ErrPasswordTooShort = errors.New("新密码至少 8 位")
 
 // Member 是一位成员。
 type Member struct {
@@ -51,6 +55,9 @@ type Session struct {
 type Manager struct {
 	db    *sql.DB
 	clock clock.Clock
+
+	clientMu    sync.Mutex
+	clientCodes map[string]clientConnectCode
 }
 
 func NewManager(db *sql.DB, c clock.Clock) *Manager {
@@ -204,10 +211,82 @@ func (m *Manager) DeactivateMember(ctx context.Context, id int64) (bool, error) 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE member_id = ?`, id); err != nil {
 		return false, err
 	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE client_credentials SET revoked_at = ?
+		WHERE member_id = ? AND revoked_at IS NULL`,
+		m.clock.Now().Format(time.RFC3339Nano), id); err != nil {
+		return false, err
+	}
 	if err := tx.Commit(); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// ChangeOwnPassword 自助改密：只换密码，不撤销客户端凭证，也不清空当前会话。
+func (m *Manager) ChangeOwnPassword(ctx context.Context, memberID int64, oldPassword, newPassword string) error {
+	if len(newPassword) < 8 {
+		return ErrPasswordTooShort
+	}
+	var hash string
+	if err := m.db.QueryRowContext(ctx,
+		`SELECT password_hash FROM members WHERE id = ?`, memberID).Scan(&hash); err != nil {
+		return err
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(oldPassword)) != nil {
+		return ErrInvalidOldPassword
+	}
+	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	_, err = m.db.ExecContext(ctx, `UPDATE members SET password_hash = ? WHERE id = ?`, string(newHash), memberID)
+	return err
+}
+
+// AdminResetMemberPassword 管理员重置密码：生成一次性初始密码，并撤销会话
+// 与全部客户端凭证（ADR 0004）。
+func (m *Manager) AdminResetMemberPassword(ctx context.Context, adminID, memberID int64) (string, error) {
+	if adminID == memberID {
+		return "", ErrCannotResetSelf
+	}
+	password, err := GenerateInitialPassword()
+	if err != nil {
+		return "", err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE members SET password_hash = ? WHERE id = ?`, string(hash), memberID)
+	if err != nil {
+		return "", err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return "", err
+	}
+	if n == 0 {
+		return "", ErrMemberNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE member_id = ?`, memberID); err != nil {
+		return "", err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE client_credentials SET revoked_at = ?
+		WHERE member_id = ? AND revoked_at IS NULL`,
+		m.clock.Now().Format(time.RFC3339Nano), memberID); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return password, nil
 }
 
 // Login 校验用户名和密码，成功则创建一条会话。

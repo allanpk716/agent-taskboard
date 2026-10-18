@@ -176,6 +176,28 @@ func Test服务停机时通知流正常结束(t *testing.T) {
 	stream.Closed(t)
 }
 
+func Test知会通知提交后实时推送到SSE(t *testing.T) {
+	w := newHandoffWorld(t)
+	number := w.createHandoffTicket(t, w.webWang, "实时知会", "李工").Number
+	stream := w.s.OpenSSE(t, w.webWang, "")
+	if ev := stream.Event(t); ev.Name != "hello" {
+		t.Fatalf("首帧 = %q, 想 hello", ev.Name)
+	}
+
+	res := w.s.Do(t, w.zhaoA, http.MethodPost, "/api/v1/tickets/"+number+"/close",
+		map[string]string{"reason": "done"}, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭状态码 = %d, 想 200", res.StatusCode)
+	}
+	ev := stream.Event(t)
+	var body notificationBody
+	decodeSSEData(t, ev, &body)
+	if ev.Name != "notification" || ev.ID != strconv.FormatInt(body.ID, 10) ||
+		body.Kind != "fyi" || body.Reason != "closed" || body.Ticket.Number != number {
+		t.Fatalf("fyi 推送 = %+v/%+v", ev, body)
+	}
+}
+
 func decodeSSEData(t testing.TB, ev tbtest.SSEEvent, out any) {
 	t.Helper()
 	if ev.Name == "" || len(ev.Data) == 0 {

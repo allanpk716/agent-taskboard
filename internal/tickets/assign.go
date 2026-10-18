@@ -135,9 +135,20 @@ func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assig
 	if err != nil {
 		return AssignResult{}, err
 	}
-	toID, toName, err := m.resolveAssignee(ctx, assigneeRef)
-	if err != nil {
-		return AssignResult{}, err
+	assigneeRef = strings.TrimSpace(assigneeRef)
+	var (
+		toID   int64
+		toName string
+	)
+	if assigneeRef != "" {
+		var err error
+		toID, toName, err = m.resolveAssignee(ctx, assigneeRef)
+		if err != nil {
+			return AssignResult{}, err
+		}
+	}
+	if full.AssigneeID == 0 && toID == 0 {
+		return AssignResult{}, &UnknownMemberError{Ref: assigneeRef}
 	}
 	if toID == full.AssigneeID {
 		return AssignResult{}, &AlreadyAssignedError{Name: toName}
@@ -153,23 +164,23 @@ func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assig
 	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE tickets SET assignee_id = ? WHERE seq = ?`, toID, full.Seq); err != nil {
+		`UPDATE tickets SET assignee_id = ? WHERE seq = ?`, nullInt(toID), full.Seq); err != nil {
 		return AssignResult{}, fmt.Errorf("改派失败：%w", err)
 	}
 	eventSeq, _, err := m.insertAssignedEvent(ctx, tx, full.Seq, authorOf(viewer), fromName, toName, now)
 	if err != nil {
 		return AssignResult{}, err
 	}
-	if m.turnNotifier != nil {
+	if m.notifier != nil {
 		after := full
 		after.AssigneeID = toID
 		after.AssigneeName = toName
 		after.Timeline = append(append([]Event{}, full.Timeline...), Event{
-			Seq: eventSeq, At: now, Actor: authorOf(viewer), Type: "assigned",
+			Seq: eventSeq, Change: full.LastChange + 1, At: now, Actor: authorOf(viewer), Type: "assigned",
 			AssignFrom: fromName, AssignTo: toName,
 		})
 		var err error
-		notified, err = m.turnNotifier.NotifyTx(ctx, tx, TurnNotificationInput{Before: full, After: after,
+		notified, err = m.notifier.NotifyTx(ctx, tx, NotificationInput{Before: full, After: after,
 			Actor: authorOf(viewer), Event: after.Timeline[len(after.Timeline)-1]})
 		if err != nil {
 			return AssignResult{}, err
@@ -178,8 +189,8 @@ func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assig
 	if err := tx.Commit(); err != nil {
 		return AssignResult{}, err
 	}
-	if m.turnNotifier != nil {
-		m.turnNotifier.Wake(notified)
+	if m.notifier != nil {
+		m.notifier.Wake(notified)
 	}
 
 	after, err := m.ByRef(ctx, ref)
