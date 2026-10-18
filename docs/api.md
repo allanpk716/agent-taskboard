@@ -405,7 +405,9 @@ spec 用户故事 84），没有 `inbox`：
 - 列出「现在轮到我」的**开启**工单，按工单序号；同一成员名下所有 Agent 共用一份
   （Agent 定时轮询它即可，不靠人口头转告）；未指派的工单不出现在任何人的收件箱里
   （要用查询接口找，#37）。响应：`{member, count, items}`，每项：
-  - `{number, title, role(assignee|creator), reason, since_seq, read_new, read_full}`。
+  - `{number, title, role(assignee|creator), reason, since_seq, read_new, read_full,
+    kind, creator, assignee, labels, waiting_on, who, updated_at}`（#101 起后四组列表摘要字段
+    供网页收件箱栏使用）。
   - `reason` 文案：新指派给你 / 已交付，待你验收 / 指派人回复了，待你答复 /
     发起人退回修改 / 发起人回复了 / 访客回复了。
   - `since_seq` 是推导所依据的那条回复的事件 seq（无相关回复时为 null，即新指派）。

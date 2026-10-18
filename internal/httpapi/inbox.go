@@ -4,6 +4,7 @@ package httpapi
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
@@ -43,19 +44,28 @@ func (a *API) handleInbox(w http.ResponseWriter, r *http.Request) {
 
 // inboxItemView 是收件箱项的对外结构。
 type inboxItemView struct {
-	Number   string `json:"number"`
-	Title    string `json:"title"`
-	Role     string `json:"role"` // assignee | creator
-	Reason   string `json:"reason"`
-	SinceSeq *int64 `json:"since_seq"` // 推导依据的回复事件 seq；无相关回复时为 null
-	ReadNew  string `json:"read_new"`  // 增量读取地址（after = 我在该单最后一条事件）
-	ReadFull string `json:"read_full"` // 全文 Markdown 地址
+	Number    string    `json:"number"`
+	Title     string    `json:"title"`
+	Role      string    `json:"role"` // assignee | creator
+	Reason    string    `json:"reason"`
+	SinceSeq  *int64    `json:"since_seq"` // 推导依据的回复事件 seq；无相关回复时为 null
+	ReadNew   string    `json:"read_new"`  // 增量读取地址（after = 我在该单最后一条事件）
+	ReadFull  string    `json:"read_full"` // 全文 Markdown 地址
+	Kind      string    `json:"kind"`
+	Creator   string    `json:"creator"`
+	Assignee  string    `json:"assignee"`
+	Labels    []string  `json:"labels"`
+	WaitingOn string    `json:"waiting_on"`
+	Who       string    `json:"who"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func newInboxItemView(it tickets.InboxItem) inboxItemView {
 	v := inboxItemView{
 		Number: it.Number, Title: it.Title, Role: it.Role, Reason: it.Reason,
 		ReadNew: it.ReadNew, ReadFull: it.ReadFull,
+		Kind: it.Kind, Creator: it.Creator, Assignee: it.Assignee,
+		Labels: it.Labels, WaitingOn: it.Waiting, Who: it.Who, UpdatedAt: it.UpdatedAt,
 	}
 	if it.SinceSeq != 0 {
 		s := it.SinceSeq

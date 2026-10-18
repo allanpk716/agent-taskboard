@@ -7,17 +7,25 @@ import (
 	"context"
 	"database/sql"
 	"strconv"
+	"time"
 )
 
 // InboxItem 是收件箱的一项：轮到我的工单 + 原因 + 增量读取地址。
 type InboxItem struct {
-	Number   string
-	Title    string
-	Role     string // assignee | creator | triager（我在这张工单里的角色）
-	Reason   string // WHY 文案：新指派给你 / 已交付，待你验收 / …
-	SinceSeq int64  // 推导所依据的回复事件 seq；0 = 无相关回复（新指派）
-	ReadNew  string // /api/v1/tickets/<编号>/timeline?after=<我在该单最后一条事件的 seq>
-	ReadFull string // /api/v1/tickets/<编号>?format=markdown
+	Number    string
+	Title     string
+	Role      string // assignee | creator | triager（我在这张工单里的角色）
+	Reason    string // WHY 文案：新指派给你 / 已交付，待你验收 / …
+	SinceSeq  int64  // 推导所依据的回复事件 seq；0 = 无相关回复（新指派）
+	ReadNew   string // /api/v1/tickets/<编号>/timeline?after=<我在该单最后一条事件的 seq>
+	ReadFull  string // /api/v1/tickets/<编号>?format=markdown
+	Kind      string
+	Creator   string
+	Assignee  string
+	Labels    []string
+	Waiting   string
+	Who       string
+	UpdatedAt time.Time
 }
 
 // Inbox 列出 memberID 当前轮到的全部开启工单（按工单序号）。
@@ -73,14 +81,27 @@ func (m *Manager) Inbox(ctx context.Context, memberID int64) ([]InboxItem, error
 		if isDepartmentTurn {
 			reason = "待初筛"
 		}
+		var updated time.Time
+		for _, e := range full.Timeline {
+			if e.At.After(updated) {
+				updated = e.At
+			}
+		}
 		items = append(items, InboxItem{
-			Number:   full.Number,
-			Title:    full.Title,
-			Role:     role,
-			Reason:   reason,
-			SinceSeq: turn.SinceSeq,
-			ReadNew:  "/api/v1/tickets/" + full.Number + "/timeline?after=" + strconv.FormatInt(after, 10),
-			ReadFull: "/api/v1/tickets/" + full.Number + "?format=markdown",
+			Number:    full.Number,
+			Title:     full.Title,
+			Role:      role,
+			Reason:    reason,
+			SinceSeq:  turn.SinceSeq,
+			ReadNew:   "/api/v1/tickets/" + full.Number + "/timeline?after=" + strconv.FormatInt(after, 10),
+			ReadFull:  "/api/v1/tickets/" + full.Number + "?format=markdown",
+			Kind:      full.Kind,
+			Creator:   full.Creator.DisplayName(),
+			Assignee:  full.AssigneeName,
+			Labels:    full.Labels,
+			Waiting:   turn.Text,
+			Who:       turn.Member,
+			UpdatedAt: updated,
 		})
 	}
 	return items, nil
