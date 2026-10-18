@@ -37,7 +37,8 @@ func (a *API) handleClientLatest(w http.ResponseWriter, r *http.Request) {
 	}
 	stamped, err := a.stampedClient(pkg, a.publicURL(r))
 	if err != nil {
-		panic(err)
+		a.writeClientUnavailable(w, err)
+		return
 	}
 	writeJSON(w, http.StatusOK, clientLatestView{
 		Version: pkg.Version, Sha256: stamped.sha256, Size: stamped.size,
@@ -60,7 +61,8 @@ func (a *API) handleClientDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	stamped, err := a.stampedClient(pkg, a.publicURL(r))
 	if err != nil {
-		panic(err)
+		a.writeClientUnavailable(w, err)
+		return
 	}
 	f, err := os.Open(pkg.Path)
 	if err != nil {
