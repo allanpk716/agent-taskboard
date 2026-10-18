@@ -674,7 +674,7 @@ func newTicketListItem(row *tickets.ListRow, include string) ticketListItemView 
 		v.Snippet = row.Hit.Snippet
 	}
 	if include == "brief" {
-		b := briefView{Markdown: t.BriefMD, Revision: t.BriefRevision}
+		b := briefView{Markdown: t.BriefMD, Revision: t.BriefRevision, LastRevised: newLastRevisedView(*t)}
 		if t.TemplateKey != "" {
 			key := t.TemplateKey
 			b.Template = &key
