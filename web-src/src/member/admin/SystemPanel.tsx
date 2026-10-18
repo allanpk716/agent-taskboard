@@ -48,7 +48,7 @@ export function SystemPanel() {
   useEffect(refresh, [refresh])
 
   const runUpdate = () => {
-    if (!window.confirm('立即更新前后端？更新前会自动备份，后端更新后服务会短暂重启。')) return
+    if (!window.confirm('立即更新平台组件？更新前会自动备份，后端更新后服务会短暂重启。')) return
     setApplying(true)
     setResult(null)
     applyUpdate()
@@ -56,13 +56,14 @@ export function SystemPanel() {
         setResult(r)
         refresh()
       })
-      .catch((err) => setResult({ source_used: '', steps: [], message: err.message, server_updated: false, web_updated: false, restart_needed: false }))
+      .catch((err) => setResult({ source_used: '', steps: [], message: err.message, server_updated: false, web_updated: false, client_updated: false, restart_needed: false }))
       .finally(() => setApplying(false))
   }
 
   const serverUpdate = update?.server.update_available
   const webUpdate = update?.web.update_available
-  const anyUpdate = !!(serverUpdate || webUpdate)
+  const clientUpdate = update?.client.update_available
+  const anyUpdate = !!(serverUpdate || webUpdate || clientUpdate)
 
   return (
     <>
@@ -118,6 +119,20 @@ export function SystemPanel() {
                 {update
                   ? `${update.web.current || '未知'}${webUpdate ? ` → ${update.web.latest}（有新版本）` : '（已是最新）'}`
                   : `${health?.web || '未知'}（未检查更新）`}
+              </b>
+            </div>
+            <div className="kv">
+              <span>桌面客户端</span>
+              <b data-testid="client-version">
+                {update
+                  ? `${update.client.current || '未代管'}${
+                      clientUpdate
+                        ? ` → ${update.client.latest}（有新版本）`
+                        : update.client.latest
+                          ? '（已是最新）'
+                          : '（尚未发布）'
+                    }`
+                  : '未知（未检查更新）'}
               </b>
             </div>
             {webUpdate && update?.web.min_server && update.web_needs_newer_server && (

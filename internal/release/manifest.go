@@ -19,6 +19,7 @@ import (
 const (
 	ComponentServer = "server"
 	ComponentWeb    = "web"
+	ComponentClient = "client"
 )
 
 // semverPattern 只接受 X.Y.Z 形式（可带 v 前缀），与 tag 命名一致。
@@ -34,7 +35,7 @@ type FileEntry struct {
 // Manifest 是附在每个 Release 上的 manifest.json。更新器下载产物前先取它，
 // 按 Sha256 校验；web 组件还用 MinServer 判断是否需要先升级后端。
 type Manifest struct {
-	Component string      `json:"component"` // server 或 web
+	Component string      `json:"component"` // server、web 或 client
 	Version   string      `json:"version"`   // 不带 v 前缀，如 1.2.3
 	MinServer string      `json:"min_server"`
 	Files     []FileEntry `json:"files"`
@@ -62,16 +63,22 @@ func (m *Manifest) FileEntry(name string) *FileEntry {
 // BuildManifest 为 dir 下的产物生成清单。names 为 nil 时取目录下全部普通文件
 // （跳过已有的 manifest.json），按名称排序，保证重复构建结果一致。
 func BuildManifest(component, version, minServer, dir string, names []string) (*Manifest, error) {
-	if component != ComponentServer && component != ComponentWeb {
-		return nil, fmt.Errorf("未知组件 %q（只能是 %s 或 %s）", component, ComponentServer, ComponentWeb)
+	valid := map[string]bool{ComponentServer: true, ComponentWeb: true, ComponentClient: true}
+	if !valid[component] {
+		return nil, fmt.Errorf("未知组件 %q（只能是 %s、%s 或 %s）", component, ComponentServer, ComponentWeb, ComponentClient)
 	}
 	version, err := NormalizeVersion(version)
 	if err != nil {
 		return nil, err
 	}
-	minServer, err = NormalizeVersion(minServer)
-	if err != nil {
-		return nil, fmt.Errorf("min_server %w", err)
+	if minServer != "" {
+		minServer, err = NormalizeVersion(minServer)
+		if err != nil {
+			return nil, fmt.Errorf("min_server %w", err)
+		}
+	}
+	if minServer == "" && component != ComponentClient {
+		return nil, fmt.Errorf("组件 %s 的 min_server 不能为空", component)
 	}
 	if names == nil {
 		entries, err := os.ReadDir(dir)

@@ -14,6 +14,10 @@ import (
 // Server 是当前后端（taskboard 二进制）的版本。
 var Server = "0.0.0"
 
+// Client 是发布流水线注入的桌面客户端版本。服务端代管时只用于发布产物，
+// 服务端本机当前代管版本记录在 data_dir/client/client.json。
+var Client = "0.0.0"
+
 // parse 把 X.Y.Z 解析成三元组；非法段按 0 处理。
 func parse(v string) [3]int {
 	var out [3]int

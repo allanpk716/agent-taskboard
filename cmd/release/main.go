@@ -3,6 +3,7 @@
 // 用法：
 //
 //	release manifest -component server -version 1.2.3 [-min-server 1.2.3] -dir dist [-o dist/manifest.json]
+//	release manifest -component client -version 1.0.0 -dir dist [-o dist/manifest.json]
 //	release latest   -component web -version 1.4.0 -tag web/v1.4.0 -repo OWNER/REPO [-file latest.json] [-out latest.json]
 //	release check-exe -goos windows -goarch amd64 dist/taskboard.exe
 //
@@ -49,7 +50,7 @@ func run(args []string) error {
 
 func usage(w *os.File) {
 	fmt.Fprintln(w, `用法：
-  release manifest -component server|web -version X.Y.Z [-min-server X.Y.Z] -dir dist [-o 输出路径]
+  release manifest -component server|web|client -version X.Y.Z [-min-server X.Y.Z] -dir dist [-o 输出路径]
       为 dist 下的产物生成 manifest.json（SHA256、大小）；缺省记录全部文件并写入 dist/manifest.json
   release latest -component server|web -version X.Y.Z -tag server/vX.Y.Z -repo OWNER/REPO [-file latest.json] [-out latest.json]
       读改写 latest.json：更新本组件条目，保留另一组件；缺省写回 -file 指向的文件
@@ -59,7 +60,7 @@ func usage(w *os.File) {
 
 func cmdManifest(args []string) error {
 	fs := flag.NewFlagSet("manifest", flag.ContinueOnError)
-	component := fs.String("component", "", "server 或 web")
+	component := fs.String("component", "", "server、web 或 client")
 	version := fs.String("version", "", "发布版本，如 1.2.3（可带 v 前缀）")
 	minServer := fs.String("min-server", "", "需要的最低后端版本；缺省等于本版本")
 	dir := fs.String("dir", "", "产物目录")
@@ -71,7 +72,7 @@ func cmdManifest(args []string) error {
 	if *component == "" || *version == "" || *dir == "" {
 		return fmt.Errorf("manifest 需要 -component、-version 和 -dir")
 	}
-	if *minServer == "" {
+	if *minServer == "" && *component != "client" {
 		*minServer = *version
 	}
 	m, err := release.BuildManifest(*component, *version, *minServer, *dir, nil)

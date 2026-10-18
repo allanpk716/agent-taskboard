@@ -219,3 +219,38 @@ func TestPublishDryRun只下载打包不上传(t *testing.T) {
 		t.Fatalf("DryRun 也应产出 feed：%v", err)
 	}
 }
+
+func TestPublish转发客户端到独立应用(t *testing.T) {
+	g := startGitHub(t)
+	dir := t.TempDir()
+	exe := []byte("windows-client-binary\n")
+	if err := os.WriteFile(filepath.Join(dir, "taskboard-client.exe"), exe, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := release.BuildManifest("client", "1.0.0", "", dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestJSON, _ := json.MarshalIndent(m, "", "  ")
+	g.put("client/v1.0.0/manifest.json", manifestJSON)
+	g.put("client/v1.0.0/taskboard-client.exe", exe)
+	hub := startHub(t, "secret-token")
+
+	res, err := Publish(context.Background(), baseOpts(g, hub, "client/v1.0.0"))
+	if err != nil {
+		t.Fatalf("Publish client：%v", err)
+	}
+	if res.AppID != "agent-taskboard-client" || res.Component != "client" {
+		t.Fatalf("client 转发结果不对：%+v", res)
+	}
+	if res.NupkgName != "agent-taskboard-client-1.0.0-full.nupkg" {
+		t.Fatalf("client nupkg 命名不对：%s", res.NupkgName)
+	}
+	stored := hub.file("agent-taskboard-client", "stable", res.NupkgName)
+	if len(stored) == 0 {
+		t.Fatal("UpdateHub 的 client 应用应收到 nupkg")
+	}
+	if !strings.Contains(string(stored), "agent-taskboard-client.nuspec") {
+		t.Fatal("nupkg 里应有 client 应用自己的 nuspec")
+	}
+}

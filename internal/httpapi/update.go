@@ -59,6 +59,10 @@ func (a *API) handleAdminUpdate(w http.ResponseWriter, r *http.Request) {
 				Current: status.WebCurrent, Latest: status.WebLatest,
 				UpdateAvailable: status.WebUpdate, MinServer: status.WebMinServer,
 			},
+			Client: componentStatusView{
+				Current: status.ClientCurrent, Latest: status.ClientLatest,
+				UpdateAvailable: status.ClientUpdate,
+			},
 			WebNeedsNewerServer: status.WebNeedsNewerServer,
 		})
 	case http.MethodPost:
@@ -70,6 +74,7 @@ func (a *API) handleAdminUpdate(w http.ResponseWriter, r *http.Request) {
 		view := updateResultView{
 			SourceUsed: res.SourceUsed, Steps: res.Steps,
 			ServerUpdated: res.ServerUpdated, WebUpdated: res.WebUpdated,
+			ClientUpdated: res.ClientUpdated,
 			RestartNeeded: res.RestartNeeded, PreupdateBackup: res.PreupdateBackup,
 		}
 		if len(res.Steps) == 0 {
@@ -106,6 +111,7 @@ type updateStatusView struct {
 	SourceUsed          string              `json:"source_used"`
 	Server              componentStatusView `json:"server"`
 	Web                 componentStatusView `json:"web"`
+	Client              componentStatusView `json:"client"`
 	WebNeedsNewerServer bool                `json:"web_needs_newer_server"`
 }
 
@@ -124,6 +130,7 @@ type updateResultView struct {
 	Message         string   `json:"message,omitempty"`
 	ServerUpdated   bool     `json:"server_updated"`
 	WebUpdated      bool     `json:"web_updated"`
+	ClientUpdated   bool     `json:"client_updated"`
 	RestartNeeded   bool     `json:"restart_needed"`
 	PreupdateBackup string   `json:"preupdate_backup,omitempty"`
 }

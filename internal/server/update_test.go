@@ -26,6 +26,7 @@ type updateStatusBody struct {
 	SourceUsed          string              `json:"source_used"`
 	Server              componentStatusBody `json:"server"`
 	Web                 componentStatusBody `json:"web"`
+	Client              componentStatusBody `json:"client"`
 	WebNeedsNewerServer bool                `json:"web_needs_newer_server"`
 }
 
@@ -42,8 +43,22 @@ type updateResultBody struct {
 	Steps           []string `json:"steps"`
 	ServerUpdated   bool     `json:"server_updated"`
 	WebUpdated      bool     `json:"web_updated"`
+	ClientUpdated   bool     `json:"client_updated"`
 	RestartNeeded   bool     `json:"restart_needed"`
 	PreupdateBackup string   `json:"preupdate_backup"`
+}
+
+func (f *adminUpdateFixture) addClient(t *testing.T, version string, m release.Manifest, files map[string][]byte) {
+	t.Helper()
+	f.latest.Client = &release.LatestEntry{
+		Version: version, Tag: "client/v" + version,
+		ManifestURL: "https://github.com/example/example/releases/download/client/v" + version + "/manifest.json",
+	}
+	data, _ := json.Marshal(m)
+	f.byPath["releases/download/client/v"+version+"/manifest.json"] = data
+	for name, content := range files {
+		f.byPath["releases/download/client/v"+version+"/"+name] = content
+	}
 }
 
 // adminUpdateFixture 造一个假 GitHub 更新源，并按它启动真实服务。
@@ -51,6 +66,8 @@ type adminUpdateFixture struct {
 	server  *httptest.Server
 	corrupt map[string]bool
 	webDir  string
+	latest  *release.Latest
+	byPath  map[string][]byte
 }
 
 func newAdminUpdateFixture(t *testing.T, serverVer, webVer, webMinServer string) (*adminUpdateFixture, *tbtest.Server) {
@@ -73,7 +90,9 @@ func newAdminUpdateFixture(t *testing.T, serverVer, webVer, webMinServer string)
 		Web: &release.LatestEntry{Version: webVer, Tag: "web/v" + webVer,
 			ManifestURL: "https://github.com/example/example/releases/download/web/v" + webVer + "/manifest.json"},
 	}
+	fx.latest = &latest
 	byPath := map[string][]byte{}
+	fx.byPath = byPath
 	for component, m := range manifests {
 		data, _ := json.Marshal(m)
 		byPath["releases/download/"+component+"/v"+m.Version+"/manifest.json"] = data
@@ -91,7 +110,7 @@ func newAdminUpdateFixture(t *testing.T, serverVer, webVer, webMinServer string)
 		key := r.URL.Path[idx:]
 		if key == "releases/download/channel-stable/latest.json" {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(latest)
+			json.NewEncoder(w).Encode(fx.latest)
 			return
 		}
 		content, ok := byPath[key]
@@ -181,6 +200,9 @@ func Test管理员可检查更新(t *testing.T) {
 	}
 	if !status.Web.UpdateAvailable || status.Web.Latest != "1.4.0" {
 		t.Errorf("前端应提示有 1.4.0 更新：%+v", status)
+	}
+	if status.Client.UpdateAvailable || status.Client.Latest != "" {
+		t.Errorf("客户端尚未发布不应影响检查：%+v", status.Client)
 	}
 	_ = fx
 }

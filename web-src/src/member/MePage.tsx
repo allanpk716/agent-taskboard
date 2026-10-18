@@ -6,6 +6,7 @@ import { ApiError } from '../api'
 import {
   fetchAgentTokens,
   fetchClients,
+  fetchClientLatest,
   issueAgentToken,
   logout,
   revokeAgentToken,
@@ -13,6 +14,7 @@ import {
   type AgentTokenRow,
   type IssuedToken,
   type ClientCredentialRow,
+  type ClientLatest,
   type Me,
 } from './memberApi'
 import { fmtShort } from '../shared/format'
@@ -26,12 +28,14 @@ export function MePage({ me }: { me: Me }) {
   const [issued, setIssued] = useState<IssuedToken | null>(null)
   const [revoking, setRevoking] = useState<AgentTokenRow | null>(null)
   const [clients, setClients] = useState<ClientCredentialRow[] | null>(null)
+  const [clientLatest, setClientLatest] = useState<ClientLatest | null | undefined>(undefined)
   const [revokingClient, setRevokingClient] = useState<ClientCredentialRow | null>(null)
 
   async function refresh() {
     try {
       setTokens(await fetchAgentTokens())
       setClients(await fetchClients())
+      setClientLatest(await fetchClientLatest())
       setError(null)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : '读取 Agent 列表失败')
@@ -107,6 +111,31 @@ export function MePage({ me }: { me: Me }) {
           </a>
         </div>
       )}
+
+      <div className="mcard" data-testid="client-card">
+        <div className="sec-t" style={{ marginTop: 0 }}>
+          桌面客户端
+        </div>
+        {clientLatest === undefined ? (
+          <div className="hint">…</div>
+        ) : clientLatest ? (
+          <>
+            <div className="btnrow">
+              <a className="btn" data-testid="client-download" href="/api/v1/client/download">
+                下载 Windows 客户端 {clientLatest.version}
+              </a>
+            </div>
+            <div className="hint">
+              首次运行如遇 SmartScreen，先点「更多信息」，再点「仍要运行」；被杀毒软件拦截时，把
+              taskboard-client.exe 加入信任。下载后 SHA256 应为 {clientLatest.sha256}。
+            </div>
+          </>
+        ) : (
+          <div className="hint" data-testid="client-unavailable">
+            管理员尚未发布客户端。
+          </div>
+        )}
+      </div>
 
       <div className="mcard">
         <div className="sec-t" style={{ marginTop: 0 }}>

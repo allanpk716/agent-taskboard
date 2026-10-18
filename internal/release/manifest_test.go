@@ -73,6 +73,20 @@ func TestBuildManifest拒绝未知组件(t *testing.T) {
 	}
 }
 
+func TestBuildManifest支持客户端且minServer可为空(t *testing.T) {
+	dir := writeDistFiles(t, map[string]string{"taskboard-client.exe": "client-binary\n"})
+	m, err := BuildManifest("client", "1.0.0", "", dir, nil)
+	if err != nil {
+		t.Fatalf("BuildManifest client：%v", err)
+	}
+	if m.Component != "client" || m.Version != "1.0.0" || m.MinServer != "" {
+		t.Fatalf("client 清单头不对：%+v", m)
+	}
+	if len(m.Files) != 1 || m.Files[0].Name != "taskboard-client.exe" || m.Files[0].Sha256 == "" {
+		t.Fatalf("client 清单应记录 exe：%+v", m.Files)
+	}
+}
+
 func TestBuildManifest拒绝非语义化版本(t *testing.T) {
 	dir := writeDistFiles(t, map[string]string{"a.zip": "a\n"})
 	for _, v := range []string{"", "1.2", "latest", "1.2.3.4"} {

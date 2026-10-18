@@ -1,0 +1,77 @@
+# 桌面客户端发布：client/vX.Y.Z tag 时在 Ubuntu 上显式交叉构建 Windows
+# amd64 单文件 exe，附 manifest.json（含 SHA256）发布 Release，并更新
+# channel-stable/latest.json 的 client 条目（保留 server/web 条目）。
+name: release-client
+
+on:
+  push:
+    tags: ["client/v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: 测试
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: 构建
+        run: |
+          set -euxo pipefail
+          VERSION="${GITHUB_REF_NAME#client/v}"
+          mkdir -p dist
+          # 客户端只发布 Windows/amd64；构建机是 Ubuntu，必须显式指定平台。
+          # #81 落地后如调整版本变量名，这里同步 internal/version.Client。
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath \
+            -ldflags="-s -w -H=windowsgui -X github.com/allanpk716/agent-taskboard/internal/version.Client=$VERSION" \
+            -o dist/taskboard-client.exe ./cmd/taskboard-client
+
+      - name: 核对产物平台
+        run: |
+          go run ./cmd/release check-exe -goos windows -goarch amd64 dist/taskboard-client.exe
+
+      - name: 生成 manifest.json
+        run: |
+          set -euxo pipefail
+          VERSION="${GITHUB_REF_NAME#client/v}"
+          go run ./cmd/release manifest -component client -version "$VERSION" -dir dist
+
+      - name: 发布 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          VERSION="${GITHUB_REF_NAME#client/v}"
+          if gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber -R "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "client $VERSION" --generate-notes -R "$GITHUB_REPOSITORY"
+          fi
+
+      - name: 更新 channel-stable 的 latest.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          VERSION="${GITHUB_REF_NAME#client/v}"
+          curl -fsSL -o latest.json "https://github.com/$GITHUB_REPOSITORY/releases/download/channel-stable/latest.json" \
+            || printf '{}' > latest.json
+          go run ./cmd/release latest -component client -version "$VERSION" \
+            -tag "$GITHUB_REF_NAME" -repo "$GITHUB_REPOSITORY" -file latest.json
+          if ! gh release view channel-stable -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create channel-stable --target "$GITHUB_SHA" --title channel-stable \
+              --notes "固定 tag：latest.json 记录后端、前端、桌面客户端各自的最新版本" \
+              -R "$GITHUB_REPOSITORY"
+          fi
+          gh release upload channel-stable latest.json --clobber -R "$GITHUB_REPOSITORY"

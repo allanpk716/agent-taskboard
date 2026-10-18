@@ -1,7 +1,7 @@
 // publish-updatehub 把 GitHub Release 上指定 tag 的产物转发到内网
 // UpdateHub：下载并按 manifest.json 校验 SHA256，自己生成 .nuspec 打成
 // nupkg（不依赖 vpk），把 manifest.json 一起打进包里，连同
-// releases.win.json 上传到 agent-taskboard-server / agent-taskboard-web
+// releases.win.json 上传到 agent-taskboard-server / agent-taskboard-web / agent-taskboard-client
 // 应用的 stable 通道，最后读 feed 确认已登记。
 //
 // 本仓库公开，UpdateHub 的地址和 token 只从环境变量读取：
@@ -40,7 +40,7 @@ func main() {
 func run(args []string) error {
 	fs := flag.NewFlagSet("publish-updatehub", flag.ContinueOnError)
 	repo := fs.String("repo", defaultRepo, "GitHub 仓库（OWNER/REPO）")
-	tag := fs.String("tag", "", "发布 tag，如 server/v1.2.3")
+	tag := fs.String("tag", "", "发布 tag，如 server/v1.2.3、client/v1.0.0")
 	channel := fs.String("channel", "stable", "UpdateHub 通道")
 	notes := fs.String("notes", "", "版本备注")
 	outDir := fs.String("out", "publish-out", "下载产物、nupkg 和 feed 的保存目录")
