@@ -14,6 +14,9 @@ import (
 // Server 是当前后端（taskboard 二进制）的版本。
 var Server = "0.0.0"
 
+// Client 是当前 Windows 桌面客户端的版本。
+var Client = "0.0.0"
+
 // parse 把 X.Y.Z 解析成三元组；非法段按 0 处理。
 func parse(v string) [3]int {
 	var out [3]int
