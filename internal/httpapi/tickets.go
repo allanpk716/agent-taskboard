@@ -510,7 +510,7 @@ type memberRef struct {
 }
 
 // agentRef 是具名 Agent 的对外结构。revoked 表示这个 Agent 已被撤销
-//（历史署名照实标注「已停用」，#28 评审修正；活动会话的 viewer 恒为 false）。
+// （历史署名照实标注「已停用」，#28 评审修正；活动会话的 viewer 恒为 false）。
 type agentRef struct {
 	ID      int64  `json:"id"`
 	Name    string `json:"name"`
@@ -560,6 +560,7 @@ type briefView struct {
 	Fields         *map[string]string  `json:"fields"`
 	Markdown       string              `json:"markdown"`
 	Revision       int64               `json:"revision"`
+	AttachmentIDs  []string            `json:"attachment_ids"`
 	Template       *string             `json:"template"`
 	TemplateFields []templateFieldView `json:"template_fields,omitempty"` // 创建时版本的字段定义（访客网页按问句渲染说明气泡，#38）
 	TemplateGroups []templateGroupView `json:"template_groups,omitempty"` // 创建时版本的分组（#63）；不分组时省略
@@ -701,7 +702,7 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 		Title:       full.Title,
 		Status:      full.Status,
 		Creator:     newAuthorView(full.Creator),
-		Brief:       briefView{Markdown: full.BriefMD, Revision: full.BriefRevision},
+		Brief:       briefView{Markdown: full.BriefMD, Revision: full.BriefRevision, AttachmentIDs: full.BriefAttachmentIDs},
 		Attachments: []attachmentView{},
 	}
 	if full.AssigneeID != 0 {

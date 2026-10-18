@@ -188,12 +188,13 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 // title-only 修订一致）。修订不做必填校验；AuthorName / ViaAgent 是访客的
 // 自报署名（#32，仅访客凭证采纳）。
 type ReviseInput struct {
-	Title        *string
-	BriefMD      *string
-	Fields       map[string]string // 模板工单：只需传改动的字段
-	BaseRevision int64             // 缺省时为 0，视为没带
-	AuthorName   string            // 访客自报的署名（仅访客凭证采纳）
-	ViaAgent     bool              // 访客自报「由其 Agent 写成」
+	Title         *string
+	BriefMD       *string
+	Fields        map[string]string // 模板工单：只需传改动的字段
+	AttachmentIDs []string
+	BaseRevision  int64  // 缺省时为 0，视为没带
+	AuthorName    string // 访客自报的署名（仅访客凭证采纳）
+	ViaAgent      bool   // 访客自报「由其 Agent 写成」
 }
 
 // Revise 以 viewer 的身份修订标题/说明：校验 base_revision 乐观锁、推进版本号、
@@ -273,9 +274,12 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 		}
 		brief = template.RenderBrief(fields, full.TemplateDef.Fields)
 	}
-	// 说明修订同样认领正文里的 att: 引用（挂到「说明」上）：只认领其中待用的，
-	// 已挂在别处的可以重复引用；计数对全部引用做（插图与附件分开）。
-	briefRefs := attachments.ParsePostRefs(brief, nil)
+	attachmentIDs := full.BriefAttachmentIDs
+	if in.AttachmentIDs != nil {
+		attachmentIDs = append([]string{}, in.AttachmentIDs...)
+	}
+	// 说明正文里的 att: 引用照旧认领；整单 attachment_ids 额外显式认领。
+	briefRefs := attachments.ParsePostRefs(brief, attachmentIDs)
 
 	now := m.clk.Now()
 	tx, err := m.db.BeginTx(ctx, nil)
@@ -287,6 +291,14 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 
 	revision := full.BriefRevision + 1
 	var fieldsJSON any
+	var attachmentIDsJSON any
+	if attachmentIDs != nil {
+		if buf, err := json.Marshal(attachmentIDs); err != nil {
+			return Ticket{}, fmt.Errorf("序列化说明附件失败：%w", err)
+		} else {
+			attachmentIDsJSON = string(buf)
+		}
+	}
 	if in.Fields != nil {
 		if buf, err := json.Marshal(fields); err != nil {
 			return Ticket{}, fmt.Errorf("序列化字段值失败：%w", err)
@@ -294,17 +306,20 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 			fieldsJSON = string(buf)
 		}
 		if _, err := tx.ExecContext(ctx,
-			`UPDATE tickets SET title = ?, brief_md = ?, fields_json = ?, brief_revision = ? WHERE seq = ?`,
-			title, brief, fieldsJSON, revision, full.Seq); err != nil {
+			`UPDATE tickets SET title = ?, brief_md = ?, fields_json = ?, brief_revision = ?, brief_attachment_ids = ? WHERE seq = ?`,
+			title, brief, fieldsJSON, revision, attachmentIDsJSON, full.Seq); err != nil {
 			return Ticket{}, fmt.Errorf("写入修订失败：%w", err)
 		}
 	} else if _, err := tx.ExecContext(ctx,
-		`UPDATE tickets SET title = ?, brief_md = ?, brief_revision = ? WHERE seq = ?`,
-		title, brief, revision, full.Seq); err != nil {
+		`UPDATE tickets SET title = ?, brief_md = ?, brief_revision = ?, brief_attachment_ids = ? WHERE seq = ?`,
+		title, brief, revision, attachmentIDsJSON, full.Seq); err != nil {
 		return Ticket{}, fmt.Errorf("写入修订失败：%w", err)
 	}
 	if err := m.atts.ClaimTx(ctx, tx, full.Seq, attachments.PrincipalOf(viewer), briefRefs,
 		attachments.ClaimOnlyPending, "说明", now); err != nil {
+		return Ticket{}, err
+	}
+	if err := m.atts.ValidateBriefIDsTx(ctx, tx, full.Seq, attachments.PrincipalOf(viewer), attachmentIDs); err != nil {
 		return Ticket{}, err
 	}
 	eventSeq, change, err := m.appendEvent(ctx, tx, full.Seq, now, author, "brief_revised")
@@ -312,8 +327,8 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 		return Ticket{}, err
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE timeline_events SET revision = ? WHERE ticket_seq = ? AND seq = ?`,
-		revision, full.Seq, eventSeq); err != nil {
+		`UPDATE timeline_events SET revision = ?, attachment_ids = ? WHERE ticket_seq = ? AND seq = ?`,
+		revision, attachmentIDsJSON, full.Seq, eventSeq); err != nil {
 		return Ticket{}, fmt.Errorf("写入修订事件失败：%w", err)
 	}
 	if err := touchLastChange(ctx, tx, full.Seq, change); err != nil {
@@ -325,10 +340,11 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 		after.BriefMD = brief
 		after.Fields = fields
 		after.BriefRevision = revision
+		after.BriefAttachmentIDs = attachmentIDs
 		after.LastChange = change
 		after.Timeline = append(append([]Event{}, full.Timeline...), Event{
 			Seq: eventSeq, Change: change, At: now, Actor: author, Type: "brief_revised",
-			Revision: revision,
+			Revision: revision, AttachmentIDs: attachmentIDs,
 		})
 		notified, err = m.notifier.NotifyTx(ctx, tx, NotificationInput{
 			Before: full, After: after, Actor: author, Event: after.Timeline[len(after.Timeline)-1],
@@ -345,6 +361,7 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 	full.BriefMD = brief
 	full.Fields = fields
 	full.BriefRevision = revision
+	full.BriefAttachmentIDs = attachmentIDs
 	full.LastChange = change
 	return full.Ticket, nil
 }

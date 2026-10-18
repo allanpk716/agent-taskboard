@@ -111,20 +111,21 @@ func (a Author) DisplayName() string {
 
 // Ticket 是一张工单的核心字段。
 type Ticket struct {
-	Seq            int64
-	Number         string
-	Kind           string // task | report
-	Title          string
-	Status         string // open | closed
-	CloseReason    string // "" | done | wontfix | duplicate
-	DuplicateOfSeq int64  // close_reason == duplicate 时另一张工单的序号（0 = 无）
-	BriefMD        string
-	BriefRevision  int64
-	Creator        Author
-	AssigneeID     int64  // 指派人的成员 id；0 = 未指派（#36）
-	AssigneeName   string // 指派人的姓名；空 = 未指派
-	CreatedAt      time.Time
-	LastChange     int64
+	Seq                int64
+	Number             string
+	Kind               string // task | report
+	Title              string
+	Status             string // open | closed
+	CloseReason        string // "" | done | wontfix | duplicate
+	DuplicateOfSeq     int64  // close_reason == duplicate 时另一张工单的序号（0 = 无）
+	BriefMD            string
+	BriefRevision      int64
+	BriefAttachmentIDs []string
+	Creator            Author
+	AssigneeID         int64  // 指派人的成员 id；0 = 未指派（#36）
+	AssigneeName       string // 指派人的姓名；空 = 未指派
+	CreatedAt          time.Time
+	LastChange         int64
 
 	// 模板工单（#34）：保存创建时那个版本的字段定义快照（模板以后修改不影响
 	// 已有工单）；说明由字段拼成（BriefMD 是渲染结果），字段值在 Fields 里。
@@ -518,38 +519,40 @@ func snapshotVersion(s *template.Snapshot) any {
 func (m *Manager) ByRef(ctx context.Context, ref string) (Full, error) {
 	ref = strings.TrimPrefix(ref, "#")
 	var (
-		t               Ticket
-		at              string
-		closeReason     sql.NullString
-		duplicateOfSeq  sql.NullInt64
-		memberID        sql.NullInt64
-		memberName      sql.NullString
-		agentID         sql.NullInt64
-		agentName       sql.NullString
-		agentRevoked    sql.NullString
-		assigneeID      sql.NullInt64
-		assigneeName    sql.NullString
-		creatorLinkID   sql.NullInt64
-		creatorIntakeID sql.NullInt64
-		creatorName     sql.NullString
-		templateKey     sql.NullString
-		snapshotJSON    sql.NullString
-		fieldsJSON      sql.NullString
-		err             error
+		t                  Ticket
+		at                 string
+		closeReason        sql.NullString
+		duplicateOfSeq     sql.NullInt64
+		memberID           sql.NullInt64
+		memberName         sql.NullString
+		agentID            sql.NullInt64
+		agentName          sql.NullString
+		agentRevoked       sql.NullString
+		assigneeID         sql.NullInt64
+		assigneeName       sql.NullString
+		creatorLinkID      sql.NullInt64
+		creatorIntakeID    sql.NullInt64
+		creatorName        sql.NullString
+		templateKey        sql.NullString
+		snapshotJSON       sql.NullString
+		fieldsJSON         sql.NullString
+		briefAttachmentIDs sql.NullString
+		err                error
 	)
 	scan := func(row *sql.Row) error {
 		return row.Scan(&t.Seq, &t.Number, &t.Kind, &t.Title, &t.Status, &closeReason, &duplicateOfSeq,
 			&t.BriefMD, &t.BriefRevision, &memberID, &memberName, &agentID, &agentName, &agentRevoked,
 			&assigneeID, &assigneeName,
 			&creatorLinkID, &creatorIntakeID, &creatorName,
-			&at, &t.LastChange, &templateKey, &snapshotJSON, &fieldsJSON)
+			&at, &t.LastChange, &templateKey, &snapshotJSON, &fieldsJSON, &briefAttachmentIDs)
 	}
 	const cols = `t.seq, t.number, t.kind, t.title, t.status, t.close_reason, t.duplicate_of_seq,
 		t.brief_md, t.brief_revision,
 		t.creator_member_id, cm.name, t.creator_agent_id, ca.name, ca.revoked_at,
 		t.assignee_id, am.name,
 		t.creator_link_id, t.creator_intake_id, t.creator_author_name,
-		t.created_at, t.last_change, t.template_key, t.template_snapshot, t.fields_json`
+		t.created_at, t.last_change, t.template_key, t.template_snapshot, t.fields_json,
+		t.brief_attachment_ids`
 
 	from := ` FROM tickets t
 		LEFT JOIN members cm ON cm.id = t.creator_member_id
@@ -572,6 +575,12 @@ func (m *Manager) ByRef(ctx context.Context, ref string) (Full, error) {
 	}
 	if closeReason.Valid {
 		t.CloseReason = closeReason.String
+	}
+	t.BriefAttachmentIDs = []string{}
+	if briefAttachmentIDs.Valid && briefAttachmentIDs.String != "" {
+		if err := json.Unmarshal([]byte(briefAttachmentIDs.String), &t.BriefAttachmentIDs); err != nil {
+			return Full{}, fmt.Errorf("解析工单 %s 的说明附件失败：%w", t.Number, err)
+		}
 	}
 	t.DuplicateOfSeq = duplicateOfSeq.Int64
 	t.AssigneeID = assigneeID.Int64
