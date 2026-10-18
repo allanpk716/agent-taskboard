@@ -1,6 +1,7 @@
 // 成员网页调用的 API（网页会话 cookie；错误结构见 api.ts）。
 import { api, ApiError } from '../api'
 import { compressImage } from '../shared/compress'
+import { fetchServerVersion } from '../shared/health'
 import type { TicketView } from '../shared/types'
 
 export interface Me {
@@ -62,9 +63,7 @@ export async function fetchInbox(): Promise<InboxResponse> {
   return api('/api/v1/inbox')
 }
 
-export async function fetchServerVersion(): Promise<string> {
-  return (await api('/api/v1/health')).server_version as string
-}
+export { fetchServerVersion }
 
 export async function fetchMembers(): Promise<MemberRef[]> {
   const body = await api('/api/v1/members')

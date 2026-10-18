@@ -10,7 +10,7 @@ import { GroupedBriefForm } from './GroupedBriefForm'
 import { LandingPage } from './LandingPage'
 import { guestApi } from './guestApi'
 import { fmtDateCN } from '../shared/format'
-import { api } from '../api'
+import { fetchServerVersion } from '../shared/health'
 import type { GuestSession, TicketView } from '../shared/types'
 
 type Mode = 'land' | 'talk' | 'fill'
@@ -83,8 +83,8 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
   }, [load])
 
   useEffect(() => {
-    api('/api/v1/health')
-      .then((health: { server_version?: string }) => setServerVersion(health.server_version ?? null))
+    fetchServerVersion()
+      .then(setServerVersion)
       .catch(() => setServerVersion(null))
   }, [])
 

@@ -44,17 +44,6 @@ export async function fetchUpdateStatus(): Promise<UpdateStatus> {
   return api('/api/v1/admin/update')
 }
 
-export interface Health {
-  status: string
-  server_version: string
-  web_version: string
-}
-
-/** 检查更新失败时仍能展示当前版本（健康检查公开可读）。 */
-export async function fetchHealth(): Promise<Health> {
-  return api('/api/v1/health')
-}
-
 export async function applyUpdate(): Promise<UpdateResult> {
   return api('/api/v1/admin/update', { method: 'POST' })
 }
