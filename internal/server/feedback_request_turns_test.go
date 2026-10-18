@@ -192,6 +192,15 @@ func Test访客修订说明会更新原因和轮次事件(t *testing.T) {
 	revise("今早开始报 E-203。", 1)
 	revise("今早开始报 E-203，重启后仍复现。", 2)
 
+	li := notificationsOf(t, w, w.webLi, "")
+	if len(li.Items) != 2 {
+		t.Fatalf("第二次修订后通知数 = %d, 想 2（补全、修订）", len(li.Items))
+	}
+	if li.Items[0].Kind != "turn" || li.Items[0].Reason != "guest_revised" ||
+		li.Items[1].Kind != "turn" || li.Items[1].Reason != "guest_completed" {
+		t.Fatalf("补全后再次修订的通知 = %+v, 想 turn/guest_completed 后 turn/guest_revised", li.Items)
+	}
+
 	assertWaitingOn(t, w.waitOf(t, w.webWang, created.Number), waitingOnBody{
 		Party: "assignee", Member: strp("李工"), Text: "李工（指派人）", Reason: "访客修订了说明",
 	}, "访客第二次修订")
@@ -215,4 +224,44 @@ func Test访客修订说明会更新原因和轮次事件(t *testing.T) {
 	assertWaitingOn(t, w.waitOf(t, w.webWang, created.Number), waitingOnBody{
 		Party: "assignee", Member: strp("李工"), Text: "李工（指派人）", Reason: "访客修订了说明",
 	}, "访客以修订代替回复")
+}
+
+// 只增删整张工单的附件也算一次说明修订，并给跟进人一条 guest_revised 通知。
+func Test访客只改整单附件也算修订并通知跟进人(t *testing.T) {
+	w := newHandoffWorld(t)
+	created, guest := createFeedbackRequest(t, w, "只补充附件的反馈", "李工")
+	res := w.s.Do(t, guest, http.MethodPatch, "/api/v1/tickets/"+created.Number,
+		map[string]any{"brief_md": "补充说明。", "base_revision": 1}, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("访客补全说明状态码 = %d, 想 200", res.StatusCode)
+	}
+
+	att := mustUploadAttachment(t, w.s, guest, created.Number, "补充日志.log", []byte("log\n"))
+	res = w.s.Do(t, guest, http.MethodPatch, "/api/v1/tickets/"+created.Number,
+		map[string]any{"attachment_ids": []string{att.ID}, "base_revision": 2}, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("只改附件状态码 = %d, 想 200", res.StatusCode)
+	}
+	var view ticketResponseBody
+	w.s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+created.Number, nil, &view)
+	if view.Brief.Revision != 3 {
+		t.Fatalf("只改附件后的 revision = %d, 想 3", view.Brief.Revision)
+	}
+	if view.WaitingOn.Why != "guest_revised" {
+		t.Fatalf("只改附件后的 waiting_on.why = %q, 想 guest_revised", view.WaitingOn.Why)
+	}
+
+	got := notificationsOf(t, w, w.webLi, "")
+	if len(got.Items) != 2 {
+		t.Fatalf("跟进人通知数 = %d, 想 2（补全、修订）", len(got.Items))
+	}
+	last := got.Items[0]
+	if last.Kind != "turn" || last.Reason != "guest_revised" || last.Event.Type != "brief_revised" {
+		t.Fatalf("只改附件后的通知 = %+v, 想 turn/guest_revised/brief_revised", last)
+	}
+	for _, n := range got.Items {
+		if n.Kind == "fyi" {
+			t.Fatalf("跟进人不应额外收到知会：%+v", got.Items)
+		}
+	}
 }

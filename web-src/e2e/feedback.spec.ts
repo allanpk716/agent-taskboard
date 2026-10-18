@@ -58,6 +58,10 @@ test('请人反馈：向导生成链接，完成页可复制，访客能打开',
   await expect(page.getByRole('button', { name: '再请一个人' })).toBeVisible()
   await expect(page.getByRole('button', { name: '回收件箱' })).toBeVisible()
 
+  await page.getByRole('button', { name: '打开工单' }).click()
+  await expect(page.locator('.badge.waiting')).toHaveText('等待 访客补全说明')
+  await page.goBack()
+
   // 访客（不带成员会话）第一次打开链接先看到落地页（#66）：成员名 + 标题
   // + 称呼预填链接备注；「先不填，直接回复」直接进对话页（这条链接带「可填写说明」）。
   const guest = await newGuestPage(browser, linkUrl)
