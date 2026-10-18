@@ -1,6 +1,6 @@
 // 建单（#41）：第一步选「用模板」或「自由格式」；第二步填表单——模板工单
 // 复用 #39 的 FieldForm（按字段分区、维度字段可按别名搜索、统一附件区，
-// 附件先暂存本机，建单后立即上传并挂到整单附件列表）；自由格式一整块
+// 附件先暂存本机，建单后立即上传并挂到整张工单的附件）；自由格式一整块
 // Markdown 说明。维度标签先经 resolve 换成标准值（建单接口只收标准值）；
 // 缺必填只弹确认、不拦截（spec 用户故事 6）；创建指派给同事后嵌入
 // 「交给 Agent」面板。
@@ -250,7 +250,7 @@ async function attachStagedFiles(
     })
   } catch (err) {
     const why = err instanceof ApiError ? err.message : '网络问题'
-    warnings.push({ field: '附件', message: `已上传，但没能挂到附件条（${why}），请打开工单后补充。` })
+    warnings.push({ field: '附件', message: `已上传，但没能挂到整张工单的附件（${why}），请打开工单后补充。` })
   }
   return warnings
 }
@@ -400,7 +400,7 @@ function NewTicketForm({
         idempotencyKey: idemKeyRef.current,
       })
       idemKeyRef.current = undefined // 成功：下一次建单是新动作
-      // 暂存的附件此刻上传并挂到整单附件列表（建单本身不带附件）。
+      // 暂存的附件此刻上传并挂到整张工单的附件（建单本身不带附件）。
       const warnings = await attachStagedFiles(created.number, files)
       created.warnings = [...created.warnings, ...warnings]
       if (created.share_text) {
