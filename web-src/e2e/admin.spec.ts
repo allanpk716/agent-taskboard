@@ -26,6 +26,26 @@ test('管理员在管理页看到备份状态与版本', async ({ page }) => {
   await expect(page.getByTestId('update-btn')).toBeDisabled()
 })
 
+test('管理员在管理页切换成员的初筛人身份', async ({ page }) => {
+  await login(page, ADMIN)
+  await page.goto('/admin')
+
+  const row = page.locator(`tr[data-member="wang"]`)
+  await expect(row).toBeVisible()
+  const toggle = row.getByRole('checkbox', { name: '初筛人' })
+  const initial = await toggle.isChecked()
+  await toggle.click()
+
+  await expect(toggle).toBeChecked({ checked: !initial })
+  const body = (await page.evaluate(() => fetch('/api/v1/members').then((r) => r.json()))) as {
+    members: { username: string; triager: boolean }[]
+  }
+  expect(body.members.find((m) => m.username === 'wang')?.triager).toBe(!initial)
+
+  await toggle.click()
+  await expect(toggle).toBeChecked({ checked: initial })
+})
+
 // 普通成员看不到面板：e2e 环境里 wang 是普通成员但管理页入口对非管理员隐藏、
 // 后端 403 admin_required，这个场景由 internal/server 的黑盒测试覆盖
 // （Test管理员可检查更新）与 AdminPage 的 is_admin 判断保证。

@@ -271,6 +271,7 @@ export interface MemberAccount {
   username: string
   name: string
   active: boolean
+  triager: boolean
 }
 
 export interface CreatedMember {
@@ -292,6 +293,13 @@ export async function createMember(username: string, name: string): Promise<Crea
 
 export async function deactivateMemberAccount(id: number): Promise<void> {
   await api(`/api/v1/members/${id}/deactivate`, { method: 'POST' })
+}
+
+export async function setMemberTriager(id: number, triager: boolean): Promise<void> {
+  await api(`/api/v1/members/${id}/triager`, {
+    method: 'POST',
+    body: JSON.stringify({ triager }),
+  })
 }
 
 /* ---------------- 工单写操作 ---------------- */
