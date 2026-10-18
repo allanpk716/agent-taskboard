@@ -148,7 +148,7 @@ func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assig
 		}
 	}
 	if full.AssigneeID == 0 && toID == 0 {
-		return AssignResult{}, &UnknownMemberError{Ref: assigneeRef}
+		return AssignResult{Ticket: full.Ticket, WaitingOn: WaitingOnOf(full)}, nil
 	}
 	if toID == full.AssigneeID {
 		return AssignResult{}, &AlreadyAssignedError{Name: toName}
@@ -167,7 +167,7 @@ func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assig
 		`UPDATE tickets SET assignee_id = ? WHERE seq = ?`, nullInt(toID), full.Seq); err != nil {
 		return AssignResult{}, fmt.Errorf("改派失败：%w", err)
 	}
-	eventSeq, _, err := m.insertAssignedEvent(ctx, tx, full.Seq, authorOf(viewer), fromName, toName, now)
+	eventSeq, change, err := m.insertAssignedEvent(ctx, tx, full.Seq, authorOf(viewer), fromName, toName, now)
 	if err != nil {
 		return AssignResult{}, err
 	}
@@ -175,8 +175,9 @@ func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assig
 		after := full
 		after.AssigneeID = toID
 		after.AssigneeName = toName
+		after.LastChange = change
 		after.Timeline = append(append([]Event{}, full.Timeline...), Event{
-			Seq: eventSeq, Change: full.LastChange + 1, At: now, Actor: authorOf(viewer), Type: "assigned",
+			Seq: eventSeq, Change: change, At: now, Actor: authorOf(viewer), Type: "assigned",
 			AssignFrom: fromName, AssignTo: toName,
 		})
 		var err error

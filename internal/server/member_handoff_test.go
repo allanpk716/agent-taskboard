@@ -420,6 +420,7 @@ func Test交付只限指派人一方(t *testing.T) {
 func Test改派接口的边界(t *testing.T) {
 	w := newHandoffWorld(t)
 	task := w.createHandoffTicket(t, w.wangA, "整理对照表", "李工").Number
+	unassigned := w.createHandoffTicket(t, w.wangA, "未指派", "").Number
 
 	link := w.s.CreateGuestLink(t, w.webWang, task, map[string]any{"note": "检验科-张三"})
 	res := w.s.Do(t, w.s.GuestClient(link.Key(t)), http.MethodPost,
@@ -451,6 +452,15 @@ func Test改派接口的边界(t *testing.T) {
 		if got.Error.Code != body.code {
 			t.Errorf("%s：错误码 = %q, 想 %s", name, got.Error.Code, body.code)
 		}
+	}
+
+	var unchanged struct {
+		Assignee any `json:"assignee"`
+	}
+	res = w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets/"+unassigned+"/assign",
+		map[string]string{"assignee": ""}, &unchanged)
+	if res.StatusCode != http.StatusOK || unchanged.Assignee != nil {
+		t.Fatalf("未指派工单再传空 assignee = %d/%v, 想 200 且保持未指派", res.StatusCode, unchanged.Assignee)
 	}
 
 	// 改派给赵工：响应带指派人、等待方与改派版 share_text；assigned 事件落地。
