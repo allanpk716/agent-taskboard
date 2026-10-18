@@ -8,11 +8,12 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 - 所有接口都在 `/api/v1` 之下；网页只调用公开 API。
 - 错误一律写成 `{"error":{"code":"…","message":"…","hint":"…"}}`，`hint` 可选，告诉调用方下一步怎么做。
 - 成功创建资源返回 `201`。
-- 凭证三种，统一解析成一个 Viewer（`kind` 为 `member` / `guest`，成员带 `member` 与 `agent`，访客带 `guest_link`，见 spec「身份与凭证」模块）：
+- 凭证四种，统一解析成一个 Viewer（`kind` 为 `member` / `guest`，成员带 `member` 与 `agent` / `client`，访客带 `guest_link`，见 spec「身份与凭证」模块）：
   1. **成员本人**：网页会话 cookie `tb_session`（HttpOnly + Secure + SameSite=Lax）。本人操作的唯一来源。
   2. **成员 Agent**：`Authorization: Bearer <Agent token>`，token 由 `POST /api/v1/me/agent-tokens` 签发（前缀 `tbag_`）。ADR 0003：用 token 的操作一律署名为「某成员 的 Agent · 名字」，永远不算本人。
-  3. **访客**：访客链接 `/g/<密钥>` 的密钥直接作 Bearer（前缀 `tbg_`，见「访客链接（#32）」）。
-- 请求同时带 Bearer 和 cookie 时按 Bearer 解析，且解析失败不回退到 cookie：凭证坏了应当报错（401），而不是悄悄当作本人。Bearer 先按 Agent token 解析、再按访客链接密钥解析。
+  3. **桌面客户端**：`Authorization: Bearer <客户端凭证>`（前缀 `tbc_`）。权限边界是 `client_scope`：只能调用通知接口、`GET /session`、`GET /client/latest`、`GET /client/download`，以及撤销自己的 `DELETE /me/clients/self`；它不署名、不代表成员操作工单。
+  4. **访客**：访客链接 `/g/<密钥>` 的密钥直接作 Bearer（前缀 `tbg_`，见「访客链接（#32）」）。
+- 请求同时带 Bearer 和 cookie 时按 Bearer 解析，且解析失败不回退到 cookie：凭证坏了应当报错（401），而不是悄悄当作本人。Bearer 先按客户端凭证、Agent token、访客链接密钥的顺序解析。
 - 401 错误码：`unauthenticated`（未登录/会话过期）、`invalid_token`（Agent token 或访客链接密钥未知）、`link_revoked`（访客链接已撤销）、`link_expired`（访客链接已过期）。访客链接的撤销与过期即时生效：每个请求都实时查库（密钥只存哈希）。
 - 撤销 Agent token 立即生效：每次请求都实时查库校验（token 只存哈希，无状态 JWT 不可用）。
 
@@ -23,6 +24,53 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 | `POST /api/v1/session` | 登录：`{"username","password"}` 换会话 cookie。错误 `invalid_credentials`(401)、`invalid_json`(400)。 |
 | `GET /api/v1/session` | 当前凭证的身份（任何有效凭证；匿名 401 `unauthenticated`）。 |
 | `DELETE /api/v1/session` | 登出（幂等 204），清除会话 cookie。 |
+
+`GET /api/v1/session` 对成员还会返回 `client` 与 `min_client_version`：
+
+```json
+{
+  "viewer": {
+    "kind": "member",
+    "member": {"id": 1, "username": "chen", "name": "陈工", "is_admin": false},
+    "agent": null,
+    "client": {"id": 8, "hostname": "WORKSTATION-01"}
+  },
+  "inbox": "/api/v1/inbox",
+  "min_client_version": ""
+}
+```
+
+网页会话没有 `viewer.client`；客户端凭证必带。`min_client_version` 来自 `[server]` 配置，空串表示不限制。
+
+## 通知（#74）
+
+通知接口接受成员网页会话、成员 Agent token 和客户端凭证；访客一律 403 `members_only`。
+
+| 方法与路径 | 说明 |
+|---|---|
+| `GET /api/v1/notifications` | 列出当前成员通知。`after` 存在时按 id 升序增量拉取；否则按 id 降序分页，`before` 取本页最后一条 id。支持 `unread=1`、`limit`（默认 50，最大 200）、`format=markdown`。 |
+| `GET /api/v1/notifications/unread` | 只返回 `{unread_count, latest_id}`。 |
+| `POST /api/v1/notifications/read` | 标已读。请求体 `{"ids":[…]}` / `{"ticket":"…"}` / `{"up_to":N}` 三选一；幂等。成员 Agent 403 `agent_cannot_mark_read`，`ids` 最多 500 个（400 `too_many_notification_ids`）。 |
+| `GET /api/v1/notifications/stream` | SSE。首连推 `hello`；`Last-Event-ID` 重连先升序补发 `notification` 再推 `hello`；在线期间推 `notification` / `read`，每 25 秒推 `: ping`。 |
+
+- 列表响应 `{items, cursor, unread_count, next}`；`next` 保留 `unread`、`limit`、`format`，只替换 `before`。
+- 通知项含 `id, ticket{number,title,url}, kind, reason, text, event, summary, read_new, read_full, created_at, read_at`。
+- 游标格式错误：400 `invalid_after` / `invalid_before`；SSE 重连头错误：400 `invalid_last_event_id`。
+
+## 桌面客户端凭证与服务端代管（#74）
+
+| 方法与路径 | 说明 |
+|---|---|
+| `POST /api/v1/client/connect` | 网页会话确认「连接这台电脑」。请求体 `{port,state,code_challenge,hostname}`，返回 `{redirect_url}`；port 只允许本机回环监听。 |
+| `POST /api/v1/client/token` | 客户端用一次性 code 和 PKCE verifier 换客户端凭证。 |
+| `GET /api/v1/client/latest` | 查询服务端代管客户端 `{version,sha256,size,download_url}`。成员网页会话与客户端凭证可调；成员 Agent 403 `agent_not_allowed`。 |
+| `GET /api/v1/client/download` | 下载代管客户端。下载内容按 ADR 0006 附加平台地址尾部戳，`latest` 的 SHA256/大小与下载字节一致。 |
+| `GET /api/v1/me/clients` | 列出本人已连接电脑。 |
+| `DELETE /api/v1/me/clients/{id}` | 网页会话撤销某台电脑。 |
+| `DELETE /api/v1/me/clients/self` | 客户端凭证撤销自己（退出登录/卸载用）。 |
+| `POST /api/v1/me/password` | 自助改密 `{old_password,new_password}`；原密码错误 422 `invalid_old_password`。 |
+
+尚未代管客户端时，`latest` 与下载均返回 404 `client_not_available`。
 
 `GET /api/v1/session` 与登录成功响应的结构（成员）：
 
@@ -90,6 +138,8 @@ spec 用户故事 84），没有 `inbox`：
 | `GET /api/v1/members` | 列出全部成员（按 id，各项带 `active`），供建单/改派的下拉选择与管理页。 |
 | `POST /api/v1/members` | 创建成员账号（**仅管理员网页会话**，#42）。 |
 | `POST /api/v1/members/{id}/deactivate` | 停用成员账号（**仅管理员网页会话**，幂等；#42）。 |
+| `POST /api/v1/members/{id}/triager` | 设置初筛人（**仅管理员网页会话**，幂等）。 |
+| `POST /api/v1/members/{id}/reset-password` | 重置成员密码（**仅管理员网页会话**；撤销网页会话与全部客户端凭证）。 |
 
 - `GET` 响应 `{members: [{id, username, name, active}]}`；仅成员可读（匿名 401，访客 403 `members_only`）。
   停用的成员仍列出（历史署名与事件保留），`active: false`；指派下拉等「选人」的场合
@@ -796,6 +846,7 @@ spec 用户故事 84），没有 `inbox`：
   "source_used": "github",
   "server": {"current": "1.0.0", "latest": "1.2.3", "update_available": true},
   "web": {"current": "2.0.0", "latest": "2.1.0", "update_available": false, "min_server": "1.0.0"},
+  "client": {"current": "0.2.0", "latest": "0.3.0", "update_available": true},
   "web_needs_newer_server": false
 }
 ```
@@ -812,17 +863,18 @@ spec 用户故事 84），没有 `inbox`：
 ```json
 {
   "source_used": "github",
-  "steps": ["后端 1.0.0 → 1.2.3", "前端 2.0.0 → 2.1.0"],
+  "steps": ["后端 1.0.0 → 1.2.3", "前端 2.0.0 → 2.1.0", "客户端 0.2.0 → 0.3.0"],
   "message": "后端已更新：服务即将退出，由 NSSM 拉起新版本（新版本启动时会自动迁移并做健康检查）",
   "server_updated": true,
   "web_updated": true,
+  "client_updated": true,
   "restart_needed": true,
   "preupdate_backup": "taskboard-20261016-220105-preupdate.db"
 }
 ```
 
 - 已经是最新时 `steps` 为空、`message` 为「已是最新，无需更新」。
-- 更新本身的失败（产物哈希不符、更新前备份失败等）返回 `500 update_failed`，
-  message 说明原因；哈希不符或备份失败时**不会**替换任何文件。
+- 后端或前端更新失败（更新前备份失败等）返回 `500 update_failed`；客户端是独立组件，
+  失败时响应仍为 200，`client_updated=false` 且 `client_error` 说明原因（例如 SHA256 不符），后端/前端照常更新。
 - 后端更新成功后服务写完响应即退出，由 NSSM 拉起新版本；命令行等价的入口是
   `taskboard update`（提示重启）、`taskboard rollback`（回滚）。

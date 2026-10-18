@@ -6,7 +6,7 @@
 
 ```powershell
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build `
-  -ldflags "-H=windowsgui -X github.com/allanpk716/agent-taskboard/internal/version.Client=0.2.0" `
+  -trimpath -ldflags "-s -w -H=windowsgui -X github.com/allanpk716/agent-taskboard/internal/version.Client=0.2.0" `
   -o bin/taskboard-client.exe ./cmd/taskboard-client
 ```
 
@@ -27,7 +27,7 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build `
 
 ## 安装与卸载
 
-从安装目录（`%LOCALAPPDATA%\Programs\taskboard-client\`）以外启动时，客户端把自己复制到安装目录并覆盖旧版本，写入：
+从安装目录（`%LOCALAPPDATA%\Programs\taskboard-client\`）以外启动时，客户端先把安装目录里的旧版改为 `taskboard-client.exe.old`，再复制新文件、通知正在运行的旧实例退出并从安装位置重启；下次启动时尽力删除 `.old`。安装后写入：
 
 ```text
 HKCU\Software\Microsoft\Windows\CurrentVersion\Run
