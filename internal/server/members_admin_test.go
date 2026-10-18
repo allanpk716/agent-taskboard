@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strconv"
@@ -273,6 +274,216 @@ func Test停用成员账号立即生效(t *testing.T) {
 	res = s.Do(t, admin, http.MethodPost, "/api/v1/members/99999/deactivate", nil, nil)
 	if res.StatusCode != http.StatusNotFound {
 		t.Errorf("停用不存在成员状态码 = %d, 想 404", res.StatusCode)
+	}
+}
+
+// 停用会真正撤销名下全部 Agent token；恢复只清停用标记，密码沿用、
+// token 不复活，指派给他的开启工单也回到收件箱（#112）。
+func Test停用撤销AgentToken且恢复账号不复活Token(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	s.CreateMember("王工", "member-pass")
+	wang := s.Login("王工", "member-pass")
+	_, laptopToken := s.IssueAgentToken(t, wang, "笔记本")
+	_, deskToken := s.IssueAgentToken(t, wang, "工位")
+	laptop := s.AgentClient(laptopToken)
+	desk := s.AgentClient(deskToken)
+
+	var wangSession sessionBody
+	s.Do(t, wang, http.MethodGet, "/api/v1/session", nil, &wangSession)
+	number := mustCreateTicket(t, s, admin, "停用后应回到王工的收件箱")
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/tickets/"+number+"/assign",
+		map[string]any{"assignee": "王工"}, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("指派给王工状态码 = %d, 想 200", res.StatusCode)
+	}
+
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/members/"+itoa(wangSession.Viewer.Member.ID)+"/deactivate", nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("停用王工状态码 = %d, 想 200", res.StatusCode)
+	}
+	for name, c := range map[string]*http.Client{"会话": wang, "笔记本": laptop, "工位": desk} {
+		if res := s.Do(t, c, http.MethodGet, "/api/v1/session", nil, nil); res.StatusCode != http.StatusUnauthorized {
+			t.Errorf("停用后 %s 请求状态码 = %d, 想 401", name, res.StatusCode)
+		}
+	}
+
+	// 非管理员与不存在成员的错误形状先核对；管理员再恢复。
+	var errBody errorBody
+	if res := s.Do(t, s.NewClient(), http.MethodPost,
+		"/api/v1/members/"+itoa(wangSession.Viewer.Member.ID)+"/reactivate", nil, nil); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("匿名恢复状态码 = %d, 想 401", res.StatusCode)
+	}
+	res := s.Do(t, admin, http.MethodPost, "/api/v1/members/99999/reactivate", nil, &errBody)
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("恢复不存在成员状态码 = %d, 想 404", res.StatusCode)
+	}
+	if errBody.Error.Code != "member_not_found" {
+		t.Errorf("恢复不存在成员错误码 = %q, 想 member_not_found", errBody.Error.Code)
+	}
+
+	var reactivated struct {
+		ID          int64 `json:"id"`
+		Active      bool  `json:"active"`
+		Reactivated bool  `json:"reactivated"`
+	}
+	res = s.Do(t, admin, http.MethodPost,
+		"/api/v1/members/"+itoa(wangSession.Viewer.Member.ID)+"/reactivate", nil, &reactivated)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("恢复状态码 = %d, 想 200", res.StatusCode)
+	}
+	if reactivated.ID != wangSession.Viewer.Member.ID || !reactivated.Active || !reactivated.Reactivated {
+		t.Errorf("恢复响应不对：%+v", reactivated)
+	}
+	res = s.Do(t, admin, http.MethodPost,
+		"/api/v1/members/"+itoa(wangSession.Viewer.Member.ID)+"/reactivate", nil, &reactivated)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("重复恢复状态码 = %d, 想 200", res.StatusCode)
+	}
+	if reactivated.Reactivated {
+		t.Errorf("重复恢复 reactivated = true, 想 false")
+	}
+
+	wangAgain := s.Login("王工", "member-pass")
+	if res := s.Do(t, laptop, http.MethodGet, "/api/v1/session", nil, nil); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("恢复后旧笔记本 token 状态码 = %d, 想 401", res.StatusCode)
+	}
+	if res := s.Do(t, desk, http.MethodGet, "/api/v1/session", nil, nil); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("恢复后旧工位 token 状态码 = %d, 想 401", res.StatusCode)
+	}
+	var tokens struct {
+		Tokens []struct {
+			ID        int64   `json:"id"`
+			Name      string  `json:"name"`
+			RevokedAt *string `json:"revoked_at"`
+		} `json:"tokens"`
+	}
+	s.Do(t, wangAgain, http.MethodGet, "/api/v1/me/agent-tokens", nil, &tokens)
+	revoked := map[string]*string{}
+	for _, token := range tokens.Tokens {
+		revoked[token.Name] = token.RevokedAt
+	}
+	if revoked["笔记本"] == nil || revoked["工位"] == nil {
+		t.Errorf("恢复后 token 列表应都是已撤销：%+v", tokens.Tokens)
+	}
+	_, freshToken := s.IssueAgentToken(t, wangAgain, "重新签发")
+	if res := s.Do(t, s.AgentClient(freshToken), http.MethodGet, "/api/v1/session", nil, nil); res.StatusCode != http.StatusOK {
+		t.Errorf("恢复后新签发 token 状态码 = %d, 想 200", res.StatusCode)
+	}
+	var inbox inboxBody
+	s.Do(t, wangAgain, http.MethodGet, "/api/v1/inbox", nil, &inbox)
+	if inbox.reasonByNumber()[number] == "" {
+		t.Errorf("恢复后收件箱没有指派给王工的开启工单：%+v", inbox.Items)
+	}
+
+	// 恢复同样只接受管理员网页会话。
+	if res := s.Do(t, wangAgain, http.MethodPost,
+		"/api/v1/members/"+itoa(wangSession.Viewer.Member.ID)+"/reactivate", nil, nil); res.StatusCode != http.StatusForbidden {
+		t.Errorf("非管理员恢复状态码 = %d, 想 403", res.StatusCode)
+	}
+}
+
+// 管理员可以停用和恢复另一位管理员；唯一被禁止的是停用自己。
+func Test管理员可停用并恢复其他管理员(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	_, err := s.Identity().CreateAdmin(context.Background(), "backup", "备用管理员", "backup-pass")
+	if err != nil {
+		t.Fatalf("创建备用管理员失败：%v", err)
+	}
+	var backup sessionBody
+	s.Do(t, s.Login("backup", "backup-pass"), http.MethodGet, "/api/v1/session", nil, &backup)
+
+	path := "/api/v1/members/" + itoa(backup.Viewer.Member.ID)
+	if res := s.Do(t, admin, http.MethodPost, path+"/deactivate", nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("停用其他管理员状态码 = %d, 想 200", res.StatusCode)
+	}
+	var got struct {
+		Active      bool `json:"active"`
+		Reactivated bool `json:"reactivated"`
+	}
+	res := s.Do(t, admin, http.MethodPost, path+"/reactivate", nil, &got)
+	if res.StatusCode != http.StatusOK || !got.Active || !got.Reactivated {
+		t.Fatalf("恢复其他管理员状态码/响应 = %d/%+v, 想 200/{active:true,reactivated:true}", res.StatusCode, got)
+	}
+}
+
+// 管理员不能给已停用账号重置密码：先恢复才能发新的初始密码。
+func Test重置已停用成员密码被拒绝(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	s.CreateMember("赵工", "old-member-pass")
+	zhao := s.Login("赵工", "old-member-pass")
+
+	var zhaoSession sessionBody
+	s.Do(t, zhao, http.MethodGet, "/api/v1/session", nil, &zhaoSession)
+	path := "/api/v1/members/" + itoa(zhaoSession.Viewer.Member.ID)
+	if res := s.Do(t, admin, http.MethodPost, path+"/deactivate", nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("停用赵工状态码 = %d, 想 200", res.StatusCode)
+	}
+
+	var errBody errorBody
+	res := s.Do(t, admin, http.MethodPost, path+"/reset-password", nil, &errBody)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("重置已停用成员状态码 = %d, 想 422", res.StatusCode)
+	}
+	if errBody.Error.Code != "member_inactive" {
+		t.Errorf("重置已停用成员错误码 = %q, 想 member_inactive", errBody.Error.Code)
+	}
+	if errBody.Error.Hint != "先恢复账号再重置密码" {
+		t.Errorf("重置已停用成员 hint = %q, 想 \"先恢复账号再重置密码\"", errBody.Error.Hint)
+	}
+}
+
+// 管理员可以重置另一位管理员：旧会话立即失效，Agent token 不受影响；
+// 自己仍不能走管理页重置密码。
+func Test管理员可重置另一位管理员密码(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	_, err := s.Identity().CreateAdmin(context.Background(), "backup", "备用管理员", "backup-pass")
+	if err != nil {
+		t.Fatalf("创建备用管理员失败：%v", err)
+	}
+	backup := s.Login("backup", "backup-pass")
+	_, laptopToken := s.IssueAgentToken(t, backup, "备用笔记本")
+	laptop := s.AgentClient(laptopToken)
+
+	var backupSession sessionBody
+	s.Do(t, backup, http.MethodGet, "/api/v1/session", nil, &backupSession)
+	path := "/api/v1/members/" + itoa(backupSession.Viewer.Member.ID)
+	var reset struct {
+		InitialPassword string `json:"initial_password"`
+	}
+	if res := s.Do(t, admin, http.MethodPost, path+"/reset-password", nil, &reset); res.StatusCode != http.StatusOK {
+		t.Fatalf("重置其他管理员状态码 = %d, 想 200", res.StatusCode)
+	}
+	if reset.InitialPassword == "" || reset.InitialPassword == "backup-pass" {
+		t.Fatalf("重置响应应返回新的初始密码：%q", reset.InitialPassword)
+	}
+	if res := s.Do(t, backup, http.MethodGet, "/api/v1/session", nil, nil); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("重置后备用管理员旧会话状态码 = %d, 想 401", res.StatusCode)
+	}
+	if res := s.Do(t, laptop, http.MethodGet, "/api/v1/session", nil, nil); res.StatusCode != http.StatusOK {
+		t.Errorf("重置后 Agent token 状态码 = %d, 想 200", res.StatusCode)
+	}
+	if res := s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/session",
+		map[string]string{"username": "backup", "password": reset.InitialPassword}, nil); res.StatusCode != http.StatusOK {
+		t.Errorf("备用管理员用新密码登录状态码 = %d, 想 200", res.StatusCode)
+	}
+
+	var adminSession sessionBody
+	s.Do(t, admin, http.MethodGet, "/api/v1/session", nil, &adminSession)
+	var errBody errorBody
+	res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/members/"+itoa(adminSession.Viewer.Member.ID)+"/reset-password", nil, &errBody)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("管理员重置自己状态码 = %d, 想 422", res.StatusCode)
+	}
+	if errBody.Error.Code != "cannot_reset_self" {
+		t.Errorf("管理员重置自己错误码 = %q, 想 cannot_reset_self", errBody.Error.Code)
 	}
 }
 

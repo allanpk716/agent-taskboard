@@ -268,6 +268,8 @@ test('管理页：创建成员账号并停用', async ({ page, request }) => {
   // 停用：立即失效（会话 401，再登录被拒 member_deactivated）
   await page.locator(`tr[data-member="${sun}"]`).getByRole('button', { name: '停用' }).click()
   await page.locator('.modal').getByRole('button', { name: '停用', exact: true }).click()
+  await expect(page.locator(`tr[data-member="${sun}"]`)).toHaveCount(0)
+  await page.getByRole('checkbox', { name: /显示已停用/ }).click()
   await expect(page.locator(`tr[data-member="${sun}"] .badge.closed`)).toBeVisible()
 
   const alive = await request.get('/api/v1/members', { headers: { Cookie: sunCookie } })

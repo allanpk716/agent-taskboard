@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react'
 import { ApiError } from '../api'
 import {
+  changeOwnPassword,
   fetchAgentTokens,
   fetchClients,
   fetchClientLatest,
@@ -30,6 +31,7 @@ export function MePage({ me }: { me: Me }) {
   const [clients, setClients] = useState<ClientCredentialRow[] | null>(null)
   const [clientLatest, setClientLatest] = useState<ClientLatest | null | undefined>(undefined)
   const [revokingClient, setRevokingClient] = useState<ClientCredentialRow | null>(null)
+  const [changingPassword, setChangingPassword] = useState(false)
 
   async function refresh() {
     try {
@@ -86,6 +88,9 @@ export function MePage({ me }: { me: Me }) {
           <span>网页会话（HttpOnly cookie，算本人操作）</span>
         </div>
         <div className="btnrow">
+          <button className="btn ghost" onClick={() => setChangingPassword(true)}>
+            修改密码
+          </button>
           <button className="btn ghost" onClick={() => void logout().finally(() => (window.location.href = '/login'))}>
             登出
           </button>
@@ -238,6 +243,9 @@ export function MePage({ me }: { me: Me }) {
         />
       )}
       {issued && <TokenOnceDialog me={me} token={issued} onClose={() => setIssued(null)} />}
+      {changingPassword && (
+        <ChangePasswordDialog onClose={() => setChangingPassword(false)} />
+      )}
       {revoking && (
         <Confirm
           title={`撤销「${revoking.name}」的 token`}
@@ -259,6 +267,108 @@ export function MePage({ me }: { me: Me }) {
         />
       )}
     </div>
+  )
+}
+
+function ChangePasswordDialog({ onClose }: { onClose: () => void }) {
+  const [oldPassword, setOldPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  async function save() {
+    if (newPassword !== confirmPassword) {
+      setError('两次输入的新密码不一致')
+      return
+    }
+    if (newPassword.length < 8) {
+      setError('新密码至少 8 位')
+      return
+    }
+    setBusy(true)
+    try {
+      await changeOwnPassword(oldPassword, newPassword)
+      setDone(true)
+      setError(null)
+    } catch (e) {
+      if (e instanceof ApiError) {
+        const messages: Record<string, string> = {
+          invalid_old_password: '原密码不正确',
+          password_too_short: '新密码至少 8 位',
+          password_unchanged: '新密码与旧密码相同',
+        }
+        setError(messages[e.code] ?? e.message)
+      } else {
+        setError('修改失败')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal title="修改密码" onClose={onClose}>
+      {done ? (
+        <>
+          <div className="hint" data-password-changed>
+            已修改，其他浏览器上的登录已退出
+          </div>
+          <div className="mrow">
+            <span className="sp" />
+            <button className="btn" onClick={onClose}>
+              完成
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <label className="fldlab" htmlFor="old-password">
+            旧密码
+          </label>
+          <input
+            id="old-password"
+            type="password"
+            autoComplete="current-password"
+            value={oldPassword}
+            onChange={(e) => setOldPassword(e.target.value)}
+          />
+          <label className="fldlab" htmlFor="new-password">
+            新密码
+          </label>
+          <input
+            id="new-password"
+            type="password"
+            autoComplete="new-password"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+          />
+          <label className="fldlab" htmlFor="confirm-password">
+            确认新密码
+          </label>
+          <input
+            id="confirm-password"
+            type="password"
+            autoComplete="new-password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && void save()}
+          />
+          <div className="hint">新密码至少 8 位，且不能与旧密码相同。</div>
+          {error && <div className="errbox">{error}</div>}
+          <div className="mrow">
+            <button className="btn ghost" onClick={onClose}>
+              取消
+            </button>
+            <span className="sp" />
+            <button className="btn" onClick={() => void save()} disabled={busy}>
+              保存
+            </button>
+          </div>
+        </>
+      )}
+    </Modal>
   )
 }
 

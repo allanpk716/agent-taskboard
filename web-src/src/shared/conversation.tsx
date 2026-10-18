@@ -4,7 +4,7 @@
 import type { TicketView, TimelineEvent } from './types'
 import { authorName, closeReasonText, fmtDateCN, fmtShort } from './format'
 import { Markdown, inlineImageIds } from './markdown'
-import { AttachmentChips, Avatar } from './widgets'
+import { AttachmentChips, Avatar, DeactivatedBadge } from './widgets'
 import type { Attachment } from './types'
 
 /** 事件文案（成员视角可见全部类型；访客看不到标签事件，服务端已过滤）。 */
@@ -39,7 +39,9 @@ export function eventText(e: TimelineEvent): string {
 export function EventLine({ event }: { event: TimelineEvent }) {
   return (
     <div className="event">
-      {authorName(event.actor)} {eventText(event)} · {fmtShort(event.at)}
+      {authorName(event.actor)}
+      {event.actor.member?.deactivated && <DeactivatedBadge />}
+        {' '}{eventText(event)} · {fmtShort(event.at)}
     </div>
   )
 }
@@ -71,6 +73,7 @@ export function BriefBubble({
       <div className="card">
         <div className="who">
           <b>{creator}</b>
+          {ticket.creator.member?.deactivated && <DeactivatedBadge />}
           {created && <> · {fmtShort(created.at)}</>} · 说明
           {onEditBrief && (
             <button type="button" className="btn ghost sm edit-brief" onClick={onEditBrief}>
@@ -124,7 +127,8 @@ export function ReplyBubble({
       <Avatar author={event.actor} />
       <div className="card">
         <div className="who">
-          <b>{authorName(event.actor)}</b> · {fmtShort(event.at)}
+          <b>{authorName(event.actor)}</b>
+          {event.actor.member?.deactivated && <DeactivatedBadge />} · {fmtShort(event.at)}
           {event.deliver && <span className="deliver-tag">交付</span>}
         </div>
         <Markdown body={event.body_md ?? ''} attachments={atts} onImageClick={onImageClick} />

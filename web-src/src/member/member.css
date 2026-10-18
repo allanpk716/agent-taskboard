@@ -837,6 +837,16 @@
   color: #d64545;
 }
 
+/* #112：已停用成员整行置灰，排在启用成员之后 */
+.member-inactive {
+  color: #7c8494;
+  background: #f6f7f9;
+}
+.member-inactive .hint,
+.member-inactive .mono {
+  color: #98a1b1;
+}
+
 /* ---- #42：工具 / 模板维护 / 个人设置 / 管理页 ---- */
 
 /* 使用中徽标（绿） */

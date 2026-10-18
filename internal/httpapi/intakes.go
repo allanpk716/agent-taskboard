@@ -281,7 +281,7 @@ func newIntakeSummaryView(in tickets.Intake) intakeSummaryView {
 	v := intakeSummaryView{
 		Slug: in.Slug, Name: in.Name, Template: in.TemplateKey,
 		Active: in.Active, URL: "/i/" + in.Slug,
-		CreatedBy: newAuthorView(in.CreatedBy),
+		CreatedBy: newAuthorView(in.CreatedBy, false),
 		CreatedAt: in.CreatedAt.Format(time.RFC3339Nano),
 	}
 	if in.DeactivatedAt != nil {

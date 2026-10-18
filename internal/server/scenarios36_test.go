@@ -13,17 +13,29 @@ import (
 
 // inboxBody 是 GET /api/v1/inbox 的响应结构。
 type inboxBody struct {
-	Member string `json:"member"`
-	Count  int    `json:"count"`
-	Items  []struct {
-		Number   string `json:"number"`
-		Title    string `json:"title"`
-		Role     string `json:"role"`
-		Reason   string `json:"reason"`
-		SinceSeq *int64 `json:"since_seq"`
-		ReadNew  string `json:"read_new"`
-		ReadFull string `json:"read_full"`
-	} `json:"items"`
+	Member string          `json:"member"`
+	Count  int             `json:"count"`
+	Items  []inboxItemBody `json:"items"`
+}
+
+type inboxItemBody struct {
+	Number   string      `json:"number"`
+	Title    string      `json:"title"`
+	Role     string      `json:"role"`
+	Reason   string      `json:"reason"`
+	SinceSeq *int64      `json:"since_seq"`
+	ReadNew  string      `json:"read_new"`
+	ReadFull string      `json:"read_full"`
+	Assignee *authorBody `json:"assignee"`
+}
+
+func (b inboxBody) itemByNumber(number string) *inboxItemBody {
+	for i := range b.Items {
+		if b.Items[i].Number == number {
+			return &b.Items[i]
+		}
+	}
+	return nil
 }
 
 // inboxOf 拉取 c 的收件箱，失败时终止测试。

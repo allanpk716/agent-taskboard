@@ -1,7 +1,7 @@
 // 成员网页调用的 API（网页会话 cookie；错误结构见 api.ts）。
 import { api, ApiError } from '../api'
 import { compressImage } from '../shared/compress'
-import type { TicketView } from '../shared/types'
+import type { Author, TicketView } from '../shared/types'
 
 export interface Me {
   id: number
@@ -18,6 +18,7 @@ export interface InboxItem {
   since_seq: number | null
   read_new: string
   read_full: string
+  assignee?: Author | null
 }
 
 export interface InboxResponse {
@@ -73,6 +74,13 @@ export function markTicketNotificationsRead(number: string): Promise<MarkNotific
 
 export async function logout(): Promise<void> {
   await api('/api/v1/session', { method: 'DELETE' })
+}
+
+export async function changeOwnPassword(oldPassword: string, newPassword: string): Promise<void> {
+  await api('/api/v1/me/password', {
+    method: 'POST',
+    body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+  })
 }
 
 /* ---------------- 模板维护（#42） ---------------- */
@@ -345,6 +353,18 @@ export async function createMember(username: string, name: string): Promise<Crea
 
 export async function deactivateMemberAccount(id: number): Promise<void> {
   await api(`/api/v1/members/${id}/deactivate`, { method: 'POST' })
+}
+
+export async function reactivateMemberAccount(id: number): Promise<void> {
+  await api(`/api/v1/members/${id}/reactivate`, { method: 'POST' })
+}
+
+export interface ResetMemberPasswordResult {
+  initial_password: string
+}
+
+export async function resetMemberPassword(id: number): Promise<ResetMemberPasswordResult> {
+  return api(`/api/v1/members/${id}/reset-password`, { method: 'POST' })
 }
 
 export async function setMemberTriager(id: number, triager: boolean): Promise<void> {
