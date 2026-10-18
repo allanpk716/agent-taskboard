@@ -11,6 +11,9 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
   PowerShell 用 `[Text.Encoding]::UTF8.GetBytes(...)` 作为 `-Body`。
 - 错误一律写成 `{"error":{"code":"…","message":"…","hint":"…"}}`，`hint` 可选，告诉调用方下一步怎么做。
 - 成功创建资源返回 `201`。
+- 所有写请求建议带 `Idempotency-Key`；地址、凭证用法和起手流程见公开说明书
+  `GET /agent.md`（`/llms.txt` 是它的别名），完整接口清单见 `GET /api.md`。两份 Markdown
+  无需凭证，正文中的地址按 `[server] public_url`（未配置时按请求的 scheme/host）生成绝对地址。
 - 凭证四种，统一解析成一个 Viewer（`kind` 为 `member` / `guest`，成员带 `member` 与 `agent` / `client`，访客带 `guest_link`，见 spec「身份与凭证」模块）：
   1. **成员本人**：网页会话 cookie `tb_session`（HttpOnly + Secure + SameSite=Lax）。本人操作的唯一来源。
   2. **成员 Agent**：`Authorization: Bearer <Agent token>`，token 由 `POST /api/v1/me/agent-tokens` 签发（前缀 `tbag_`）。ADR 0003：用 token 的操作一律署名为「某成员 的 Agent · 名字」，永远不算本人。
@@ -21,6 +24,22 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 - 撤销 Agent token 立即生效：每次请求都实时查库校验（token 只存哈希，无状态 JWT 不可用）。
 
 ## 会话与身份
+
+`GET /api/v1` 与 `GET /api/v1/` 公开返回 API 自描述 JSON：
+
+```json
+{
+  "name": "agent-taskboard",
+  "version": "…",
+  "docs": {"agent": "…/agent.md", "api": "…/api.md"},
+  "auth": "成员 Agent 用主人在网页「我的 → Agent」签发的 token：Authorization: Bearer <token>；访客用访客链接里的凭证",
+  "entry_points": {"tickets": "…/api/v1/tickets", "inbox": "…/api/v1/inbox"}
+}
+```
+
+`entry_points` 另含会话、标签字典和模板入口，全部是绝对地址；`version` 与
+`GET /api/v1/health` 的 `server_version` 一致。`/api/v1/*` 下未知路径仍返回
+404 `not_found`，hint 指向说明书。
 
 | 方法与路径 | 说明 |
 |---|---|
@@ -216,8 +235,10 @@ spec 用户故事 84），没有 `inbox`：
   （`url` 即 `/t/<编号>`）。`warnings` 是用模板建单时「缺必填」的逐项提醒
   `{field, message}[]`——工单照常创建，只在响应里提醒（spec 用户故事 6）；不用模板或
   必填全填时为空数组。`assignee` 为成员或 null；`share_text` 只在指派给**他人**时非空，
-  可直接转发：`李工：给你派了一张工单「整理对照表」，让你的 Agent 读一下
-  /t/20261016-001（它也会出现在你的收件箱里）`。
+  内容是「人话行 + 空行 + Agent 段」：人话行写给被指派人，说明派了哪张工单、
+  网页地址，并提示把下面一段交给 Agent；Agent 段依次给出说明书绝对地址、
+  「我的 → Agent」token 的用法与缺失时的处理、读工单 `curl`、照「下一步」做
+  并看收件箱。交接文案不含任何成员 token 或访客链接凭证。
   请求带 `guest_link` 时，响应另带嵌套对象 `guest_link:
   {id, url, note, expires_at, can_edit_brief, share_text}`：`url` 是访客链接地址
   （完整密钥只出现这一次；配置了 `[server] public_url` 时是绝对地址），`share_text`
@@ -231,7 +252,10 @@ spec 用户故事 84），没有 `inbox`：
 - 工单编号与全局序号在同一事务内分配；建单同时写入一条 `created` 时间线事件，
   并推进全局变更序号（事件里的 `change` 字段，与事件写入同事务）。
 - `GET` 响应（成员视角）：`number, seq, url, kind, title, status, close_reason,
-  template, creator, assignee, waiting_on, labels, brief, viewer, timeline`；
+  template, creator, assignee, waiting_on, labels, brief, viewer, timeline,
+  handoff_text, handoff_share_text`；`handoff_text` 是与建单/改派 `share_text`
+  共用的 Agent 段，总是有值；`handoff_share_text` 用建单版人话行，工单有指派人时
+  才有值，否则为 null。访客视角没有这两个字段；`format=markdown` 也不加入这两项。
   - 作者结构统一 `{member: {id, name}, agent: {id, name, revoked}|null}`，本人操作
     `agent` 为 `null`；`agent.revoked` 为 `true` 表示这个具名 Agent 已被撤销——
     历史署名照实标注「（已停用）」（#28 评审修正：撤销不删历史，展示反映现状）。
@@ -346,7 +370,8 @@ spec 用户故事 84），没有 `inbox`：
   指派停用成员 → `422 assignee_deactivated`（#42）
   （hint 列出可选成员）；其他 JSON 类型或非法数字 id → `422 invalid_assignee`。
 - 成功 `200`：`{assignee, waiting_on, share_text}`；`share_text` 只在改派给**他人**时
-  非空：`赵工：工单「整理对照表」转给你了，让你的 Agent 读一下 /t/20261016-001`。
+  非空，内容是改派版「人话行 + 空行 + Agent 段」，Agent 段与读工单的
+  `handoff_text` 逐字相同。
 - 记一条 `assigned{from, to}` 事件（文案「指派给 X」/「改派：X → Y」）并推进变更序号。
   改派后，原指派人的回复不再参与等待方推导，工单随推导从原指派人的收件箱移到
   新指派人的收件箱。

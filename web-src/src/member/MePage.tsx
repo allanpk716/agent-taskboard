@@ -175,12 +175,12 @@ export function MePage({ me }: { me: Me }) {
 
       <div className="mcard">
         <div className="sec-t" style={{ marginTop: 0 }}>
-          我的成员 Agent（API token）
+          Agent
         </div>
+        <div className="hint">为名下的 Agent 签发具名 token</div>
         <div className="hint">
-          为名下的 Agent 签发具名 token：可以有几个、分别署名「{me.name} 的 Agent ·
-          名字」、分别撤销。Agent 不能冒充本人，也不能签发 token；成员没有「本人 API
-          token」——自己用命令行时，也建一个具名 Agent。
+          可以有几个、分别署名「{me.name} 的 Agent · 名字」、分别撤销。Agent
+          不能冒充本人，也不能签发 token；成员没有「本人 API token」——自己用命令行时，也建一个具名 Agent。
         </div>
         {error && <div className="errbox">{error}</div>}
         <table className="mini-tbl">
@@ -326,6 +326,9 @@ function TokenOnceDialog({ me, token, onClose }: { me: Me; token: IssuedToken; o
       </div>
       <div className="linkbox mono" data-token-value>
         {token.token}
+      </div>
+      <div className="hint">
+        下一步：把这个 token 配进你的 Agent。以后接到工单，在工单上复制交接文案发给它就行——文案里不带 token。
       </div>
       <div className="hint">用它做 Bearer token 调用 API；撤销立即失效，历史署名保留。</div>
       <div className="mrow">

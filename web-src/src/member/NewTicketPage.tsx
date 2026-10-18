@@ -2,13 +2,14 @@
 // 复用 #39 的 FieldForm（按字段分区、维度字段可按别名搜索、统一附件区，
 // 附件先暂存本机，建单后立即上传并把引用写进说明）；自由格式一整块
 // Markdown 说明。维度标签先经 resolve 换成标准值（建单接口只收标准值）；
-// 缺必填只弹确认、不拦截（spec 用户故事 6）；创建后显示编号与可转发的
-// share_text。
+// 缺必填只弹确认、不拦截（spec 用户故事 6）；创建指派给同事后嵌入
+// 「交给 Agent」面板。
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, api } from '../api'
 import type { TemplateField } from '../shared/types'
-import { fetchMembers, uploadMemberAttachment, type MemberRef } from './memberApi'
-import { Confirm, copyText, invalidate, nav, toast } from './ui'
+import { fetchMembers, fetchTicket, uploadMemberAttachment, type MemberRef } from './memberApi'
+import { HandoffPanel } from './HandoffDialog'
+import { Confirm, invalidate, nav, toast } from './ui'
 import { chipClass } from './TicketsPage'
 import { FieldForm, appendRef, missingRequired, type StagedFile } from '../guest/FieldForm'
 
@@ -33,12 +34,13 @@ interface Created {
   seq: number
   warnings: { field: string; message: string }[]
   share_text?: string | null
+  handoff_text?: string
 }
 
 type Step =
   | { phase: 'pick' }
   | { phase: 'form'; template: TemplateDetail | null }
-  | { phase: 'done'; created: Created; title: string }
+  | { phase: 'done'; created: Created; title: string; assignee: string }
 
 /** 标签输入 → 标准值：先走 resolve（exact/alias/fuzzy），建单只收标准值。 */
 async function resolveLabel(q: string): Promise<{ label: string; via: string; alias?: string } | null> {
@@ -115,6 +117,7 @@ export function NewTicketPage() {
 
   if (step.phase === 'done') {
     const t = step.created
+    const assignee = step.assignee
     return (
       <div className="bpage">
         <div className="bigok">✓</div>
@@ -132,19 +135,15 @@ export function NewTicketPage() {
         )}
         {t.share_text ? (
           <>
-            <div className="sec-t">share_text（可直接转发）</div>
-            <div className="linkbox">{t.share_text}</div>
+            <div className="sec-t">交给 Agent</div>
+            <HandoffPanel
+              handoffText={t.handoff_text ?? ''}
+              handoffShareText={t.share_text}
+              assigneeName={assignee}
+              isAssignee={false}
+              defaultMode="share"
+            />
             <div className="btnrow">
-              <button
-                className="btn"
-                onClick={() => {
-                  void copyText(t.share_text!).then((ok) =>
-                    toast(ok ? '✓ 已复制到剪贴板' : '复制失败，请手动选择文字复制'),
-                  )
-                }}
-              >
-                复制 share_text
-              </button>
               <button
                 className="btn ghost"
                 onClick={() => {
@@ -188,7 +187,12 @@ export function NewTicketPage() {
     )
   }
 
-  return <NewTicketForm template={step.template} onDone={(created, title) => setStep({ phase: 'done', created, title })} />
+  return (
+    <NewTicketForm
+      template={step.template}
+      onDone={(created, title, assignee) => setStep({ phase: 'done', created, title, assignee })}
+    />
+  )
 }
 
 /* ---------------- 第二步：表单 ---------------- */
@@ -264,7 +268,7 @@ function NewTicketForm({
   onDone,
 }: {
   template: TemplateDetail | null
-  onDone: (created: Created, title: string) => void
+  onDone: (created: Created, title: string, assignee: string) => void
 }) {
   const [title, setTitle] = useState('')
   const [kind, setKind] = useState('task')
@@ -407,8 +411,15 @@ function NewTicketForm({
       // 暂存的附件此刻上传（建单本身不认领 att: 引用），再把引用写进说明。
       const warnings = await attachStagedFiles(created.number, template, brief, files)
       created.warnings = [...created.warnings, ...warnings]
+      if (created.share_text) {
+        try {
+          created.handoff_text = (await fetchTicket(created.number)).handoff_text
+        } catch {
+          created.share_text = undefined
+        }
+      }
       invalidate()
-      onDone(created, title.trim())
+      onDone(created, title.trim(), assignee)
       window.scrollTo(0, 0)
     } catch (e) {
       if (!(e instanceof ApiError) || e.status >= 500 || e.status === 429) {

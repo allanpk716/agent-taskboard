@@ -74,8 +74,14 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/admin/backups", a.handleAdminBackups)
 	mux.HandleFunc("/api/v1/admin/update", a.handleAdminUpdate)
 	mux.HandleFunc("/api/v1/health", a.handleHealth)
+	mux.HandleFunc("/api/v1", a.handleAPIRoot)
 	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
-		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "接口都在 /api/v1 之下，检查路径拼写")
+		if r.URL.Path == "/api/v1/" {
+			a.handleAPIRoot(w, r)
+			return
+		}
+		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
+			"接口说明见 "+a.docsURL(r)+"；主要接口在 /api/v1/tickets、/api/v1/inbox、/api/v1/labels")
 	})
 	return recoverMiddleware(a.clientScopeMiddleware(mux))
 }
@@ -219,13 +225,13 @@ func (a *API) handleOwnPassword(w http.ResponseWriter, r *http.Request) {
 func (a *API) sessionFromRequest(w http.ResponseWriter, r *http.Request) (identity.Session, bool) {
 	cookie, err := r.Cookie(SessionCookieName)
 	if err != nil || cookie.Value == "" {
-		WriteError(w, http.StatusUnauthorized, CodeUnauthenticated, "未登录", "先调用 POST /api/v1/session 登录")
+		WriteError(w, http.StatusUnauthorized, CodeUnauthenticated, "未登录", a.authHint(r))
 		return identity.Session{}, false
 	}
 	sess, err := a.ident.SessionByID(r.Context(), cookie.Value)
 	if err != nil {
 		if errors.Is(err, identity.ErrInvalidCredentials) {
-			WriteError(w, http.StatusUnauthorized, CodeUnauthenticated, "会话不存在或已过期", "重新登录")
+			WriteError(w, http.StatusUnauthorized, CodeUnauthenticated, "会话不存在或已过期", a.authHint(r))
 			return identity.Session{}, false
 		}
 		panic(err)

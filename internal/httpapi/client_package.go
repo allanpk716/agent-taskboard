@@ -7,10 +7,10 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/allanpk716/agent-taskboard/internal/clientstamp"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
+	"github.com/allanpk716/agent-taskboard/internal/publicbase"
 	"github.com/allanpk716/agent-taskboard/internal/updater"
 )
 
@@ -98,21 +98,7 @@ func (a *API) clientPackageViewer(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (a *API) publicURL(r *http.Request) string {
-	if configured := a.cfg.Server.PublicURL; configured != "" {
-		return strings.TrimRight(configured, "/")
-	}
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	if s := r.Header.Get("X-Forwarded-Proto"); s == "http" || s == "https" {
-		scheme = s
-	}
-	host := r.Host
-	if forwarded := r.Header.Get("X-Forwarded-Host"); forwarded != "" {
-		host = forwarded
-	}
-	return scheme + "://" + host
+	return publicbase.FromRequest(a.cfg.Server.PublicURL, r)
 }
 
 func (a *API) stampedClient(pkg *updater.ClientPackage, rawURL string) (*stampedClient, error) {

@@ -285,6 +285,7 @@
   background: #fff;
   padding: 12px 4px 8px;
   border-bottom: 1px solid #e6e9f0;
+  position: relative;
 }
 .detail .dhead h1 {
   font-size: 18px;
@@ -332,6 +333,54 @@
   gap: 6px;
   flex-wrap: wrap;
   margin-top: 8px;
+}
+
+/* #110：手机详情顶栏的「⋯」菜单；宽屏按钮在 actrow 里。 */
+.dmore {
+  display: none;
+}
+@media (max-width: 639px) {
+  .detail .dhead {
+    padding-right: 40px;
+  }
+  .dmore {
+    display: block;
+    position: absolute;
+    top: 12px;
+    right: 4px;
+    border: 0;
+    background: none;
+    color: #55607a;
+    font-size: 20px;
+    line-height: 1;
+    padding: 4px 8px;
+    cursor: pointer;
+  }
+  .dmenu {
+    position: absolute;
+    top: 46px;
+    right: 4px;
+    z-index: 35;
+    background: #fff;
+    border: 1px solid #dfe4ee;
+    border-radius: 8px;
+    box-shadow: 0 8px 20px rgba(20, 30, 50, 0.14);
+    min-width: 150px;
+    overflow: hidden;
+  }
+  .dmenu button {
+    display: block;
+    width: 100%;
+    border: 0;
+    background: none;
+    text-align: left;
+    padding: 10px 12px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .actrow .handoff-btn {
+    display: none;
+  }
 }
 .conv {
   background: #eef1f6;
@@ -607,6 +656,50 @@
   word-break: break-all;
   font-size: 13.5px;
   margin: 10px 0;
+}
+
+/* #110：交接文案预览与复制 */
+.handoff-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-bottom: 8px;
+}
+.handoff-modes label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+}
+.handoff-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  background: #f3f5f8;
+  border: 1px solid #e2e6ee;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #374151;
+}
+.handoff-copy {
+  width: 100%;
+  margin-top: 8px;
+}
+.no-token {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: #a35f00;
+  line-height: 1.5;
+}
+.no-token a {
+  color: #a35f00;
+  text-decoration: underline;
+}
+.handoff-foot {
+  align-items: center;
 }
 .sugg {
   margin-top: 6px;

@@ -237,7 +237,7 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 			res.Assignee = &memberRef{ID: full.AssigneeID, Name: full.AssigneeName}
 			// 指派给他人时才附一句可转发的 share_text（自派自不需要通知自己）。
 			if full.AssigneeID != full.Creator.MemberID {
-				share := a.createShareText(full.AssigneeName, full.Title, full.Number)
+				share := newHandoffText(a.requestBaseURL(r)).share(false, full.AssigneeName, full.Number, full.Title)
 				res.ShareText = &share
 			}
 		}
@@ -266,18 +266,6 @@ func (a *API) guestShareText(note, title, url string, expiresAt time.Time) strin
 		"。不用登录，有效期至 " + expiresAt.In(clock.Beijing).Format("2006-01-02")
 }
 
-// createShareText 是建单指派时的可转发文案（原型的句子）。工单地址用
-// absURL：配置了 public_url 时是绝对地址（评审 P2-7），否则保持 /t/<编号>。
-func (a *API) createShareText(assigneeName, title, number string) string {
-	return assigneeName + "：给你派了一张工单「" + title + "」，让你的 Agent 读一下 " +
-		a.absURL("/t/"+number) + "（它也会出现在你的收件箱里）"
-}
-
-// reassignShareText 是改派时的可转发文案。
-func (a *API) reassignShareText(assigneeName, title, number string) string {
-	return assigneeName + "：工单「" + title + "」转给你了，让你的 Agent 读一下 " + a.absURL("/t/"+number)
-}
-
 // readTicket 处理 GET /api/v1/tickets/{id}[?format=markdown]。访客链接只能
 // 访问它指向的那张工单（其他一律 404，防枚举）；访客看不到 labels 字段与
 // 标签事件（事件序号因此跳号，已接受）。
@@ -301,7 +289,7 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		_, _ = w.Write([]byte(md))
 		return
 	}
-	v := newTicketView(full, viewer)
+	v := a.newTicketView(full, viewer, r)
 	// 维度字段补上字典候选值与别名（#39：补全说明表单的下拉框按别名搜索；
 	// 快照里不存候选值，读取时现取）。
 	for i := range v.Brief.TemplateFields {
@@ -674,6 +662,10 @@ type ticketView struct {
 	Usage       attachmentUsage  `json:"attachment_usage"` // 含待用附件（#33）
 	Viewer      ticketViewerView `json:"viewer"`
 	Timeline    []eventView      `json:"timeline"`
+
+	// 成员交接文案（#98）：访客视角不出现这两个字段。
+	HandoffText      *string `json:"handoff_text,omitempty"`
+	HandoffShareText any     `json:"handoff_share_text,omitempty"`
 }
 
 // attachmentView 是附件列表项（#33）：id 是 att: 引用，url 是下载地址
@@ -698,7 +690,7 @@ type attachmentUsage struct {
 
 // newTicketView 把工单投影 + 当前凭证组装成 GET 响应。访客可见性过滤（#32）：
 // 无 labels 字段、时间线跳过标签事件（事件序号会跳号，这是已接受的）。
-func newTicketView(full tickets.Full, viewer identity.Viewer) ticketView {
+func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.Request) ticketView {
 	waitingOn := tickets.WaitingOnOf(full)
 	isGuest := viewer.Kind == identity.ViewerGuest
 	v := ticketView{
@@ -714,6 +706,16 @@ func newTicketView(full tickets.Full, viewer identity.Viewer) ticketView {
 	}
 	if full.AssigneeID != 0 {
 		v.Assignee = &authorView{Member: &memberRef{ID: full.AssigneeID, Name: full.AssigneeName}}
+	}
+	if !isGuest {
+		text := newHandoffText(a.requestBaseURL(r))
+		handoff := text.agentSection(full.Number, full.Title)
+		v.HandoffText = &handoff
+		v.HandoffShareText = (*string)(nil)
+		if full.AssigneeID != 0 {
+			share := text.share(false, full.AssigneeName, full.Number, full.Title)
+			v.HandoffShareText = &share
+		}
 	}
 	if full.TemplateKey != "" {
 		key := full.TemplateKey

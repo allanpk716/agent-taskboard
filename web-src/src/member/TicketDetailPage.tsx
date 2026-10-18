@@ -21,12 +21,14 @@ import {
   revokeGuestLink,
   uploadMemberAttachment,
   type GuestLink,
+  type Me,
   type MemberRef,
 } from './memberApi'
 import { BriefBubble, EventLine, ReplyBubble } from '../shared/conversation'
 import { Lightbox } from '../shared/widgets'
 import { absoluteUrl, authorName, closeReasonText, fmtLinkExpiry, linkExpired } from '../shared/format'
 import { Confirm, Modal, copyText, invalidate, nav, toast } from './ui'
+import { HandoffDialog } from './HandoffDialog'
 import { LabelChips, chipClass } from './TicketsPage'
 
 /* ---------------- 弹窗：打标签 ---------------- */
@@ -148,16 +150,18 @@ function LabelDialog({
 function AssignDialog({
   ticket,
   members,
+  me,
   onChanged,
   onClose,
 }: {
   ticket: MemberTicket
   members: MemberRef[]
+  me?: Me
   onChanged: () => void
   onClose: () => void
 }) {
   const [choice, setChoice] = useState('')
-  const [share, setShare] = useState<string | null>(null)
+  const [handoff, setHandoff] = useState<{ text: string; shareText: string; assignee: string } | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const changing = !!ticket.assignee?.member
 
@@ -165,41 +169,38 @@ function AssignDialog({
     if (!choice) return
     try {
       const res = await assignTicket(ticket.number, choice)
+      const fresh = await fetchTicket(ticket.number)
       onChanged()
-      if (res.share_text) {
-        setShare(res.share_text)
+      if (res.assignee?.id === me?.id) {
+        onClose()
+        toast(`已指派给 ${choice}`)
         return
       }
-      onClose()
-      toast(`已指派给 ${choice}`)
+      if (!res.share_text || !fresh.handoff_text) {
+        onClose()
+        toast(`已指派给 ${choice}`)
+        return
+      }
+      setHandoff({
+        text: fresh.handoff_text,
+        shareText: res.share_text,
+        assignee: res.assignee?.name ?? choice,
+      })
     } catch (e) {
       setErr(e instanceof ApiError ? `${e.code}：${e.message}` : '指派失败，请重试')
     }
   }
 
-  if (share !== null) {
+  if (handoff !== null) {
     return (
-      <Modal title={`已指派给 ${choice}`} onClose={onClose}>
-        <div className="hint">改派响应里带一句可直接转发的 share_text：</div>
-        <div className="linkbox">{share}</div>
-        <div className="mrow">
-          <span className="sp" />
-          <button
-            className="btn ghost"
-            onClick={onClose}
-          >
-            关闭
-          </button>
-          <button
-            className="btn"
-            onClick={() => {
-              void copyText(share).then((ok) => toast(ok ? '✓ 已复制到剪贴板' : '复制失败，请手动选择文字复制'))
-            }}
-          >
-            复制 share_text
-          </button>
-        </div>
-      </Modal>
+      <HandoffDialog
+        handoffText={handoff.text}
+        handoffShareText={handoff.shareText}
+        assigneeName={handoff.assignee}
+        isAssignee={false}
+        defaultMode="share"
+        onClose={onClose}
+      />
     )
   }
 
@@ -523,12 +524,19 @@ function CloseDialog({
 
 type ActorFilter = 'all' | 'member' | 'agent'
 
-export function TicketDetailPage({ ticketRef }: { ticketRef: string; me?: { id: number; name: string } }) {
+export function TicketDetailPage({
+  ticketRef,
+  me,
+}: {
+  ticketRef: string
+  me?: Me
+}) {
   const [ticket, setTicket] = useState<MemberTicket | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const [actor, setActor] = useState<ActorFilter>('all')
-  const [dialog, setDialog] = useState<'label' | 'assign' | 'links' | 'close' | 'reopen' | null>(null)
+  const [dialog, setDialog] = useState<'label' | 'assign' | 'links' | 'close' | 'reopen' | 'handoff' | null>(null)
+  const [mobileMenu, setMobileMenu] = useState(false)
   const [members, setMembers] = useState<MemberRef[]>([])
   const markedRef = useRef<string | null>(null)
 
@@ -613,6 +621,29 @@ export function TicketDetailPage({ ticketRef }: { ticketRef: string; me?: { id: 
         <div className="tc-top">
           <StatusBadge />
         </div>
+        <button
+          type="button"
+          className="dmore"
+          aria-label="更多操作"
+          aria-expanded={mobileMenu}
+          onClick={() => setMobileMenu((v) => !v)}
+        >
+          ⋯
+        </button>
+        {mobileMenu && (
+          <div className="dmenu" role="menu" aria-label="工单操作">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setMobileMenu(false)
+                setDialog('handoff')
+              }}
+            >
+              🤖 交给 Agent
+            </button>
+          </div>
+        )}
         <details className="mmeta">
           <summary>标签 · 指派 · 访客链接</summary>
           <div className="kv">
@@ -670,6 +701,9 @@ export function TicketDetailPage({ ticketRef }: { ticketRef: string; me?: { id: 
           </button>
           <button className="btn sm ghost" onClick={() => setDialog('assign')}>
             👤 {ticket.assignee?.member ? '改派' : '指派'}
+          </button>
+          <button className="btn sm ghost handoff-btn" onClick={() => setDialog('handoff')}>
+            🤖 交给 Agent
           </button>
           <button className="btn sm ghost" onClick={() => setDialog('links')}>
             🔗 访客链接
@@ -756,9 +790,24 @@ export function TicketDetailPage({ ticketRef }: { ticketRef: string; me?: { id: 
 
       {dialog === 'label' && <LabelDialog ticket={ticket} onChanged={changed} onClose={() => setDialog(null)} />}
       {dialog === 'assign' && (
-        <AssignDialog ticket={ticket} members={members} onChanged={changed} onClose={() => setDialog(null)} />
+        <AssignDialog
+          ticket={ticket}
+          members={members}
+          me={me}
+          onChanged={changed}
+          onClose={() => setDialog(null)}
+        />
       )}
       {dialog === 'links' && <LinksDialog ticket={ticket} onChanged={changed} onClose={() => setDialog(null)} />}
+      {dialog === 'handoff' && (
+        <HandoffDialog
+          handoffText={ticket.handoff_text ?? ''}
+          handoffShareText={ticket.handoff_share_text}
+          assigneeName={ticket.assignee?.member?.name ?? null}
+          isAssignee={!!ticket.assignee?.member && ticket.assignee.member.id === me?.id}
+          onClose={() => setDialog(null)}
+        />
+      )}
       {dialog === 'close' && <CloseDialog ticket={ticket} onChanged={changed} onClose={() => setDialog(null)} />}
       {dialog === 'reopen' && (
         <Confirm

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/agentdocs"
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
@@ -82,7 +83,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/", api.Handler())
-	mux.Handle("/", web)
+	mux.Handle("/", agentdocs.Handler(cfg.Server.PublicURL, webapp.AgentRoutes(cfg.Server.PublicURL, web)))
 
 	return &Server{
 		cfg:           cfg,
