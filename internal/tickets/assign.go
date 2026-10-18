@@ -115,17 +115,17 @@ func (m *Manager) MemberNames(ctx context.Context) []string {
 // insertAssignedEvent 记一条 assigned 事件：from 为空表示创建时指派
 // （文案「指派给 X」），否则是改派（文案「改派：X → Y」）。
 func (m *Manager) insertAssignedEvent(ctx context.Context, tx *sql.Tx, ticketSeq int64,
-	actor Author, from, to string, at time.Time) error {
+	actor Author, from, to string, at time.Time) (int64, int64, error) {
 	eventSeq, change, err := m.appendEvent(ctx, tx, ticketSeq, at, actor, "assigned")
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE timeline_events SET assign_from = ?, assign_to = ? WHERE ticket_seq = ? AND seq = ?`,
 		nullStr(from), to, ticketSeq, eventSeq); err != nil {
-		return fmt.Errorf("写入 assigned 事件的附加字段失败：%w", err)
+		return 0, 0, fmt.Errorf("写入 assigned 事件的附加字段失败：%w", err)
 	}
-	return touchLastChange(ctx, tx, ticketSeq, change)
+	return eventSeq, change, touchLastChange(ctx, tx, ticketSeq, change)
 }
 
 // Assign 以 viewer 的身份把 ref 指向的工单改派给 assignee（成员 id 或姓名），
@@ -135,14 +135,26 @@ func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assig
 	if err != nil {
 		return AssignResult{}, err
 	}
-	toID, toName, err := m.resolveAssignee(ctx, assigneeRef)
-	if err != nil {
-		return AssignResult{}, err
+	assigneeRef = strings.TrimSpace(assigneeRef)
+	var (
+		toID   int64
+		toName string
+	)
+	if assigneeRef != "" {
+		var err error
+		toID, toName, err = m.resolveAssignee(ctx, assigneeRef)
+		if err != nil {
+			return AssignResult{}, err
+		}
+	}
+	if full.AssigneeID == 0 && toID == 0 {
+		return AssignResult{Ticket: full.Ticket, WaitingOn: WaitingOnOf(full)}, nil
 	}
 	if toID == full.AssigneeID {
 		return AssignResult{}, &AlreadyAssignedError{Name: toName}
 	}
 	fromName := full.AssigneeName
+	var notified []int64
 
 	now := m.clk.Now()
 	tx, err := m.db.BeginTx(ctx, nil)
@@ -152,13 +164,30 @@ func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assig
 	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE tickets SET assignee_id = ? WHERE seq = ?`, toID, full.Seq); err != nil {
+		`UPDATE tickets SET assignee_id = ? WHERE seq = ?`, nullInt(toID), full.Seq); err != nil {
 		return AssignResult{}, fmt.Errorf("改派失败：%w", err)
 	}
-	if err := m.insertAssignedEvent(ctx, tx, full.Seq, authorOf(viewer), fromName, toName, now); err != nil {
+	eventSeq, change, err := m.insertAssignedEvent(ctx, tx, full.Seq, authorOf(viewer), fromName, toName, now)
+	if err != nil {
 		return AssignResult{}, err
 	}
-	if err := tx.Commit(); err != nil {
+	if m.notifier != nil {
+		after := full
+		after.AssigneeID = toID
+		after.AssigneeName = toName
+		after.LastChange = change
+		after.Timeline = append(append([]Event{}, full.Timeline...), Event{
+			Seq: eventSeq, Change: change, At: now, Actor: authorOf(viewer), Type: "assigned",
+			AssignFrom: fromName, AssignTo: toName,
+		})
+		var err error
+		notified, err = m.notifier.NotifyTx(ctx, tx, NotificationInput{Before: full, After: after,
+			Actor: authorOf(viewer), Event: after.Timeline[len(after.Timeline)-1]})
+		if err != nil {
+			return AssignResult{}, err
+		}
+	}
+	if err := m.commitAndWake(tx, notified); err != nil {
 		return AssignResult{}, err
 	}
 

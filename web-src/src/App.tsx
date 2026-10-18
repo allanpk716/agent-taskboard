@@ -2,6 +2,7 @@ import { LoginPage } from './LoginPage'
 import { MemberApp } from './member/MemberApp'
 import { GuestPage } from './guest/GuestPage'
 import { IntakePage } from './guest/IntakePage'
+import { ClientConnectPage } from './ClientConnectPage'
 
 // 网页路由：/login 登录页；/g/<密钥> 访客链接（#38）；/i/<slug>
 // 反馈入口页（#39）；其余是登录后的成员页面（#41：/ 收件箱、/tickets 列表、
@@ -16,6 +17,9 @@ export function App() {
   }
   if (pathname.startsWith('/i/')) {
     return <IntakePage slug={decodeURIComponent(pathname.slice(3).replace(/\/+$/, '')) } />
+  }
+  if (pathname === '/client/connect') {
+    return <ClientConnectPage />
   }
   return <MemberApp />
 }

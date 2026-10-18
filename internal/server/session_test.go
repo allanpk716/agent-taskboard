@@ -152,3 +152,31 @@ func Test创建管理员后可以登录查身份并登出(t *testing.T) {
 		t.Fatalf("登出后查身份状态码 = %d, 想 401", res.StatusCode)
 	}
 }
+
+// /session 返回平台要求的最低客户端版本；默认空字符串表示不限制。
+func TestSession返回最低客户端版本(t *testing.T) {
+	cases := []struct {
+		name string
+		min  string
+	}{
+		{"默认不限制", ""},
+		{"配置后返回配置值", "1.2.0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := tbtest.Start(t, tbtest.WithMinClientVersion(tc.min))
+			s.CreateMember("wang", "pass-word")
+			web := s.Login("wang", "pass-word")
+			var got struct {
+				MinClientVersion string `json:"min_client_version"`
+			}
+			res := s.Do(t, web, http.MethodGet, "/api/v1/session", nil, &got)
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("状态码 = %d, 想 200", res.StatusCode)
+			}
+			if got.MinClientVersion != tc.min {
+				t.Fatalf("min_client_version = %q, 想 %q", got.MinClientVersion, tc.min)
+			}
+		})
+	}
+}

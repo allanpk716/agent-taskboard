@@ -7,6 +7,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -43,9 +44,9 @@ func startUpdateFixture(t *testing.T) *updateFixture {
 	dir := t.TempDir()
 	f := &updateFixture{
 		t: t, bin: bin, dir: dir,
-		install:  filepath.Join(dir, "install"),
-		dataDir:  filepath.Join(dir, "data"),
-		webDir:   filepath.Join(dir, "install", "web"),
+		install: filepath.Join(dir, "install"),
+		dataDir: filepath.Join(dir, "data"),
+		webDir:  filepath.Join(dir, "install", "web"),
 	}
 	if err := os.MkdirAll(f.install, 0o755); err != nil {
 		t.Fatal(err)
@@ -182,7 +183,7 @@ func newFakeUpdateSource(t *testing.T, serverVer, webVer, webMinServer string) (
 }
 
 // newFakeUpdateSourceWithExe 同上，但本平台的后端产物用 exe（哈希照常登记）。
-func newFakeUpdateSourceWithExe(t *testing.T, serverVer, webVer, webMinServer string, exe []byte) (*fakeUpdateSource, map[string][]byte) {
+func newFakeUpdateSourceWithExe(t *testing.T, serverVer, webVer, webMinServer string, exe []byte, clientVer ...string) (*fakeUpdateSource, map[string][]byte) {
 	t.Helper()
 	files := map[string][]byte{
 		"taskboard.exe":         []byte("new windows exe " + serverVer),
@@ -191,6 +192,11 @@ func newFakeUpdateSourceWithExe(t *testing.T, serverVer, webVer, webMinServer st
 	files[platformArtifact()] = exe
 	webZip := makeWebZip(t, webVer)
 	files["taskboard-web-"+webVer+".zip"] = webZip
+	clientVersion := ""
+	if len(clientVer) > 0 {
+		clientVersion = clientVer[0]
+		files["taskboard-client.exe"] = windowsClientExeForCLI(t)
+	}
 
 	src := &fakeUpdateSource{t: t, corrupt: map[string]bool{}}
 	byPath := map[string][]byte{}
@@ -203,6 +209,16 @@ func newFakeUpdateSourceWithExe(t *testing.T, serverVer, webVer, webMinServer st
 			ManifestURL: "https://github.com/example/example/releases/download/server/v" + serverVer + "/manifest.json"},
 		Web: &release.LatestEntry{Version: webVer, Tag: "web/v" + webVer,
 			ManifestURL: "https://github.com/example/example/releases/download/web/v" + webVer + "/manifest.json"},
+	}
+	if clientVersion != "" {
+		latest.Client = &release.LatestEntry{
+			Version: clientVersion, Tag: "client/v" + clientVersion,
+			ManifestURL: "https://github.com/example/example/releases/download/client/v" + clientVersion + "/manifest.json",
+		}
+		manifests["client"] = release.Manifest{
+			Component: "client", Version: clientVersion,
+			Files: fileEntriesOf(map[string][]byte{"taskboard-client.exe": files["taskboard-client.exe"]}),
+		}
 	}
 	latestJSON, _ := json.Marshal(latest)
 	byPath["releases/download/channel-stable/latest.json"] = latestJSON
@@ -306,6 +322,35 @@ func Test命令行更新检查回退到第二个源并记录实际源(t *testing
 	if !strings.Contains(out, "实际使用源") && !strings.Contains(out, "实际用的源") {
 		t.Errorf("输出应说明实际使用的源：%s", out)
 	}
+}
+
+func Test命令行更新检查输出客户端组件(t *testing.T) {
+	if testing.Short() {
+		t.Skip("短模式跳过：需要编译真实二进制")
+	}
+	f := startUpdateFixture(t)
+	src, _ := newFakeUpdateSourceWithExe(t, "0.0.0", "0.0.0", "0.0.0", platformExe(t, "0.0.0"), "1.0.0")
+	f.writeConfig(updateTomlGitHub(src.server.URL))
+
+	out, err := runUpdate(f, "-check")
+	if err != nil {
+		t.Fatalf("update -check 失败：%v\n%s", err, out)
+	}
+	for _, want := range []string{"客户端", "当前代管 未", "最新 1.0.0", "有新版本"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("输出应包含 %q：%s", want, out)
+		}
+	}
+}
+
+func windowsClientExeForCLI(t *testing.T) []byte {
+	t.Helper()
+	b := make([]byte, 0x80)
+	copy(b, "MZ")
+	binary.LittleEndian.PutUint32(b[0x3c:], 0x40)
+	copy(b[0x40:], "PE\x00\x00")
+	binary.LittleEndian.PutUint16(b[0x44:], 0x8664)
+	return append(b, []byte("taskboard client")...)
 }
 
 // taskboard update -check：所有源不可用时退出码非 0，错误说明每个源的情况。

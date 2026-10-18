@@ -52,6 +52,12 @@ func (t *writeTracker) Write(p []byte) (int, error) {
 	return t.ResponseWriter.Write(p)
 }
 
+func (t *writeTracker) Flush() {
+	if f, ok := t.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 func timeZero() time.Time { return time.Time{}.UTC() }
 
 // sessionCookie 构造网页会话 cookie：HttpOnly、Secure、SameSite=Lax。

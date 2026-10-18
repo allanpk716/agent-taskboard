@@ -1,5 +1,5 @@
 // 成员网页调用的 API（网页会话 cookie；错误结构见 api.ts）。
-import { api } from '../api'
+import { api, ApiError } from '../api'
 import { compressImage } from '../shared/compress'
 import type { TicketView } from '../shared/types'
 
@@ -38,6 +38,11 @@ export interface MemberTicket extends TicketView {
   labels: string[]
 }
 
+export interface MarkNotificationsReadResult {
+  marked: number
+  unread_count: number
+}
+
 export async function fetchSession(): Promise<{ viewer: { kind: string; member: Me } }> {
   return api('/api/v1/session')
 }
@@ -53,6 +58,13 @@ export async function fetchMembers(): Promise<MemberRef[]> {
 
 export async function fetchTicket(ref: string): Promise<MemberTicket> {
   return api(`/api/v1/tickets/${encodeURIComponent(ref)}`)
+}
+
+export function markTicketNotificationsRead(number: string): Promise<MarkNotificationsReadResult> {
+  return api('/api/v1/notifications/read', {
+    method: 'POST',
+    body: JSON.stringify({ ticket: number }),
+  })
 }
 
 export async function logout(): Promise<void> {
@@ -264,6 +276,42 @@ export async function revokeAgentToken(id: number): Promise<void> {
   await api(`/api/v1/me/agent-tokens/${id}`, { method: 'DELETE' })
 }
 
+/* ---------------- 桌面客户端（#80） ---------------- */
+
+export interface ClientCredentialRow {
+  id: number
+  hostname: string
+  created_at: string
+  last_used_at: string
+  client_version: string
+}
+
+export async function fetchClients(): Promise<ClientCredentialRow[]> {
+  const body = await api('/api/v1/me/clients')
+  return (body.clients ?? []) as ClientCredentialRow[]
+}
+
+export async function revokeClient(id: number): Promise<void> {
+  await api(`/api/v1/me/clients/${id}`, { method: 'DELETE' })
+}
+
+export interface ClientLatest {
+  version: string
+  sha256: string
+  size: number
+  download_url: string
+}
+
+/** 未代管时返回 null（404 client_not_available），页面显示管理员尚未发布。 */
+export async function fetchClientLatest(): Promise<ClientLatest | null> {
+  try {
+    return await api('/api/v1/client/latest')
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404 && e.code === 'client_not_available') return null
+    throw e
+  }
+}
+
 /* ---------------- 成员账号（#42，仅管理员） ---------------- */
 
 export interface MemberAccount {
@@ -271,6 +319,7 @@ export interface MemberAccount {
   username: string
   name: string
   active: boolean
+  triager: boolean
 }
 
 export interface CreatedMember {
@@ -292,6 +341,13 @@ export async function createMember(username: string, name: string): Promise<Crea
 
 export async function deactivateMemberAccount(id: number): Promise<void> {
   await api(`/api/v1/members/${id}/deactivate`, { method: 'POST' })
+}
+
+export async function setMemberTriager(id: number, triager: boolean): Promise<void> {
+  await api(`/api/v1/members/${id}/triager`, {
+    method: 'POST',
+    body: JSON.stringify({ triager }),
+  })
 }
 
 /* ---------------- 工单写操作 ---------------- */

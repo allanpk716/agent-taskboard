@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -14,8 +15,17 @@ import (
 // 凭证坏了应当报错，而不是悄悄当作本人。访客链接的撤销与过期即时生效：
 // 每个请求都实时查库判定，分别返回 401 link_revoked / link_expired。
 func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identity.Viewer, bool) {
+	if viewer, ok := viewerFromContext(r.Context()); ok {
+		return viewer, true
+	}
 	if token, ok := bearerToken(r); ok {
-		viewer, err := a.ident.ViewerFromAgentToken(r.Context(), token)
+		var viewer identity.Viewer
+		var err error
+		if identity.IsClientToken(token) {
+			viewer, err = a.ident.ViewerFromClientToken(r.Context(), token, r.UserAgent())
+		} else {
+			viewer, err = a.ident.ViewerFromAgentToken(r.Context(), token)
+		}
 		if errors.Is(err, identity.ErrInvalidCredentials) {
 			viewer, err = a.ident.ViewerFromGuestKey(r.Context(), token)
 		}
@@ -52,6 +62,15 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 		panic(err)
 	}
 	return viewer, true
+}
+
+type viewerContextKeyType struct{}
+
+var viewerContextKey viewerContextKeyType
+
+func viewerFromContext(ctx context.Context) (identity.Viewer, bool) {
+	viewer, ok := ctx.Value(viewerContextKey).(identity.Viewer)
+	return viewer, ok
 }
 
 // webSessionFromRequest 要求凭证是成员本人的网页会话。

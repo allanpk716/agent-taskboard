@@ -16,7 +16,9 @@ export function LoginPage() {
         method: 'POST',
         body: JSON.stringify({ username, password }),
       })
-      window.location.href = '/'
+      const next = new URLSearchParams(window.location.search).get('next')
+      window.location.href =
+        next && next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/\\') ? next : '/'
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.hint ? `${err.message}（${err.hint}）` : err.message)

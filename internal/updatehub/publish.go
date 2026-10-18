@@ -17,14 +17,14 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/release"
 )
 
-// tagPattern 匹配发布 tag：server/v1.2.3、web/v1.4.0。
-var tagPattern = regexp.MustCompile(`^(server|web)/v?(\d+\.\d+\.\d+)$`)
+// tagPattern 匹配发布 tag：server/v1.2.3、web/v1.4.0、client/v1.0.0。
+var tagPattern = regexp.MustCompile(`^(server|web|client)/v?(\d+\.\d+\.\d+)$`)
 
 // AppIDForComponent 返回 UpdateHub 上的应用名：agent-taskboard-server /
-// agent-taskboard-web（appId 只能字母数字和连字符）。
+// agent-taskboard-web / agent-taskboard-client（appId 只能字母数字和连字符）。
 func AppIDForComponent(component string) (string, error) {
 	switch component {
-	case release.ComponentServer, release.ComponentWeb:
+	case release.ComponentServer, release.ComponentWeb, release.ComponentClient:
 		return "agent-taskboard-" + component, nil
 	default:
 		return "", fmt.Errorf("未知组件 %q", component)
@@ -153,8 +153,11 @@ func Publish(ctx context.Context, opt PublishOptions) (*PublishResult, error) {
 
 	// 3. nupkg。
 	title := "Agent Taskboard Server"
-	if component == release.ComponentWeb {
+	switch component {
+	case release.ComponentWeb:
 		title = "Agent Taskboard Web"
+	case release.ComponentClient:
+		title = "Agent Taskboard Client"
 	}
 	nupkg, err := release.PackNupkg(release.PackInput{
 		AppID:       appID,

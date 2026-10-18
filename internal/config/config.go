@@ -38,6 +38,8 @@ type Server struct {
 	//「复制链接」拿到即可发送（评审 P2-7）；留空（默认）时保持相对路径，
 	// 前端复制时用当前页面的 origin 拼绝对地址。
 	PublicURL string `toml:"public_url"`
+	// MinClientVersion 是平台要求的最低桌面客户端版本；空字符串表示不限制。
+	MinClientVersion string `toml:"min_client_version"`
 }
 
 // Attachments 是 [attachments] 小节：服务端只检查上限，不压缩图片

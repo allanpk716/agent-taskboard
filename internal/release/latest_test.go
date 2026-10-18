@@ -69,6 +69,31 @@ func TestMergeLatest拒绝损坏的latestjson(t *testing.T) {
 	}
 }
 
+func TestMergeLatest发布客户端时保留前后端(t *testing.T) {
+	existing := []byte(`{
+	  "server": {"version":"1.2.0","tag":"server/v1.2.0","manifest_url":"https://github.com/acme/board/releases/download/server/v1.2.0/manifest.json"},
+	  "web": {"version":"1.4.0","tag":"web/v1.4.0","manifest_url":"https://github.com/acme/board/releases/download/web/v1.4.0/manifest.json"}
+	}`)
+	entry := LatestEntry{
+		Version: "1.0.0", Tag: "client/v1.0.0",
+		ManifestURL: "https://github.com/acme/board/releases/download/client/v1.0.0/manifest.json",
+	}
+	data, err := MergeLatestJSON(existing, ComponentClient, entry)
+	if err != nil {
+		t.Fatalf("合并 client：%v", err)
+	}
+	var l Latest
+	if err := json.Unmarshal(data, &l); err != nil {
+		t.Fatalf("解析 latest.json：%v\n%s", err, data)
+	}
+	if l.Client == nil || *l.Client != entry {
+		t.Fatalf("client 条目不对：%+v", l.Client)
+	}
+	if l.Server == nil || l.Server.Version != "1.2.0" || l.Web == nil || l.Web.Version != "1.4.0" {
+		t.Fatalf("server/web 条目应保留：%+v %+v", l.Server, l.Web)
+	}
+}
+
 func TestMergeLatest拒绝未知组件(t *testing.T) {
 	if _, err := MergeLatestJSON(nil, "cli", LatestEntry{}); err == nil {
 		t.Fatal("只有 server 和 web 两个组件")

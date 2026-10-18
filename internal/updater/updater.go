@@ -80,9 +80,9 @@ type Status struct {
 	// SourceUsed 是实际使用的更新源（按 sources 顺序第一个连得上的）。
 	SourceUsed string
 	// ServerCurrent / ServerLatest 是后端的当前/最新版本。
-	ServerCurrent  string
-	ServerLatest   string
-	ServerUpdate   bool
+	ServerCurrent string
+	ServerLatest  string
+	ServerUpdate  bool
 	// WebCurrent / WebLatest / WebMinServer：前端当前/最新版本，以及最新
 	// 前端要求的最低后端版本。
 	WebCurrent   string
@@ -91,6 +91,10 @@ type Status struct {
 	WebUpdate    bool
 	// WebNeedsNewerServer 报告“前端有新版但当前后端不够新”：更新时先升级后端。
 	WebNeedsNewerServer bool
+	// ClientCurrent / ClientLatest 是服务端当前代管/更新源上的桌面客户端版本。
+	ClientCurrent string
+	ClientLatest  string
+	ClientUpdate  bool
 }
 
 // Check 查询更新源并对比当前版本；不做任何安装动作。
@@ -102,6 +106,7 @@ func Check(ctx context.Context, opt Options) (*Status, error) {
 	s := &Status{SourceUsed: latest.Source}
 	s.ServerCurrent = opt.serverVersion()
 	s.WebCurrent = WebVersion(opt.WebDir)
+	s.ClientCurrent = ClientVersion(opt.DataDir)
 	if latest.Server != nil {
 		s.ServerLatest = latest.Server.Manifest.Version
 		s.ServerUpdate = version.Less(s.ServerCurrent, s.ServerLatest)
@@ -110,6 +115,10 @@ func Check(ctx context.Context, opt Options) (*Status, error) {
 		s.WebLatest = latest.Web.Manifest.Version
 		s.WebMinServer = latest.Web.Manifest.MinServer
 		s.WebUpdate = version.Less(s.WebCurrent, s.WebLatest)
+	}
+	if latest.Client != nil {
+		s.ClientLatest = latest.Client.Manifest.Version
+		s.ClientUpdate = version.Less(s.ClientCurrent, s.ClientLatest)
 	}
 	if s.WebUpdate && s.WebMinServer != "" && version.Less(s.ServerCurrent, s.WebMinServer) {
 		s.WebNeedsNewerServer = true
@@ -125,6 +134,9 @@ type Result struct {
 	// ServerUpdated / WebUpdated 报告是否真的替换了后端 / 前端。
 	ServerUpdated bool
 	WebUpdated    bool
+	ClientUpdated bool
+	// ClientError 是 client 组件的独立失败原因；server/web 不受它影响。
+	ClientError string
 	// RestartNeeded 报告是否需要重启服务（换了后端 exe 后由 NSSM 拉起新版本）。
 	RestartNeeded bool
 	// PreupdateBackup 是更新前备份的文件名。
@@ -148,10 +160,12 @@ func Apply(ctx context.Context, opt Options) (*Result, error) {
 	res := &Result{SourceUsed: latest.Source}
 	serverCur := opt.serverVersion()
 	webCur := WebVersion(opt.WebDir)
+	clientCur := ClientVersion(opt.DataDir)
 
 	needServer := latest.Server != nil && version.Less(serverCur, latest.Server.Manifest.Version)
 	needWeb := latest.Web != nil && version.Less(webCur, latest.Web.Manifest.Version)
-	if !needServer && !needWeb {
+	needClient := latest.Client != nil && version.Less(clientCur, latest.Client.Manifest.Version)
+	if !needServer && !needWeb && !needClient {
 		return res, nil
 	}
 	// 前端的 min_server 不满足时先升级后端（步骤里后端在前）；最新的后端也
@@ -199,13 +213,50 @@ func Apply(ctx context.Context, opt Options) (*Result, error) {
 			return nil, fmt.Errorf("web manifest 里没有 zip 产物")
 		}
 	}
+	var clientExe []byte
+	var clientPkg ClientPackage
+	if needClient {
+		name := clientFileName
+		data, err := latest.Client.File(ctx, name)
+		if err != nil {
+			res.ClientError = err.Error()
+			needClient = false
+		}
+		if needClient {
+			fe := latest.Client.Manifest.FileEntry(name)
+			if fe == nil {
+				res.ClientError = fmt.Sprintf("client manifest 里没有产物 %s", name)
+				needClient = false
+			} else {
+				clientPkg = ClientPackage{Version: latest.Client.Manifest.Version, Sha256: fe.Sha256, Size: fe.Size}
+				clientExe = data
+			}
+		}
+	}
 
+	var backup string
 	if needServer {
-		backup, err := opt.preupdate(ctx)
+		backup, err = opt.preupdate(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("更新前备份失败，更新中止（未替换 exe）：%w", err)
 		}
 		res.PreupdateBackup = backup
+	}
+	if needClient {
+		if err := InstallClient(opt.DataDir, clientExe, clientPkg); err != nil {
+			res.ClientError = err.Error()
+			res.Steps = append(res.Steps, fmt.Sprintf("客户端 %s → %s 失败：%s",
+				orUnknown(clientCur), latest.Client.Manifest.Version, res.ClientError))
+		} else {
+			res.ClientUpdated = true
+			res.Steps = append(res.Steps, fmt.Sprintf("客户端 %s → %s", orUnknown(clientCur), latest.Client.Manifest.Version))
+			opt.logf("客户端已代管 %s → %s", orUnknown(clientCur), latest.Client.Manifest.Version)
+		}
+	} else if res.ClientError != "" {
+		res.Steps = append(res.Steps, fmt.Sprintf("客户端 %s → %s 失败：%s",
+			orUnknown(clientCur), latest.Client.Manifest.Version, res.ClientError))
+	}
+	if needServer {
 		if err := swapExe(opt.exePath(), serverExe); err != nil {
 			return nil, err
 		}
@@ -267,6 +318,14 @@ func (s *Status) Describe() string {
 		}
 	}
 	fmt.Fprintf(&b, "前端：当前 %s，最新 %s（%s）\n", orUnknown(s.WebCurrent), orUnknown(s.WebLatest), webNote)
+	clientNote := "尚未发布"
+	if s.ClientLatest != "" {
+		clientNote = "已是最新"
+		if s.ClientUpdate {
+			clientNote = "有新版本"
+		}
+	}
+	fmt.Fprintf(&b, "客户端：当前代管 %s，最新 %s（%s）\n", orUnknown(s.ClientCurrent), orUnknown(s.ClientLatest), clientNote)
 	return b.String()
 }
 

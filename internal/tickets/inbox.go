@@ -1,10 +1,11 @@
 // 收件箱（#36）：列出「现在轮到我」的开启工单。收件箱属于成员——同一成员
 // 名下所有 Agent 共用一份；等待方与原因都由时间线推导（WaitingOnOf），
-// 不存会漂移的状态。未指派的工单不会出现在任何人的收件箱里。
+// 不存会漂移的状态。轮到本部门的未指派工单只进入有效初筛人的收件箱。
 package tickets
 
 import (
 	"context"
+	"database/sql"
 	"strconv"
 )
 
@@ -12,7 +13,7 @@ import (
 type InboxItem struct {
 	Number   string
 	Title    string
-	Role     string // assignee | creator（我在这张工单里的角色）
+	Role     string // assignee | creator | triager（我在这张工单里的角色）
 	Reason   string // WHY 文案：新指派给你 / 已交付，待你验收 / …
 	SinceSeq int64  // 推导所依据的回复事件 seq；0 = 无相关回复（新指派）
 	ReadNew  string // /api/v1/tickets/<编号>/timeline?after=<我在该单最后一条事件的 seq>
@@ -23,6 +24,10 @@ type InboxItem struct {
 // read_new 的 after 是我在该单最后一条任意事件（不只回复）的 seq——
 // 收件箱项要读的是「上次我看过之后别人做了什么」。
 func (m *Manager) Inbox(ctx context.Context, memberID int64) ([]InboxItem, error) {
+	triager, err := m.isTriager(ctx, memberID)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := m.db.QueryContext(ctx,
 		`SELECT seq FROM tickets WHERE status = 'open' ORDER BY seq`)
 	if err != nil {
@@ -47,7 +52,9 @@ func (m *Manager) Inbox(ctx context.Context, memberID int64) ([]InboxItem, error
 			return nil, err
 		}
 		turn := WaitingOnOf(full)
-		if turn.MemberID != memberID {
+		isTurn := turn.MemberID == memberID
+		isDepartmentTurn := triager && turn.Party == "department"
+		if !isTurn && !isDepartmentTurn {
 			continue
 		}
 		after := int64(0)
@@ -59,16 +66,71 @@ func (m *Manager) Inbox(ctx context.Context, memberID int64) ([]InboxItem, error
 		role := "creator"
 		if turn.Party == "assignee" {
 			role = "assignee"
+		} else if isDepartmentTurn {
+			role = "triager"
+		}
+		reason := WhyText(turn.Why)
+		if isDepartmentTurn {
+			reason = "待初筛"
 		}
 		items = append(items, InboxItem{
 			Number:   full.Number,
 			Title:    full.Title,
 			Role:     role,
-			Reason:   WhyText(turn.Why),
+			Reason:   reason,
 			SinceSeq: turn.SinceSeq,
 			ReadNew:  "/api/v1/tickets/" + full.Number + "/timeline?after=" + strconv.FormatInt(after, 10),
 			ReadFull: "/api/v1/tickets/" + full.Number + "?format=markdown",
 		})
 	}
 	return items, nil
+}
+
+// isTriager 判定成员当前是否有效初筛人：有启用中的显式初筛人时只有这些
+// 成员生效；一个都没有时所有管理员兜底（#75）。
+func (m *Manager) isTriager(ctx context.Context, memberID int64) (bool, error) {
+	ids, err := EffectiveTriagers(ctx, m.db)
+	if err != nil {
+		return false, err
+	}
+	for _, id := range ids {
+		if id == memberID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// Queryer 是读取初筛人所需的最小 SQL 接口；db 与写事务都能提供。
+type Queryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// EffectiveTriagers 返回当前有效的初筛人：有启用中的显式初筛人时只有这些
+// 成员；一个都没有时所有管理员兜底（#75）。
+func EffectiveTriagers(ctx context.Context, q Queryer) ([]int64, error) {
+	var explicit int
+	if err := q.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM members WHERE triager = 1 AND deactivated_at IS NULL`).Scan(&explicit); err != nil {
+		return nil, err
+	}
+	column := "triager"
+	if explicit == 0 {
+		column = "is_admin"
+	}
+	rows, err := q.QueryContext(ctx, `SELECT id FROM members WHERE `+column+` = 1 AND deactivated_at IS NULL ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }

@@ -120,6 +120,29 @@ func Test命令行合并latest不覆盖另一组件(t *testing.T) {
 	}
 }
 
+func Test命令行生成客户端manifest且minServer为空(t *testing.T) {
+	if testing.Short() {
+		t.Skip("短模式跳过：需要编译真实二进制")
+	}
+	bin := buildReleaseBinary(t)
+	dist := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dist, "taskboard-client.exe"), []byte("client\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runRelease(t, bin, "manifest", "-component", "client", "-version", "1.0.0", "-dir", dist)
+	data, err := os.ReadFile(filepath.Join(dist, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m release.Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.Component != "client" || m.Version != "1.0.0" || m.MinServer != "" || len(m.Files) != 1 {
+		t.Fatalf("client manifest 不对：%+v", m)
+	}
+}
+
 func Test命令行拒绝未知子命令(t *testing.T) {
 	if testing.Short() {
 		t.Skip("短模式跳过：需要编译真实二进制")

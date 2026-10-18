@@ -4,7 +4,8 @@
 // 生成、写进临时文件供用例读取（只出现一次，服务端不再回显）。
 // 进程随 Playwright 结束被清理（SIGINT/SIGTERM）。
 import { spawn, execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -27,6 +28,31 @@ writeFileSync(
   configPath,
   `data_dir = '${tomlPath(join(dir, 'data'))}'\nport = ${port}\nweb_dir = '${tomlPath(webDir)}'\n`,
 )
+
+// 预置服务端代管的桌面客户端（#83）：e2e 分两轮跑，有版本时验证下载区，
+// 没有版本时验证“管理员尚未发布”。Content 只需与清单一致，不必是可运行 PE。
+const clientVersion = process.env.E2E_CLIENT_VERSION
+if (clientVersion) {
+  const clientDir = join(dir, 'data', 'client')
+  const exe = Buffer.from(`e2e taskboard-client ${clientVersion}\n`)
+  mkdirSync(clientDir, { recursive: true })
+  // 文件名规则需与服务端 clientVersionPath 保持一致；e2e 只使用 x.y.z 版本号。
+  writeFileSync(join(clientDir, `taskboard-client-${clientVersion}.exe`), exe)
+  writeFileSync(
+    join(clientDir, 'client.json'),
+    JSON.stringify(
+      {
+        current: {
+          version: clientVersion,
+          sha256: createHash('sha256').update(exe).digest('hex'),
+          size: exe.length,
+        },
+      },
+      null,
+      2,
+    ) + '\n',
+  )
+}
 
 // 创建管理员（复用已有服务时登录名可能已存在，忽略失败）。
 try {

@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -79,8 +78,7 @@ func (a *API) issueAgentToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req issueAgentTokenRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "请求体不是合法的 JSON", "请求体应为 {\"name\": \"…\"}")
+	if !decodeJSON(w, r, &req, `{"name": "…"}`) {
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
@@ -117,5 +115,6 @@ func (a *API) revokeAgentToken(w http.ResponseWriter, r *http.Request) {
 		}
 		panic(err)
 	}
+	a.wakeMemberStreams(viewer.Member.ID)
 	w.WriteHeader(http.StatusNoContent)
 }

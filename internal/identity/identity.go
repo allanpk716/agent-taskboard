@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
@@ -30,6 +31,9 @@ var ErrMemberNotFound = errors.New("没有这位成员")
 
 // ErrCannotDeactivateSelf 表示不能停用自己的账号（#42：防止管理员把自己锁在门外）。
 var ErrCannotDeactivateSelf = errors.New("不能停用自己的账号")
+var ErrCannotResetSelf = errors.New("不能重置自己的密码")
+var ErrInvalidOldPassword = errors.New("原密码不正确")
+var ErrPasswordTooShort = errors.New("新密码至少 8 位")
 
 // Member 是一位成员。
 type Member struct {
@@ -51,6 +55,9 @@ type Session struct {
 type Manager struct {
 	db    *sql.DB
 	clock clock.Clock
+
+	clientMu    sync.Mutex
+	clientCodes map[string]clientConnectCode
 }
 
 func NewManager(db *sql.DB, c clock.Clock) *Manager {
@@ -103,6 +110,7 @@ type MemberRow struct {
 	Member
 	// DeactivatedAt 非空表示已停用。
 	DeactivatedAt *time.Time
+	Triager       bool
 }
 
 // Active 报告账号是否启用。
@@ -112,7 +120,7 @@ func (r MemberRow) Active() bool { return r.DeactivatedAt == nil }
 // 停用的成员仍列出：历史署名与事件保留，页面上要能对上人。
 func (m *Manager) ListMembersDetailed(ctx context.Context) ([]MemberRow, error) {
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT id, username, name, is_admin, deactivated_at FROM members ORDER BY id`)
+		SELECT id, username, name, is_admin, deactivated_at, triager FROM members ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -123,11 +131,13 @@ func (m *Manager) ListMembersDetailed(ctx context.Context) ([]MemberRow, error) 
 			r           MemberRow
 			isAdmin     int
 			deactivated sql.NullString
+			triager     int
 		)
-		if err := rows.Scan(&r.ID, &r.Username, &r.Name, &isAdmin, &deactivated); err != nil {
+		if err := rows.Scan(&r.ID, &r.Username, &r.Name, &isAdmin, &deactivated, &triager); err != nil {
 			return nil, err
 		}
 		r.IsAdmin = isAdmin == 1
+		r.Triager = triager == 1
 		if deactivated.Valid && deactivated.String != "" {
 			t, err := time.ParseInLocation(time.RFC3339Nano, deactivated.String, clock.Beijing)
 			if err != nil {
@@ -138,6 +148,23 @@ func (m *Manager) ListMembersDetailed(ctx context.Context) ([]MemberRow, error) 
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// SetTriager 设置成员的显式初筛人标记（#75）。停用成员也可以保留标记；
+// 是否生效由调用方按启用状态过滤。
+func (m *Manager) SetTriager(ctx context.Context, id int64, triager bool) error {
+	res, err := m.db.ExecContext(ctx, `UPDATE members SET triager = ? WHERE id = ?`, boolToInt(triager), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrMemberNotFound
+	}
+	return nil
 }
 
 // GenerateInitialPassword 生成一位新成员的初始密码（创建成员账号时由服务器
@@ -184,10 +211,76 @@ func (m *Manager) DeactivateMember(ctx context.Context, id int64) (bool, error) 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE member_id = ?`, id); err != nil {
 		return false, err
 	}
+	if err := m.revokeAllClientCredentialsTx(ctx, tx, id); err != nil {
+		return false, err
+	}
 	if err := tx.Commit(); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// ChangeOwnPassword 自助改密：只换密码，不撤销客户端凭证，也不清空当前会话。
+func (m *Manager) ChangeOwnPassword(ctx context.Context, memberID int64, oldPassword, newPassword string) error {
+	if len(newPassword) < 8 {
+		return ErrPasswordTooShort
+	}
+	var hash string
+	if err := m.db.QueryRowContext(ctx,
+		`SELECT password_hash FROM members WHERE id = ?`, memberID).Scan(&hash); err != nil {
+		return err
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(oldPassword)) != nil {
+		return ErrInvalidOldPassword
+	}
+	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	_, err = m.db.ExecContext(ctx, `UPDATE members SET password_hash = ? WHERE id = ?`, string(newHash), memberID)
+	return err
+}
+
+// AdminResetMemberPassword 管理员重置密码：生成一次性初始密码，并撤销会话
+// 与全部客户端凭证（ADR 0004）。
+func (m *Manager) AdminResetMemberPassword(ctx context.Context, adminID, memberID int64) (string, error) {
+	if adminID == memberID {
+		return "", ErrCannotResetSelf
+	}
+	password, err := GenerateInitialPassword()
+	if err != nil {
+		return "", err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE members SET password_hash = ? WHERE id = ?`, string(hash), memberID)
+	if err != nil {
+		return "", err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return "", err
+	}
+	if n == 0 {
+		return "", ErrMemberNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE member_id = ?`, memberID); err != nil {
+		return "", err
+	}
+	if err := m.revokeAllClientCredentialsTx(ctx, tx, memberID); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return password, nil
 }
 
 // Login 校验用户名和密码，成功则创建一条会话。

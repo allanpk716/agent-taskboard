@@ -23,6 +23,10 @@ type sessionBody struct {
 			ID   int64  `json:"id"`
 			Name string `json:"name"`
 		} `json:"agent"`
+		Client *struct {
+			ID       int64  `json:"id"`
+			Hostname string `json:"hostname"`
+		} `json:"client"`
 	} `json:"viewer"`
 	Inbox string `json:"inbox"`
 }
@@ -329,8 +333,8 @@ func Test撤销的Agent历史署名标注已停用(t *testing.T) {
 			} `json:"agent"`
 		} `json:"creator"`
 		Timeline []struct {
-			Type   string `json:"type"`
-			Actor  struct {
+			Type  string `json:"type"`
+			Actor struct {
 				Agent struct {
 					Revoked bool `json:"revoked"`
 				} `json:"agent"`

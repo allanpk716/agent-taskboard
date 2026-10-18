@@ -11,6 +11,7 @@ import {
   deactivateMemberAccount,
   fetchDictionary,
   fetchMemberAccounts,
+  setMemberTriager,
   mergeLabels,
   renameLabel,
   repointAlias,
@@ -109,6 +110,17 @@ function MembersTab({ me }: { me: Me }) {
     }
   }
 
+  async function doSetTriager(member: MemberAccount, triager: boolean) {
+    try {
+      await setMemberTriager(member.id, triager)
+      toast(`✓ ${triager ? '已设' : '已取消'} ${member.name} 的初筛人身份`)
+      await refresh()
+    } catch (e) {
+      setError(e instanceof ApiError ? `${e.message}（${e.code}）` : '设置初筛人失败')
+      await refresh()
+    }
+  }
+
   return (
     <div className="mcard">
       <div className="hint" style={{ marginTop: 0 }}>
@@ -128,6 +140,15 @@ function MembersTab({ me }: { me: Me }) {
                 {m.active ? <span className="badge open">使用中</span> : <span className="badge closed">已停用</span>}
               </td>
               <td>
+                <input
+                  type="checkbox"
+                  aria-label="初筛人"
+                  checked={m.triager}
+                  disabled={!m.active}
+                  onChange={(e) => void doSetTriager(m, e.target.checked)}
+                />
+              </td>
+              <td>
                 {m.name === me.name ? (
                   <span className="hint">—</span>
                 ) : m.active ? (
@@ -140,7 +161,7 @@ function MembersTab({ me }: { me: Me }) {
           ))}
           {members !== null && members.length === 0 && (
             <tr>
-              <td className="hint" colSpan={3}>
+                <td className="hint" colSpan={4}>
                 还没有成员。
               </td>
             </tr>

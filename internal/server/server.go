@@ -16,6 +16,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/labels"
+	"github.com/allanpk716/agent-taskboard/internal/notifications"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
 	"github.com/allanpk716/agent-taskboard/internal/store"
 	"github.com/allanpk716/agent-taskboard/internal/templates"
@@ -27,12 +28,13 @@ import (
 
 // Server 是一个运行中的 taskboard 服务实例。
 type Server struct {
-	cfg     config.Config
-	Ident   *identity.Manager
-	Store   *store.Store
-	Atts    *attachments.Manager
-	Backups *ops.Backups
-	Idem    *idempotency.Manager
+	cfg           config.Config
+	Ident         *identity.Manager
+	Store         *store.Store
+	Atts          *attachments.Manager
+	Backups       *ops.Backups
+	Idem          *idempotency.Manager
+	Notifications *notifications.Manager
 
 	handler  http.Handler
 	web      *webapp.Handler
@@ -67,8 +69,12 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 		return nil, err
 	}
 	idem := idempotency.NewManager(st.DB, c)
-	api := httpapi.NewAPI(ident, tickets.NewManager(st.DB, c, labelDict, templateDict, atts),
+	notificationStore := notifications.NewManager(st.DB, c)
+	ticketStore := tickets.NewManager(st.DB, c, labelDict, templateDict, atts)
+	ticketStore.SetNotifier(notificationStore)
+	api := httpapi.NewAPI(ident, ticketStore,
 		templateDict, idem, atts, backups, cfg)
+	api.SetNotifications(notificationStore)
 	web, err := webapp.New(cfg.WebDir)
 	if err != nil {
 		return nil, err
@@ -79,14 +85,15 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	mux.Handle("/", web)
 
 	return &Server{
-		cfg:     cfg,
-		Ident:   ident,
-		Store:   st,
-		Atts:    atts,
-		Backups: backups,
-		Idem:    idem,
-		handler: mux,
-		web:     web,
+		cfg:           cfg,
+		Ident:         ident,
+		Store:         st,
+		Atts:          atts,
+		Backups:       backups,
+		Idem:          idem,
+		Notifications: notificationStore,
+		handler:       mux,
+		web:           web,
 	}, nil
 }
 
@@ -189,6 +196,7 @@ func (s *Server) selfHealthCheck() {
 
 // Shutdown 优雅停机。
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.Notifications.Close()
 	if s.httpSrv == nil {
 		return nil
 	}

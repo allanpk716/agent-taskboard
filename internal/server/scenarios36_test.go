@@ -306,9 +306,9 @@ func Test场景4反馈转给同事(t *testing.T) {
 	}
 }
 
-// 收件箱只对成员开放：访客 403 members_only，匿名 401；未指派的工单不出现在
-// 任何人的收件箱里（要用查询接口找）。
-func Test收件箱仅限成员且不含未指派工单(t *testing.T) {
+// 收件箱只对成员开放：访客 403 members_only，匿名 401；未指派的工单进入
+// 管理员初筛人的收件箱（#75 默认规则），非初筛人不会看到。
+func Test收件箱仅限成员且未指派工单只进初筛人邮箱(t *testing.T) {
 	w := newHandoffWorld(t)
 	plain := w.createHandoffTicket(t, w.webWang, "未指派", "").Number
 	assigned := w.createHandoffTicket(t, w.webWang, "已指派", "李工").Number
@@ -328,12 +328,13 @@ func Test收件箱仅限成员且不含未指派工单(t *testing.T) {
 		t.Errorf("访客收件箱错误码 = %q, 想 members_only", got.Error.Code)
 	}
 
-	for _, inbox := range []inboxBody{
-		w.inboxOf(t, w.webWang), w.inboxOf(t, w.webLi), w.inboxOf(t, w.webZhao),
-	} {
+	if got := w.inboxOf(t, w.webWang).reasonByNumber()[plain]; got != "待初筛" {
+		t.Errorf("管理员默认初筛人的收件箱 = %v, 想包含 %s（待初筛）", got, plain)
+	}
+	for _, inbox := range []inboxBody{w.inboxOf(t, w.webLi), w.inboxOf(t, w.webZhao)} {
 		for _, it := range inbox.Items {
 			if it.Number == plain {
-				t.Errorf("未指派的 %s 不应出现在收件箱里", plain)
+				t.Errorf("非初筛人 %s 的收件箱不应包含 %s", inbox.Member, plain)
 			}
 		}
 	}

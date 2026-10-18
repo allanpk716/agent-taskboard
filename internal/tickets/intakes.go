@@ -358,6 +358,7 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 		return SubmissionResult{}, err
 	}
 	defer tx.Rollback()
+	var notified []int64
 
 	// 当日序号与全局序号在同一事务内分配（与成员建单同一段逻辑）。
 	var today int
@@ -430,13 +431,24 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	if err := m.insertLinkEvent(ctx, tx, t.Seq, author, "guest_link_created", note, "", now); err != nil {
 		return SubmissionResult{}, err
 	}
+	if m.notifier != nil {
+		t.Number = number
+		after := Full{Ticket: t}
+		after.Timeline = []Event{{Seq: 1, At: now, Actor: author, Type: "created"}}
+		notified, err = m.notifier.NotifyTx(ctx, tx, NotificationInput{
+			After: after, Actor: author, Event: after.Timeline[0],
+		})
+		if err != nil {
+			return SubmissionResult{}, err
+		}
+	}
 	for _, l := range labels {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO ticket_labels (ticket_seq, label) VALUES (?, ?)`, t.Seq, l); err != nil {
 			return SubmissionResult{}, fmt.Errorf("写入标签 %s 失败：%w", l, err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := m.commitAndWake(tx, notified); err != nil {
 		return SubmissionResult{}, err
 	}
 	t.Number = number
