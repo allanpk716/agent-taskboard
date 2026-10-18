@@ -177,6 +177,14 @@ export function ticketLabelFilterPath(label: string, search = 'status=open'): st
   return `/tickets?${toQuery({ ...filters, ...patch })}`
 }
 
+function mergeLabelInput(current: string[], text: string): string[] {
+  const values = text.split(/\s+/).map((v) => v.trim()).filter(Boolean)
+  return values.reduce((labels, value) => {
+    if (labels.includes(value)) return labels
+    return [...labels, value]
+  }, current)
+}
+
 export function TicketCard({
   item,
   href,
@@ -211,7 +219,6 @@ export function TicketCard({
             <span className="pc-row-time">{fmtShort(item.updated_at)}</span>
           </div>
           <div className="pc-row-title">
-            <i className="unread-dot" aria-hidden="true" />
             {item.title}
           </div>
           <div className={`pc-row-turn${item.waiting_on.member === me?.name ? ' mine' : ''}`}>
@@ -526,10 +533,14 @@ export function TicketsPage({
                 aria-label="标签"
                 defaultValue={filters.label.join(' ')}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') changeFilter({ label: [(e.target as HTMLInputElement).value] })
+                  if (e.key === 'Enter') {
+                    changeFilter({ label: mergeLabelInput(filters.label, (e.target as HTMLInputElement).value) })
+                  }
                 }}
                 onBlur={(e) => {
-                  if (e.target.value !== filters.label.join(' ')) changeFilter({ label: [e.target.value] })
+                  if (e.target.value !== filters.label.join(' ')) {
+                    changeFilter({ label: mergeLabelInput(filters.label, e.target.value) })
+                  }
                 }}
               />
               <datalist id="pc-label-suggestions">
@@ -734,10 +745,14 @@ export function TicketsPage({
                   defaultValue={filters.label.join(' ')}
                   aria-label="标签"
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') set('label', [(e.target as HTMLInputElement).value])
+                    if (e.key === 'Enter') {
+                      set('label', mergeLabelInput(filters.label, (e.target as HTMLInputElement).value))
+                    }
                   }}
                   onBlur={(e) => {
-                    if (e.target.value !== filters.label.join(' ')) set('label', [e.target.value])
+                    if (e.target.value !== filters.label.join(' ')) {
+                      set('label', mergeLabelInput(filters.label, e.target.value))
+                    }
                   }}
                 />
                 <datalist id="label-suggestions">

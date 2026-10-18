@@ -28,6 +28,9 @@ test('label facet panel combines dimensions and restores its URL filters', async
   await expect(page.getByRole('heading', { name: '标签筛选 · 同维度多选取或' })).toBeVisible()
 
   const panel = page.getByTestId('label-facet-panel')
+  await panel.getByRole('button', { name: /机型/ }).click()
+  await panel.getByRole('button', { name: /产品线/ }).click()
+  await panel.getByRole('button', { name: /其他标签/ }).click()
   await panel.getByRole('checkbox', { name: 'UD-2300' }).check()
   await panel.getByRole('checkbox', { name: 'UD-1290' }).check()
   await panel.getByRole('checkbox', { name: '血液' }).check()
@@ -69,6 +72,7 @@ test('label facets search, expand long groups, and link counts to other conditio
   await page.getByRole('button', { name: '🏷 标签 ▾' }).click()
   const panel = page.getByTestId('label-facet-panel')
   const machine = panel.locator('.label-facet-group', { hasText: '机型' })
+  await machine.getByRole('button', { name: /机型/ }).click()
   await expect(machine.getByRole('button', { name: '展开全部 14 个' })).toBeVisible()
   await machine.getByRole('button', { name: '展开全部 14 个' }).click()
   await expect(machine.getByRole('checkbox', { name: 'US-1680' })).toBeVisible()
@@ -80,6 +84,7 @@ test('label facets search, expand long groups, and link counts to other conditio
   await expect(panel.locator('.label-facet-group', { hasText: '产品线' }).getByRole('checkbox', { name: '血液' })).toBeVisible()
 
   await panel.getByLabel('搜索标签').fill('')
+  await panel.getByRole('button', { name: /产品线/ }).click()
   await panel.getByRole('checkbox', { name: '尿液' }).check()
   const ud1290 = panel.locator('.label-facet-value', { hasText: 'UD-1290' })
   const ud2300 = panel.locator('.label-facet-value', { hasText: 'UD-2300' })
@@ -104,6 +109,7 @@ test('mobile label facets use a full-screen bottom drawer', async ({ page, reque
   expect(box?.y).toBe(0)
   expect(box?.width).toBe(390)
   expect(box?.height).toBe(844)
+  await panel.getByRole('button', { name: /机型/ }).click()
   await panel.getByRole('checkbox', { name: 'UD-2300' }).check()
   await panel.getByRole('button', { name: /显示 \d+ 张/ }).click()
   await expect(page).toHaveURL(/label_any=/u)

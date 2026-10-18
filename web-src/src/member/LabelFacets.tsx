@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import type { Dictionary } from './memberApi'
 import { toQuery, type ListFilters } from './TicketsPage'
@@ -36,9 +36,12 @@ interface CountsResponse {
 
 interface FacetGroup {
   name: string
+  undimensioned?: boolean
   labels: string[]
   aliases: Record<string, string[]>
 }
+
+const UNDIMENSIONED_GROUP = '其他标签'
 
 export function LabelFacetPanel({
   filters,
@@ -68,13 +71,14 @@ export function LabelFacetPanel({
 
   const groups = useMemo<FacetGroup[]>(() => {
     if (!dictionary) return []
-    const result = dictionary.dimensions.map((dim) => ({
+    const result: FacetGroup[] = dictionary.dimensions.map((dim) => ({
       name: dim.name,
       labels: dim.values.map((v) => `${dim.name}:${v.value}`),
       aliases: Object.fromEntries(dim.values.map((v) => [`${dim.name}:${v.value}`, v.aliases])),
     }))
     result.push({
-      name: '其他标签',
+      name: UNDIMENSIONED_GROUP,
+      undimensioned: true,
       labels: dictionary.plain ?? [],
       aliases: Object.fromEntries((dictionary.plain ?? []).map((l) => [l, []])),
     })
@@ -83,11 +87,25 @@ export function LabelFacetPanel({
 
   useEffect(() => {
     if (!groups.length) return
+    const query = search.trim().toLowerCase()
+    const active = groups.filter((group) => {
+      if (openGroups[group.name]) return true
+      if (!query) return false
+      return (
+        group.name.toLowerCase().includes(query) ||
+        group.labels.some(
+          (label) =>
+            label.toLowerCase().includes(query) ||
+            (group.aliases[label] ?? []).some((alias) => alias.toLowerCase().includes(query)),
+        )
+      )
+    })
+    if (!active.length) return
     let alive = true
     void Promise.all(
-      groups.map(async (group) => {
+      active.map(async (group) => {
         const body = await api(
-          `/api/v1/tickets/counts?group_by=${encodeURIComponent(group.name === '其他标签' ? 'undimensioned' : group.name)}&${labelQuery(draft)}`,
+          `/api/v1/tickets/counts?group_by=${encodeURIComponent(group.undimensioned ? 'undimensioned' : group.name)}&${labelQuery(draft)}`,
         ) as CountsResponse
         return [group.name, Object.fromEntries(body.groups.map((g) => [g.value, g.count]))] as const
       }),
@@ -101,7 +119,7 @@ export function LabelFacetPanel({
     return () => {
       alive = false
     }
-  }, [groups, draft])
+  }, [groups, draft, openGroups, search])
 
   useEffect(() => {
     let alive = true
@@ -158,11 +176,11 @@ export function LabelFacetPanel({
           const ranked = hits
             .map((label) => ({
               label,
-              count: groupCounts[group.name === '其他标签' ? label : label.slice(group.name.length + 1)] ?? 0,
+              count: groupCounts[group.undimensioned ? label : label.slice(group.name.length + 1)] ?? 0,
             }))
             .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
           const visible = query || expandedGroups[group.name] ? ranked : ranked.slice(0, 5)
-          const open = openGroups[group.name] !== false
+          const open = openGroups[group.name] === true || (!!query && !!hits.length)
           return (
             <section key={group.name} className="label-facet-group">
               <button
@@ -174,7 +192,7 @@ export function LabelFacetPanel({
                 <span>{group.labels.length} 个值</span>
               </button>
               {open && visible.map(({ label, count }) => {
-                const value = group.name === '其他标签' ? label : label.slice(group.name.length + 1)
+                const value = group.undimensioned ? label : label.slice(group.name.length + 1)
                 const included = draft.label.includes(label) || draft.labelAny.includes(label)
                 const excluded = draft.noLabel.includes(label)
                 return (
@@ -252,6 +270,8 @@ export function LabelFilterSummary({
   onChange: (patch: Partial<ListFilters>) => void
 }) {
   const [expanded, setExpanded] = useState(false)
+  const [hiddenChips, setHiddenChips] = useState<number[]>([])
+  const chipRowRef = useRef<HTMLDivElement | null>(null)
   const dimensions = new Map<string, string[]>()
   for (const label of filters.labelAny) {
     const dim = label.split(':', 1)[0]
@@ -275,6 +295,31 @@ export function LabelFilterSummary({
     remove: () => onChange(toggleLabelCondition(filters, label, 'exclude')),
   }))
   const chips = [...includes, ...excludes]
+  useEffect(() => {
+    if (expanded || !chipRowRef.current) {
+      setHiddenChips([])
+      return
+    }
+    const row = chipRowRef.current
+    const measure = () => {
+      const buttons = Array.from(row.children).filter(
+        (el): el is HTMLElement => el instanceof HTMLElement,
+      )
+      if (!buttons.length) {
+        setHiddenChips([])
+        return
+      }
+      const firstTop = buttons[0].offsetTop
+      setHiddenChips(buttons.map((button, i) => (button.offsetTop > firstTop ? i : -1)).filter((i) => i >= 0))
+    }
+    const frame = requestAnimationFrame(measure)
+    const observer = new ResizeObserver(measure)
+    observer.observe(row)
+    return () => {
+      cancelAnimationFrame(frame)
+      observer.disconnect()
+    }
+  }, [expanded, chips.length])
   if (!chips.length) return null
   const words = [
     ...[...dimensions].map(([dim, values]) => `${dim}是 ${values.join(' 或 ')}`),
@@ -283,21 +328,22 @@ export function LabelFilterSummary({
   ].join('，且 ')
   return (
     <div className="label-filter-summary" aria-label="已选标签条件">
-      <div className={expanded ? 'expanded' : undefined}>
-        {chips.map((chip) => (
+      <div ref={chipRowRef} className={expanded ? 'expanded' : undefined}>
+        {chips.map((chip, i) => (
           <button
             key={chip.key}
             type="button"
             className={chip.text.startsWith('不含') ? 'exclude' : undefined}
+            style={{ display: !expanded && hiddenChips.includes(i) ? 'none' : undefined }}
             onClick={chip.remove}
           >
             <span>{chip.text}</span> ×
           </button>
         ))}
       </div>
-      {chips.length > 3 && (
+      {!!hiddenChips.length && (
         <button type="button" className="label-filter-more" onClick={() => setExpanded(!expanded)}>
-          {expanded ? '收起' : `+${chips.length - 3}`}
+          {expanded ? '收起' : `+${hiddenChips.length}`}
         </button>
       )}
       <button type="button" onClick={() => onChange({ label: [], labelAny: [], noLabel: [] })}>

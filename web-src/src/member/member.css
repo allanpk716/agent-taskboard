@@ -146,6 +146,9 @@
   display: flex;
   height: 100vh;
 }
+.pc-list-slot {
+  display: contents;
+}
 .pc-list-pane {
   width: 380px;
   flex: none;
@@ -337,17 +340,6 @@
   font-weight: 700;
   line-height: 1.35;
   margin: 7px 0 4px;
-}
-.pc-row-title .unread-dot {
-  display: none;
-}
-.pc-row-title.unread .unread-dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: 50%;
-  background: #2a6fdb;
 }
 .pc-row-turn {
   color: #697386;

@@ -224,7 +224,10 @@ async function runFullUseCase(
   await login(page, ADMIN)
 
   // 成员向导：收件箱卡片进入，两项必填（默认 Bug 反馈），生成链接
-  await page.getByRole('button', { name: '＋ 请人反馈' }).click()
+  const feedbackEntry = mobile
+    ? page.getByRole('button', { name: '＋ 请人反馈' })
+    : page.getByRole('navigation', { name: '侧栏' }).getByRole('link', { name: '＋ 请人反馈' })
+  await feedbackEntry.click()
   await expect(page.getByLabel('请谁反馈')).toBeVisible()
   await page.getByLabel('请谁反馈').fill('检验科-张三')
   await page.getByLabel('什么事').fill('完整用例：UD-2300 质控报 E-203')

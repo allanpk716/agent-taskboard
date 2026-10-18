@@ -665,7 +665,7 @@ export function TicketDetailPage({
     }
   }, [ticketRef])
   useEffect(() => {
-    if (tier === 'wide' || tier === 'medium') void reloadGuestLinks()
+    void reloadGuestLinks()
   }, [reloadGuestLinks, tier])
 
   function changed() {
@@ -837,57 +837,59 @@ export function TicketDetailPage({
             </button>
           </div>
         )}
-        <details className="mmeta">
-          <summary>标签 · 指派 · 访客链接</summary>
-          <div className="kv">
-            <span>标签</span>
-            <span>
-              <LabelChips labels={ticket.labels ?? []} onToggle={toggleDetailLabel} />{' '}
-              <button className="btn sm ghost" onClick={() => setDialog('label')}>
-                ＋
-              </button>
-            </span>
-          </div>
-          <div className="kv">
-            <span>发起人</span>
-            <b>{authorName(ticket.creator)}</b>
-          </div>
-          <div className="kv">
-            <span>指派人</span>
-            <span>
-              <b>{ticket.assignee?.member?.name ?? '未指派'}</b>{' '}
-              <button className="btn sm ghost" onClick={() => setDialog('assign')}>
-                {ticket.assignee?.member ? '改派' : '指派'}
-              </button>
-            </span>
-          </div>
-          <div className="kv">
-            <span>等待方</span>
-            <b>{closed ? '无（已关闭）' : ticket.waiting_on.text}</b>
-          </div>
-          <div className="kv">
-            <span>访客链接</span>
-            <span>
-              <button className="btn sm ghost" onClick={() => setDialog('links')}>
-                管理
-              </button>
-            </span>
-          </div>
-          <div className="kv">
-            <span>更多</span>
-            <span>
-              {open ? (
-                <button className="btn sm ghost" onClick={() => setDialog('close')}>
-                  关闭工单
+        {(tier === 'mobile' || tier === 'narrow') && (
+          <details className="mmeta">
+            <summary>标签 · 指派 · 访客链接</summary>
+            <div className="kv">
+              <span>标签</span>
+              <span>
+                <LabelChips labels={ticket.labels ?? []} onToggle={toggleDetailLabel} />{' '}
+                <button className="btn sm ghost" onClick={() => setDialog('label')}>
+                  ＋
                 </button>
-              ) : (
-                <button className="btn sm ghost" onClick={() => setDialog('reopen')}>
-                  重新开启
+              </span>
+            </div>
+            <div className="kv">
+              <span>发起人</span>
+              <b>{authorName(ticket.creator)}</b>
+            </div>
+            <div className="kv">
+              <span>指派人</span>
+              <span>
+                <b>{ticket.assignee?.member?.name ?? '未指派'}</b>{' '}
+                <button className="btn sm ghost" onClick={() => setDialog('assign')}>
+                  {ticket.assignee?.member ? '改派' : '指派'}
                 </button>
-              )}
-            </span>
-          </div>
-        </details>
+              </span>
+            </div>
+            <div className="kv">
+              <span>等待方</span>
+              <b>{closed ? '无（已关闭）' : ticket.waiting_on.text}</b>
+            </div>
+            <div className="kv">
+              <span>访客链接</span>
+              <span>
+                <button className="btn sm ghost" onClick={() => setDialog('links')}>
+                  管理
+                </button>
+              </span>
+            </div>
+            <div className="kv">
+              <span>更多</span>
+              <span>
+                {open ? (
+                  <button className="btn sm ghost" onClick={() => setDialog('close')}>
+                    关闭工单
+                  </button>
+                ) : (
+                  <button className="btn sm ghost" onClick={() => setDialog('reopen')}>
+                    重新开启
+                  </button>
+                )}
+              </span>
+            </div>
+          </details>
+        )}
         <div className="actrow" role="region" aria-label="工单操作">
           <button className="btn sm ghost" onClick={() => setDialog('label')}>
             🏷 标签

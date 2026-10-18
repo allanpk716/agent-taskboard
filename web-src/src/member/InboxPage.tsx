@@ -3,8 +3,14 @@
 // 出现在收件箱里（要用查询接口找）。
 import { useCallback, useEffect, useState } from 'react'
 import { fetchInbox, reasonClass, type InboxItem, type InboxResponse } from './memberApi'
-import { nav, useInvalidate } from './ui'
+import { nav, useInvalidate, useLocationSearch } from './ui'
 import { TicketCard, ticketLabelFilterPath } from './TicketsPage'
+
+function inboxDetailPath(number: string, search: string): string {
+  const params = new URLSearchParams(search)
+  params.set('list', 'inbox')
+  return `/t/${number}?${params.toString()}`
+}
 
 export function InboxPage({
   desktop,
@@ -15,10 +21,12 @@ export function InboxPage({
   selected?: string
   me?: { name: string }
 }) {
+  const search = useLocationSearch()
   const [data, setData] = useState<InboxResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [mode, setMode] = useState<'mine' | 'guest'>('mine')
-  const [q, setQ] = useState('')
+  const params = new URLSearchParams(search)
+  const mode = params.get('inbox') === 'guest' ? 'guest' : 'mine'
+  const q = params.get('q') ?? ''
 
   const load = useCallback(async () => {
     try {
@@ -34,10 +42,15 @@ export function InboxPage({
   }, [load])
   useInvalidate(load)
 
+  function updateInbox(patch: Record<string, string>) {
+    const params = new URLSearchParams(search)
+    for (const [key, value] of Object.entries(patch)) params.set(key, value)
+    nav(`/?${params.toString()}`)
+  }
+
   if (desktop) {
     const filtered = (data?.items ?? []).filter((it) => {
-      const guestReply = it.reason.includes('访客')
-      return mode === 'mine' ? !guestReply || it.reason === '待初筛' : guestReply
+      return mode === 'mine' || it.reason.includes('访客')
     })
     const shown = q
       ? filtered.filter((it) => it.title.includes(q) || it.number.includes(q) || it.labels.some((l) => l.includes(q)))
@@ -58,19 +71,21 @@ export function InboxPage({
           <input
             placeholder="搜索"
             aria-label="搜索"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
+            defaultValue={q}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') updateInbox({ q: (e.target as HTMLInputElement).value })
+            }}
+            onBlur={(e) => {
+              if (e.target.value !== q) updateInbox({ q: e.target.value })
+            }}
           />
         </header>
         <div className="pc-filter-row">
-          <button className="pc-primary-chip" type="button" onClick={() => nav('/feedback')}>
-            ＋ 请人反馈
-          </button>
           <button
             type="button"
             className={`fchip${mode === 'mine' ? ' on' : ''}`}
             aria-pressed={mode === 'mine'}
-            onClick={() => setMode('mine')}
+            onClick={() => updateInbox({ inbox: 'mine' })}
           >
             等我处理
           </button>
@@ -78,7 +93,7 @@ export function InboxPage({
             type="button"
             className={`fchip${mode === 'guest' ? ' on' : ''}`}
             aria-pressed={mode === 'guest'}
-            onClick={() => setMode('guest')}
+            onClick={() => updateInbox({ inbox: 'guest' })}
           >
             访客新回复
           </button>
@@ -93,7 +108,7 @@ export function InboxPage({
               desktop
               me={me}
               selected={selected === it.number}
-              href={`/t/${it.number}?list=inbox`}
+              href={inboxDetailPath(it.number, search)}
               onLabelClick={(label) => nav(ticketLabelFilterPath(label))}
             />
           ))}

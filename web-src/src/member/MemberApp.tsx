@@ -108,7 +108,9 @@ export function MemberApp() {
   const fromInbox = detailParams.get('list') === 'inbox'
   detailParams.delete('list')
   const detailQuery = detailParams.toString()
-  const detailReturnTo = fromInbox ? '/' : `/tickets${detailQuery ? '?' + detailQuery : ''}`
+  const detailReturnTo = fromInbox
+    ? `/${detailQuery ? '?' + detailQuery : ''}`
+    : `/tickets${detailQuery ? '?' + detailQuery : ''}`
   const page = (
     <>
       {route.page === 'inbox' && <InboxPage key={route.page} />}
@@ -154,6 +156,7 @@ export function MemberApp() {
       <a
         className={`pc-nav-item${primary ? ' primary' : ''}${on ? ' on' : ''}`}
         href={href}
+        aria-current={on ? 'page' : undefined}
         onClick={(e) => {
           e.preventDefault()
           nav(href)
@@ -170,8 +173,8 @@ export function MemberApp() {
           工单板
         </a>
         {item('/feedback', '✚', '＋ 请人反馈', '请人反馈', h.page === 'feedback', undefined, true)}
-        {item('/', '📥', '收件箱', '收件箱', h.page === 'inbox' || h.page === 'detail', inboxCount)}
-        {item('/tickets', '🗂', '工单', '工单', h.page === 'tickets')}
+        {item('/', '📥', '收件箱', '收件箱', h.page === 'inbox' || (h.page === 'detail' && fromInbox), inboxCount)}
+        {item('/tickets', '🗂', '工单', '工单', h.page === 'tickets' || (h.page === 'detail' && !fromInbox))}
         {item('/new', '📝', '建单（高级）', '建单', h.page === 'new')}
         {item('/tools', '🧰', '工具', '工具', toolsOn)}
         {item('/me', '👤', '我的', '我的', meOn)}
@@ -186,16 +189,19 @@ export function MemberApp() {
         </div>
       </nav>
     )
-    if (h.page === 'detail' && (tier === 'wide' || tier === 'medium')) {
+    const listish = h.page === 'tickets' || h.page === 'inbox' || h.page === 'detail'
+    if (listish && (tier === 'wide' || tier === 'medium')) {
       return (
         <div className={`pc-shell${compact ? ' compact' : ''}`}>
           {sidebar}
           <div className="pc-split">
-            {fromInbox ? (
-              <InboxPage desktop selected={route.page === 'detail' ? route.ref : undefined} me={me} />
-            ) : (
-              <TicketsPage desktop selected={route.page === 'detail' ? route.ref : undefined} me={me} />
-            )}
+            <section className="pc-list-slot" aria-label="工单列表">
+              {h.page === 'inbox' || fromInbox ? (
+                <InboxPage desktop selected={route.page === 'detail' ? route.ref : undefined} me={me} />
+              ) : (
+                <TicketsPage desktop selected={route.page === 'detail' ? route.ref : undefined} me={me} />
+              )}
+            </section>
             <main className="pc-detail">
               {route.page === 'detail' && (
                 <TicketDetailPage ticketRef={route.ref} me={me} returnTo={detailReturnTo} />
