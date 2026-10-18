@@ -104,7 +104,7 @@ func (a *App) downloadClient(ctx context.Context, token, rawURL, dest string) ([
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("User-Agent", a.userAgent())
-	res, err := a.httpClient.Do(req)
+	res, err := a.streamClient.Do(req)
 	if err != nil {
 		return [32]byte{}, 0, err
 	}
