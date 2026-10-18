@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>通知 HTTP API 原型</title>
+<style>
+:root{--accent:#1d66d0;--bg:#f6f6f7;--card:#fff;--fg:#1d1d1f;--mute:#68686f;--line:#e2e2e6;--bad:#bf3b2d;--ok:#177b45;--new:#fff4cc;--code:#f2f2f4}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+.wrap{max-width:1440px;margin:0 auto;padding:28px 22px 60px}
+h1{font-size:22px;margin:0 0 5px}h2{font-size:15px;margin:0 0 12px}h3{font-size:14px;margin:15px 0 7px}
+p{margin:6px 0}.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:16px}
+.intro{border-left:4px solid var(--accent)}
+.tag{display:inline-block;font-size:12px;padding:1px 8px;border-radius:10px;background:#eaf0fb;color:var(--accent);margin:0 4px 4px 0}
+.tag.gray{background:#f0f0f2;color:var(--mute)}.tag.bad{background:#faeae7;color:var(--bad)}.tag.ok{background:#e6f4ec;color:var(--ok)}
+.mute{color:var(--mute)}.small{font-size:12px}
+button{font:inherit;border:1px solid var(--line);background:#fff;border-radius:6px;padding:5px 10px;cursor:pointer;margin:0 6px 6px 0}
+button:hover{border-color:var(--accent);color:var(--accent)}button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.primary:hover{color:#fff;opacity:.9}button.done{background:#e6f4ec;border-color:#bde2cb;color:var(--ok)}button.next{border-color:var(--accent);box-shadow:0 0 0 2px #d9e5f9}
+code,pre{font-family:Consolas,"Cascadia Mono",monospace}code{font-size:12.5px;background:var(--code);padding:0 4px;border-radius:3px}
+pre{background:var(--code);border-radius:6px;padding:10px 12px;overflow:auto;font:12.5px/1.5 Consolas,"Cascadia Mono",monospace;margin:6px 0;white-space:pre-wrap;word-break:break-word}
+.status{font-weight:700}.status.ok{color:var(--ok)}.status.bad{color:var(--bad)}
+.grid{display:grid;grid-template-columns:minmax(430px,52%) 1fr;gap:16px;align-items:start}
+.state-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px}
+.panel{border:1px solid var(--line);border-radius:7px;padding:10px 12px;margin-bottom:10px;background:#fff}
+.panel.changed{border-color:#e2bb4b;background:#fffdf0}
+.notice{border-left:3px solid var(--accent);background:#fffaf0;border-radius:0 6px 6px 0;padding:6px 10px;margin:5px 0;font-size:13px}
+ul.list{list-style:none;padding:0;margin:6px 0 0}ul.list li{padding:4px 6px;border-radius:4px;margin-bottom:3px}
+ul.list li.unread{font-weight:700}ul.list li.new{background:var(--new)}
+.kv{display:grid;grid-template-columns:82px 1fr;gap:2px 10px;font-size:13px}.kv div:nth-child(odd){color:var(--mute)}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{border-bottom:1px solid var(--line);text-align:left;padding:5px 6px;vertical-align:top}
+.tabs{display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;padding:6px 10px}
+.tabs button.active{border-bottom-color:var(--accent);color:var(--accent)}
+.step{display:grid;grid-template-columns:28px 1fr;gap:10px;margin:0 0 9px}
+.stepno{width:24px;height:24px;border-radius:12px;background:var(--code);color:var(--mute);text-align:center;line-height:24px;font-size:12px}
+.step button{display:block;margin-bottom:3px}.toast{background:#252526;color:#fff;border-radius:6px;padding:7px 9px;font-size:12.5px;margin-top:7px}
+.empty{color:var(--mute);font-size:13px}
+@media(max-width:920px){.wrap{padding:12px 10px 42px}.grid,.state-grid{grid-template-columns:1fr}table{display:block;overflow-x:auto}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<section class="card intro">
+  <span class="tag bad">原型 · 一次性讨论用，不进入正式实现</span>
+  <h1>通知 HTTP API 原型</h1>
+  <p><b>要回答的问题</b>：通知 API 要长什么样，才能同时服务桌面托盘客户端、网页铃铛和成员 Agent？重点检验四件事：通知 id 能否作为增量游标；实时通道断线后能否用 <code>Last-Event-ID</code> 补齐；已读是否按成员只存一份、Agent 是否不能改已读；客户端凭证是否只能读通知、标已读和查会话。</p>
+  <p class="small mute">页面是纯浏览器内存模拟，刷新即重置。托盘连接只影响推送展示，通知本体始终可被 Agent 轮询拉到。SSE 实际服务每 25 秒发送 <code>: ping</code> 注释保活，本原型不计时。</p>
+</section>
+<div class="grid">
+  <div>
+    <section class="card"><h2>引导场景</h2><div class="tabs" id="tabs"></div><div id="scenario"></div></section>
+    <section class="card"><h2>自由操作</h2><div id="ops"></div><p class="small mute">工单事件直接改变模拟平台；设备操作会影响推送；HTTP 操作会记录完整请求和响应。</p></section>
+    <section class="card"><h2>CLI / MCP 对照</h2>
+      <table><thead><tr><th>CLI</th><th>MCP tool</th><th>说明</th></tr></thead><tbody>
+      <tr><td><code>tb notifications [--after N] [--unread]</code></td><td><code>notifications_list</code></td><td>拉列表，支持增量与未读筛选</td></tr>
+      <tr><td><code>tb notifications count</code></td><td><code>notifications_unread_count</code></td><td>最低开销轮询</td></tr>
+      <tr><td><code>tb notifications read --ids/--ticket/--up-to</code></td><td>不提供</td><td>仅限成员本人，Agent 不改已读</td></tr>
+      <tr><td><code>tb notifications watch</code></td><td>不提供</td><td>SSE，打印到终端</td></tr>
+      </tbody></table>
+    </section>
+  </div>
+  <section class="card"><h2>当前状态</h2><div id="changed" class="notice" hidden></div><div class="state-grid" id="state"></div></section>
+</div>
+<section class="card"><h2>最近一次 HTTP 请求与响应</h2><div id="exchange" class="empty">还没有发送 HTTP 请求。</div></section>
+</div>
+<script>
+const Notify = (() => {
+  const PAGE_SIZE = 50;
+  const clone = x => JSON.parse(JSON.stringify(x));
+  const err = (status, code, message, hint) => ({status, body:{error:{code, message, hint}}});
+  const isAgent = c => c?.kind === "agent";
+  const isClient = c => c?.kind === "client";
+  const isGuest = c => c?.kind === "guest";
+  const memberName = (s, id) => s.members.find(m => m.id === id)?.name ?? String(id);
+  const ticketOf = (s, number) => s.tickets.find(t => t.number === number);
+  const titleRef = n => `「${n}」`;
+
+  function nextTime(s) {
+    s.clock += 1;
+    return `2026-10-17 ${String(9 + Math.floor(s.clock / 20)).padStart(2, "0")}:${String((s.clock * 3) % 60).padStart(2, "0")}`;
+  }
+
+  function initial() {
+    return {
+      clock: 0, nextId: 1, streamSeq: 1,
+      members: [
+        {id: 1, name: "陈工", role: "管理员、初筛人"},
+        {id: 2, name: "李工", role: null},
+        {id: 3, name: "王梦龙", role: null}
+      ],
+      credentials: {
+        tbm_chen_web: {kind: "web", member_id: 1},
+        tbm_li_web: {kind: "web", member_id: 2},
+        tbag_li_laptop: {kind: "agent", member_id: 2, name: "笔记本"},
+        tbc_li_desk: {kind: "client", member_id: 2, id: "tbc_li_desk", hostname: "LI-DESK"},
+        tbc_li_laptop: {kind: "client", member_id: 2, id: "tbc_li_laptop", hostname: "LI-LAPTOP"},
+        tbg_guest1: {kind: "guest", note: "检验科-张三", name: "张三"}
+      },
+      tickets: [
+        {number: "20261017-001", title: "整理对照表", kind: "task", creator_id: 1, assignee_id: null, status: "open", seq: 1, timeline: [], labels: []},
+        {number: "20261017-002", title: "7600 报错 E203", kind: "report", creator_id: null, guest: {note: "检验科-张三", name: "张三"}, assignee_id: null, status: "open", seq: 1, timeline: [], labels: []}
+      ],
+      notifications: [], readEvents: [],
+      webBell: {credential: "tbm_li_web", member_id: 2, seenMax: null, lastCount: 0},
+      connections: {
+        desk: {id: "desk", token: "tbc_li_desk", member_id: 2, online: true, mode: "connect", lastEventId: null, lastReadSeq: 0, unreadCount: 0, latestToast: null, frames: []},
+        laptop: {id: "laptop", token: "tbc_li_laptop", member_id: 2, online: true, mode: "connect", lastEventId: null, lastReadSeq: 0, unreadCount: 0, latestToast: null, frames: []},
+        agent: {id: "agent", token: "tbag_li_laptop", member_id: 2, cursor: 0}
+      }
+    };
+  }
+
+  function cred(state, token) { return {token, ...state.credentials[token]}; }
+  function countUnread(state, memberId) { return state.notifications.filter(n => n.member_id === memberId && n.read_at === null).length; }
+  function push(state, ticket, memberIds, kind, reason, text, event, summary = null) {
+    const created = memberIds.map(member_id => {
+      const n = {
+        id: state.nextId++, member_id,
+        ticket: {number: ticket.number, title: ticket.title, url: `/t/${ticket.number}`},
+        kind, reason, text, event: {...event}, summary,
+        read_new: `/api/v1/tickets/${ticket.number}/timeline?after=${event.seq - 1}`,
+        read_full: `/api/v1/tickets/${ticket.number}?format=markdown`,
+        created_at: nextTime(state), read_at: null
+      };
+      state.notifications.push(n);
+      return clone(n);
+    });
+    return created;
+  }
+
+  function addTimeline(state, ticket, type, actor, extra = {}) {
+    ticket.seq += 1;
+    const event = {seq: ticket.seq, type, actor, ...extra};
+    ticket.timeline.push(event);
+    return event;
+  }
+
+  function recipients(ticket, actor) {
+    const ids = new Set();
+    if (ticket.creator_id !== null) ids.add(ticket.creator_id);
+    if (ticket.assignee_id !== null) ids.add(ticket.assignee_id);
+    if (actor?.kind === "member") ids.delete(actor.member_id);
+    return [...ids];
+  }
+
+  function apply(input, action) {
+    const state = clone(input);
+    const ticket = ticketOf(state, action.number);
+    if (!ticket) return {state, created: []};
+    let created = [];
+    const memberActor = id => ({kind: "member", member_id: id, name: memberName(state, id)});
+    const agentActor = {kind: "agent", member_id: action.ownerId ?? 2, name: "笔记本"};
+    const guestActor = {kind: "guest", member_id: null, name: action.guestName || "张三"};
+
+    if (action.type === "assign") {
+      const e = addTimeline(state, ticket, "assigned", memberActor(action.actorId), {to: action.to});
+      ticket.assignee_id = action.to;
+      created = push(state, ticket, [action.to], "turn", "assigned", `${memberName(state, action.actorId)} 把${titleRef(ticket.title)}指派给你`, e);
+    }
+    if (action.type === "agent_reply_deliver") {
+      const e = addTimeline(state, ticket, "delivered", agentActor, {body: "已整理完成，对照表见附件。"});
+      created = push(state, ticket, [ticket.creator_id], "turn", "delivered", `李工的 Agent 把${titleRef(ticket.title)}交付，待你验收`, e, e.body);
+    }
+    if (action.type === "return") {
+      const e = addTimeline(state, ticket, "returned", memberActor(action.actorId), {body: "第 3 行单位有误，请改为 mg/dL。"});
+      created = push(state, ticket, [ticket.assignee_id], "turn", "returned", `${memberName(state, action.actorId)} 退回${titleRef(ticket.title)}，请你修改`, e, e.body);
+    }
+    if (action.type === "third_reply") {
+      const e = addTimeline(state, ticket, "reply", memberActor(action.actorId), {body: "我这边有历史版本，可以先对照第 2 列。"});
+      created = push(state, ticket, recipients(ticket, memberActor(action.actorId)), "fyi", "third_party_reply", `${memberName(state, action.actorId)} 回复了${titleRef(ticket.title)}`, e, e.body);
+    }
+    if (action.type === "reassign") {
+      const before = ticket.assignee_id;
+      const e = addTimeline(state, ticket, "reassigned", memberActor(action.actorId), {from: before, to: action.to});
+      ticket.assignee_id = action.to;
+      if (before !== null) created.push(...push(state, ticket, [before], "fyi", "unassigned", `${memberName(state, action.actorId)} 把${titleRef(ticket.title)}改派给${memberName(state, action.to)}`, e));
+      created.push(...push(state, ticket, [action.to], "turn", "assigned", `${memberName(state, action.actorId)} 把${titleRef(ticket.title)}指派给你`, e));
+    }
+    if (action.type === "close") {
+      const actor = action.ownerId === undefined ? memberActor(action.actorId) : agentActor;
+      const e = addTimeline(state, ticket, "closed", actor, {reason: "done"});
+      ticket.status = "closed";
+      created = push(state, ticket, recipients(ticket, actor), "fyi", "closed", `${actor.kind === "agent" ? `${memberName(state, actor.member_id)}的 Agent` : actor.name} 关闭了${titleRef(ticket.title)}`, e);
+    }
+    if (action.type === "reopen") {
+      const e = addTimeline(state, ticket, "reopened", memberActor(action.actorId), {});
+      ticket.status = "open";
+      created = push(state, ticket, recipients(ticket, memberActor(action.actorId)), "fyi", "reopened", `${memberName(state, action.actorId)} 重新开启了${titleRef(ticket.title)}`, e);
+    }
+    if (action.type === "guest_reply") {
+      const e = addTimeline(state, ticket, "reply", guestActor, {body: action.body || "今天上午又复现了一次，错误码还是 E203。"});
+      if (ticket.assignee_id === null) {
+        const screeners = state.members.filter(m => m.role?.includes("初筛")).map(m => m.id);
+        created = push(state, ticket, screeners, "turn", "department", `${e.actor.name} 回复了未指派反馈${titleRef(ticket.title)}，待你初筛`, e, e.body);
+      } else {
+        created = push(state, ticket, recipients(ticket, null), "turn", "guest_replied", `${e.actor.name} 回复了${titleRef(ticket.title)}，待你处理`, e, e.body);
+      }
+    }
+    if (action.type === "guest_submit") {
+      const body = action.body || "7600 报错 E203，样本复核页连续运行 20 分钟后更常见。";
+      const e = addTimeline(state, ticket, "created", guestActor, {body});
+      const screeners = state.members.filter(m => m.role?.includes("初筛")).map(m => m.id);
+      created = push(state, ticket, screeners, "turn", "department", `${e.actor.name} 通过反馈入口提交了${titleRef(ticket.title)}，待你初筛`, e, body.slice(0, 120));
+    }
+    if (action.type === "brief_revised") {
+      const e = addTimeline(state, ticket, "brief_revised", guestActor, {body: "补充：报错出现在样本复核页，连续运行 20 分钟后更常见。"});
+      const screeners = ticket.assignee_id === null ? state.members.filter(m => m.role?.includes("初筛")).map(m => m.id) : recipients(ticket, null);
+      created = push(state, ticket, screeners, "fyi", "brief_revised", `${e.actor.name} 修订了${titleRef(ticket.title)}的说明`, e, e.body);
+    }
+    if (action.type === "label") {
+      addTimeline(state, ticket, "label_added", memberActor(action.actorId), {label: "需复核"});
+      ticket.labels.push("需复核");
+    }
+    return {state, created};
+  }
+
+  function tokenOf(request) { return request.credential || request.headers?.Authorization?.replace(/^Bearer /, ""); }
+  function markdownItems(items, cursor) {
+    if (!items.length) return `没有新通知。\n\n下一步：下次用 after=${cursor} 增量拉取；要看现在轮到谁，用 /api/v1/inbox。`;
+    return items.map(n => `- #${n.id} [${n.kind}/${n.reason}] ${n.text}（${n.created_at}）\n  - 新事件：${n.read_new}\n  - 全文：${n.read_full}${n.summary ? `\n  - 摘要：${n.summary}` : ""}`).join("\n\n") + `\n\n下一步：下次用 after=${cursor}；要看现在轮到谁，用 /api/v1/inbox。`;
+  }
+
+  function handle(input, request) {
+    const state = clone(input);
+    const token = tokenOf(request);
+    if (!token || !state.credentials[token]) return {state, response: err(401, "invalid_token", "凭证无效", "检查 Authorization: Bearer 的值")};
+    const c = cred(state, token);
+    const path = request.path, q = request.query || {}, method = request.method.toUpperCase();
+    const notificationSurface = ["/api/v1/notifications", "/api/v1/notifications/unread", "/api/v1/notifications/read", "/api/v1/notifications/stream"].includes(path);
+    if (isClient(c) && !notificationSurface && path !== "/api/v1/session") return {state, response: err(403, "client_scope", "客户端凭证不能调用该接口", "客户端凭证只能读通知、标已读；点开通知请用浏览器打开工单页面")};
+    if (notificationSurface && isGuest(c)) return {state, response: err(403, "members_only", "通知接口仅限成员使用", "访客请继续使用工单链接和反馈入口")};
+
+    if (path === "/api/v1/session" && method === "GET") {
+      if (isClient(c)) return {state, response: {status: 200, body: {viewer: {kind: "member", id: c.member_id, name: memberName(state, c.member_id)}, client: {id: c.id, hostname: c.hostname}, agent: null}}};
+      const body = {viewer: {kind: "member", id: c.member_id, name: memberName(state, c.member_id)}};
+      if (isAgent(c)) { body.agent = {name: c.name}; body.client = null; }
+      return {state, response: {status: 200, body}};
+    }
+
+    if (path === "/api/v1/notifications" && method === "GET") {
+      let items = state.notifications.filter(n => n.member_id === c.member_id);
+      if (q.unread === "1" || q.unread === 1) items = items.filter(n => n.read_at === null);
+      const hasAfter = q.after !== undefined && q.after !== null && q.after !== "";
+      let cursor;
+      if (hasAfter) {
+        const after = Number(q.after);
+        if (!Number.isInteger(after) || after < 0) return {state, response: err(400, "invalid_after", "after 必须是非负整数", "after 使用上次响应返回的 cursor")};
+        items = items.filter(n => n.id > after).sort((a, b) => a.id - b.id);
+        cursor = items.length ? items[items.length - 1].id : after;
+      } else {
+        items = [...items].sort((a, b) => b.id - a.id);
+        if (q.before !== undefined && q.before !== null && q.before !== "") {
+          const before = Number(q.before);
+          if (!Number.isInteger(before)) return {state, response: err(400, "invalid_before", "before 必须是整数", "before 使用本页最后一条通知的 id")};
+          items = items.filter(n => n.id < before);
+        }
+        cursor = items.length ? Math.max(...items.map(n => n.id)) : 0;
+      }
+      const requested = q.limit === undefined ? PAGE_SIZE : Number(q.limit);
+      if (!Number.isInteger(requested) || requested < 1) return {state, response: err(400, "invalid_limit", "limit 必须是正整数", "不传时默认 50，服务端最大 200")};
+      const limit = Math.min(requested, 200), page = items.slice(0, limit);
+      const unreadCount = countUnread(state, c.member_id);
+      const next = !hasAfter && items.length > limit ? `/api/v1/notifications?before=${page[page.length - 1].id}` : null;
+      const body = {items: clone(page), cursor, unread_count: unreadCount, next};
+      if (q.format === "markdown") body.items = markdownItems(page, cursor);
+      return {state, response: {status: 200, body}};
+    }
+
+    if (path === "/api/v1/notifications/unread" && method === "GET") {
+      const all = state.notifications.filter(n => n.member_id === c.member_id);
+      return {state, response: {status: 200, body: {unread_count: countUnread(state, c.member_id), latest_id: all.length ? Math.max(...all.map(n => n.id)) : 0}}};
+    }
+
+    if (path === "/api/v1/notifications/read" && method === "POST") {
+      if (isAgent(c)) return {state, response: err(403, "agent_cannot_mark_read", "Agent 不能修改成员已读状态", "已读状态属于成员本人，由桌面客户端和网页共用；Agent 用 after 游标增量拉取即可")};
+      const b = request.body || {}, keys = ["ids", "ticket", "up_to"].filter(k => b[k] !== undefined);
+      if (keys.length !== 1) return {state, response: err(400, "invalid_read_scope", "请求体必须且只能包含 ids、ticket、up_to 之一", "网页打开工单用 ticket；全部已读用页面上看到的最大 id 作为 up_to")};
+      let selected;
+      if (keys[0] === "ids") {
+        if (!Array.isArray(b.ids) || !b.ids.every(Number.isInteger)) return {state, response: err(400, "invalid_ids", "ids 必须是整数数组", "传入要标已读的通知 id")};
+        selected = state.notifications.filter(n => n.member_id === c.member_id && b.ids.includes(n.id));
+      } else if (keys[0] === "ticket") selected = state.notifications.filter(n => n.member_id === c.member_id && n.ticket.number === b.ticket);
+      else {
+        if (!Number.isInteger(b.up_to)) return {state, response: err(400, "invalid_up_to", "up_to 必须是整数", "使用页面上看到的最大通知 id")};
+        selected = state.notifications.filter(n => n.member_id === c.member_id && n.id <= b.up_to);
+      }
+      const markedIds = [];
+      selected.forEach(n => { if (n.read_at === null) { n.read_at = nextTime(state); markedIds.push(n.id); } });
+      const unreadCount = countUnread(state, c.member_id);
+      if (markedIds.length) state.readEvents.push({seq: state.streamSeq++, member_id: c.member_id, ids: markedIds, unread_count: unreadCount});
+      return {state, response: {status: 200, body: {marked: markedIds.length, unread_count: unreadCount}}};
+    }
+
+    if (path === "/api/v1/notifications/stream" && method === "GET") return {state, response: {status: 200, body: {stream: true}}};
+    return {state, response: err(404, "not_found", "接口不存在", "通知接口都在 /api/v1 下")};
+  }
+
+  function stream(state, connection) {
+    const c = cred(state, connection.token);
+    if (isGuest(c)) return [];
+    const mine = state.notifications.filter(n => n.member_id === c.member_id);
+    const mode = connection.mode || (connection.lastEventId === null ? "connect" : "live");
+    if (mode === "connect") return [{event: "hello", data: {unread_count: countUnread(state, c.member_id), latest_id: mine.length ? Math.max(...mine.map(n => n.id)) : 0}}];
+    if (mode === "reconnect") {
+      const out = mine.filter(n => n.id > connection.lastEventId).sort((a, b) => a.id - b.id)
+        .map(n => ({event: "notification", id: n.id, data: clone(n)}));
+      out.push({event: "hello", data: {unread_count: countUnread(state, c.member_id), latest_id: mine.length ? Math.max(...mine.map(n => n.id)) : 0}});
+      return out;
+    }
+    const out = mine.filter(n => n.id > connection.lastEventId).sort((a, b) => a.id - b.id)
+      .map(n => ({event: "notification", id: n.id, data: clone(n)}));
+    state.readEvents.filter(e => e.member_id === c.member_id && e.seq > connection.lastReadSeq)
+      .forEach(e => out.push({event: "read", seq: e.seq, data: {ids: e.ids, unread_count: e.unread_count}}));
+    return out;
+  }
+  return {initial, apply, handle, stream, countUnread};
+})();
+</script>
+<script>
+let state = Notify.initial();
+let prevState = null;
+let lastHttp = null;
+let activeScenario = 0;
+let progress = 0;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+const j = o => JSON.stringify(o, null, 2);
+const T1 = "20261017-001", T2 = "20261017-002";
+
+function request(method, path, credential, query = {}, body = undefined, headers = {}) {
+  const req = {method, path, query, headers: {Authorization: `Bearer ${credential}`, ...headers}, body, credential};
+  const result = Notify.handle(state, req);
+  prevState = state;
+  state = result.state;
+  lastHttp = {request: req, response: result.response};
+  deliverOnline();
+  render();
+  return result.response;
+}
+
+function business(action) {
+  const result = Notify.apply(state, action);
+  prevState = state;
+  state = result.state;
+  deliverOnline();
+  render();
+  return result;
+}
+
+function processEvents(connection, events) {
+  const c = state.connections[connection.id];
+  const reconnecting = c.mode === "reconnect";
+  events.forEach(e => {
+    if (e.event === "hello") {
+      c.unreadCount = e.data.unread_count;
+      c.lastEventId = e.data.latest_id;
+    }
+    if (e.event === "notification") {
+      c.lastEventId = e.id;
+      c.latestToast = `#${e.id} ${e.data.text}`;
+      c.unreadCount += 1;
+    }
+    if (e.event === "read") {
+      c.unreadCount = e.data.unread_count;
+      c.lastReadSeq = Math.max(c.lastReadSeq, e.seq);
+    }
+  });
+  if (reconnecting) c.lastReadSeq = Math.max(0, ...state.readEvents.filter(x => x.member_id === c.member_id).map(x => x.seq));
+  c.mode = "live";
+  if (events.length) c.frames = [...c.frames, ...events.map(sseFrame)].slice(-8);
+}
+
+function deliverOnline() {
+  ["desk", "laptop"].forEach(id => { if (state.connections[id].online) processEvents(state.connections[id], Notify.stream(state, state.connections[id])); });
+}
+
+function device(id, online) {
+  prevState = state;
+  state = JSON.parse(JSON.stringify(state));
+  state.connections[id].online = online;
+  if (online) {
+    state.connections[id].mode = "reconnect";
+    processEvents(state.connections[id], Notify.stream(state, state.connections[id]));
+  }
+  render();
+}
+
+function agentPoll() {
+  const conn = state.connections.agent;
+  const res = request("GET", "/api/v1/notifications", conn.token, {after: conn.cursor, limit: 50});
+  state.connections.agent.cursor = res.body.cursor;
+  render();
+  return res;
+}
+
+function sseFrame(e) {
+  const data = e.event === "notification"
+    ? {id: e.data.id, kind: e.data.kind, reason: e.data.reason, text: e.data.text}
+    : e.data;
+  return [`event: ${e.event}`, ...(e.id === undefined ? [] : [`id: ${e.id}`]), `data: ${JSON.stringify(data)}`].join("\n");
+}
+
+function refreshBell() {
+  const res = request("GET", "/api/v1/notifications", "tbm_li_web");
+  const items = Array.isArray(res.body.items) ? res.body.items : [];
+  state.webBell.seenMax = items.length ? Math.max(...items.map(n => n.id)) : 0;
+  state.webBell.lastCount = items.length;
+  render();
+  return res;
+}
+
+function markBellAllRead() {
+  if (state.webBell.seenMax === null) refreshBell();
+  return request("POST", "/api/v1/notifications/read", "tbm_li_web", {}, {up_to: state.webBell.seenMax});
+}
+
+function renderExchange() {
+  const el = $("exchange");
+  if (!lastHttp) { el.className = "empty"; el.textContent = "还没有发送 HTTP 请求。"; return; }
+  el.className = "";
+  const r = lastHttp.request, res = lastHttp.response;
+  el.innerHTML = `<div class="small mute">凭证：${esc(r.credential)}</div><pre>${esc(r.method)} ${esc(r.path)}${Object.keys(r.query).length ? "?" + Object.entries(r.query).map(([k,v]) => `${k}=${v}`).join("&") : ""}\n${esc(r.headers.Authorization)}${r.body ? "\n\n" + esc(j(r.body)) : ""}</pre><div><b>响应</b> <span class="status ${res.status < 400 ? "ok" : "bad"}">${res.status}</span></div><pre>${esc(j(res.body))}</pre>`;
+}
+
+function credentialLabel(token) {
+  const c = state.credentials[token];
+  if (!c) return token;
+  if (c.kind === "web") return `${memberName(c.member_id)}网页会话`;
+  if (c.kind === "agent") return `李工 Agent「${c.name}」`;
+  if (c.kind === "client") return `客户端凭证 ${c.hostname}`;
+  return `访客链接 ${c.note}`;
+}
+function memberName(id) { return state.members.find(m => m.id === id).name; }
+
+function renderState() {
+  const old = prevState;
+  const newIds = old ? state.notifications.filter(n => !old.notifications.some(x => x.id === n.id)).map(n => n.id) : [];
+  const changedRead = old ? state.notifications.filter(n => old.notifications.some(x => x.id === n.id && x.read_at === null) && n.read_at !== null).map(n => n.id) : [];
+  const memberHtml = state.members.map(m => {
+    const ns = state.notifications.filter(n => n.member_id === m.id).sort((a,b) => b.id - a.id);
+    const list = ns.length ? ns.map(n => `<li class="${n.read_at ? "" : "unread"} ${newIds.includes(n.id) ? "new" : ""}">#${n.id} ${esc(n.text)} <span class="mute small">${n.read_at ? "已读 " + esc(n.read_at) : "未读"} · ${esc(n.kind)}/${esc(n.reason)}</span></li>`).join("") : `<li class="mute">暂无通知</li>`;
+    return `<div class="panel ${newIds.some(id => ns.some(n => n.id === id)) ? "changed" : ""}"><h3>${esc(m.name)}${m.role ? ` <span class="tag gray">${esc(m.role)}</span>` : ""}</h3><div class="small">未读 ${Notify.countUnread(state,m.id)} 条</div><ul class="list">${list}</ul></div>`;
+  }).join("");
+  const bell = state.webBell, beforeBell = old?.webBell;
+  const bellChanged = !beforeBell || beforeBell.seenMax !== bell.seenMax || beforeBell.lastCount !== bell.lastCount;
+  const trayHtml = ["desk", "laptop"].map(id => {
+    const c = state.connections[id], before = old?.connections[id];
+    const changed = !before || before.online !== c.online || before.latestToast !== c.latestToast || before.unreadCount !== c.unreadCount || before.frames.join("\n\n") !== c.frames.join("\n\n");
+    return `<div class="panel ${changed ? "changed" : ""}"><h3>托盘 · ${esc(credentialLabel(c.token))}</h3><div class="kv"><div>连接</div><div>${c.online ? '<span class="tag ok">在线</span>' : '<span class="tag bad">离线</span>'}</div><div>游标</div><div><code>Last-Event-ID: ${c.lastEventId}</code></div><div>未读</div><div>${c.unreadCount}</div><div>Toast</div><div>${c.latestToast ? `<div class="toast">${esc(c.latestToast)}</div>` : '<span class="mute">尚未弹出</span>'}</div></div><h3>最近收到的 SSE 帧</h3><pre>${c.frames.length ? esc(c.frames.join("\n\n")) : '<span class="mute">尚未收到</span>'}</pre></div>`;
+  }).join("");
+  const agent = state.connections.agent, beforeAgent = old?.connections.agent;
+  const agentChanged = !beforeAgent || beforeAgent.cursor !== agent.cursor;
+  const httpPanel = lastHttp ? `<div class="panel"><h3>最近 HTTP</h3><pre>${esc(lastHttp.request.method + " " + lastHttp.request.path)} → ${esc(lastHttp.response.status)}</pre></div>` : "";
+  const bellHtml = `<div class="panel ${bellChanged ? "changed" : ""}"><h3>李工网页铃铛</h3><div class="kv"><div>seenMax</div><div><code>${bell.seenMax === null ? "未刷新" : bell.seenMax}</code></div><div>上次条数</div><div>${bell.lastCount}</div></div></div>`;
+  $("state").innerHTML = bellHtml + memberHtml + trayHtml + `<div class="panel ${agentChanged ? "changed" : ""}"><h3>李工 Agent「笔记本」</h3><div class="kv"><div>Token</div><div><code>${agent.token}</code></div><div>游标</div><div><code>after=${agent.cursor}</code></div></div></div>` + httpPanel;
+  const parts = [];
+  if (newIds.length) parts.push(`新增通知：${newIds.join("、")}`);
+  if (changedRead.length) parts.push(`刚标已读：${changedRead.join("、")}`);
+  if (old && ["desk","laptop"].some(id => old.connections[id].online !== state.connections[id].online)) parts.push("托盘连接状态变化");
+  if (old && (old.webBell.seenMax !== state.webBell.seenMax || old.webBell.lastCount !== state.webBell.lastCount)) parts.push("李工网页铃铛视图更新");
+  const box = $("changed");
+  box.hidden = !parts.length;
+  box.innerHTML = parts.map(esc).join("；");
+}
+
+function render() { renderState(); renderExchange(); renderOps(); }
+
+const OPS = [
+  ["工单事件", [
+    ["陈工指派 001 给李工", () => business({type:"assign", number:T1, actorId:1, to:2})],
+    ["李工 Agent 回复并交付", () => business({type:"agent_reply_deliver", number:T1, ownerId:2})],
+    ["陈工退回修改", () => business({type:"return", number:T1, actorId:1})],
+    ["王梦龙在 001 回复", () => business({type:"third_reply", number:T1, actorId:3})],
+    ["陈工改派 001 给王梦龙", () => business({type:"reassign", number:T1, actorId:1, to:3})],
+    ["陈工关闭 001", () => business({type:"close", number:T1, actorId:1})],
+    ["李工的 Agent 关闭 001", () => business({type:"close", number:T1, ownerId:2})],
+    ["陈工重开 001", () => business({type:"reopen", number:T1, actorId:1})],
+    ["访客提交反馈 002", () => business({type:"guest_submit", number:T2, guestName:"张三"})],
+    ["访客修订 002 说明", () => business({type:"brief_revised", number:T2, guestName:"张三"})],
+    ["陈工给 001 加标签", () => business({type:"label", number:T1, actorId:1})]
+  ]],
+  ["设备", [
+    ["LI-LAPTOP 断网", () => device("laptop", false)],
+    ["LI-LAPTOP 重连", () => device("laptop", true)],
+    ["李工 Agent 轮询", agentPoll],
+    ["李工网页打开 001", () => request("POST", "/api/v1/notifications/read", "tbm_li_web", {}, {ticket:T1})],
+    ["李工网页全部已读", markBellAllRead],
+    ["Agent 试图标已读", () => request("POST", "/api/v1/notifications/read", "tbag_li_laptop", {}, {up_to: state.connections.agent.cursor})],
+    ["客户端凭证试图读工单", () => request("GET", "/api/v1/tickets/20261017-001", "tbc_li_desk")]
+  ]],
+  ["HTTP", [
+    ["李工网页铃铛", refreshBell],
+    ["未读数轮询", () => request("GET", "/api/v1/notifications/unread", "tbm_li_web")],
+    ["Agent 拉 Markdown", () => request("GET", "/api/v1/notifications", "tbag_li_laptop", {after:state.connections.agent.cursor, format:"markdown"})],
+    ["客户端查会话", () => request("GET", "/api/v1/session", "tbc_li_desk")],
+    ["访客调通知", () => request("GET", "/api/v1/notifications/unread", "tbg_guest1")],
+    ["客户端查收件箱", () => request("GET", "/api/v1/inbox", "tbc_li_desk")]
+  ]]
+];
+
+function renderOps() {
+  $("ops").innerHTML = OPS.map(([group, items]) => `<h3>${esc(group)}</h3>${items.map(([,fn],i) => `<button data-g="${OPS.findIndex(x => x[0]===group)}" data-i="${i}">${esc(items[i][0])}</button>`).join("")}`).join("");
+}
+$("ops").onclick = e => { const g = e.target.dataset.g, i = e.target.dataset.i; if (g !== undefined) OPS[g][1][i][1](); };
+
+const SCENARIOS = [
+  {title:"主干链路", steps:[
+    ["陈工指派 001 给李工", "看两台托盘都收到 notification 并弹 toast，李工通知列表多一条未读。", () => business({type:"assign", number:T1, actorId:1, to:2})],
+    ["李工 Agent 轮询", "Agent 用 after=0 拉到同一条通知，响应 cursor 变成 1。", agentPoll],
+    ["李工网页打开 001", "网页按工单标已读，两台托盘都收到 read 事件，未读归零。", () => request("POST", "/api/v1/notifications/read", "tbm_li_web", {}, {ticket:T1})],
+    ["Agent 再轮询", "Agent 返回空 items，cursor 仍是 1，不会把已读误当成新通知。", agentPoll]
+  ]},
+  {title:"断线补齐", steps:[
+    ["陈工指派 001 给李工", "先让 001 轮到李工，后续断线期间才会有李工的通知可补发。", () => business({type:"assign", number:T1, actorId:1, to:2})],
+    ["LI-LAPTOP 断网", "这台托盘离线，Last-Event-ID 停在 1。", () => device("laptop", false)],
+    ["李工 Agent 回复并交付", "交付按收件箱规则轮到创建者验收，只通知陈工（turn/delivered）；李工作为指派人不收，是因为交付不属于指派人的通知原因。", () => business({type:"agent_reply_deliver", number:T1, ownerId:2})],
+    ["陈工退回修改", "李工收到 returned，但因离线暂未弹出。", () => business({type:"return", number:T1, actorId:1})],
+    ["王梦龙回复", "陈工和李工各收 third_party_reply；李工的离线通知继续积累。", () => business({type:"third_reply", number:T1, actorId:3})],
+    ["LI-LAPTOP 重连", "按 Last-Event-ID 升序补发李工的 returned 和 third_party_reply，最后推 hello；read 事件不补发，由 hello 校正未读数。", () => device("laptop", true)],
+    ["李工的 Agent 关闭 001", "陈工是创建者、李工是指派人，关闭属于知会，两人都收 fyi/closed；Agent 挂在李工名下，不算李工本人操作，所以李工也收。两台在线托盘都应弹出。", () => business({type:"close", number:T1, ownerId:2})]
+  ]},
+  {title:"Agent 不吃通知", steps:[
+    ["陈工指派 001 给李工", "李工收到一条未读 assigned，两台托盘未读从 0 变 1。", () => business({type:"assign", number:T1, actorId:1, to:2})],
+    ["Agent 轮询", "Agent 拉到李工这条通知，响应 cursor 从 0 前进到通知 id。", agentPoll],
+    ["Agent 试图标已读", "期望返回 403 agent_cannot_mark_read，提示已读属于成员本人。", () => request("POST", "/api/v1/notifications/read", "tbag_li_laptop", {}, {up_to:state.connections.agent.cursor})],
+    ["核对托盘状态", "李工这条通知仍未读，两台托盘未读数仍是 1，Agent 轮询没有已读副作用。", () => { prevState = state; render(); }]
+  ]},
+  {title:"全部已读竞态", steps:[
+    ["陈工指派 001 给李工", "先建立当事人关系，让李工铃铛里有一条可见通知。", () => business({type:"assign", number:T1, actorId:1, to:2})],
+    ["李工网页先刷新铃铛", "页面状态记下看到的最大通知 id N（seenMax）。", refreshBell],
+    ["王梦龙回复 001", "页面尚未刷新，又来一条 id 大于 N 的通知。", () => business({type:"third_reply", number:T1, actorId:3})],
+    ["用 up_to=N 全部已读", "请求使用 seenMax；只标掉页面看到的那条，新到且 id > N 的通知仍未读，托盘未读数为 1。", markBellAllRead]
+  ]},
+  {title:"初筛人", steps:[
+    ["访客提交反馈 002", "反馈入口产生 created 时间线事件，初筛人陈工收 turn/department，通知摘要为提交正文前 120 字。", () => business({type:"guest_submit", number:T2, guestName:"张三"})],
+    ["访客修订说明", "工单仍未指派，只通知初筛人陈工，收 fyi/brief_revised。", () => business({type:"brief_revised", number:T2, guestName:"张三"})],
+    ["陈工加标签", "标签变化不产生通知，通知数量保持不变。", () => business({type:"label", number:T1, actorId:1})]
+  ]},
+  {title:"凭证越权", steps:[
+    ["客户端凭证读工单", "期望 403 client_scope，并提示用浏览器打开工单页面。", () => request("GET", "/api/v1/tickets/20261017-001", "tbc_li_desk")],
+    ["访客调通知", "期望 403 members_only，访客不能进入成员通知空间。", () => request("GET", "/api/v1/notifications/unread", "tbg_guest1")],
+    ["客户端凭证查会话", "这是通知接口之外的例外，正常返回 viewer、client 和 agent:null。", () => request("GET", "/api/v1/session", "tbc_li_desk")]
+  ]},
+  {title:"改派与关闭", steps:[
+    ["陈工先指派给李工", "先建立当事人关系，李工会收到一条 assigned。", () => business({type:"assign", number:T1, actorId:1, to:2})],
+    ["改派给王梦龙", "李工收 fyi/unassigned，王梦龙收 turn/assigned。", () => business({type:"reassign", number:T1, actorId:1, to:3})],
+    ["陈工关闭 001", "李工已不是当事人不收；王梦龙收 fyi/closed。", () => business({type:"close", number:T1, actorId:1})],
+    ["陈工重开 001", "当前当事人仍是王梦龙，陈工作为操作者不收，王梦龙收 fyi/reopened。", () => business({type:"reopen", number:T1, actorId:1})]
+  ]}
+];
+
+function renderScenario() {
+  $("tabs").innerHTML = SCENARIOS.map((s,i) => `<button class="${i===activeScenario?"active":""}" data-tab="${i}">${i+1}. ${esc(s.title)}</button>`).join("");
+  const s = SCENARIOS[activeScenario];
+  $("scenario").innerHTML = `<p class="small mute">进入标签页已重置；按顺序点击每步，右侧会高亮刚变化的部分。</p>` + s.steps.map((step,i) => `<div class="step"><div class="stepno">${i+1}</div><div><button data-step="${i}" class="${i<progress?"done":i===progress?"next":""}">${esc(step[0])}</button><div class="small mute">${esc(step[1])}</div></div></div>`).join("");
+}
+$("tabs").onclick = e => { const i = e.target.dataset.tab; if (i === undefined) return; activeScenario = +i; progress = 0; resetState(`已重置，开始场景：${SCENARIOS[i].title}`); };
+$("scenario").onclick = e => {
+  const i = e.target.dataset.step; if (i === undefined) return;
+  SCENARIOS[activeScenario].steps[i][2]();
+  progress = Math.max(progress, +i + 1); renderScenario(); renderState(); renderExchange();
+};
+
+function resetState(message) {
+  state = Notify.initial(); prevState = null; lastHttp = null;
+  ["desk", "laptop"].forEach(id => processEvents(state.connections[id], Notify.stream(state, state.connections[id])));
+  render(); renderScenario(); $("exchange").textContent = message; $("exchange").className = "empty";
+ }
+resetState("页面已初始化，两台托盘各完成一次首次 SSE 连接。");
+</script>
+</body>
+</html>
