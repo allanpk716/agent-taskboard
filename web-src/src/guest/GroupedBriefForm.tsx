@@ -11,7 +11,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api'
 import { compressImage } from '../shared/compress'
 import { DimensionSelect } from './DimensionSelect'
-import { briefDraftKey, clearFormDraft, loadAuthor, loadFormDraft, saveAuthor, saveFormDraft } from './draft'
+import { briefDraftKey, clearFormDraft, loadAuthor, loadFormDraft, saveAuthor, saveFormDraft, type FormDraft } from './draft'
 import { guestApi } from './guestApi'
 import { uploadAttachment } from './upload'
 import type { TemplateField, TicketView } from '../shared/types'
@@ -88,6 +88,12 @@ export function groupsOf(ticket: TicketView): FieldGroup[] {
     return gs.map((g, i) => ({ title: g.title, subtitle: g.subtitle, fields: fields.filter((f) => f.group === i) }))
   }
   return [{ title: '填写说明', fields }]
+}
+
+function draftAttachments(files: StagedFile[]): NonNullable<FormDraft['attachments']> {
+  return files
+    .filter((f) => f.area && f.status === 'ready' && f.attachmentId)
+    .map((f) => ({ attachmentId: f.attachmentId!, name: f.name, size: f.size }))
 }
 
 /** ≥768 算宽屏（双栏布局），窗口缩放时实时切换。 */
@@ -466,9 +472,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
       author,
       idemKey: idemKeyRef.current,
       pending: pendingRef.current,
-      attachments: files
-        .filter((f) => f.area && f.status === 'ready' && f.attachmentId)
-        .map((f) => ({ attachmentId: f.attachmentId!, name: f.name, size: f.size })),
+      attachments: draftAttachments(files),
       attachmentIds: attachmentIdsRef.current,
     })
   }, [key, values, author, submitted, files, attachmentIds])
@@ -549,9 +553,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
         author: authorRef.current,
         idemKey: idemKeyRef.current,
         pending: true,
-        attachments: files
-          .filter((f) => f.area && f.status === 'ready' && f.attachmentId)
-          .map((f) => ({ attachmentId: f.attachmentId!, name: f.name, size: f.size })),
+        attachments: draftAttachments(files),
         attachmentIds: attachmentIdsRef.current,
       })
       const name = authorRef.current.trim()

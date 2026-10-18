@@ -297,18 +297,18 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 	var fieldsJSON any
 	var attachmentIDsJSON any
 	if attachmentIDs != nil {
-		if buf, err := json.Marshal(attachmentIDs); err != nil {
+		buf, err := json.Marshal(attachmentIDs)
+		if err != nil {
 			return Ticket{}, fmt.Errorf("序列化说明附件失败：%w", err)
-		} else {
-			attachmentIDsJSON = string(buf)
 		}
+		attachmentIDsJSON = string(buf)
 	}
 	if in.Fields != nil {
-		if buf, err := json.Marshal(fields); err != nil {
+		buf, err := json.Marshal(fields)
+		if err != nil {
 			return Ticket{}, fmt.Errorf("序列化字段值失败：%w", err)
-		} else {
-			fieldsJSON = string(buf)
 		}
+		fieldsJSON = string(buf)
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE tickets SET title = ?, brief_md = ?, fields_json = ?, brief_revision = ?, brief_attachment_ids = ? WHERE seq = ?`,
 			title, brief, fieldsJSON, revision, attachmentIDsJSON, full.Seq); err != nil {
