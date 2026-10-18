@@ -907,9 +907,23 @@ func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 		}
 		why := WhyNew
 		deliveredBefore := false
+		guestRevisionsBefore := 0
 		for i := range t.Timeline {
 			e := &t.Timeline[i]
-			if e.Type != "reply" || e.Seq >= last.Seq {
+			if e.Seq >= last.Seq {
+				continue
+			}
+			if e.Type == "brief_revised" {
+				if e.Actor.MemberID == 0 {
+					guestRevisionsBefore++
+					why = WhyGuestRevised
+					if guestRevisionsBefore == 1 {
+						why = WhyGuestCompleted
+					}
+				}
+				continue
+			}
+			if e.Type != "reply" {
 				continue
 			}
 			if e.Actor.MemberID == 0 {
