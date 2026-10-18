@@ -50,6 +50,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/inbox", a.handleInbox)
 	mux.HandleFunc("/api/v1/notifications", a.handleNotifications)
 	mux.HandleFunc("/api/v1/notifications/unread", a.handleNotificationsUnread)
+	mux.HandleFunc("/api/v1/notifications/read", a.handleNotificationsRead)
 	mux.HandleFunc("/api/v1/client/connect", a.handleClientConnect)
 	mux.HandleFunc("/api/v1/client/token", a.handleClientToken)
 	mux.HandleFunc("/api/v1/me/clients", a.handleClients)

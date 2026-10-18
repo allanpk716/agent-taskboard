@@ -124,6 +124,82 @@ func (a *API) handleNotificationsUnread(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"unread_count": out.Count, "latest_id": out.LatestID})
 }
 
+type markNotificationsReadRequest struct {
+	IDs    *[]int64 `json:"ids"`
+	Ticket *string  `json:"ticket"`
+	UpTo   *int64   `json:"up_to"`
+}
+
+func (a *API) handleNotificationsRead(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
+		return
+	}
+	viewer, ok := a.viewerFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if viewer.Kind == identity.ViewerGuest {
+		WriteError(w, http.StatusForbidden, CodeMembersOnly, "通知接口仅限成员使用", "访客请继续使用工单链接和反馈入口")
+		return
+	}
+	if viewer.Agent != nil {
+		WriteError(w, http.StatusForbidden, CodeAgentCannotMarkRead,
+			"成员 Agent 不能标通知已读", "已读状态保留给成员本人查看；Agent 只读取通知")
+		return
+	}
+	var req markNotificationsReadRequest
+	if !decodeJSON(w, r, &req, `{"ids": [1]} / {"ticket": "20261016-001"} / {"up_to": 3} 三选一`) {
+		return
+	}
+	chosen := 0
+	for _, present := range []bool{req.IDs != nil, req.Ticket != nil, req.UpTo != nil} {
+		if present {
+			chosen++
+		}
+	}
+	if chosen != 1 {
+		WriteError(w, http.StatusBadRequest, CodeInvalidReadRequest,
+			"请求体必须正好包含 ids、ticket、up_to 中的一个", "三选一：按通知 id、按工单编号，或标到某个通知为止")
+		return
+	}
+	target := notifications.ReadTarget{}
+	if req.IDs != nil {
+		if len(*req.IDs) == 0 {
+			WriteError(w, http.StatusBadRequest, CodeInvalidReadRequest, "ids 不能为空", "至少带一个通知 id")
+			return
+		}
+		unique := make(map[int64]struct{}, len(*req.IDs))
+		for _, id := range *req.IDs {
+			if id <= 0 {
+				WriteError(w, http.StatusBadRequest, CodeInvalidReadRequest, "ids 里的通知 id 必须是正整数", "")
+				return
+			}
+			unique[id] = struct{}{}
+		}
+		target.IDs = make([]int64, 0, len(unique))
+		for id := range unique {
+			target.IDs = append(target.IDs, id)
+		}
+	} else if req.Ticket != nil {
+		target.Ticket = strings.TrimSpace(*req.Ticket)
+		if target.Ticket == "" {
+			WriteError(w, http.StatusBadRequest, CodeInvalidReadRequest, "ticket 不能为空", "填工单编号，如 20261016-001")
+			return
+		}
+	} else if *req.UpTo < 0 {
+		WriteError(w, http.StatusBadRequest, CodeInvalidReadRequest, "up_to 必须是非负整数", "0 表示不标任何通知")
+		return
+	} else {
+		target.UpTo = *req.UpTo
+	}
+	result, err := a.notifications.MarkRead(r.Context(), viewer.Member.ID, target)
+	if err != nil {
+		panic(err)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"marked": len(result.IDs), "unread_count": result.UnreadCount})
+}
+
 func newNotificationItemView(it notifications.Item) notificationItemView {
 	readAt := ""
 	if it.ReadAt != nil {

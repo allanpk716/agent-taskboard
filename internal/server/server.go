@@ -70,7 +70,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	idem := idempotency.NewManager(st.DB, c)
 	notificationStore := notifications.NewManager(st.DB, c)
 	ticketStore := tickets.NewManager(st.DB, c, labelDict, templateDict, atts)
-	ticketStore.SetTurnNotifier(notificationStore)
+	ticketStore.SetNotifier(notificationStore)
 	api := httpapi.NewAPI(ident, ticketStore,
 		templateDict, idem, atts, backups, cfg)
 	api.SetNotifications(notificationStore)

@@ -287,3 +287,119 @@ func Test成员Agent操作通知主人而本人自派自不通知(t *testing.T) 
 		t.Errorf("本人自派自后通知数 = %d, 想 仍为 1", len(got.Items))
 	}
 }
+
+func Test成员标通知已读的三种方式与边界(t *testing.T) {
+	w := newHandoffWorld(t)
+	first := w.createHandoffTicket(t, w.webWang, "第一张", "李工").Number
+	second := w.createHandoffTicket(t, w.webWang, "第二张", "李工").Number
+	third := w.createHandoffTicket(t, w.webWang, "第三张", "李工").Number
+	w.createHandoffTicket(t, w.webWang, "别人的通知", "赵工")
+
+	li := notificationsOf(t, w, w.webLi, "")
+	zhao := notificationsOf(t, w, w.webZhao, "")
+	if len(li.Items) != 3 || len(zhao.Items) != 1 {
+		t.Fatalf("李工/赵工通知数 = %d/%d, 想 3/1", len(li.Items), len(zhao.Items))
+	}
+	newest, middle, oldest := li.Items[0], li.Items[1], li.Items[2]
+
+	var marked struct {
+		Marked      int `json:"marked"`
+		UnreadCount int `json:"unread_count"`
+	}
+	res := w.s.Do(t, w.webLi, http.MethodPost, "/api/v1/notifications/read",
+		map[string]any{"ids": []int64{oldest.ID}}, &marked)
+	if res.StatusCode != http.StatusOK || marked.Marked != 1 || marked.UnreadCount != 2 {
+		t.Fatalf("按 ids 标已读 = %d/%d+%d, 想 1/2+%d", res.StatusCode, marked.Marked, marked.UnreadCount, res.StatusCode)
+	}
+	res = w.s.Do(t, w.webLi, http.MethodPost, "/api/v1/notifications/read",
+		map[string]any{"ids": []int64{oldest.ID}}, &marked)
+	if res.StatusCode != http.StatusOK || marked.Marked != 0 || marked.UnreadCount != 2 {
+		t.Fatalf("重复按 ids 标已读 = %d/%d+%d, 想 0/2+%d", res.StatusCode, marked.Marked, marked.UnreadCount, res.StatusCode)
+	}
+
+	res = w.s.Do(t, w.webLi, http.MethodPost, "/api/v1/notifications/read",
+		map[string]any{"up_to": middle.ID}, &marked)
+	if res.StatusCode != http.StatusOK || marked.Marked != 1 || marked.UnreadCount != 1 {
+		t.Fatalf("up_to 标到中间通知 = %d/%d+%d, 想 1/1+%d", res.StatusCode, marked.Marked, marked.UnreadCount, res.StatusCode)
+	}
+	upToState := notificationsOf(t, w, w.webLi, "")
+	if upToState.Items[0].ID != newest.ID || upToState.Items[0].ReadAt != nil {
+		t.Fatalf("up_to 之后更新的通知应保持未读：%+v", upToState.Items[0])
+	}
+
+	res = w.s.Do(t, w.webLi, http.MethodPost, "/api/v1/notifications/read",
+		map[string]any{"ticket": second}, &marked)
+	if res.StatusCode != http.StatusOK || marked.Marked != 0 || marked.UnreadCount != 1 {
+		t.Fatalf("按已读工单标已读 = %d/%d+%d, 想 0/1+%d", res.StatusCode, marked.Marked, marked.UnreadCount, res.StatusCode)
+	}
+	res = w.s.Do(t, w.webLi, http.MethodPost, "/api/v1/notifications/read",
+		map[string]any{"ticket": third}, &marked)
+	if res.StatusCode != http.StatusOK || marked.Marked != 1 || marked.UnreadCount != 0 {
+		t.Fatalf("按最新工单标已读 = %d/%d+%d, 想 1/0+%d", res.StatusCode, marked.Marked, marked.UnreadCount, res.StatusCode)
+	}
+	res = w.s.Do(t, w.webLi, http.MethodPost, "/api/v1/notifications/read",
+		map[string]any{"ticket": third}, &marked)
+	if res.StatusCode != http.StatusOK || marked.Marked != 0 || marked.UnreadCount != 0 {
+		t.Fatalf("重复按最新工单标已读 = %d/%d+%d, 想 0/0+%d", res.StatusCode, marked.Marked, marked.UnreadCount, res.StatusCode)
+	}
+
+	res = w.s.Do(t, w.webLi, http.MethodPost, "/api/v1/notifications/read",
+		map[string]any{"ids": []int64{zhao.Items[0].ID}}, &marked)
+	if res.StatusCode != http.StatusOK || marked.Marked != 0 || marked.UnreadCount != 0 {
+		t.Fatalf("标别人的通知 = %d/%d+%d, 想 200 且不影响任何通知", res.StatusCode, marked.Marked, marked.UnreadCount)
+	}
+	if got := notificationsOf(t, w, w.webZhao, ""); len(got.Items) != 1 || got.Items[0].ReadAt != nil || got.UnreadCount != 1 {
+		t.Fatalf("别人的通知被改动：%+v", got)
+	}
+
+	for _, body := range []map[string]any{
+		{},
+		{"ids": []int64{oldest.ID}, "ticket": first},
+		{"ticket": third, "up_to": newest.ID},
+		{"ids": []int64{oldest.ID}, "ticket": third, "up_to": newest.ID},
+	} {
+		res := w.s.Do(t, w.webLi, http.MethodPost, "/api/v1/notifications/read", body, nil)
+		if res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("请求体 %v 状态码 = %d, 想 400", body, res.StatusCode)
+		}
+		var got errorBody
+		tbtest.DecodeJSON(t, res, &got)
+		if got.Error.Code != "invalid_read_request" {
+			t.Errorf("请求体 %v 错误码 = %q, 想 invalid_read_request", body, got.Error.Code)
+		}
+	}
+
+	res = w.s.Do(t, w.liA, http.MethodPost, "/api/v1/notifications/read",
+		map[string]any{"up_to": newest.ID}, nil)
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("Agent 标已读状态码 = %d, 想 403", res.StatusCode)
+	}
+	var got errorBody
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "agent_cannot_mark_read" {
+		t.Errorf("Agent 标已读错误码 = %q, 想 agent_cannot_mark_read", got.Error.Code)
+	}
+
+	link := w.s.CreateGuestLink(t, w.webWang, first, map[string]any{"note": "检验科-张三"})
+	res = w.s.Do(t, w.s.GuestClient(link.Key(t)), http.MethodPost, "/api/v1/notifications/read",
+		map[string]any{"up_to": newest.ID}, nil)
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("访客标已读状态码 = %d, 想 403", res.StatusCode)
+	}
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "members_only" {
+		t.Errorf("访客标已读错误码 = %q, 想 members_only", got.Error.Code)
+	}
+}
+
+func Test读工单详情和时间线不自动标通知已读(t *testing.T) {
+	w := newHandoffWorld(t)
+	created := w.createHandoffTicket(t, w.wangA, "只读不标已读", "李工")
+
+	w.s.Do(t, w.webLi, http.MethodGet, "/api/v1/tickets/"+created.Number, nil, nil)
+	w.s.Do(t, w.webLi, http.MethodGet, "/api/v1/tickets/"+created.Number+"/timeline", nil, nil)
+	got := notificationsOf(t, w, w.webLi, "")
+	if len(got.Items) != 1 || got.Items[0].ReadAt != nil || got.UnreadCount != 1 {
+		t.Fatalf("读工单后通知被标已读：%+v", got)
+	}
+}

@@ -24,6 +24,7 @@ func Test客户端凭证完整签发使用与撤销流程(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("admin", "secret-pass")
 	s.CreateMember("wang", "member-pass")
+	admin := s.Login("admin", "secret-pass")
 	web := s.Login("wang", "member-pass")
 
 	connect := s.StartClientConnect(t, web, "WORKSTATION-01")
@@ -40,6 +41,14 @@ func Test客户端凭证完整签发使用与撤销流程(t *testing.T) {
 	}
 	client := s.ClientCredentialClient(issued.Token)
 
+	var assigned struct {
+		Number string `json:"number"`
+	}
+	s.Do(t, admin, http.MethodPost, "/api/v1/tickets", map[string]any{
+		"kind": "task", "title": "客户端标已读", "brief_md": "请处理。",
+		"labels": []string{"机型:UD-2300"}, "assignee": "wang",
+	}, &assigned)
+
 	var session sessionBody
 	res := s.Do(t, client, http.MethodGet, "/api/v1/session", nil, &session)
 	if res.StatusCode != http.StatusOK {
@@ -54,6 +63,14 @@ func Test客户端凭证完整签发使用与撤销流程(t *testing.T) {
 
 	if res := s.Do(t, client, http.MethodGet, "/api/v1/notifications", nil, nil); res.StatusCode != http.StatusOK {
 		t.Fatalf("客户端读通知状态码 = %d", res.StatusCode)
+	}
+	var read struct {
+		UnreadCount int `json:"unread_count"`
+	}
+	s.Do(t, client, http.MethodPost, "/api/v1/notifications/read",
+		map[string]string{"ticket": assigned.Number}, &read)
+	if read.UnreadCount != 0 {
+		t.Fatalf("客户端按工单标已读后的未读数 = %d, 想 0", read.UnreadCount)
 	}
 
 	s.Clock().Advance(2 * time.Hour)

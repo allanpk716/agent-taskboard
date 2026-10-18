@@ -15,6 +15,7 @@ import {
   fetchGuestLinks,
   fetchMembers,
   fetchTicket,
+  markTicketNotificationsRead,
   reopenTicket,
   replyTicket,
   revokeGuestLink,
@@ -529,11 +530,17 @@ export function TicketDetailPage({ ticketRef }: { ticketRef: string; me?: { id: 
   const [actor, setActor] = useState<ActorFilter>('all')
   const [dialog, setDialog] = useState<'label' | 'assign' | 'links' | 'close' | 'reopen' | null>(null)
   const [members, setMembers] = useState<MemberRef[]>([])
+  const markedRef = useRef<string | null>(null)
 
   const load = useCallback(async () => {
     try {
-      setTicket(await fetchTicket(ticketRef))
+      const got = await fetchTicket(ticketRef)
+      setTicket(got)
       setError(null)
+      if (markedRef.current !== ticketRef) {
+        markedRef.current = ticketRef
+        void markTicketNotificationsRead(got.number).catch(() => {})
+      }
     } catch (e) {
       setError(e instanceof ApiError ? `${e.message}（${e.code}）` : '读取工单失败')
     }

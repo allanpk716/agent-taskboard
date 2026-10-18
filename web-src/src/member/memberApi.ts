@@ -38,6 +38,11 @@ export interface MemberTicket extends TicketView {
   labels: string[]
 }
 
+export interface MarkNotificationsReadResult {
+  marked: number
+  unread_count: number
+}
+
 export async function fetchSession(): Promise<{ viewer: { kind: string; member: Me } }> {
   return api('/api/v1/session')
 }
@@ -53,6 +58,13 @@ export async function fetchMembers(): Promise<MemberRef[]> {
 
 export async function fetchTicket(ref: string): Promise<MemberTicket> {
   return api(`/api/v1/tickets/${encodeURIComponent(ref)}`)
+}
+
+export function markTicketNotificationsRead(number: string): Promise<MarkNotificationsReadResult> {
+  return api('/api/v1/notifications/read', {
+    method: 'POST',
+    body: JSON.stringify({ ticket: number }),
+  })
 }
 
 export async function logout(): Promise<void> {
