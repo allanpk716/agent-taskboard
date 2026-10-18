@@ -250,7 +250,13 @@ func Test等待方推导表(t *testing.T) {
 	w := newHandoffWorld(t)
 	// 一个任务（王工→李工，王工的 Agent 建的）、一个自派自的反馈和一个未指派的反馈。
 	task := w.createHandoffTicket(t, w.wangA, "整理对照表", "李工").Number
-	selfReport := w.createHandoffTicket(t, w.webWang, "质控结果偏高", "王工").Number
+	selfReportRes := w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets", map[string]any{
+		"kind": "report", "title": "质控结果偏高", "brief_md": "……", "labels": []string{"机型:UD-2300"},
+		"assignee": "王工",
+	}, nil)
+	var selfReportBody createAssignedResponse
+	tbtest.DecodeJSON(t, selfReportRes, &selfReportBody)
+	selfReport := selfReportBody.Number
 	reportRes := w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets", map[string]any{
 		"kind": "report", "title": "耗材到货异常", "brief_md": "……", "labels": []string{"机型:UD-2300"},
 	}, nil)
