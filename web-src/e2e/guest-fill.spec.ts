@@ -283,6 +283,7 @@ test.describe('上传与提交', () => {
 
     const guestBrief = page.locator('[data-bubble="brief"]')
     await expect(guestBrief.locator('.who')).toContainText(/检验科-张三（访客）填写 · .+ · 第 2 版/)
+    await expect(guestBrief.locator('> .av.g')).toBeVisible()
 
     const base = `http://127.0.0.1:${process.env.E2E_PORT || '8901'}`
     const member = await browser.newPage({ baseURL: base })
@@ -290,6 +291,7 @@ test.describe('上传与提交', () => {
     await member.goto(`/t/${seed.number}`)
     const memberBrief = member.locator('[data-bubble="brief"]')
     await expect(memberBrief.locator('.who')).toContainText(/检验科-张三（访客）填写 · .+ · 第 2 版/)
+    await expect(memberBrief.locator('> .av.g')).toBeVisible()
     await expect(memberBrief).not.toContainText('管理员填写')
     const meta = member.locator('.mmeta .kv', { hasText: '发起人' })
     await expect(meta).toContainText('管理员')
