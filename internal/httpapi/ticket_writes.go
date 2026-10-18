@@ -177,9 +177,13 @@ func (a *API) reopenTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		a.writeTicketError(w, r, ref, err)
 		return
 	}
+	waitingOn, err := a.tickets.WaitingOn(r.Context(), full)
+	if err != nil {
+		panic(err)
+	}
 	writeJSON(w, http.StatusOK, reopenTicketView{
 		Status:    full.Status,
-		WaitingOn: newWaitingOnView(tickets.WaitingOnOf(full)),
+		WaitingOn: newWaitingOnView(waitingOn),
 	})
 }
 
@@ -228,7 +232,10 @@ func (a *API) ticketTimeline(w http.ResponseWriter, r *http.Request, ref string)
 		}
 		return true
 	}
-	waitingOn := tickets.WaitingOnOf(full)
+	waitingOn, err := a.tickets.WaitingOn(r.Context(), full)
+	if err != nil {
+		panic(err)
+	}
 	cursor := int64(0)
 	for _, e := range full.Timeline {
 		if !visible(e) {

@@ -187,6 +187,11 @@ type NotificationInput struct {
 	Actor    Author
 	Event    Event
 	Triagers []int64
+
+	// GuestLinks 与 Now 是等待方推导的输入。NotifyTx 会在工单事务里补齐，
+	// 保证规则看到的链接状态与时钟和工单写入使用同一份真相。
+	GuestLinks []GuestLinkInfo
+	Now        time.Time
 }
 
 // Notifier 在工单事件同一事务里生成成员通知。
@@ -200,6 +205,16 @@ func NewManager(db *sql.DB, c clock.Clock, lm *labels.Manager, tm *templates.Man
 }
 
 func (m *Manager) SetNotifier(n Notifier) { m.notifier = n }
+
+// WaitingOn 用注入时钟和这张工单的访客链接状态推导等待方。HTTP 与查询
+// 入口都从这里取值，不各自读时间或链接表。
+func (m *Manager) WaitingOn(ctx context.Context, t Full) (WaitingOn, error) {
+	links, err := GuestLinksForTicket(ctx, m.db, t.Seq)
+	if err != nil {
+		return WaitingOn{}, err
+	}
+	return WaitingOnOf(t, links, m.clk.Now()), nil
+}
 
 func (m *Manager) commitAndWake(tx *sql.Tx, notified []int64) error {
 	if err := tx.Commit(); err != nil {
@@ -418,33 +433,13 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, err
 	if _, err := tx.ExecContext(ctx, `UPDATE tickets SET last_change = ? WHERE seq = ?`, change, t.Seq); err != nil {
 		return CreateResult{}, err
 	}
+	assignedSeq := int64(0)
 	if assigneeID != 0 {
 		eventSeq, _, err := m.insertAssignedEvent(ctx, tx, t.Seq, creator, "", assigneeName, now)
 		if err != nil {
 			return CreateResult{}, err
 		}
-		if m.notifier != nil {
-			after := Full{Ticket: t}
-			after.Timeline = []Event{
-				{Seq: 1, At: now, Actor: creator, Type: "created"},
-				{Seq: eventSeq, At: now, Actor: creator, Type: "assigned", AssignTo: assigneeName, Change: t.LastChange},
-			}
-			var err error
-			notified, err = m.notifier.NotifyTx(ctx, tx, NotificationInput{After: after, Actor: creator,
-				Event: after.Timeline[1]})
-			if err != nil {
-				return CreateResult{}, err
-			}
-		}
-	} else if m.notifier != nil {
-		after := Full{Ticket: t}
-		after.Timeline = []Event{{Seq: 1, At: now, Actor: creator, Type: "created", Change: t.LastChange}}
-		var err error
-		notified, err = m.notifier.NotifyTx(ctx, tx, NotificationInput{After: after, Actor: creator,
-			Event: after.Timeline[0]})
-		if err != nil {
-			return CreateResult{}, err
-		}
+		assignedSeq = eventSeq
 	}
 	for _, l := range in.Labels {
 		if _, err := tx.ExecContext(ctx,
@@ -462,6 +457,22 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, err
 			return CreateResult{}, err
 		}
 		linkCreated = link
+	}
+	if m.notifier != nil {
+		after := Full{Ticket: t}
+		after.Timeline = []Event{{Seq: 1, At: now, Actor: creator, Type: "created", Change: t.LastChange}}
+		event := after.Timeline[0]
+		if assignedSeq != 0 {
+			assigned := Event{Seq: assignedSeq, At: now, Actor: creator, Type: "assigned",
+				AssignTo: assigneeName, Change: t.LastChange}
+			after.Timeline = append(after.Timeline, assigned)
+			event = assigned
+		}
+		var err error
+		notified, err = m.notifier.NotifyTx(ctx, tx, NotificationInput{After: after, Actor: creator, Event: event})
+		if err != nil {
+			return CreateResult{}, err
+		}
 	}
 
 	if err := m.commitAndWake(tx, notified); err != nil {
@@ -793,6 +804,7 @@ func WhyText(why string) string {
 
 // WaitingOnOf 推导当前轮到谁。规则照抄 prototype/member-handoff 的 turnOf
 // （spec「等待方与收件箱」，#37 的查询也复用这一个函数）：
+// guestLinks 与 now 是轮次规则的输入；#126 只打通输入，不改变下面的规则。
 //
 //	已关闭                     → 无等待方
 //	尚无回复 或 最后是访客回复    → 指派人（未指派 → department）
@@ -806,7 +818,7 @@ func WhyText(why string) string {
 // 相关回复集 = type=reply 且（访客 或 无对手 或 actor∈{指派人, 对手}）。
 // 未指派轮到本部门时原因只写「尚未指派」或「访客回复了」（prototype/ticket-query
 // 的修正：不能写「新指派给你」）。
-func WaitingOnOf(t Full) WaitingOn {
+func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 	if t.Status == "closed" {
 		return WaitingOn{Party: "none", Text: "无（已关闭）"}
 	}
