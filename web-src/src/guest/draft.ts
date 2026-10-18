@@ -65,6 +65,10 @@ export interface FormDraft {
   author?: string
   idemKey?: string
   pending?: boolean
+  /** 整张工单附件区的元数据；附件 id 在上传成功后才有。 */
+  attachments?: Array<{ attachmentId: string; name: string; size: number }>
+  /** 整张工单附件区的当前有序列表（含已挂到说明上的附件）。 */
+  attachmentIds?: string[]
 }
 
 export function loadFormDraft(key: string): FormDraft | null {

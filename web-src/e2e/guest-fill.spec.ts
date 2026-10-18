@@ -356,6 +356,25 @@ async function seedUngroupedTicket(request: APIRequestContext): Promise<FillSeed
   return { number, linkKey: String((await link.json()).url).slice(3) }
 }
 
+/** 造一张自由格式工单 + 可填写说明链接（说明已有初稿，访客直接修订）。 */
+async function seedFreeTicket(request: APIRequestContext): Promise<FillSeed> {
+  await loginAdmin(request)
+  const created = await request.post('/api/v1/tickets', {
+    data: {
+      title: '流水线偶发停机',
+      brief_md: '今天上午流水线停了两次，每次复位后又能继续跑。',
+      labels: ['机型:UD-2300'],
+    },
+  })
+  expect(created.status(), `建自由格式工单失败：${await created.text()}`).toBe(201)
+  const number: string = (await created.json()).number
+  const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
+    data: { note: '产线-王工', valid_days: 30, can_edit_brief: true },
+  })
+  expect(link.status(), `创建访客链接失败：${await link.text()}`).toBe(201)
+  return { number, linkKey: String((await link.json()).url).slice(3) }
+}
+
 // 7.（手机视口）不分组的模板工单显示成一组「填写说明」，多行示例默认折叠
 //    （点「看完整示例」展开），可以正常提交。
 test.describe('不分组模板', () => {
@@ -463,5 +482,102 @@ test.describe('桌面视口', () => {
 
     // 右栏统一附件区也有拖放区（日志这类不属于某个字段的文件）
     await expect(side.locator('.cf.area .drop')).toBeVisible()
+  })
+
+  test('附件区的日志独立于字段，提交后列在说明底部', async ({ page, request, browser }) => {
+    const seed = await seedFillTicket(request)
+    await page.goto(`/g/${seed.linkKey}`)
+    await page.getByRole('button', { name: '开始填写' }).click()
+
+    const side = page.locator('.fill-side')
+    await side.locator('.cf.area input[type=file]').setInputFiles({
+      name: '质控日志.log',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('E-203 at 09:01\n'),
+    })
+    await expect(side.locator('.staged-file.ready')).toContainText('质控日志.log', { timeout: 15000 })
+
+    await page.reload()
+    await page.getByRole('button', { name: '开始填写' }).click()
+    await expect(page.locator('.fill-side .staged-file')).toContainText('质控日志.log')
+    for (const textarea of await page.locator('.cf:not(.area) textarea').all()) {
+      await expect(textarea).not.toHaveValue(/att:/)
+    }
+
+    await page.getByRole('combobox', { name: '哪台仪器？' }).click()
+    await page.getByRole('option', { name: '不确定' }).click()
+    for (const q of ['什么时候发生的？', '你做了哪些操作？', '实际看到了什么？', '你期望看到什么？']) {
+      await page.locator(`.cf[data-field="${q}"]`).getByRole('button', { name: '不清楚', exact: true }).click()
+    }
+    await page.locator('.cf[data-field="出现得频繁吗？"]').getByRole('radio', { name: '每次' }).check()
+    await page.getByRole('button', { name: /^提交给管理员/ }).click()
+    await expect(page.locator('.fill-done')).toContainText('已提交给管理员')
+
+    const member = await browser.newPage({ baseURL: `http://127.0.0.1:${process.env.E2E_PORT || '8901'}` })
+    await login(member, ADMIN)
+    await member.goto(`/t/${seed.number}`)
+    const brief = member.locator('[data-bubble="brief"]')
+    await expect(brief.locator('.atts .att')).toContainText('质控日志.log', { timeout: 15000 })
+    const guess = brief.locator('.f', { hasText: '你的猜测或补充？' })
+    await expect(guess).not.toContainText('att:')
+    await expect(guess.getByRole('link', { name: '质控日志.log' })).toHaveCount(0)
+    await member.close()
+  })
+
+  test('附件区删掉传错的文件后，说明附件里不再有它', async ({ page, request }) => {
+    const seed = await seedFillTicket(request)
+    await page.goto(`/g/${seed.linkKey}`)
+    await page.getByRole('button', { name: '开始填写' }).click()
+    await page.getByRole('combobox', { name: '哪台仪器？' }).click()
+    await page.getByRole('option', { name: '不确定' }).click()
+    for (const q of ['什么时候发生的？', '你做了哪些操作？', '实际看到了什么？', '你期望看到什么？']) {
+      await page.locator(`.cf[data-field="${q}"]`).getByRole('button', { name: '不清楚', exact: true }).click()
+    }
+    await page.locator('.cf[data-field="出现得频繁吗？"]').getByRole('radio', { name: '每次' }).check()
+
+    const area = page.locator('.fill-side .cf.area')
+    await area.locator('input[type=file]').setInputFiles([
+      { name: '正确日志.log', mimeType: 'text/plain', buffer: Buffer.from('correct\n') },
+      { name: '传错日志.log', mimeType: 'text/plain', buffer: Buffer.from('wrong\n') },
+    ])
+    await expect(area.locator('.staged-file')).toHaveCount(2, { timeout: 15000 })
+    await page.getByRole('button', { name: /^提交给管理员/ }).click()
+    await page.getByRole('button', { name: '查看对话' }).click()
+
+    await page.getByRole('button', { name: '✏ 修改说明' }).click()
+    await page.locator('.fill-side .cf.area').getByRole('button', { name: '移除 传错日志.log' }).click()
+    await expect(page.locator('.fill-side .staged-file')).toHaveCount(1)
+    await page.getByRole('button', { name: /^提交给管理员/ }).click()
+    await page.getByRole('button', { name: '查看对话' }).click()
+
+    const event = page.locator('.event', { hasText: '修订了说明（第 3 版）' })
+    await expect(event).toBeVisible({ timeout: 15000 })
+    const brief = page.locator('[data-bubble="brief"]')
+    await expect(brief.locator('.atts .att')).toHaveCount(1)
+    await expect(brief.locator('.atts .att')).toContainText('正确日志.log')
+    await expect(brief.locator('.atts .att')).not.toContainText('传错日志.log')
+  })
+
+  test('自由描述页的附件区独立于大文本框', async ({ page, request }) => {
+    const seed = await seedFreeTicket(request)
+    await page.goto(`/g/${seed.linkKey}`)
+    await page.getByRole('button', { name: '开始填写' }).click()
+
+    const text = page.locator('.cf[data-field="请把情况写详细"] textarea')
+    await expect(text).toHaveValue(/今天上午流水线停了两次/)
+    await page.locator('.fill-side .cf.area input[type=file]').setInputFiles({
+      name: '停机日志.log',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('stop at 10:12\n'),
+    })
+    await expect(page.locator('.fill-side .staged-file')).toContainText('停机日志.log', { timeout: 15000 })
+    await expect(text).not.toHaveValue(/att:/)
+    await expect(text).toHaveValue(/今天上午流水线停了两次/)
+
+    await page.getByRole('button', { name: /^提交给管理员/ }).click()
+    await page.getByRole('button', { name: '查看对话' }).click()
+    const brief = page.locator('[data-bubble="brief"]')
+    await expect(brief.locator('.atts .att')).toContainText('停机日志.log', { timeout: 15000 })
+    await expect(brief.locator('.md')).not.toContainText('att:')
   })
 })
