@@ -23,6 +23,7 @@ const (
 	ReasonAssigneeReplied = "assignee_replied"
 	ReasonReturned        = "returned"
 	ReasonCreatorReplied  = "creator_replied"
+	ReasonAgentReplied    = "agent_replied"
 	ReasonGuestReplied    = "guest_replied"
 	ReasonGuestCompleted  = "guest_completed"
 	ReasonGuestRevised    = "guest_revised"
@@ -48,6 +49,7 @@ var notificationStyles = map[string]notificationStyle{
 	tickets.WhyAssigneeReply:  {ReasonAssigneeReplied, " 回复了"},
 	tickets.WhySentBack:       {ReasonReturned, " 退回"},
 	tickets.WhyCreatorReplied: {ReasonCreatorReplied, " 回复了"},
+	tickets.WhyAgentReplied:   {ReasonAgentReplied, " 回复了"},
 }
 
 // Rules 是成员通知规则模块。它只依据事件前后的工单状态、操作者和有效

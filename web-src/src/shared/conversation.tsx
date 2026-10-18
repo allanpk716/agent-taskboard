@@ -62,16 +62,18 @@ export function BriefBubble({
   const atts = attachmentsOf(ticket)
   const fields = ticket.brief.template_fields ?? []
   const values = ticket.brief.fields ?? {}
-  const briefAtts = ticket.attachments.filter((a) => a.attached_to === '说明')
-  const created = ticket.timeline.find((e) => e.type === 'created')
-  const creator = authorName(ticket.creator)
+  const briefAtts = ticket.brief.attachment_ids
+    .map((id) => ticket.attachments.find((a) => a.id === id))
+    .filter((a): a is Attachment => !!a)
+  const reviser = ticket.brief.last_revised
+  const reviserName =
+    reviser.type === 'guest' ? `${reviser.display_name}（访客）` : reviser.display_name
   return (
     <div className="bubble" data-bubble="brief">
       <Avatar author={ticket.creator} />
       <div className="card">
         <div className="who">
-          <b>{creator}</b>
-          {created && <> · {fmtShort(created.at)}</>} · 说明
+          <b>{reviserName}</b>填写 · {fmtShort(reviser.at)} · 第 {reviser.revision} 版 · 说明
           {onEditBrief && (
             <button type="button" className="btn ghost sm edit-brief" onClick={onEditBrief}>
               ✏ 修改说明

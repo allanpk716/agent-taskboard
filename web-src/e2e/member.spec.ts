@@ -158,6 +158,43 @@ test('派活到验收：A建单指派B，B收件箱交付，A验收关闭', asyn
   await expect(page.getByPlaceholder(/写回复/)).toHaveCount(0)
 })
 
+// 3b. 自派自的任务（#128）：成员 Agent 通过 API 交付后，本人在收件箱看到
+// 待验收，详情页显示「现在轮到你」和验收按钮；本人退回后按钮消失。
+test('自派自任务：Agent交付后本人验收界面', async ({ page, request }) => {
+  const number = await createTicket(request, {
+    title: '自派自的工具清单',
+    assignee: '管理员',
+  })
+  await loginAdmin(request)
+  const tokenRes = await request.post('/api/v1/me/agent-tokens', {
+    data: { name: `自派自验收-${number}` },
+  })
+  expect(tokenRes.ok(), await tokenRes.text()).toBeTruthy()
+  const token: string = (await tokenRes.json()).token
+  const delivered = await request.post(`/api/v1/tickets/${number}/replies`, {
+    data: { body_md: '清单已完成，请验收。', deliver: true },
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  expect(delivered.status(), await delivered.text()).toBe(201)
+
+  await login(page, ADMIN)
+  const card = page.locator('.tcard', { hasText: number })
+  await expect(card).toBeVisible()
+  await expect(card.locator('.badge.reason')).toHaveText('已交付，待你验收')
+  await card.click()
+  await expect(page.locator('.badge.myturn')).toHaveText('● 现在轮到你（已交付，待你验收）')
+  await expect(page.locator('.accept')).toContainText('已交付，等待你的验收')
+  await expect(page.getByRole('button', { name: '验收通过，关闭（完成）' })).toBeVisible()
+
+  const sentBack = await request.post(`/api/v1/tickets/${number}/replies`, {
+    data: { body_md: '缺少异常处理，请补充后重新交付。' },
+  })
+  expect(sentBack.ok(), await sentBack.text()).toBeTruthy()
+  await page.reload()
+  await expect(page.locator('.badge.myturn')).toHaveText('● 现在轮到你（发起人退回修改）')
+  await expect(page.locator('.accept')).toHaveCount(0)
+})
+
 // 4. 详情页创建访客链接并复制（验收标准 2）。
 test('详情页创建访客链接并复制', async ({ page, request }) => {
   const number = await createTicket(request, { title: '要发访客链接的工单' })
@@ -356,11 +393,12 @@ test('建单（模板）：缺必填项弹出确认，仍创建后逐项提示',
   await expect(page.locator('.warnbox')).toContainText('必填未填')
 
   // 打开工单：说明气泡按字段显示，未填的显示（未填写），机型值同时进了标签；
-  // 暂存的附件建单后已上传并写进说明
+  // 暂存的附件建单后挂到整单附件条，不进入任何字段
   await page.getByRole('button', { name: '打开工单' }).click()
   await expect(page.locator('[data-bubble="brief"]')).toContainText('BM-10vet')
   await expect(page.getByText('（未填写）').first()).toBeVisible()
-  await expect(page.locator('[data-bubble="brief"]')).toContainText('现场日志.log')
+  await expect(page.locator('[data-bubble="brief"] .atts .att')).toHaveCount(1)
+  await expect(page.locator('[data-bubble="brief"] .atts .att')).toContainText('现场日志.log')
 })
 
 // 9. 访客链接的「指定日期」：创建与延期都能选日期（当天有效，评审 P2-9）；

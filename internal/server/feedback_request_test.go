@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
 )
@@ -12,8 +13,8 @@ import (
 // feedbackCreateResponse 是带 guest_link 建单（#64「请人反馈」）的响应结构。
 type feedbackCreateResponse struct {
 	createTicketResponse
-	ShareText *string             `json:"share_text"`
-	GuestLink *feedbackGuestLink  `json:"guest_link"`
+	ShareText *string            `json:"share_text"`
+	GuestLink *feedbackGuestLink `json:"guest_link"`
 }
 
 // feedbackGuestLink 是建单响应里嵌套的访客链接（含面向访客的转发文案）。
@@ -144,7 +145,7 @@ func Test用请人反馈的链接能读工单并修订说明(t *testing.T) {
 
 	// 自由格式：不用模板的 report 工单，说明为空。
 	res := createWithGuestLink(t, s, web, map[string]any{
-		"kind": "report",
+		"kind":  "report",
 		"title": "生化仪打印异常",
 		"guest_link": map[string]any{
 			"note":           "检验科-李四",
@@ -192,6 +193,70 @@ func Test用请人反馈的链接能读工单并修订说明(t *testing.T) {
 	}
 	if revised != 1 {
 		t.Errorf("时间线上应有 1 条 brief_revised，实际 %d", revised)
+	}
+}
+
+// 说明署名取最后一次修订说明的人：未修订时是创建者；访客修订后显示链接备注；
+// 创建者再修订后回到成员。成员与访客读取同一份元数据（#129）。
+func Test说明的最后修订者随修订人变化(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+
+	res := createWithGuestLink(t, s, web, map[string]any{
+		"kind":  "report",
+		"title": "生化仪打印异常",
+		"guest_link": map[string]any{
+			"note":           "检验科-王工",
+			"can_edit_brief": true,
+		},
+	})
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("建单状态码 = %d，想 201", res.StatusCode)
+	}
+	var created feedbackCreateResponse
+	tbtest.DecodeJSON(t, res, &created)
+	guest := s.GuestClient(strings.TrimPrefix(created.GuestLink.URL, "/g/"))
+
+	var got ticketResponseBody
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+created.Number, nil, &got)
+	if got.Brief.LastRevised.Type != "member" || got.Brief.LastRevised.DisplayName != "陈工" ||
+		got.Brief.LastRevised.Revision != 1 {
+		t.Errorf("未修订时最后修订者应是创建者：%+v", got.Brief.LastRevised)
+	}
+	createdAt := got.Brief.LastRevised.At
+
+	s.Clock().Advance(time.Minute)
+	res = s.Do(t, guest, http.MethodPatch, "/api/v1/tickets/"+created.Number, map[string]any{
+		"brief_md":      "今早开机后打印机不吐纸。",
+		"base_revision": 1,
+		"author_name":   "王工本人自报",
+	}, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("访客修订状态码 = %d，想 200", res.StatusCode)
+	}
+
+	s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+created.Number, nil, &got)
+	if got.Brief.LastRevised.Type != "guest" || got.Brief.LastRevised.DisplayName != "检验科-王工" ||
+		got.Brief.LastRevised.Revision != 2 {
+		t.Errorf("访客修订后最后修订者应显示链接备注：%+v", got.Brief.LastRevised)
+	}
+	if !strings.Contains(got.Brief.LastRevised.At, "T09:01:00+08:00") {
+		t.Errorf("访客修订时间 = %q，想建单一分钟后", got.Brief.LastRevised.At)
+	}
+
+	s.Clock().Advance(time.Minute)
+	res = s.Do(t, web, http.MethodPatch, "/api/v1/tickets/"+created.Number, map[string]any{
+		"brief_md":      "成员补充了处理要求。",
+		"base_revision": 2,
+	}, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("成员修订状态码 = %d，想 200", res.StatusCode)
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+created.Number, nil, &got)
+	if got.Brief.LastRevised.Type != "member" || got.Brief.LastRevised.DisplayName != "陈工" ||
+		got.Brief.LastRevised.Revision != 3 || got.Brief.LastRevised.At == createdAt {
+		t.Errorf("成员修订后最后修订者应回到成员：%+v（创建时间 %s）", got.Brief.LastRevised, createdAt)
 	}
 }
 
@@ -252,11 +317,11 @@ func Test带链接建单校验失败返回422且不留下工单(t *testing.T) {
 		link map[string]any
 		code string
 	}{
-		"非法天数":   {map[string]any{"note": "x", "valid_days": 14, "can_edit_brief": true}, "invalid_valid_days"},
-		"永久零天":   {map[string]any{"note": "x", "valid_days": 0, "can_edit_brief": true}, "invalid_valid_days"},
+		"非法天数":  {map[string]any{"note": "x", "valid_days": 14, "can_edit_brief": true}, "invalid_valid_days"},
+		"永久零天":  {map[string]any{"note": "x", "valid_days": 0, "can_edit_brief": true}, "invalid_valid_days"},
 		"带过期日期": {map[string]any{"note": "x", "expires_at": "2026-12-01", "can_edit_brief": true}, "invalid_valid_days"},
-		"缺备注":    {map[string]any{"can_edit_brief": true}, "note_required"},
-		"空白备注":   {map[string]any{"note": "  ", "can_edit_brief": true}, "note_required"},
+		"缺备注":   {map[string]any{"can_edit_brief": true}, "note_required"},
+		"空白备注":  {map[string]any{"note": "  ", "can_edit_brief": true}, "note_required"},
 	} {
 		res := createWithGuestLink(t, s, web, map[string]any{
 			"kind": "report", "title": "不该留下的工单", "labels": []string{},
