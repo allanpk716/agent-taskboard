@@ -187,24 +187,24 @@ test.describe('自由格式', () => {
     await expect(groups.nth(0).locator('.nudge')).toHaveCount(0)
     await expect(page.locator('.fill-prog')).toHaveText(/必填都写好了/)
 
-    // 附件区在组末：上传图片显示在那里，引用写进说明
+    // 附件区在组末：上传图片显示在那里，不写进大文本框
     const png = await smallPng(page)
     await groups.nth(0).locator('.cf.area input[type=file]').setInputFiles({
       name: '报警照片.png',
       mimeType: 'image/png',
       buffer: Buffer.from(png),
     })
-    await expect(groups.nth(0).locator('.cf.area .staged-file')).toContainText('报警照片.png', { timeout: 15000 })
-    await expect(box).toHaveValue(/att:/, { timeout: 15000 })
+    await expect(groups.nth(0).locator('.cf.area .staged-file.ready')).toContainText('报警照片.png', { timeout: 15000 })
+    await expect(box).not.toHaveValue(/att:/)
 
     await submit.click()
     await expect(page.locator('.fill-done')).toContainText('已提交给管理员')
     await page.getByRole('button', { name: '查看对话' }).click()
 
-    // 对话页：说明里能看到内容和图，时间线有访客的修订事件（署名门诊-李四）
+    // 对话页：说明里能看到内容，附件在说明底部；时间线有访客的修订事件
     const brief = page.locator('[data-bubble="brief"]')
     await expect(brief).toContainText('E-203')
-    await expect(brief.locator('img.inline-img')).toBeVisible({ timeout: 15000 })
+    await expect(brief.locator('.atts .att')).toContainText('报警照片.png', { timeout: 15000 })
     const event = page.locator('.event', { hasText: '修订了说明' })
     await expect(event).toBeVisible({ timeout: 15000 })
     await expect(event).toContainText('门诊-李四')
