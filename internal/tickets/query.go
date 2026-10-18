@@ -20,7 +20,9 @@ type ListQuery struct {
 	Kind     string // task | report
 	Template string // 模板 key
 
-	Labels   []string // 必须全部带有（可含 维度:*）
+	Labels []string // 必须全部带有（可含 维度:*）
+	// LabelAny 是「维度:值」条件；同一维度取或，不同维度取且。
+	LabelAny []string
 	NoLabels []string // 必须一个都不带
 
 	AssigneeSet  bool
@@ -152,6 +154,16 @@ func (q *ListQuery) matches(t *Full) bool {
 			return false
 		}
 	}
+	labelAnyDims := map[string][]string{}
+	for _, l := range q.LabelAny {
+		dim, _, _ := strings.Cut(l, ":")
+		labelAnyDims[dim] = append(labelAnyDims[dim], l)
+	}
+	for _, alternatives := range labelAnyDims {
+		if !hasAnyLabel(t.Labels, alternatives) {
+			return false
+		}
+	}
 	for _, l := range q.NoLabels {
 		if hasWildcardLabel(t.Labels, l) {
 			return false
@@ -231,6 +243,18 @@ func hasWildcardLabel(labels []string, l string) bool {
 	for _, x := range labels {
 		if x == l {
 			return true
+		}
+	}
+	return false
+}
+
+// hasAnyLabel 报告工单是否带有候选标签中的任意一个。
+func hasAnyLabel(labels, alternatives []string) bool {
+	for _, a := range alternatives {
+		for _, x := range labels {
+			if x == a {
+				return true
+			}
 		}
 	}
 	return false
