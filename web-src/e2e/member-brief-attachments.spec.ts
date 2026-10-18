@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext } from '@playwright/test'
-import { ADMIN, createTicket, login } from './helpers'
+import { ADMIN, createTicket, login, loginAdmin } from './helpers'
 
 async function upload(request: APIRequestContext, number: string, name: string, body: string) {
   const res = await request.post(`/api/v1/tickets/${number}/attachments`, {
@@ -99,6 +99,35 @@ test('成员修改说明时整单附件可删可加，说明随之修订', async
   await expect(brief.locator('.atts .att')).toContainText('新日志.log')
   await expect(brief).not.toContainText('旧日志.log')
   await expect(brief).toContainText('第 3 版')
+})
+
+test('成员修改模板说明时按字段键保存，其余字段保持不变', async ({ page, request }) => {
+  await loginAdmin(request)
+  const created = await request.post('/api/v1/tickets', {
+    data: {
+      title: '成员修改模板说明',
+      template: 'bug-report',
+      fields: {
+        '哪台仪器？': 'UD-2300',
+        '什么时候发生的？': '今天上午 9 点左右',
+        '你的猜测或补充？': '可能是试剂问题',
+      },
+    },
+  })
+  expect(created.status(), `建模板工单失败：${await created.text()}`).toBe(201)
+  const number = (await created.json()).number
+
+  await login(page, ADMIN)
+  await page.goto(`/t/${number}`)
+  await page.getByRole('button', { name: '修改说明' }).click()
+  await page.getByLabel('什么时候发生的？').fill('昨天下午 3 点左右')
+  await page.getByRole('button', { name: '保存修改' }).click()
+  await page.reload()
+
+  const brief = page.locator('[data-bubble="brief"]')
+  await expect(brief.locator('.f', { hasText: '什么时候发生的？' }).locator('.v')).toHaveText('昨天下午 3 点左右')
+  await expect(brief.locator('.f', { hasText: '你的猜测或补充？' }).locator('.v')).toHaveText('可能是试剂问题')
+  await expect(brief).toContainText('第 2 版')
 })
 
 test('建单不带暂存附件时说明仍保持第一版', async ({ page }) => {
