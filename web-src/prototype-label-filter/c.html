@@ -1,0 +1,265 @@
+<!-- 一次性原型，不合并 -->
+<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>工单标签筛选候选</title><style>
+/* 一次性原型：工单动态标签筛选，不合并。 */
+*{box-sizing:border-box}
+html,body{margin:0;min-width:0}
+body{background:#d9dde4;font-family:system-ui,"Microsoft YaHei",sans-serif;color:#1f2937;font-size:14px}
+button,input{font-family:inherit}
+.proto{position:sticky;top:0;z-index:80;background:#111827;color:#fff;font-size:12px;padding:6px 10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.proto b{color:#fbbf24}
+.proto button{background:#374151;color:#fff;border:0;border-radius:5px;padding:4px 8px;font-size:12px;cursor:pointer}
+.proto button.on{background:#2a6fdb}
+.proto .d{color:#cbd5e1;flex-basis:100%;line-height:1.5}
+#stage{overflow:hidden}
+#pc{transform-origin:0 0;height:800px;background:#f5f6f8;display:flex;overflow:hidden;position:relative}
+.btn{background:#2a6fdb;color:#fff;border:0;border-radius:7px;padding:8px 13px;font-size:13px;cursor:pointer}
+.btn.ghost{background:#eef3fc;color:#2a6fdb}.btn.plain{background:none;color:#6b7280;border:0}
+.btn.sm{padding:5px 9px;font-size:12px}.btn.block{width:100%}
+.muted{color:#6b7280}.small{font-size:12.5px}.tiny{font-size:11.5px}
+.chip{display:inline-flex;align-items:center;gap:3px;max-width:100%;min-height:21px;font-size:11.5px;padding:1px 7px;border-radius:10px;background:#f0f2f6;color:#4b5563;margin:0 4px 2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border:0;cursor:pointer}
+.chip.dim{background:#e8f0fd;color:#245fc0}
+.chip.selected{background:#2a6fdb;color:#fff}
+.badge{display:inline-block;font-size:11px;padding:1px 6px;border-radius:4px;background:#f0f2f6;color:#4b5563}
+.badge.fb{background:#fff1e6;color:#b45309}.badge.task{background:#ecfdf3;color:#15803d}.badge.closed{background:#f3f4f6;color:#9ca3af}
+.wait{font-size:12px;color:#b45309}.wait.me{color:#d64545;font-weight:600}
+.dot{display:inline-block;min-width:18px;padding:0 5px;border-radius:9px;background:#d64545;color:#fff;font-size:11px;text-align:center;line-height:18px;font-style:normal}
+.side{width:212px;flex:none;background:#fff;border-right:1px solid #e6e9f0;display:flex;flex-direction:column;padding:14px 10px}
+.side .brand{font-weight:800;font-size:16px;padding:2px 8px 14px}
+.side .nav{margin-top:12px;display:flex;flex-direction:column;gap:2px}
+.side .it{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:7px;cursor:pointer;color:#374151}
+.side .it:hover{background:#f3f5f9}.side .it.on{background:#eef3fc;color:#2a6fdb;font-weight:600}.side .it .dot{margin-left:auto}
+.side .sub{display:flex;align-items:center;gap:5px;padding:6px 10px 6px 34px;font-size:12.5px;border-radius:6px;cursor:pointer;color:#545d6c}
+.side .sub:hover{background:#f3f5f9}.side .sub .n{margin-left:auto;color:#9aa3b2;font-size:11.5px}
+.side .foot{margin-top:auto;border-top:1px solid #f0f2f6;padding:10px 8px 0;font-size:12.5px}
+.side .foot .ver{color:#b0b7c3;font-size:11px;margin-top:3px}
+.rail{width:68px;flex:none;background:#fff;border-right:1px solid #e6e9f0;display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:4px}
+.rail .plus{width:44px;height:44px;border-radius:12px;background:#2a6fdb;color:#fff;font-size:22px;display:flex;align-items:center;justify-content:center;margin-bottom:8px;cursor:pointer}
+.rail .it{width:58px;text-align:center;padding:7px 0;border-radius:8px;font-size:17px;cursor:pointer;position:relative}
+.rail .it span{display:block;font-size:10.5px;color:#6b7280;margin-top:2px}.rail .it.on{background:#eef3fc}.rail .it.on span{color:#2a6fdb;font-weight:600}
+.rail .it .dot{position:absolute;top:2px;right:6px;font-size:10px;min-width:16px;line-height:16px}.rail .ver{margin-top:auto;font-size:10px;color:#b0b7c3}
+.lcol{flex:none;background:#fff;border-right:1px solid #e6e9f0;display:flex;flex-direction:column;overflow:hidden;position:relative}
+.lhead{padding:11px 12px 9px;border-bottom:1px solid #f0f2f6}
+.ltitle{display:flex;align-items:center;gap:7px;margin-bottom:7px}.ltitle b{font-size:16px}
+.statuschips{display:flex;gap:4px;flex-wrap:wrap}.sc{border:1px solid #dfe4ec;background:#fff;color:#4b5563;border-radius:11px;padding:2px 8px;font-size:11.5px;cursor:pointer}.sc.on{background:#253247;border-color:#253247;color:#fff}
+.search{width:100%;padding:7px 10px;border:1px solid #d7dde8;border-radius:7px;font-size:13px;background:#fafbfc}
+.fchips{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}.fc{font-size:12px;padding:3px 9px;border-radius:12px;border:1px solid #dfe4ec;color:#4b5563;cursor:pointer;background:#fff}.fc.on{background:#2a6fdb;border-color:#2a6fdb;color:#fff}
+.schips{display:flex;gap:5px;flex-wrap:nowrap;overflow:hidden;margin-top:7px;min-height:0}
+.schips.expanded{flex-wrap:wrap}
+.schip{display:inline-flex;align-items:center;gap:4px;flex:0 0 auto;max-width:100%;border:1px solid #c9dcfa;background:#eaf2ff;color:#1f4f9c;border-radius:12px;padding:2px 7px;font-size:11.5px}
+.schip.exc{border-color:#f0c5c1;background:#fdecec;color:#a53030}.schip.exc .tx{text-decoration:line-through}
+.schip button{border:0;background:transparent;color:inherit;font-size:12px;line-height:1;cursor:pointer;padding:0}
+.morechips{border:0;background:#edf0f4;color:#545d6c;border-radius:12px;padding:2px 8px;font-size:11.5px;cursor:pointer;flex:0 0 auto}
+.summary{font-size:11px;color:#748093;line-height:1.5;margin-top:5px}
+.lbody{overflow:auto;flex:1;scrollbar-width:thin}
+.row{padding:9px 12px;border-bottom:1px solid #f3f4f7;cursor:pointer}.row:hover{background:#fafbfd}.row.on{background:#eef3fc;box-shadow:inset 3px 0 #2a6fdb}
+.row .top{display:flex;gap:5px;align-items:center}.row .top .time{margin-left:auto}
+.row .t{font-weight:600;margin:3px 0;line-height:1.4}
+.row .m{font-size:12px;color:#6b7280}.row .tags{margin-top:4px;display:flex;gap:4px;flex-wrap:wrap}
+.dcol{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.dhead{background:#fff;border-bottom:1px solid #e6e9f0;padding:12px 18px}.dhead h2{font-size:17px;margin:4px 0 2px;line-height:1.4}
+.acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.dmain{flex:1;display:flex;overflow:hidden}
+.convo{flex:1;overflow:auto;padding:14px 18px;min-width:0}
+.msg{background:#fff;border:1px solid #e6e9f0;border-radius:9px;padding:10px 12px;margin-bottom:10px;max-width:760px}.msg .who{font-size:12px;color:#6b7280;margin-bottom:5px}.msg .who b{color:#1f2937}.msg.mine{margin-left:auto;background:#f2f7ff;border-color:#d6e4fb}.msg.agent{background:#f7f5ff;border-color:#e3dcfb}.msg .tx{line-height:1.6;white-space:pre-wrap}
+.files{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.file{font-size:12px;background:#f3f5f9;border-radius:6px;padding:4px 8px}
+.sys{font-size:12px;color:#9aa3b2;margin:5px 0 12px}
+.composer{background:#fff;border-top:1px solid #e6e9f0;padding:10px 18px;display:flex;gap:8px;align-items:end}.composer textarea{flex:1;height:56px;padding:8px 10px;border:1px solid #d7dde8;border-radius:8px;font-size:13.5px;resize:none}
+.meta{width:290px;flex:none;border-left:1px solid #e6e9f0;background:#fff;overflow:auto;padding:14px 16px}
+.mblk{padding:10px 0;border-bottom:1px solid #f0f2f6}.mblk:last-child{border:0}.mblk .h{font-size:11.5px;color:#9aa3b2;margin-bottom:5px}
+.strip{background:#fafbfc;border-bottom:1px solid #e6e9f0;padding:7px 18px;font-size:12.5px;color:#4b5563;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.ph{flex:1;display:flex;align-items:center;justify-content:center;color:#9aa3b2;font-size:15px}
+.overlay{position:absolute;inset:0;background:#fff;z-index:10;display:flex;flex-direction:column;box-shadow:0 10px 28px rgba(15,23,42,.14)}
+.ohead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #e6e9f0}.ohead b{font-size:14px}.ohead .x{margin-left:auto;border:0;background:transparent;font-size:18px;color:#6b7280;cursor:pointer;line-height:1}
+.obody{flex:1;overflow:auto;padding:8px 10px 12px;background:#fff}
+.group{border-bottom:1px solid #eef1f5;padding:7px 0}
+.ghead{display:flex;align-items:center;gap:5px;width:100%;border:0;background:transparent;font-weight:650;font-size:13px;color:#263243;padding:5px 2px;cursor:pointer}
+.ghead .n{margin-left:auto;color:#9aa3b2;font-weight:400;font-size:11.5px}
+.vrow{display:flex;align-items:center;gap:7px;min-height:35px;border-radius:6px;padding:0 5px}.vrow:hover{background:#f6f8fb}
+.vrow label{display:flex;align-items:center;gap:7px;flex:1;min-width:0;cursor:pointer}.vrow .val{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vrow .count{color:#748093;font-size:11.5px}.vrow.zero .val,.vrow.zero .count{color:#a4adba}
+.vrow input{accent-color:#2a6fdb;margin:0}
+.exc-btn{border:1px solid #e4e8ef;background:#fff;color:#8b95a4;border-radius:9px;font-size:10.5px;padding:2px 6px;cursor:pointer}.exc-btn.on{border-color:#e2a7a2;background:#fdeceb;color:#b43b3b}
+.ofoot{border-top:1px solid #e6e9f0;padding:8px 10px;display:flex;gap:8px;align-items:center;background:#fff}
+.tokenbox{display:flex;align-items:center;gap:3px;flex-wrap:wrap;min-height:36px;width:100%;padding:3px 6px;border:1px solid #d7dde8;border-radius:7px;background:#fff;cursor:text}
+.tokenbox input{flex:1;min-width:90px;border:0;outline:0;background:transparent;font-size:13px;padding:4px 0}
+.suggest{position:absolute;left:10px;right:10px;top:calc(100% + 4px);z-index:20;background:#fff;border:1px solid #dfe4ec;border-radius:9px;box-shadow:0 14px 34px rgba(15,23,42,.18);overflow:hidden}
+.srow{display:flex;align-items:center;gap:7px;width:100%;border:0;background:transparent;padding:8px 10px;text-align:left;font-size:12.5px;cursor:pointer}.srow:hover{background:#f5f8fc}.srow .l{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.srow .c{color:#748093}.srow .kind{color:#9aa3b2}.srow .exc{border:1px solid #e4e8ef;background:#fff;color:#8b95a4;border-radius:9px;font-size:10.5px;padding:2px 6px;cursor:pointer}
+.dimchips{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}.dimchips::-webkit-scrollbar{display:none}
+.savedscroll{display:flex;gap:6px;overflow-x:auto;padding:2px 0 4px;scrollbar-width:none}.savedscroll::-webkit-scrollbar{display:none}
+.viewchip{flex:0 0 auto;border:1px solid #dbe5f5;background:#f6f9ff;color:#28538d;border-radius:13px;padding:3px 9px;font-size:12px;cursor:pointer}
+.mobile{flex:1;display:flex;flex-direction:column;overflow:hidden;background:#f5f6f8;position:relative}
+.mtop{display:flex;align-items:center;gap:8px;background:#fff;border-bottom:1px solid #e6e9f0;padding:10px 12px;color:#1f2937}
+.mtop b{font-size:15px}.mlist{flex:1;overflow:auto;background:#fff}
+.mtabs{display:flex;background:#fff;border-top:1px solid #e6e9f0;padding-bottom:env(safe-area-inset-bottom)}
+.mtabs .it{flex:1;text-align:center;font-size:17px;padding:7px 0;color:#6b7280;cursor:pointer}.mtabs .it span{display:block;font-size:10.5px}.mtabs .it.on{color:#2a6fdb}.mtabs .it.on span{font-weight:700}
+.sheet{position:absolute;left:0;right:0;bottom:0;top:64px;background:#fff;z-index:25;display:flex;flex-direction:column;box-shadow:0 -12px 34px rgba(15,23,42,.2)}
+.mdetail{flex:1;display:flex;flex-direction:column;overflow:hidden;background:#fff}
+@media (max-width:500px){body{background:#f5f6f8}.proto{position:static}}
+</style><script>
+// 一次性原型：工单动态标签筛选，不合并。数据与规则仅用于本地对比。
+const VER='v0.3.0'
+const DIMS={
+  '机型':['UD-2300','UD-1600','UD-3100','BH-7600CS','BH-5800','UD-900'],
+  '系统':['液路','光路','软件','打印','质控','条码'],
+  '科室':['检验科','急诊','门诊化验','体检中心','病理科'],
+  '产品线':['尿液','血液'],
+  '其他标签':['待初筛','售后','固件','紧急','已复现']
+}
+const ALIASES=[['2300','机型:UD-2300'],['7600','机型:BH-7600CS'],['乱码','系统:软件'],['检验','科室:检验科']]
+const T=[
+ {no:'T-0152',kind:'fb',title:'UD-2300 开机后报警 E21，无法进样',wait:'你（指派人）',me:1,assignee:'陈工',creator:'陈工',guest:'检验科-张三',labels:['机型:UD-2300','系统:液路','科室:检验科','待初筛'],upd:'10 分钟前',unread:1,tpl:'Bug 反馈'},
+ {no:'T-0151',kind:'fb',title:'UD-2300 清洗阶段压力波动',wait:'指派人',assignee:'陈工',creator:'王梦龙 的 Agent',guest:'急诊-周护士',labels:['机型:UD-2300','系统:液路','科室:急诊','紧急'],upd:'25 分钟前',unread:1},
+ {no:'T-0150',kind:'fb',title:'UD-2300 探针吸样量偏低',wait:'发起人验收',assignee:'王梦龙',creator:'陈工',guest:'检验科-李技师',labels:['机型:UD-2300','系统:液路','科室:检验科','产品线:血液','售后'],upd:'1 小时前',unread:1},
+ {no:'T-0149',kind:'fb',title:'UD-2300 管路气泡反复出现',wait:'访客',assignee:'陈工',creator:'陈工',guest:'检验科-张三',labels:['机型:UD-2300','系统:液路','科室:检验科','待初筛'],upd:'2 小时前'},
+ {no:'T-0148',kind:'fb',title:'UD-2300 试剂余量显示与实际不符',wait:'访客',assignee:'陈工',creator:'李娜',guest:'检验科-张三',labels:['机型:UD-2300','系统:软件','科室:检验科','固件'],upd:'3 小时前'},
+ {no:'T-0147',kind:'fb',title:'UD-2300 尿有形成分图像偶发花屏',wait:'部门（未指派）',assignee:null,creator:'王梦龙 的 Agent',guest:'检验科-张三',labels:['机型:UD-2300','系统:软件','产品线:尿液','已复现'],upd:'5 小时前'},
+ {no:'T-0146',kind:'fb',title:'UD-2300 打印报告边缘缺失',wait:'指派人',assignee:'李娜',creator:'李娜',guest:'门诊化验-李医生',labels:['机型:UD-2300','科室:门诊化验'],upd:'昨天 16:20'},
+ {no:'T-0145',kind:'fb',title:'UD-2300 质控曲线漂移后报警',wait:'发起人验收',assignee:'王梦龙',creator:'陈工',guest:'检验科-张三',labels:['机型:UD-2300','系统:质控','科室:检验科','产品线:血液','售后'],upd:'昨天 11:02'},
+ {no:'T-0144',kind:'fb',title:'UD-2300 光源强度自检超时',wait:'你（指派人）',me:1,assignee:'陈工',creator:'陈工',guest:'病理科-赵医生',labels:['机型:UD-2300','系统:光路','科室:病理科','已复现'],upd:'昨天 09:12'},
+ {no:'T-0143',kind:'fb',title:'UD-2300 样本架条码识读失败',wait:'访客',assignee:'陈工',creator:'陈工',guest:'急诊-周护士',labels:['机型:UD-2300','系统:条码','科室:急诊'],upd:'10-16'},
+ {no:'T-0142',kind:'fb',title:'UD-1600 清洗槽排空不畅',wait:'你（指派人）',me:1,assignee:'陈工',creator:'陈工',guest:'检验科-王主管',labels:['机型:UD-1600','系统:液路','科室:检验科'],upd:'10-16'},
+ {no:'T-0141',kind:'fb',title:'UD-1600 液路压力传感器漂移',wait:'指派人',assignee:'陈工',creator:'王梦龙 的 Agent',guest:'门诊化验-李医生',labels:['机型:UD-1600','系统:液路','科室:门诊化验','产品线:尿液','待初筛'],upd:'10-15'},
+ {no:'T-0140',kind:'fb',title:'UD-1600 软件升级后报告模板丢失',wait:'访客',assignee:'李娜',creator:'陈工',guest:'检验科-张三',labels:['机型:UD-1600','系统:软件','科室:检验科','售后'],upd:'10-15'},
+ {no:'T-0139',kind:'fb',title:'UD-1600 图表导出乱码',wait:'你（指派人）',me:1,assignee:'陈工',creator:'陈工',guest:'急诊-周护士',labels:['机型:UD-1600','系统:软件','科室:急诊','紧急'],upd:'10-14'},
+ {no:'T-0138',kind:'fb',title:'UD-1600 打印组件卡纸',wait:'部门（未指派）',assignee:null,creator:'王梦龙 的 Agent',guest:'门诊化验-李医生',labels:['机型:UD-1600','系统:打印','科室:门诊化验','固件'],upd:'10-14'},
+ {no:'T-0137',kind:'fb',title:'UD-1600 质控品批次切换失败',wait:'指派人',assignee:'王梦龙',creator:'陈工',guest:'检验科-张三',labels:['机型:UD-1600','系统:质控','科室:检验科'],upd:'10-13'},
+ {no:'T-0136',kind:'fb',title:'UD-1600 光路自检中断',wait:'发起人验收',assignee:'陈工',creator:'李娜',guest:'病理科-赵医生',labels:['机型:UD-1600','系统:光路','科室:病理科'],upd:'10-12'},
+ {no:'T-0135',kind:'fb',title:'UD-3100 废液阀关闭延迟',wait:'指派人',assignee:'陈工',creator:'陈工',guest:'急诊-周护士',labels:['机型:UD-3100','系统:液路','科室:急诊','产品线:血液','紧急'],upd:'10-11'},
+ {no:'T-0134',kind:'fb',title:'UD-3100 数据接口偶发超时',wait:'访客',assignee:'李娜',creator:'王梦龙 的 Agent',guest:'检验科-张三',labels:['机型:UD-3100','系统:软件','科室:检验科','产品线:尿液','售后'],upd:'10-10'},
+ {no:'T-0133',kind:'fb',title:'UD-3100 打印驱动兼容问题',wait:'你（指派人）',me:1,assignee:'陈工',creator:'陈工',guest:'检验科-张三',labels:['机型:UD-3100','系统:打印','科室:检验科'],upd:'10-09'},
+ {no:'T-0132',kind:'fb',title:'BH-7600CS 进样针复位异响',wait:'访客',assignee:'陈工',creator:'陈工',guest:'检验科-张三',labels:['机型:BH-7600CS','系统:液路','科室:检验科','产品线:尿液'],upd:'10-08'},
+ {no:'T-0131',kind:'fb',title:'BH-7600CS 图像算法版本异常',wait:'指派人',assignee:'李娜',creator:'陈工',guest:'急诊-周护士',labels:['机型:BH-7600CS','系统:软件','科室:急诊','紧急'],upd:'10-07'},
+ {no:'T-0130',kind:'fb',title:'BH-7600CS 报告打印偏移',wait:'部门（未指派）',assignee:null,creator:'王梦龙 的 Agent',guest:'门诊化验-李医生',labels:['机型:BH-7600CS','系统:打印','科室:门诊化验'],upd:'10-06'},
+ {no:'T-0129',kind:'fb',title:'BH-7600CS 质控记录无法保存',wait:'发起人验收',assignee:'王梦龙',creator:'李娜',guest:'检验科-张三',labels:['机型:BH-7600CS','系统:质控','科室:检验科','产品线:尿液','售后'],upd:'10-05'},
+ {no:'T-0128',kind:'fb',title:'UD-900 打印模块字体缺失',wait:'你（指派人）',me:1,assignee:'陈工',creator:'陈工',guest:'体检中心-刘医生',labels:['机型:UD-900','系统:打印','科室:体检中心','产品线:血液','固件'],upd:'10-04'},
+ {no:'T-0127',kind:'fb',title:'BH-5800 尿沉渣图像色彩异常',wait:'访客',assignee:'李娜',creator:'王梦龙 的 Agent',guest:'体检中心-孙医生',labels:['机型:BH-5800','系统:软件','科室:体检中心','产品线:尿液','已复现'],upd:'10-03'},
+ {no:'T-0126',kind:'fb',title:'BH-5800 样本仓温度提示不稳定',wait:'你（指派人）',me:1,assignee:'陈工',creator:'陈工',guest:'急诊-周护士',labels:['机型:BH-5800','科室:急诊','产品线:尿液'],upd:'10-02'},
+ {no:'T-0125',kind:'task',title:'整理季度标签治理清单',wait:'指派人',assignee:'李娜',creator:'陈工',labels:['产品线:尿液'],upd:'10-02'},
+ {no:'T-0124',kind:'task',title:'整理 10 月售后故障统计，按机型出表',wait:'发起人验收',assignee:'王梦龙',creator:'陈工',labels:['售后'],closed:'已解决',upd:'10-01'},
+ {no:'T-0123',kind:'task',title:'归档上周紧急工单处理记录',wait:'指派人',assignee:'李娜',creator:'陈工',labels:['紧急','已复现'],closed:'已解决',upd:'09-30'}
+]
+const NAV=[['inbox','📥','收件箱',3],['list','🗂','工单'],['new','📝','建单（高级）','','建单'],['tools','🧰','工具'],['me','👤','我的'],['admin','🛡','管理']]
+let S={view:'list',nav:'list',w:1366,sel:0,status:'进行中',filter:{inc:[],exc:[]},text:'',expanded:false,panel:false,q:'',browse:null,drop:null,pinned:['机型','系统'],saved:[{name:'UD-2300 液路问题',filter:{inc:['机型:UD-2300','系统:液路'],exc:[]},text:''}],mobileDetail:false}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function set(o){Object.assign(S,o);draw()}
+function dimOf(label){const i=label.indexOf(':');return i<0?'其他标签':label.slice(0,i)}
+function dimKey(label){const d=dimOf(label);return d==='其他标签'?'@'+label:d}
+function has(t,label){return t.labels.includes(label)}
+function statusOK(t){return S.status==='全部'?true:Boolean(t.closed)===(S.status==='已关闭')}
+function matches(t,{ignoreDim=null,ignoreExc=null}={}){
+  if(!statusOK(t))return false
+  if(S.text&&!(`${t.title} ${t.no} ${t.labels.join(' ')}`).toLowerCase().includes(S.text.toLowerCase()))return false
+  const groups={}
+  for(const l of S.filter.inc){const k=dimKey(l);if(k===ignoreDim)continue;(groups[k]??=[]).push(l)}
+  for(const values of Object.values(groups))if(!values.some(l=>has(t,l)))return false
+  for(const l of S.filter.exc){if(l===ignoreExc)continue;if(has(t,l))return false}
+  return true
+}
+function filteredIds(){return T.map((_,i)=>i).filter(i=>matches(T[i]))}
+function facetCount(label){return T.filter(t=>t.labels.includes(label)&&matches(t,{ignoreDim:dimKey(label),ignoreExc:label})).length}
+function toggleInc(label){
+  const a=S.filter.inc.slice(),i=a.indexOf(label),e=S.filter.exc.filter(x=>x!==label)
+  if(i>=0)a.splice(i,1);else a.push(label)
+  S.filter={inc:a,exc:e};draw()
+}
+function toggleExc(label){
+  const e=S.filter.exc.slice(),i=e.indexOf(label),a=S.filter.inc.filter(x=>x!==label)
+  if(i>=0)e.splice(i,1);else e.push(label)
+  S.filter={inc:a,exc:e};draw()
+}
+function removeGroup(key){set({filter:{...S.filter,inc:S.filter.inc.filter(l=>dimKey(l)!==key)}})}
+function removeExc(label){set({filter:{...S.filter,exc:S.filter.exc.filter(x=>x!==label)}})}
+function clearFilter(){set({filter:{inc:[],exc:[]},text:'',q:'',expanded:false})}
+function groupPhrase(ls){const d=dimOf(ls[0]);return d==='其他标签'?ls.join(' 且 '):`${d}是 ${ls.map(x=>x.split(':').slice(1).join(':')).join(' 或 ')}`}
+function summary(ids){
+  const g=Object.values(S.filter.inc.reduce((m,l)=>{(m[dimKey(l)]??=[]).push(l);return m},{})).map(groupPhrase)
+  const parts=[...g,...S.filter.exc.map(l=>`不含 ${l}`)]
+  if(S.text)parts.unshift(`标题/编号含 “${S.text}”`)
+  return `${parts.length?parts.join('，且 ')+'，':''}共 ${ids.length} 张`
+}
+function selectedChips(){
+  const groups=Object.entries(S.filter.inc.reduce((m,l)=>{(m[dimKey(l)]??=[]).push(l);return m},{}))
+  const all=[...groups.map(([key,ls])=>`<span class="schip"><span class="tx">${esc(groupPhrase(ls))}</span><button title="移除" onclick="event.stopPropagation();removeGroup('${esc(key)}')">×</button></span>`),
+    ...S.filter.exc.map(l=>`<span class="schip exc"><span class="tx">不含 ${esc(l)}</span><button title="移除" onclick="event.stopPropagation();removeExc('${esc(l)}')">×</button></span>`)]
+  let shown=all
+  if(!S.expanded&&all.length>2)shown=[...all.slice(0,2),`<button class="morechips" onclick="set({expanded:true})">+${all.length-2}</button>`]
+  else if(all.length>2)shown=[...all,`<button class="morechips" onclick="set({expanded:false})">收起</button>`]
+  return `<div class="schips ${S.expanded?'expanded':''}">${shown.join('')||'<span class="tiny muted">未选标签条件</span>'}</div><div class="summary">${esc(summary(filteredIds()))}</div>${all.length||S.text?`<button class="tiny" style="border:0;background:none;color:#2a6fdb;padding:2px 0;cursor:pointer" onclick="clearFilter()">清空</button>`:''}`
+}
+function chips(ls){return ls.map(l=>`<button class="chip ${dimOf(l)==='其他标签'?'':'dim'} ${S.filter.inc.includes(l)?'selected':''}" title="点击按此筛选" onclick="event.stopPropagation();toggleInc('${esc(l)}')">${esc(l)}</button>`).join('')}
+function kind(t){return t.closed?`<span class="badge closed">已关闭 · ${t.closed}</span>`:t.kind==='task'?'<span class="badge task">任务</span>':'<span class="badge fb">反馈</span>'}
+function waitTx(t){return t.closed?'':`<span class="wait ${t.me?'me':''}">等待 ${t.wait}</span>`}
+function lrows(ids){return ids.map(i=>{const t=T[i];return `<div class="row ${t.unread?'unread':''} ${S.sel===i?'on':''}" onclick="set({sel:${i},mobileDetail:S.w===390})">
+ <div class="top">${kind(t)}<span class="tiny muted">${t.no}</span><span class="tiny muted time">${t.upd}</span></div>
+ <div class="t">${esc(t.title)}</div><div class="m">${waitTx(t)||'已完成'} · 指派 ${t.assignee||'未指派'}</div><div class="tags">${chips(t.labels)||'<span class="tiny muted">无标签</span>'}</div></div>`}).join('')}
+function go(k){set({view:k==='inbox'||k==='list'?k:'other',nav:k,panel:false,drop:null,mobileDetail:false})}
+function side(extra=''){return `<aside class="side"><div class="brand">工单板</div><button class="btn block" onclick="set({view:'other',nav:'wizard'})">＋ 请人反馈</button>
+ <div class="nav">${NAV.map(([k,ic,n,b])=>`<div class="it ${S.nav===k?'on':''}" onclick="go('${k}')">${ic} ${n}${b?`<i class="dot">${b}</i>`:''}</div>${k==='list'&&extra?extra:''}`).join('')}</div>
+ <div class="foot"><b>陈工</b> <span class="muted tiny">管理员</span><div class="ver">工单板 ${VER}</div></div></aside>`}
+function rail(){return `<aside class="rail"><div class="plus" onclick="set({view:'other',nav:'wizard'})">＋</div>${NAV.map(([k,ic,n,b,sn])=>`<div class="it ${S.nav===k?'on':''}" onclick="go('${k}')">${ic}${b?`<i class="dot">${b}</i>`:''}<span>${sn||n}</span></div>`).join('')}<div class="ver">${VER}</div></aside>`}
+const MSGS=[
+ {k:'sys',tx:'陈工 通过「请人反馈」创建工单，访客链接已发出 · 10-15 09:12'},
+ {k:'brief',who:'检验科-张三',role:'访客',time:'10-15 10:03',qa:[['出问题的仪器','UD-2300（3 号机）'],['实际看到了什么','开机自检到一半弹出 E21，进样针不动'],['之前做过什么','昨天下班前换过清洗液']],files:['📷 报警画面.jpg','📄 system_log.txt']},
+ {k:'msg',who:'陈工',role:'成员',mine:1,time:'10-15 10:20',tx:'收到。麻烦再看下清洗液瓶管路有没有气泡？能拍一张最好。'},
+ {k:'msg',who:'检验科-张三',role:'访客',time:'10-15 10:41',tx:'有一点气泡，照片发上来了。',files:['📷 管路.jpg']},
+ {k:'msg',who:'陈工 的 Agent',role:'Agent',agent:1,time:'10-15 10:45',tx:'已比对日志：E21 与液路压力异常吻合。建议先按说明书 6.3 排气，再开机自检。'}
+]
+function convo(){return MSGS.map(m=>{
+ if(m.k==='sys')return `<div class="sys">${m.tx}</div>`
+ const fs=m.files?`<div class="files">${m.files.map(f=>`<span class="file">${f}</span>`).join('')}</div>`:''
+ if(m.k==='brief')return `<div class="msg ${m.mine?'mine':''}"><div class="who"><b>${m.who}</b> · ${m.role} · ${m.time}</div><div class="small" style="font-weight:650">访客填写的说明</div><div style="margin-top:5px">${m.qa.map(([q,a])=>`<div class="tiny muted">${q}</div><div style="line-height:1.5;margin-bottom:4px">${a}</div>`).join('')}${fs}</div></div>`
+ return `<div class="msg ${m.mine?'mine':''} ${m.agent?'agent':''}"><div class="who"><b>${m.who}</b> · ${m.role} · ${m.time}</div><div class="tx">${m.tx}</div>${fs}</div>`}).join('')}
+function composer(){return `<div class="composer"><textarea placeholder="回复…"></textarea><div style="display:flex;flex-direction:column;gap:6px"><span style="display:flex;gap:6px"><button class="btn ghost sm">📎</button><button class="btn sm">发送</button></span></div></div>`}
+function metaBlocks(t){return `<div class="mblk"><div class="h">状态</div>${kind(t)} ${waitTx(t)}</div>
+ <div class="mblk"><div class="h">指派人</div>${t.assignee||'未指派'}</div><div class="mblk"><div class="h">发起人</div>${t.creator}${t.tpl?`<div class="tiny muted">模板 ${t.tpl}</div>`:''}</div>
+ <div class="mblk"><div class="h">标签（点击筛选）</div>${chips(t.labels)||'<span class="muted small">无</span>'}</div>
+ <div class="mblk"><div class="h">访客链接</div>${t.guest?`<div class="small">${t.guest}</div>`:'<span class="muted small">还没有</span>'}</div>`}
+function stripMeta(t){return `<div class="strip">${kind(t)} ${waitTx(t)}<span>指派 <b>${t.assignee||'未指派'}</b></span><span>${chips(t.labels)}</span></div>`}
+function detail(wide){const t=T[S.sel];return `<div class="dcol"><div class="dhead"><div style="display:flex;gap:6px;align-items:center">${kind(t)}<span class="small muted">${t.no}</span></div><h2>${esc(t.title)}</h2><div class="acts"><button class="btn ghost sm">🏷 标签</button><button class="btn ghost sm">👤 改派</button><button class="btn ghost sm">✔ 关闭</button></div></div>${wide?'':stripMeta(t)}<div class="dmain"><div style="flex:1;display:flex;flex-direction:column;min-width:0"><div class="convo">${convo()}</div>${composer()}</div>${wide?`<div class="meta">${metaBlocks(t)}</div>`:''}</div></div>`}
+function listHead(ids){return `<div class="ltitle"><b>${S.view==='inbox'?'收件箱':'工单'}</b><span class="muted small lcount">${ids.length} 张</span><span style="flex:1"></span><span class="statuschips">${['进行中','已关闭','全部'].map(x=>`<button class="sc ${S.status===x?'on':''}" onclick="set({status:'${x}'})">${x}</button>`).join('')}</span></div>${filterHead(ids)}${selectedChips()}`}
+function view(){
+  const ids=filteredIds();if(!ids.includes(S.sel)&&ids.length)S.sel=ids[0]
+  if(S.w===390)return mobileView(ids)
+  const wide=S.w>=1280,n=wide?side(typeof sideExtra==='function'?sideExtra():''):rail()
+  if(S.view==='other')return n+`<div class="ph">这页沿用现有内容，原型不展开</div>`
+  return n+`<div class="lcol" style="width:${wide?380:320}px"><div class="lhead">${listHead(ids)}</div><div class="lbody">${lrows(ids)}</div>${panelOverlay(ids)}</div>${detail(wide)}`
+}
+function mobileView(ids){
+  if(S.mobileDetail){const t=T[S.sel];return `<div class="mobile"><div class="mtop"><button class="plain" style="font-size:18px" onclick="set({mobileDetail:false})">‹</button><b>${t.no}</b><span class="tiny muted" style="margin-left:auto">${S.status}</span></div><div class="mdetail"><div style="flex:1;overflow:auto;padding:14px 14px 20px">${kind(t)}<h2 style="font-size:18px;line-height:1.4;margin:6px 0">${esc(t.title)}</h2><div style="margin:8px 0">${chips(t.labels)}</div>${convo()}</div></div><div class="mtabs">${NAV.slice(0,4).map(([k,i,n])=>`<div class="it ${k==='list'?'on':''}" onclick="go('${k}')">${i}<span>${n}</span></div>`).join('')}</div></div>`}
+  return `<div class="mobile"><div class="mtop"><b>工单</b><span class="tiny muted lcount">${ids.length} 张</span><span style="flex:1"></span><span class="statuschips">${['进行中','已关闭'].map(x=>`<button class="sc ${S.status===x?'on':''}" onclick="set({status:'${x}'})">${x}</button>`).join('')}</span></div><div style="padding:8px 10px;background:#fff;border-bottom:1px solid #f0f2f6">${typeof mobileExtra==='function'?`<div class="savedscroll">${mobileExtra()}</div>`:''}${filterHead(ids)}${selectedChips()}</div><div class="mlist">${lrows(ids)}</div>${mobileOverlay(ids)}<div class="mtabs">${NAV.slice(0,4).map(([k,i,n])=>`<div class="it ${k==='list'?'on':''}" onclick="go('${k}')">${i}<span>${n}</span></div>`).join('')}</div></div>`
+}
+function fit(){const p=document.getElementById('pc'),bar=document.getElementById('bar');p.style.width=S.w+'px';p.style.height=S.w===390?Math.max(700,innerHeight-bar.offsetHeight):800+'px';const s=Math.min(innerWidth/S.w,1);p.style.transform=`scale(${s})`;document.getElementById('stage').style.height=p.offsetHeight*s+'px'}
+function draw(){document.getElementById('bar').innerHTML=bar();document.getElementById('pc').innerHTML=view();fit()}
+addEventListener('resize',fit)
+</script></head><body>
+<div class="proto" id="bar"></div><div id="stage"><div id="pc"></div></div>
+<script>
+// 一次性原型：候选 C · 维度下拉 + 保存视图，不合并。
+const NAME='候选 C · 维度下拉 + 保存视图'
+const DESC0='常用维度固定成下拉，条件可保存成个人视图'
+const DESC='机型、系统等维度直接以下拉呈现，更多维度可勾选固定。下拉内可搜索并复选值，组合后能保存为个人视图，侧栏工单入口下方会缩进展示并可一键恢复。'
+function scenario(k){
+  const base={status:'进行中',expanded:false,panel:false,q:'',browse:null,drop:null,mobileDetail:false}
+  if(k==='empty')set({...base,filter:{inc:[],exc:[]},text:''})
+  if(k==='multi')set({...base,filter:{inc:['机型:UD-2300','机型:UD-1600','系统:液路'],exc:[]},text:''})
+  if(k==='exclude')set({...base,filter:{inc:['机型:UD-2300','机型:UD-1600','系统:液路'],exc:['待初筛']},text:''})
+  if(k==='open')set({...base,drop:'机型'})
+}
+function bar(){return `<b>${NAME}</b><span>${DESC0}</span><span style="flex:1"></span><button onclick="set({view:S.view==='list'?'inbox':'list',nav:'list',drop:null})">${S.view==='list'?'收件箱视图':'工单列表视图'}</button>${[['空','empty'],['多选','multi'],['排除','exclude'],['已展开','open']].map(([n,k])=>`<button onclick="scenario('${k}')">${n}</button>`).join('')}<span>宽</span>${[[1366,'1366'],[1024,'1024'],[390,'手机']].map(([w,n])=>`<button class="${S.w===w?'on':''}" onclick="set({w:${w},drop:null,mobileDetail:false})">${n}</button>`).join('')}<div class="d">${DESC}</div>`}
+function filterHead(){return `<div class="dimchips">${S.pinned.map(d=>`<button class="fc ${S.drop===d?'on':''}" onclick="set({drop:S.drop===d?null:'${d}',q:''})">${d} ▾</button>`).join('')}<button class="fc ${S.drop==='__more'?'on':''}" onclick="set({drop:S.drop==='__more'?null:'__more',q:''})">更多维度 ▾</button></div><div style="display:flex;gap:6px;margin-top:7px"><button class="btn ghost sm" style="border-radius:12px" onclick="saveView()">☆ 保存为视图</button><button class="morechips" onclick="set({expanded:true})">查看全部条件</button></div>`}
+function valueRows(d){
+  const q=S.q.trim().toLowerCase(),vals=DIMS[d].filter(v=>`${d}:${v}`.toLowerCase().includes(q))
+  return vals.map(v=>{const l=`${d}:${v}`,n=facetCount(l);return `<div class="vrow ${n===0?'zero':''}"><label onclick="toggleInc('${esc(l)}')"><input type="checkbox" ${S.filter.inc.includes(l)?'checked':''} readonly><span class="val">${v}</span><span class="count">${n}</span></label><button class="exc-btn ${S.filter.exc.includes(l)?'on':''}" onclick="toggleExc('${esc(l)}')">不含</button></div>`}).join('')||'<div class="tiny muted" style="padding:6px">没有匹配值</div>'
+}
+function panelOverlay(){if(!S.drop)return '';const more=S.drop==='__more';return `<div class="overlay"><div class="ohead"><b>${more?'更多维度':S.drop}</b><span class="tiny muted">复选清单</span><button class="x" onclick="set({drop:null,q:''})">×</button></div><div style="padding:9px 10px;border-bottom:1px solid #eef1f5"><input class="search" value="${esc(S.q)}" placeholder="搜索维度或值…" oninput="setQuery(this.value)"></div><div class="obody">${more?Object.keys(DIMS).map(d=>`<div class="group"><label class="vrow"><input type="checkbox" ${S.pinned.includes(d)?'checked':''} onchange="pinDim('${d}',this.checked)"><span class="val">固定显示 ${d}</span><span class="count">${DIMS[d].length} 个值</span></label><button class="fc" style="margin-left:6px" onclick="set({drop:'${d}',q:''})">查看值 ›</button></div>`).join(''):valueRows(S.drop)}</div><div class="ofoot"><button class="btn ghost sm" onclick="clearFilter()">清空</button><span class="tiny muted" style="flex:1">${S.filter.inc.length} 个纳入 · ${S.filter.exc.length} 个排除</span><button class="btn sm" onclick="set({drop:null,q:''})">显示 ${filteredIds().length} 张</button></div></div>`}
+function mobileOverlay(){if(!S.drop)return '';return `<div class="sheet"><div class="ohead"><b>${S.drop==='__more'?'更多维度':S.drop}</b><button class="x" onclick="set({drop:null,q:''})">×</button></div><div style="padding:9px 10px;border-bottom:1px solid #eef1f5"><input class="search" value="${esc(S.q)}" placeholder="搜索值…" oninput="setQuery(this.value)"></div><div class="obody">${S.drop==='__more'?Object.keys(DIMS).map(d=>`<button class="srow" onclick="set({drop:'${d}',q:''})"><span class="l">${d}</span><span class="c">${DIMS[d].length} 个值</span></button>`).join(''):valueRows(S.drop)}</div><div class="ofoot"><button class="btn ghost sm" onclick="clearFilter()">清空</button><button class="btn sm" onclick="set({drop:null,q:''})">完成</button></div></div>`}
+function setQuery(v){S.q=v;const p=document.querySelector('.overlay .obody,.sheet .obody');if(p)p.innerHTML=S.drop==='__more'?Object.keys(DIMS).map(d=>`<button class="srow" onclick="set({drop:'${d}',q:''})"><span class="l">${d}</span><span class="c">${DIMS[d].length} 个值</span></button>`).join(''):valueRows(S.drop)}
+function pinDim(d,on){set({pinned:on?[...new Set([...S.pinned,d])]:S.pinned.filter(x=>x!==d),drop:'__more',q:S.q})}
+function saveView(){if(!S.filter.inc.length&&!S.filter.exc.length&&!S.text)return;const name=prompt('视图名称','我的标签视图');if(name)set({saved:[...S.saved,{name,filter:JSON.parse(JSON.stringify(S.filter)),text:S.text}]})}
+function applyView(i){const v=S.saved[i],f=JSON.parse(JSON.stringify(v.filter));const old=S.status;set({filter:f,text:v.text||'',status:old,drop:null,expanded:true})}
+function viewCount(v){return T.filter(t=>!t.closed&&v.filter.inc.every(l=>has(t,l))&&v.filter.exc.every(l=>!has(t,l))).length}
+function sideExtra(){return S.saved.map((v,i)=>`<div class="sub" onclick="applyView(${i})"><span>🗂</span><span>${esc(v.name)}</span><span class="n">· ${viewCount(v)}</span></div>`).join('')}
+function mobileExtra(){return S.saved.map((v,i)=>`<button class="viewchip" onclick="applyView(${i})">${esc(v.name)}</button>`).join('')}
+draw()
+</script>
+</body></html>

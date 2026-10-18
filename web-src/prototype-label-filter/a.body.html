@@ -1,0 +1,42 @@
+<div class="proto" id="bar"></div><div id="stage"><div id="pc"></div></div>
+<script>
+// 一次性原型：候选 A · 分面面板，不合并。
+const NAME='候选 A · 分面面板'
+const DESC0='列表栏内盖一层可搜索的标签分面面板'
+const DESC='点「🏷 标签」在列表栏内打开完整分面：先搜维度和值，再勾选纳入或切换不含。数量会随其他条件联动，选完收起面板，条件以 chip 留在列表顶部。'
+function scenario(k){
+  const base={status:'进行中',expanded:false,panel:false,q:'',browse:null,drop:null,mobileDetail:false}
+  if(k==='empty')set({...base,filter:{inc:[],exc:[]},text:''})
+  if(k==='multi')set({...base,filter:{inc:['机型:UD-2300','机型:UD-1600','系统:液路'],exc:[]},text:''})
+  if(k==='exclude')set({...base,filter:{inc:['机型:UD-2300','机型:UD-1600','系统:液路'],exc:['待初筛']},text:''})
+  if(k==='open')set({...base,panel:true})
+}
+function bar(){return `<b>${NAME}</b><span>${DESC0}</span><span style="flex:1"></span><button onclick="set({view:S.view==='list'?'inbox':'list',nav:'list',panel:false})">${S.view==='list'?'收件箱视图':'工单列表视图'}</button>
+ ${[['空','empty'],['多选','multi'],['排除','exclude'],['已展开','open']].map(([n,k])=>`<button onclick="scenario('${k}')">${n}</button>`).join('')}
+ <span>宽</span>${[[1366,'1366'],[1024,'1024'],[390,'手机']].map(([w,n])=>`<button class="${S.w===w?'on':''}" onclick="set({w:${w},panel:false,mobileDetail:false})">${n}</button>`).join('')}<div class="d">${DESC}</div>`}
+function filterHead(){return `<div class="fchips"><button class="fc ${S.panel?'on':''}" onclick="set({panel:!S.panel})">🏷 标签 ▾</button><button class="fc" onclick="set({view:S.view==='list'?'inbox':'list'})">${S.view==='list'?'只看收件箱':'全部工单'}</button></div>`}
+function groupRows(name){
+  let vals=DIMS[name].map(v=>`${name}:${v}`);if(name==='其他标签')vals=DIMS[name]
+  let rows=vals.map(l=>({l,n:facetCount(l)}))
+  const q=S.q.trim().toLowerCase()
+  if(q)rows=rows.filter(x=>x.l.toLowerCase().includes(q))
+  else{
+    rows=rows.sort((a,b)=>b.n-a.n)
+    const hidden=rows.length-5
+    if(!S['full'+name])rows=rows.slice(0,5)
+    return rows.map(({l,n})=>`<div class="vrow ${n===0?'zero':''}"><label onclick="toggleInc('${esc(l)}')"><input type="checkbox" ${S.filter.inc.includes(l)?'checked':''} readonly><span class="val">${esc(dimOf(l)==='其他标签'?l:l.slice(name.length+1))}</span><span class="count">${n}</span></label><button class="exc-btn ${S.filter.exc.includes(l)?'on':''}" onclick="toggleExc('${esc(l)}')">不含</button></div>`).join('')+(hidden>0&&!S['full'+name]?`<button class="morechips" style="margin:3px 5px 7px" onclick="set({'full${name}':true,q:S.q})">展开全部 ${vals.length} 个</button>`:'')||'<div class="tiny muted" style="padding:4px 5px 8px">没有匹配的值</div>'
+  }
+  return rows.map(({l,n})=>`<div class="vrow ${n===0?'zero':''}"><label onclick="toggleInc('${esc(l)}')"><input type="checkbox" ${S.filter.inc.includes(l)?'checked':''} readonly><span class="val">${esc(dimOf(l)==='其他标签'?l:l.slice(name.length+1))}</span><span class="count">${n}</span></label><button class="exc-btn ${S.filter.exc.includes(l)?'on':''}" onclick="toggleExc('${esc(l)}')">不含</button></div>`).join('')||'<div class="tiny muted" style="padding:4px 5px 8px">没有匹配的值</div>'
+}
+function facetBody(ids){
+  const open=g=>S['open'+g]!==false
+  return `<div class="obody">${Object.keys(DIMS).map(g=>{
+    const vals=DIMS[g].map(v=>g==='其他标签'?v:`${g}:${v}`),q=S.q.trim().toLowerCase()
+    const hit=!q||g.toLowerCase().includes(q)||vals.some(v=>v.toLowerCase().includes(q))
+    if(!hit)return ''
+    return `<div class="group"><button class="ghead" onclick="set({'open${g}':${open(g)},q:S.q})">${open(g)?'▾':'▸'} ${g}<span class="n">${vals.length} 个值</span></button>${open(g)?groupRows(g):''}</div>`}).join('')||'<div class="tiny muted">没有匹配的维度或值</div>'}</div>`}
+function panelOverlay(ids){if(!S.panel)return '';return `<div class="${S.w===390?'sheet':'overlay'}"><div class="ohead"><b>标签筛选</b><span class="tiny muted">同维度多选取或</span><button class="x" onclick="set({panel:false})">×</button></div><div style="padding:9px 10px;border-bottom:1px solid #eef1f5"><input class="search" value="${esc(S.q)}" placeholder="在维度和值里搜索…" oninput="setQuery(this.value)"></div>${facetBody(ids)}<div class="ofoot"><button class="btn ghost sm" onclick="clearFilter()">清空</button><span class="tiny muted" style="flex:1">已选 ${S.filter.inc.length+S.filter.exc.length} 个条件</span><button class="btn sm" onclick="set({panel:false})">显示 ${ids.length} 张</button></div></div>`}
+function mobileOverlay(ids){return panelOverlay(ids)}
+function setQuery(v){S.q=v;const p=document.querySelector('.overlay .obody,.sheet .obody');if(p)p.innerHTML=facetBody(filteredIds()).children[0]?facetBody(filteredIds()):''}
+draw()
+</script>

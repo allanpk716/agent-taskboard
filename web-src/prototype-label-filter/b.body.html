@@ -1,0 +1,38 @@
+<div class="proto" id="bar"></div><div id="stage"><div id="pc"></div></div>
+<script>
+// 一次性原型：候选 B · 搜索框直输，不合并。
+const NAME='候选 B · 搜索框直输'
+const DESC0='搜索框就是筛选入口，标签和别名都能建议'
+const DESC='聚焦搜索框后可按维度浏览，也可以输入 2300、7600、乱码、检验等别名直接得到标签建议。选中后条件变成 token，退格可删除，建议项右侧还能一键排除。'
+function scenario(k){
+  const base={status:'进行中',expanded:false,panel:false,q:'',browse:null,drop:null,mobileDetail:false}
+  if(k==='empty')set({...base,filter:{inc:[],exc:[]},text:''})
+  if(k==='multi')set({...base,filter:{inc:['机型:UD-2300','机型:UD-1600','系统:液路'],exc:[]},text:''})
+  if(k==='exclude')set({...base,filter:{inc:['机型:UD-2300','机型:UD-1600','系统:液路'],exc:['待初筛']},text:''})
+  if(k==='open')set({...base,panel:true,q:'2300'})
+}
+function bar(){return `<b>${NAME}</b><span>${DESC0}</span><span style="flex:1"></span><button onclick="set({view:S.view==='list'?'inbox':'list',nav:'list',panel:false})">${S.view==='list'?'收件箱视图':'工单列表视图'}</button>${[['空','empty'],['多选','multi'],['排除','exclude'],['已展开','open']].map(([n,k])=>`<button onclick="scenario('${k}')">${n}</button>`).join('')}<span>宽</span>${[[1366,'1366'],[1024,'1024'],[390,'手机']].map(([w,n])=>`<button class="${S.w===w?'on':''}" onclick="set({w:${w},panel:false,q:'',mobileDetail:false})">${n}</button>`).join('')}<div class="d">${DESC}</div>`}
+function removeToken(key){if(key==='__text')set({text:'',q:''});else removeGroup(key)}
+function tokenBox(){return `<div class="tokenbox" onclick="document.getElementById('bq').focus()">${Object.entries(S.filter.inc.reduce((m,l)=>{(m[dimKey(l)]??=[]).push(l);return m},{})).map(([key,ls])=>`<span class="schip"><span class="tx">${esc(groupPhrase(ls))}</span><button onclick="event.stopPropagation();removeToken('${esc(key)}')">×</button></span>`).join('')}${S.filter.exc.map(l=>`<span class="schip exc"><span class="tx">不含 ${esc(l)}</span><button onclick="event.stopPropagation();removeExc('${esc(l)}')">×</button></span>`).join('')}${S.text?`<span class="schip"><span class="tx">“${esc(S.text)}”</span><button onclick="event.stopPropagation();removeToken('__text')">×</button></span>`:''}<input id="bq" value="${esc(S.q)}" placeholder="搜索标签、别名或标题…" onfocus="openSearch(this)" oninput="setQuery(this.value)" onkeydown="keySearch(event)"></div>`}
+function filterHead(){return `<div style="position:relative">${tokenBox()}${S.panel&&S.w!==390?`<div class="suggest">${suggestRows()}</div>`:''}</div>`}
+function openSearch(input){
+  if(S.w===390){if(!S.panel){S.panel=true;draw();document.getElementById('bq')?.focus()}return}
+  if(!S.panel){S.panel=true;input.parentElement.insertAdjacentHTML('beforeend',`<div class="suggest">${suggestRows()}</div>`)}
+}
+function suggestRows(){
+  if(S.browse){const vals=DIMS[S.browse].map(v=>S.browse==='其他标签'?v:`${S.browse}:${v}`);return `<button class="srow" onclick="set({browse:null,q:''})"><span class="l">‹ 返回维度</span></button>`+vals.map(l=>{const n=facetCount(l),shown=S.browse==='其他标签'?l:l.slice(S.browse.length+1);return `<div class="srow" style="padding:0"><button class="srow" style="flex:1" onclick="toggleInc('${esc(l)}')"><span class="l">${esc(shown)}</span><span class="c">${n} 张</span></button><button class="exc" onclick="toggleExc('${esc(l)}')">不含</button></div>`}).join('')}
+  const q=S.q.trim().toLowerCase()
+  if(!q)return `<div class="tiny muted" style="padding:7px 10px 3px">按维度浏览</div>`+Object.keys(DIMS).map(d=>`<button class="srow" onclick="set({browse:'${d}'})"><span class="l">${d}</span><span class="kind">${DIMS[d].length} 个值 ›</span></button>`).join('')
+  const hits=[]
+  for(const [d,vs] of Object.entries(DIMS))for(const v of vs){const l=d==='其他标签'?v:`${d}:${v}`;if(l.toLowerCase().includes(q))hits.push(l)}
+  for(const [a,l] of ALIASES)if(a.toLowerCase().includes(q)&&!hits.includes(l))hits.push(l)
+  return hits.slice(0,8).map(l=>{const alias=ALIASES.find(([a,x])=>x===l&&a.toLowerCase().includes(q));return `<div class="srow" style="padding:0"><button class="srow" style="flex:1" onclick="selectSuggestion('${esc(l)}')"><span class="l">${esc(l)}${alias?`<span class="kind"> · 别名 ${esc(alias[0])}</span>`:''}</span><span class="c">${facetCount(l)} 张</span></button><button class="exc" onclick="toggleExc('${esc(l)}')">不含</button></div>`}).join('')+`<button class="srow" onclick="applyText()"><span class="l">搜索标题含 “${esc(S.q)}”</span><span class="kind">Enter</span></button>`
+}
+function selectSuggestion(l){S.q='';S.panel=true;toggleInc(l)}
+function applyText(){set({text:S.q,q:'',panel:false})}
+function keySearch(e){if(e.key==='Enter')applyText();if(e.key==='Backspace'&&!S.q){const keys=Object.keys(S.filter.inc.reduce((m,l)=>{(m[dimKey(l)]??=[]);return m},{}));if(keys.length)removeToken(keys.at(-1));else if(S.filter.exc.length)removeExc(S.filter.exc.at(-1));else if(S.text)removeToken('__text')}}
+function setQuery(v){S.q=v;const s=document.querySelector('.suggest');if(s)s.innerHTML=suggestRows()}
+function panelOverlay(){return ''}
+function mobileOverlay(){if(!S.panel)return '';return `<div class="sheet"><div class="ohead"><b>搜索筛选</b><button class="x" onclick="set({panel:false,q:''})">×</button></div><div style="padding:9px 10px;border-bottom:1px solid #eef1f5">${tokenBox()}</div><div class="obody" style="padding:0">${suggestRows()}</div><div class="ofoot"><button class="btn ghost sm" onclick="clearFilter()">清空</button><span style="flex:1"></span><button class="btn sm" onclick="set({panel:false})">显示 ${filteredIds().length} 张</button></div></div>`}
+draw()
+</script>

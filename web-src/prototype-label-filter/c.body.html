@@ -1,0 +1,30 @@
+<div class="proto" id="bar"></div><div id="stage"><div id="pc"></div></div>
+<script>
+// 一次性原型：候选 C · 维度下拉 + 保存视图，不合并。
+const NAME='候选 C · 维度下拉 + 保存视图'
+const DESC0='常用维度固定成下拉，条件可保存成个人视图'
+const DESC='机型、系统等维度直接以下拉呈现，更多维度可勾选固定。下拉内可搜索并复选值，组合后能保存为个人视图，侧栏工单入口下方会缩进展示并可一键恢复。'
+function scenario(k){
+  const base={status:'进行中',expanded:false,panel:false,q:'',browse:null,drop:null,mobileDetail:false}
+  if(k==='empty')set({...base,filter:{inc:[],exc:[]},text:''})
+  if(k==='multi')set({...base,filter:{inc:['机型:UD-2300','机型:UD-1600','系统:液路'],exc:[]},text:''})
+  if(k==='exclude')set({...base,filter:{inc:['机型:UD-2300','机型:UD-1600','系统:液路'],exc:['待初筛']},text:''})
+  if(k==='open')set({...base,drop:'机型'})
+}
+function bar(){return `<b>${NAME}</b><span>${DESC0}</span><span style="flex:1"></span><button onclick="set({view:S.view==='list'?'inbox':'list',nav:'list',drop:null})">${S.view==='list'?'收件箱视图':'工单列表视图'}</button>${[['空','empty'],['多选','multi'],['排除','exclude'],['已展开','open']].map(([n,k])=>`<button onclick="scenario('${k}')">${n}</button>`).join('')}<span>宽</span>${[[1366,'1366'],[1024,'1024'],[390,'手机']].map(([w,n])=>`<button class="${S.w===w?'on':''}" onclick="set({w:${w},drop:null,mobileDetail:false})">${n}</button>`).join('')}<div class="d">${DESC}</div>`}
+function filterHead(){return `<div class="dimchips">${S.pinned.map(d=>`<button class="fc ${S.drop===d?'on':''}" onclick="set({drop:S.drop===d?null:'${d}',q:''})">${d} ▾</button>`).join('')}<button class="fc ${S.drop==='__more'?'on':''}" onclick="set({drop:S.drop==='__more'?null:'__more',q:''})">更多维度 ▾</button></div><div style="display:flex;gap:6px;margin-top:7px"><button class="btn ghost sm" style="border-radius:12px" onclick="saveView()">☆ 保存为视图</button><button class="morechips" onclick="set({expanded:true})">查看全部条件</button></div>`}
+function valueRows(d){
+  const q=S.q.trim().toLowerCase(),vals=DIMS[d].filter(v=>`${d}:${v}`.toLowerCase().includes(q))
+  return vals.map(v=>{const l=`${d}:${v}`,n=facetCount(l);return `<div class="vrow ${n===0?'zero':''}"><label onclick="toggleInc('${esc(l)}')"><input type="checkbox" ${S.filter.inc.includes(l)?'checked':''} readonly><span class="val">${v}</span><span class="count">${n}</span></label><button class="exc-btn ${S.filter.exc.includes(l)?'on':''}" onclick="toggleExc('${esc(l)}')">不含</button></div>`}).join('')||'<div class="tiny muted" style="padding:6px">没有匹配值</div>'
+}
+function panelOverlay(){if(!S.drop)return '';const more=S.drop==='__more';return `<div class="overlay"><div class="ohead"><b>${more?'更多维度':S.drop}</b><span class="tiny muted">复选清单</span><button class="x" onclick="set({drop:null,q:''})">×</button></div><div style="padding:9px 10px;border-bottom:1px solid #eef1f5"><input class="search" value="${esc(S.q)}" placeholder="搜索维度或值…" oninput="setQuery(this.value)"></div><div class="obody">${more?Object.keys(DIMS).map(d=>`<div class="group"><label class="vrow"><input type="checkbox" ${S.pinned.includes(d)?'checked':''} onchange="pinDim('${d}',this.checked)"><span class="val">固定显示 ${d}</span><span class="count">${DIMS[d].length} 个值</span></label><button class="fc" style="margin-left:6px" onclick="set({drop:'${d}',q:''})">查看值 ›</button></div>`).join(''):valueRows(S.drop)}</div><div class="ofoot"><button class="btn ghost sm" onclick="clearFilter()">清空</button><span class="tiny muted" style="flex:1">${S.filter.inc.length} 个纳入 · ${S.filter.exc.length} 个排除</span><button class="btn sm" onclick="set({drop:null,q:''})">显示 ${filteredIds().length} 张</button></div></div>`}
+function mobileOverlay(){if(!S.drop)return '';return `<div class="sheet"><div class="ohead"><b>${S.drop==='__more'?'更多维度':S.drop}</b><button class="x" onclick="set({drop:null,q:''})">×</button></div><div style="padding:9px 10px;border-bottom:1px solid #eef1f5"><input class="search" value="${esc(S.q)}" placeholder="搜索值…" oninput="setQuery(this.value)"></div><div class="obody">${S.drop==='__more'?Object.keys(DIMS).map(d=>`<button class="srow" onclick="set({drop:'${d}',q:''})"><span class="l">${d}</span><span class="c">${DIMS[d].length} 个值</span></button>`).join(''):valueRows(S.drop)}</div><div class="ofoot"><button class="btn ghost sm" onclick="clearFilter()">清空</button><button class="btn sm" onclick="set({drop:null,q:''})">完成</button></div></div>`}
+function setQuery(v){S.q=v;const p=document.querySelector('.overlay .obody,.sheet .obody');if(p)p.innerHTML=S.drop==='__more'?Object.keys(DIMS).map(d=>`<button class="srow" onclick="set({drop:'${d}',q:''})"><span class="l">${d}</span><span class="c">${DIMS[d].length} 个值</span></button>`).join(''):valueRows(S.drop)}
+function pinDim(d,on){set({pinned:on?[...new Set([...S.pinned,d])]:S.pinned.filter(x=>x!==d),drop:'__more',q:S.q})}
+function saveView(){if(!S.filter.inc.length&&!S.filter.exc.length&&!S.text)return;const name=prompt('视图名称','我的标签视图');if(name)set({saved:[...S.saved,{name,filter:JSON.parse(JSON.stringify(S.filter)),text:S.text}]})}
+function applyView(i){const v=S.saved[i],f=JSON.parse(JSON.stringify(v.filter));const old=S.status;set({filter:f,text:v.text||'',status:old,drop:null,expanded:true})}
+function viewCount(v){return T.filter(t=>!t.closed&&v.filter.inc.every(l=>has(t,l))&&v.filter.exc.every(l=>!has(t,l))).length}
+function sideExtra(){return S.saved.map((v,i)=>`<div class="sub" onclick="applyView(${i})"><span>🗂</span><span>${esc(v.name)}</span><span class="n">· ${viewCount(v)}</span></div>`).join('')}
+function mobileExtra(){return S.saved.map((v,i)=>`<button class="viewchip" onclick="applyView(${i})">${esc(v.name)}</button>`).join('')}
+draw()
+</script>
