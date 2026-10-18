@@ -109,7 +109,7 @@ test('detail writes refresh the selected row in the wide list', async ({ page, r
   const row = page.locator('.tcard', { hasText: ticket })
   await expect(row).toContainText('机型:UD-2300')
 
-  await page.getByRole('button', { name: '标签' }).click()
+  await page.getByRole('button', { name: '🏷 标签', exact: true }).click()
   await page.getByLabel('标签输入').fill('机型:US-1680')
   await page.getByRole('button', { name: '添加', exact: true }).click()
   await expect(page.locator('.modal .chip', { hasText: '机型:US-1680' })).toBeVisible()

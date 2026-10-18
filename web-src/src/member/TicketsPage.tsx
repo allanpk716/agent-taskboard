@@ -7,6 +7,8 @@ import { ApiError } from '../api'
 import { closeReasonText, fmtShort } from '../shared/format'
 import { api } from '../api'
 import { nav, useInvalidate, useLocationSearch } from './ui'
+import { LabelFacetPanel, LabelFilterSummary } from './LabelFacets'
+import { useLayoutTier } from './useLayoutTier'
 
 export interface ListFilters {
   status: 'open' | 'closed' | 'all'
@@ -16,7 +18,9 @@ export interface ListFilters {
   actor: '' | 'member' | 'agent'
   q: string
   // 更多筛选（评审 P2-11）
-  label: string // 标签：维度:值 / 值 / 别名，服务端解析（resolved_aliases 回显标准值）
+  label: string[] // 标签（可重复）：维度:值 / 值 / 别名，服务端解析后回显标准值
+  labelAny: string[] // 维度:值；同一维度取或（#104）
+  noLabel: string[] // 排除条件（可重复）
   template: string // 模板 key
   creatorKind: '' | 'me' | 'guest'
   creatorName: string // 成员姓名（填了优先于 creatorKind）
@@ -65,7 +69,9 @@ export function toQuery(f: ListFilters): string {
   if (f.waiting) q.set('waiting_on', f.waiting)
   if (f.actor) q.set('actor_kind', f.actor)
   if (f.q.trim()) q.set('q', f.q.trim())
-  if (f.label.trim()) q.set('label', f.label.trim())
+  for (const label of f.label) if (label.trim()) q.append('label', label.trim())
+  for (const label of f.labelAny) q.append('label_any', label)
+  for (const label of f.noLabel) q.append('no_label', label)
   if (f.template) q.set('template', f.template)
   if (f.creatorName.trim()) q.set('creator', f.creatorName.trim())
   else if (f.creatorKind) q.set('creator', f.creatorKind)
@@ -87,7 +93,9 @@ export function filtersFromSearch(search: string): ListFilters {
     waiting: (q.get('waiting_on') ?? '') as ListFilters['waiting'],
     actor: (q.get('actor_kind') ?? '') as ListFilters['actor'],
     q: get('q', ''),
-    label: get('label', ''),
+    label: q.getAll('label').filter(Boolean),
+    labelAny: q.getAll('label_any').filter(Boolean),
+    noLabel: q.getAll('no_label').filter(Boolean),
     template: get('template', ''),
     creatorKind: '',
     creatorName: '',
@@ -256,6 +264,7 @@ export function TicketsPage({
   const [extra, setExtra] = useState<TicketListItem[]>([])
   const [error, setError] = useState<string | null>(null)
   const [moreOpen, setMoreOpen] = useState(false)
+  const [labelPanelOpen, setLabelPanelOpen] = useState(false)
   const [templates, setTemplates] = useState<{ key: string; name: string }[]>([])
   const [labelHints, setLabelHints] = useState<string[]>([])
   const hintTimer = useRef<number | undefined>(undefined)
@@ -263,7 +272,7 @@ export function TicketsPage({
   // 标签输入的候选：resolve 接口把俗称/别名换成标准值（评审 P2-11，别名可用）。
   useEffect(() => {
     window.clearTimeout(hintTimer.current)
-    const text = filters.label.trim()
+    const text = filters.label.join(' ').trim()
     if (!text) {
       setLabelHints([])
       return
@@ -334,12 +343,40 @@ export function TicketsPage({
     update({ [key]: value } as Partial<ListFilters>)
   }
 
+  const hasLabelFilters =
+    !!filters.label.length || !!filters.labelAny.length || !!filters.noLabel.length
   const hasMoreFilters =
-    !!filters.label.trim() || !!filters.template || !!filters.creatorKind || !!filters.creatorName.trim() || !!filters.timeField
+    !!filters.template || !!filters.creatorKind || !!filters.creatorName.trim() || !!filters.timeField
 
   const items = [...(data?.items ?? []), ...extra]
   const changeFilter = update
   const detailHref = (number: string) => `/t/${number}?${toQuery(filters)}`
+  const tier = useLayoutTier()
+  const labelPanel = labelPanelOpen && (
+    <LabelFacetPanel
+      filters={filters}
+      variant={tier === 'mobile' ? 'drawer' : 'overlay'}
+      onApply={(patch) => {
+        update(patch)
+        setLabelPanelOpen(false)
+      }}
+      onClose={() => setLabelPanelOpen(false)}
+    />
+  )
+  const labelSummary = (
+    <LabelFilterSummary filters={filters} total={data?.total ?? null} onChange={update} />
+  )
+  const labelButton = (
+    <button
+      type="button"
+      className={`fchip${labelPanelOpen || hasLabelFilters ? ' on' : ''}`}
+      aria-pressed={labelPanelOpen}
+      aria-expanded={labelPanelOpen}
+      onClick={() => setLabelPanelOpen(!labelPanelOpen)}
+    >
+      🏷 标签 ▾
+    </button>
+  )
 
   if (desktop) {
     return (
@@ -362,6 +399,7 @@ export function TicketsPage({
           />
         </header>
         <div className="pc-filter-row">
+          {labelButton}
           <button
             type="button"
             className={`fchip${filters.status === 'open' ? ' on' : ''}`}
@@ -456,12 +494,12 @@ export function TicketsPage({
                 list="pc-label-suggestions"
                 placeholder="如 机型:UD-2300"
                 aria-label="标签"
-                defaultValue={filters.label}
+                defaultValue={filters.label.join(' ')}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') changeFilter({ label: (e.target as HTMLInputElement).value })
+                  if (e.key === 'Enter') changeFilter({ label: [(e.target as HTMLInputElement).value] })
                 }}
                 onBlur={(e) => {
-                  if (e.target.value !== filters.label) changeFilter({ label: e.target.value })
+                  if (e.target.value !== filters.label.join(' ')) changeFilter({ label: [e.target.value] })
                 }}
               />
               <datalist id="pc-label-suggestions">
@@ -541,6 +579,8 @@ export function TicketsPage({
             </label>
           </div>
         )}
+        {labelSummary}
+        {labelPanel}
         <div className="pc-list-scroll" data-testid="ticket-list-scroll">
           {error && <div className="ecard">{error}</div>}
           {!error && items.length === 0 && data && <div className="ecard">没有符合条件的工单</div>}
@@ -584,6 +624,7 @@ export function TicketsPage({
             />
           </div>
           <div className="frow">
+            {labelButton}
             <FilterGroup
               label="状态"
               value={filters.status}
@@ -659,13 +700,13 @@ export function TicketsPage({
                   style={{ width: 150 }}
                   list="label-suggestions"
                   placeholder="如 机型:UD-2300 或俗称"
-                  defaultValue={filters.label}
+                  defaultValue={filters.label.join(' ')}
                   aria-label="标签"
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') set('label', (e.target as HTMLInputElement).value)
+                    if (e.key === 'Enter') set('label', [(e.target as HTMLInputElement).value])
                   }}
                   onBlur={(e) => {
-                    if (e.target.value !== filters.label) set('label', e.target.value)
+                    if (e.target.value !== filters.label.join(' ')) set('label', [e.target.value])
                   }}
                 />
                 <datalist id="label-suggestions">
@@ -753,8 +794,10 @@ export function TicketsPage({
               </span>
             </div>
           )}
+          {labelSummary}
         </div>
       </div>
+      {labelPanel}
       <div className="b-note">
         共 <b>{data?.total ?? '…'}</b> 张（当前条件）
       </div>
