@@ -150,6 +150,7 @@ const (
 	CodeClientNotAvailable       = "client_not_available"
 	CodePasswordTooShort         = "password_too_short"
 	CodeInvalidOldPassword       = "invalid_old_password"
+	CodePasswordUnchanged        = "password_unchanged"
 	CodeCannotResetSelf          = "cannot_reset_self"
 )
 

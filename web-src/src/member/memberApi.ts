@@ -75,6 +75,13 @@ export async function logout(): Promise<void> {
   await api('/api/v1/session', { method: 'DELETE' })
 }
 
+export async function changeOwnPassword(oldPassword: string, newPassword: string): Promise<void> {
+  await api('/api/v1/me/password', {
+    method: 'POST',
+    body: JSON.stringify({ old_password: oldPassword, new_password: newPassword }),
+  })
+}
+
 /* ---------------- 模板维护（#42） ---------------- */
 
 export interface TemplateSummary {

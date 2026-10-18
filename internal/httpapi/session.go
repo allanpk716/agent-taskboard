@@ -198,7 +198,7 @@ func (a *API) handleOwnPassword(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
 		return
 	}
-	viewer, ok := a.webSessionFromRequest(w, r)
+	sess, ok := a.sessionFromRequest(w, r)
 	if !ok {
 		return
 	}
@@ -209,12 +209,14 @@ func (a *API) handleOwnPassword(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req, `{"old_password": "…", "new_password": "…"}`) {
 		return
 	}
-	err := a.ident.ChangeOwnPassword(r.Context(), viewer.Member.ID, req.OldPassword, req.NewPassword)
+	err := a.ident.ChangeOwnPassword(r.Context(), sess.Member.ID, sess.ID, req.OldPassword, req.NewPassword)
 	switch {
 	case errors.Is(err, identity.ErrInvalidOldPassword):
 		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidOldPassword, "原密码不正确", "")
 	case errors.Is(err, identity.ErrPasswordTooShort):
 		WriteError(w, http.StatusUnprocessableEntity, CodePasswordTooShort, "新密码至少 8 位", "")
+	case errors.Is(err, identity.ErrPasswordUnchanged):
+		WriteError(w, http.StatusUnprocessableEntity, CodePasswordUnchanged, "新密码与旧密码相同", "")
 	case err != nil:
 		panic(err)
 	default:
