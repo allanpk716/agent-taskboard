@@ -36,6 +36,10 @@ export interface MemberRef {
 /** 成员视角的工单（比访客多 labels；viewer.can 决定按钮是否出现）。 */
 export interface MemberTicket extends TicketView {
   labels: string[]
+  /** #110：Agent 段（成员读工单总有）。 */
+  handoff_text?: string
+  /** #110：人话行 + Agent 段；有指派人时才有。 */
+  handoff_share_text?: string | null
 }
 
 export interface MarkNotificationsReadResult {

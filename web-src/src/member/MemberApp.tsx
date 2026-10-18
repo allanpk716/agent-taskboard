@@ -124,7 +124,7 @@ export function MemberApp() {
           {route.page === 'tickets' && <TicketsPage key={navSeq} />}
           {route.page === 'new' && <NewTicketPage key={navSeq} />}
           {route.page === 'feedback' && <FeedbackRequestPage key={navSeq} me={me} />}
-          {route.page === 'detail' && <TicketDetailPage key={navSeq} ticketRef={route.ref} />}
+          {route.page === 'detail' && <TicketDetailPage key={navSeq} ticketRef={route.ref} me={me} />}
           {route.page === 'tools' && <ToolsPage key={navSeq} />}
           {route.page === 'me' && <MePage key={navSeq} me={me} />}
           {route.page === 'templates' && <TemplatesPage key={navSeq} />}

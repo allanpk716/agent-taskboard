@@ -308,7 +308,7 @@ test('建单（自由格式）：缺维度标签被拦，指派后显示 share_t
   await expect(page.locator('.donet')).toContainText('已创建')
   const share = page.locator('.linkbox')
   await expect(share).toContainText('王工')
-  await expect(share).toContainText('让你的 Agent')
+  await expect(share).toContainText('下面这段交给你的 Agent')
   const shareText = ((await share.textContent()) ?? '').trim()
   expect(shareText).toMatch(/\/t\/\d{8}-\d{3}/)
 
