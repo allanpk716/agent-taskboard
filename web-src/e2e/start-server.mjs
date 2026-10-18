@@ -36,14 +36,17 @@ if (clientVersion) {
   const clientDir = join(dir, 'data', 'client')
   const exe = Buffer.from(`e2e taskboard-client ${clientVersion}\n`)
   mkdirSync(clientDir, { recursive: true })
-  writeFileSync(join(clientDir, 'taskboard-client.exe'), exe)
+  // 文件名规则需与服务端 clientVersionPath 保持一致；e2e 只使用 x.y.z 版本号。
+  writeFileSync(join(clientDir, `taskboard-client-${clientVersion}.exe`), exe)
   writeFileSync(
     join(clientDir, 'client.json'),
     JSON.stringify(
       {
-        version: clientVersion,
-        sha256: createHash('sha256').update(exe).digest('hex'),
-        size: exe.length,
+        current: {
+          version: clientVersion,
+          sha256: createHash('sha256').update(exe).digest('hex'),
+          size: exe.length,
+        },
       },
       null,
       2,

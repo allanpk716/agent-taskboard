@@ -26,6 +26,9 @@ C:\<安装目录>\
 D:\taskboard-data\            # data_dir
 ├── taskboard.db
 ├── attachments\
+├── client\                   # 服务端代管的桌面客户端
+│   ├── client.json           # 当前和上一版客户端的指针
+│   └── taskboard-client-<version>.exe
 └── backups\                  # 只在没有配置备份目标时使用，见「备份与恢复」
 ```
 
