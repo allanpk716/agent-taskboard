@@ -90,7 +90,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 | `GET /api/v1/me/clients` | 列出本人已连接电脑。 |
 | `DELETE /api/v1/me/clients/{id}` | 网页会话撤销某台电脑。 |
 | `DELETE /api/v1/me/clients/self` | 客户端凭证撤销自己（退出登录/卸载用）。 |
-| `POST /api/v1/me/password` | 自助改密 `{old_password,new_password}`；原密码错误 422 `invalid_old_password`。 |
+| `POST /api/v1/me/password` | 自助改密 `{old_password,new_password}`；成功 204，并在同一事务里保留当前网页会话、注销其他网页会话；客户端凭证与 Agent token 不受影响。原密码错误 422 `invalid_old_password`，少于 8 位 422 `password_too_short`，新密码与旧密码相同 422 `password_unchanged`（先校验旧密码，再判断是否相同）。 |
 
 尚未代管客户端时，`latest` 与下载均返回 404 `client_not_available`。
 

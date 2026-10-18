@@ -37,6 +37,7 @@ var ErrMemberInactive = errors.New("成员账号已停用")
 var ErrCannotResetSelf = errors.New("不能重置自己的密码")
 var ErrInvalidOldPassword = errors.New("原密码不正确")
 var ErrPasswordTooShort = errors.New("新密码至少 8 位")
+var ErrPasswordUnchanged = errors.New("新密码与旧密码相同")
 
 // Member 是一位成员。
 type Member struct {
@@ -258,25 +259,44 @@ func (m *Manager) ReactivateMember(ctx context.Context, id int64) (bool, error) 
 	return true, nil
 }
 
-// ChangeOwnPassword 自助改密：只换密码，不撤销客户端凭证，也不清空当前会话。
-func (m *Manager) ChangeOwnPassword(ctx context.Context, memberID int64, oldPassword, newPassword string) error {
+// ChangeOwnPassword 自助改密：保留当前网页会话，注销其他网页会话；
+// 客户端凭证与 Agent token 不动（ADR 0004）。
+func (m *Manager) ChangeOwnPassword(ctx context.Context, memberID int64, currentSessionID, oldPassword, newPassword string) error {
 	if len(newPassword) < 8 {
 		return ErrPasswordTooShort
 	}
+
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
 	var hash string
-	if err := m.db.QueryRowContext(ctx,
-		`SELECT password_hash FROM members WHERE id = ?`, memberID).Scan(&hash); err != nil {
+	err = tx.QueryRowContext(ctx,
+		`SELECT password_hash FROM members WHERE id = ?`, memberID).Scan(&hash)
+	if err != nil {
 		return err
 	}
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(oldPassword)) != nil {
 		return ErrInvalidOldPassword
 	}
+	if oldPassword == newPassword {
+		return ErrPasswordUnchanged
+	}
 	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
-	_, err = m.db.ExecContext(ctx, `UPDATE members SET password_hash = ? WHERE id = ?`, string(newHash), memberID)
-	return err
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE members SET password_hash = ? WHERE id = ?`, string(newHash), memberID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM sessions WHERE member_id = ? AND id <> ?`, memberID, currentSessionID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // AdminResetMemberPassword 管理员重置密码：生成一次性初始密码，并撤销会话
