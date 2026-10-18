@@ -31,6 +31,7 @@ type guestLinkBase struct {
 	Note         string `json:"note"`
 	ExpiresAt    string `json:"expires_at"`
 	CanEditBrief bool   `json:"can_edit_brief"`
+	UseCount     int    `json:"use_count"`
 }
 
 // guestLinkView 是访客链接的对外结构（列表项不含密钥）。
@@ -106,6 +107,7 @@ func (a *API) createGuestLink(w http.ResponseWriter, r *http.Request, ref string
 			guestLinkBase: guestLinkBase{
 				ID: link.ID, URL: a.absURL("/g/" + link.Key), Note: link.Note,
 				ExpiresAt: link.ExpiresAt.Format(time.RFC3339Nano), CanEditBrief: link.CanEditBrief,
+				UseCount: 0,
 			},
 		})
 	})
@@ -172,6 +174,7 @@ func newGuestLinkView(l tickets.GuestLinkInfo) guestLinkView {
 			Note:         l.Note,
 			ExpiresAt:    l.ExpiresAt.Format(time.RFC3339Nano),
 			CanEditBrief: l.CanEditBrief,
+			UseCount:     l.UseCount,
 		},
 		CreatedBy: newAuthorView(l.CreatedBy),
 		CreatedAt: l.CreatedAt.Format(time.RFC3339Nano),

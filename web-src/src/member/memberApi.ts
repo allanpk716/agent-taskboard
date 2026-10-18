@@ -429,6 +429,7 @@ export interface GuestLink {
   can_edit_brief: boolean
   created_by: { member?: { name: string }; agent?: { name: string } | null }
   created_at: string
+  use_count?: number
 }
 
 export interface CreatedGuestLink {
