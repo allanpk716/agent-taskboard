@@ -47,6 +47,20 @@ func windowsAMD64Exe(t *testing.T) []byte {
 	return append(b, "taskboard-client\n"...)
 }
 
+// nativeExe 返回当前平台可执行文件；服务端产物要能通过更新器的本机架构校验。
+func nativeExe(t *testing.T) []byte {
+	t.Helper()
+	path, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
 func readClient(t *testing.T, dataDir string) ([]byte, ClientPackage) {
 	t.Helper()
 	pkg, err := CurrentClientPackage(dataDir)
@@ -209,7 +223,7 @@ func Test客户端SHA256不符时不替换(t *testing.T) {
 
 func Test客户端失败不阻断服务端和前端更新(t *testing.T) {
 	fx := newGitHubFixture("1.0.0", "1.0.0", "")
-	serverExe := windowsAMD64Exe(t)
+	serverExe := nativeExe(t)
 	serverFiles := map[string][]byte{
 		"taskboard.exe": serverExe, "taskboard-linux-amd64": serverExe,
 	}
