@@ -58,6 +58,8 @@ type Config struct {
 	RetryWait func(context.Context, time.Duration) error
 	// AfterUpdate 表示本进程是自动更新启动的新进程；初始化后要通知旧进程退出。
 	AfterUpdate bool
+	// AfterInstall 表示本进程是覆盖安装后的新进程；旧实例可能还未释放单实例锁。
+	AfterInstall bool
 }
 
 // TrayCallbacks 是托盘菜单命令回到核心的入口。
@@ -131,6 +133,7 @@ type App struct {
 	loginRequired     bool
 	loginSignal       chan struct{}
 	tokenSignal       chan struct{}
+	quitSignal        chan struct{}
 	streamCancel      context.CancelFunc
 	shutdown          context.CancelFunc
 	httpClient        *http.Client
@@ -161,19 +164,22 @@ func New(cfg Config, deps Dependencies) *App {
 		httpClient: &http.Client{Timeout: 30 * time.Second}, streamClient: &http.Client{Transport: transport}}
 }
 
-// Run 阻塞运行客户端，直到 ctx 取消。
+// Run 阻塞运行客户端，直到 ctx 取消或收到另一实例的退出信号。
 func (a *App) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	a.ctx, a.shutdown = runCtx, cancel
 	defer cancel()
+	if a.deps.Update != nil {
+		_ = a.deps.Update.ResetQuit()
+	}
+	if a.cfg.AfterUpdate && a.deps.Update != nil {
+		_ = a.deps.Update.SendQuit()
+	}
 	var releaseLock func()
 	if a.deps.Lock != nil {
-		if a.cfg.AfterUpdate {
-			if a.deps.Update != nil {
-				_ = a.deps.Update.SendQuit()
-			}
+		if a.cfg.AfterUpdate || a.cfg.AfterInstall {
 			var err error
-			releaseLock, err = a.acquireLockAfterUpdate(runCtx)
+			releaseLock, err = a.acquireLockAfterHandoff(runCtx)
 			if err != nil {
 				return err
 			}
@@ -204,8 +210,25 @@ func (a *App) Run(ctx context.Context) error {
 		return a.deps.Toaster.Run(runCtx, a.openNotification)
 	})
 	if a.cfg.AfterUpdate && a.deps.Update != nil {
+		_ = a.deps.Update.ResetQuit()
 		_ = a.deps.Update.SendReady()
 		a.deps.Toaster.Show(Notification{Reason: "updated", Text: "客户端已更新到 " + a.cfg.Version})
+	}
+	a.quitSignal = make(chan struct{})
+	if a.deps.Update != nil {
+		go func() {
+			select {
+			case <-runCtx.Done():
+			case <-a.deps.Update.Quit():
+				close(a.quitSignal)
+				a.mu.Lock()
+				updating := a.updating
+				a.mu.Unlock()
+				if !updating {
+					cancel()
+				}
+			}
+		}()
 	}
 	updateDone := make(chan struct{})
 	if a.deps.Update != nil {
@@ -216,7 +239,14 @@ func (a *App) Run(ctx context.Context) error {
 	} else {
 		close(updateDone)
 	}
-	err := a.serve(runCtx)
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- a.serve(runCtx) }()
+	var err error
+	select {
+	case err = <-serveDone:
+	case <-a.quitSignal:
+		err = <-serveDone
+	}
 	cancel()
 	<-trayDone
 	<-toastDone
@@ -224,7 +254,7 @@ func (a *App) Run(ctx context.Context) error {
 	return err
 }
 
-func (a *App) acquireLockAfterUpdate(ctx context.Context) (func(), error) {
+func (a *App) acquireLockAfterHandoff(ctx context.Context) (func(), error) {
 	deadline := a.deps.Clock.After(30 * time.Second)
 	for {
 		release, err := a.deps.Lock.Acquire()

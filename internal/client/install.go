@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -35,6 +34,7 @@ type ToastRegistrar interface {
 type FileSystem interface {
 	InstallDir() (string, error)
 	Executable() (string, error)
+	Exists(path string) (bool, error)
 	CopyExecutable(dest string) error
 	RenameExecutable(old, dest string) error
 	RemoveExecutable(path string) error
@@ -102,7 +102,11 @@ func InstallIfNeeded(deps LifecycleDependencies, serverURL string) (bool, error)
 		}
 		return false, nil
 	}
-	if _, err := os.Stat(installed); err == nil {
+	targetExists, err := deps.Files.Exists(installed)
+	if err != nil {
+		return false, fmt.Errorf("检查安装目标失败：%w", err)
+	}
+	if targetExists {
 		if err := deps.Files.RenameExecutable(installed, installed+".old"); err != nil {
 			return false, fmt.Errorf("备份正在运行的客户端失败：%w", err)
 		}
@@ -116,7 +120,7 @@ func InstallIfNeeded(deps LifecycleDependencies, serverURL string) (bool, error)
 	if err := deps.Process.QuitExisting(); err != nil {
 		return false, fmt.Errorf("通知正在运行的客户端退出失败：%w", err)
 	}
-	if err := deps.Process.Start(installed, []string{"--autostart"}); err != nil {
+	if err := deps.Process.Start(installed, []string{"--after-install"}); err != nil {
 		return false, fmt.Errorf("从安装位置重启客户端失败：%w", err)
 	}
 	return true, nil

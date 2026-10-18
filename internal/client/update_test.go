@@ -103,6 +103,37 @@ func Test自动更新三十秒无就绪时结束新进程并换回旧版(t *test
 	waitClient(t, done)
 }
 
+func Test自动更新新进程退出旧实例时不回滚新exe(t *testing.T) {
+	fake := newFakeDesktop(t)
+	s := fake.startService(t)
+	webLi := s.Login("李工", "secret-pass")
+	fake.browser.web = webLi
+	fake.browser.serverURL = s.URL()
+	newExe := testClientBinary(t, "1.2.0 new")
+	installClientPackage(t, s, "1.2.0", newExe)
+	fx := newUpdateFixture(t, s, testClientBinary(t, "0.2.0 old"))
+	fx.updater.autoReady = false
+	fake.lifecycle = fx.lifecycle
+	fake.updater = fx.updater
+	fake.clock = clock.NewFake(time.Now())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := fake.startClient(t, ctx, s.URL())
+	fake.waitState(t, client.TrayNormal)
+	waitCondition(t, func() bool { return len(fake.updater.startsList()) == 1 })
+	if err := fake.updater.SendQuit(); err != nil {
+		t.Fatal(err)
+	}
+	waitClient(t, done)
+	if got := readFile(t, fx.exePath); string(got) != string(newExe)+stampSuffix(t, s.URL()) {
+		t.Fatalf("退出信号后 exe = %q, 想保留新版本", got)
+	}
+	if len(fx.updater.stoppedList()) != 0 {
+		t.Fatalf("新进程已正常退出，不应被终止：%v", fx.updater.stoppedList())
+	}
+}
+
 func Test自动更新SHA256不符时不替换并继续运行(t *testing.T) {
 	fake := newFakeDesktop(t)
 	s := fake.startService(t)
@@ -252,6 +283,63 @@ func TestAfterUpdate进程发就绪信号并弹更新Toast(t *testing.T) {
 	waitClient(t, done)
 }
 
+func Test运行中的客户端收到覆盖安装退出信号后释放单实例锁(t *testing.T) {
+	fake := newFakeDesktop(t)
+	s := fake.startService(t)
+	webLi := s.Login("李工", "secret-pass")
+	fake.browser.web = webLi
+	fake.browser.serverURL = s.URL()
+	fake.updater = newFakeUpdateAdapter()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := fake.startClient(t, ctx, s.URL())
+	fake.waitState(t, client.TrayNormal)
+
+	if err := fake.updater.SendQuit(); err != nil {
+		t.Fatal(err)
+	}
+	waitClient(t, done)
+	if fake.lock.heldByUpdate() {
+		t.Fatal("覆盖安装退出后单实例锁应已释放")
+	}
+}
+
+func Test覆盖安装启动的新实例等待旧实例释放锁(t *testing.T) {
+	fake := newFakeDesktop(t)
+	s := fake.startService(t)
+	webLi := s.Login("李工", "secret-pass")
+	fake.browser.web = webLi
+	fake.browser.serverURL = s.URL()
+	fake.updater = newFakeUpdateAdapter()
+	oldRelease := fake.lock.AcquireMust(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	app := client.New(client.Config{
+		ServerURL: s.URL(), Version: "1.2.0", Hostname: "TEST-PC", Nonces: fixedNonces,
+		RetryWait: func(context.Context, time.Duration) error { return nil }, AfterInstall: true,
+	}, fake.dependencies())
+	done := make(chan error, 1)
+	go func() { done <- app.Run(ctx) }()
+	go func() {
+		for i := 0; i < 100 && fake.lock.acquiredCount() < 2; i++ {
+			time.Sleep(time.Millisecond)
+			fake.clock.Advance(100 * time.Millisecond)
+		}
+		oldRelease()
+	}()
+
+	waitCondition(t, func() bool { return fake.lock.acquiredCount() == 2 })
+	if got := fake.updater.resets(); got != 1 {
+		t.Fatalf("启动时清理退出信号次数 = %d, 想 1", got)
+	}
+	if !fake.lock.heldByUpdate() {
+		t.Fatal("旧实例释放后新实例应持有单实例锁")
+	}
+	cancel()
+	waitClient(t, done)
+}
+
 func Test版本过旧时停止拉取通知并提示下载(t *testing.T) {
 	fake := newFakeDesktop(t)
 	s := tbtest.Start(t, tbtest.WithMinClientVersion("1.0.0"))
@@ -394,14 +482,16 @@ func installClientPackage(t testing.TB, s *tbtest.Server, version string, data [
 }
 
 type fakeUpdateAdapter struct {
-	mu        sync.Mutex
-	starts    []fakeStart
-	stopped   []string
-	signaled  chan struct{}
-	once      sync.Once
-	autoReady bool
-	quitOld   func()
-	quit      chan struct{}
+	mu         sync.Mutex
+	starts     []fakeStart
+	stopped    []string
+	signaled   chan struct{}
+	once       sync.Once
+	autoReady  bool
+	quitOld    func()
+	quit       chan struct{}
+	quitClosed bool
+	resetCount int
 }
 
 func newBadLatestProxy(t testing.TB, backend string) *httptest.Server {
@@ -464,13 +554,32 @@ func (u *fakeUpdateAdapter) SendReady() error {
 func (u *fakeUpdateAdapter) SendQuit() error {
 	u.mu.Lock()
 	quit := u.quitOld
-	quitCh := u.quit
+	if !u.quitClosed && u.quit != nil {
+		close(u.quit)
+		u.quitClosed = true
+	}
 	u.mu.Unlock()
 	if quit != nil {
 		quit()
 	}
-	close(quitCh)
 	return nil
+}
+
+func (u *fakeUpdateAdapter) ResetQuit() error {
+	u.mu.Lock()
+	u.resetCount++
+	if u.quitClosed {
+		u.quit = make(chan struct{})
+		u.quitClosed = false
+	}
+	u.mu.Unlock()
+	return nil
+}
+
+func (u *fakeUpdateAdapter) resets() int {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.resetCount
 }
 
 func (u *fakeUpdateAdapter) waitStarted(t testing.TB) {

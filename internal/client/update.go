@@ -26,6 +26,7 @@ type UpdateProcessManager interface {
 	Quit() <-chan struct{}
 	SendReady() error
 	SendQuit() error
+	ResetQuit() error
 }
 
 type clientLatest struct {
@@ -149,7 +150,7 @@ func (a *App) replaceExecutable(ctx context.Context, exe, temp string) bool {
 				a.shutdown()
 			}
 			return true
-		case <-a.deps.Update.Quit():
+		case <-a.quitSignal:
 			if a.shutdown != nil {
 				a.shutdown()
 			}

@@ -372,6 +372,8 @@ func (m *WindowsUpdateManager) Quit() <-chan struct{} {
 
 func (m *WindowsUpdateManager) SendQuit() error { return windows.SetEvent(m.quitEvent) }
 
+func (m *WindowsUpdateManager) ResetQuit() error { return windows.ResetEvent(m.quitEvent) }
+
 func (m *WindowsUpdateManager) Start(path string, args []string) (client.UpdateProcess, error) {
 	cmd := exec.Command(path, args...)
 	cmd.SysProcAttr = &windows.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
@@ -596,6 +598,17 @@ func (UserFileSystem) InstallDir() (string, error) {
 }
 
 func (UserFileSystem) Executable() (string, error) { return os.Executable() }
+
+func (UserFileSystem) Exists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
+}
 
 func (UserFileSystem) CopyExecutable(dest string) error {
 	source, err := os.Executable()

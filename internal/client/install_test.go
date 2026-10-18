@@ -139,6 +139,37 @@ func Test旧版运行时覆盖安装先改名并通知退出(t *testing.T) {
 	}
 }
 
+func Test覆盖安装通过文件适配器识别已存在目标(t *testing.T) {
+	fx := newInstallFixture(t)
+	fx.files.executable = fx.download
+	fx.files.targetExists = true
+
+	installed, err := client.InstallIfNeeded(fx.deps(), "https://taskboard.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !installed {
+		t.Fatal("覆盖安装后仍应从安装位置重启")
+	}
+	if !fx.files.targetExistsChecked {
+		t.Fatal("目标是否存在必须经过 FileSystem 适配层判断")
+	}
+	if len(fx.files.renames) != 1 || fx.files.renames[0].src != fx.files.installPath ||
+		fx.files.renames[0].dest != fx.files.installPath+".old" {
+		t.Fatalf("备份旧实例 = %+v", fx.files.renames)
+	}
+	if len(fx.files.copies) != 1 || fx.files.copies[0] != fx.files.installPath {
+		t.Fatalf("复制新实例 = %v", fx.files.copies)
+	}
+	if fx.process.quitExisting != 1 {
+		t.Fatalf("通知旧实例退出次数 = %d, 想 1", fx.process.quitExisting)
+	}
+	if len(fx.process.started) != 1 || len(fx.process.started[0].args) != 1 ||
+		fx.process.started[0].args[0] != "--after-install" {
+		t.Fatalf("重启参数 = %+v, 想 --after-install", fx.process.started)
+	}
+}
+
 func Test托盘卸载撤销凭证清理本机并请求删除自身(t *testing.T) {
 	fake := newFakeDesktop(t)
 	s := fake.startService(t)
@@ -236,12 +267,15 @@ func (a *fakeAutostart) Disable() error            { a.enabled = false; return n
 func (t *fakeToastRegistration) Unregister() error { t.unregistered = true; return nil }
 
 type fakeFileSystem struct {
-	download       string
-	installDir     string
-	installPath    string
-	executable     string
-	copies         []string
-	occupiedTarget bool
+	download            string
+	installDir          string
+	installPath         string
+	executable          string
+	copies              []string
+	renames             []fakeRename
+	occupiedTarget      bool
+	targetExists        bool
+	targetExistsChecked bool
 }
 
 type fakeProcessManager struct {
@@ -252,6 +286,22 @@ type fakeProcessManager struct {
 
 func (f *fakeFileSystem) InstallDir() (string, error) { return f.installDir, nil }
 func (f *fakeFileSystem) Executable() (string, error) { return f.executable, nil }
+
+func (f *fakeFileSystem) Exists(path string) (bool, error) {
+	f.targetExistsChecked = true
+	if f.targetExists {
+		return true, nil
+	}
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
 func (f *fakeFileSystem) CopyExecutable(dest string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
@@ -273,6 +323,10 @@ func (f *fakeFileSystem) CopyExecutable(dest string) error {
 }
 
 func (f *fakeFileSystem) RenameExecutable(src, dest string) error {
+	f.renames = append(f.renames, fakeRename{src: src, dest: dest})
+	if f.targetExists {
+		return nil
+	}
 	if err := os.Rename(src, dest); err != nil {
 		return err
 	}
@@ -298,4 +352,9 @@ func (p *fakeProcessManager) QuitExisting() error {
 type fakeStart struct {
 	path string
 	args []string
+}
+
+type fakeRename struct {
+	src  string
+	dest string
 }
