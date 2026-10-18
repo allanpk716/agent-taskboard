@@ -1,7 +1,7 @@
 // 对话流的共用气泡与事件行（#38 访客网页 / #41 成员工单详情都用）：
 // 说明 = 第一条气泡（按字段显示问句和回答）、回复气泡（头像 + 署名 + Markdown
 // + 附件条）、居中灰色系统事件行。成员视角比访客多看到标签事件。
-import type { TicketView, TimelineEvent } from './types'
+import type { Author, TicketView, TimelineEvent } from './types'
 import { authorName, closeReasonText, fmtDateCN, fmtShort } from './format'
 import { Markdown, inlineImageIds } from './markdown'
 import { AttachmentChips, Avatar } from './widgets'
@@ -68,9 +68,13 @@ export function BriefBubble({
   const reviser = ticket.brief.last_revised
   const reviserName =
     reviser.type === 'guest' ? `${reviser.display_name}（访客）` : reviser.display_name
+  const reviserAvatar: Author =
+    reviser.type === 'guest'
+      ? { author_name: reviser.display_name }
+      : { member: { id: 0, name: reviser.display_name } }
   return (
     <div className="bubble" data-bubble="brief">
-      <Avatar author={ticket.creator} />
+      <Avatar author={reviserAvatar} />
       <div className="card">
         <div className="who">
           <b>{reviserName}</b>填写 · {fmtShort(reviser.at)} · 第 {reviser.revision} 版 · 说明

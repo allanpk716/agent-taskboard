@@ -166,6 +166,57 @@ func Test自派自任务访客链接过期或撤销后回到本人(t *testing.T)
 	}, "链接撤销后")
 }
 
+// 自派自任务没有有效访客链接时，本人普通回复不重置原因：访客修订说明
+// 与访客回复一样，作为上一条对方行动被回溯计入。
+func Test自派自任务访客修订说明后链接失效本人回复沿用原因(t *testing.T) {
+	w := newHandoffWorld(t)
+	first := w.createHandoffTicket(t, w.webWang, "短期补全一", "王工").Number
+	firstLink := mustCreateGuestLink(t, w.s, w.webWang, first,
+		map[string]any{"note": "检验科-张三", "can_edit_brief": true})
+	firstGuest := w.s.GuestClient(guestKeyOf(t, firstLink))
+	res := revise(t, w.s, firstGuest, first,
+		map[string]any{"brief_md": "第一次补全说明。", "base_revision": 1})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("第一次补全说明状态码 = %d, 想 200", res.StatusCode)
+	}
+	res = w.s.Do(t, w.webWang, http.MethodDelete,
+		"/api/v1/tickets/"+first+"/guest-links/"+strconv.FormatInt(firstLink.ID, 10), nil, nil)
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("撤销第一条访客链接状态码 = %d, 想 204", res.StatusCode)
+	}
+
+	var firstNote replyBody
+	w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets/"+first+"/replies",
+		map[string]string{"body_md": "链接失效后的备注。"}, &firstNote)
+	assertWaitingOn(t, firstNote.WaitingOn, waitingOnBody{
+		Party: "assignee", Member: strp("王工"), Text: "王工（指派人）", Reason: "访客补全了说明",
+	}, "一次修订后本人备注")
+
+	second := w.createHandoffTicket(t, w.webWang, "短期补全二", "王工").Number
+	secondLink := mustCreateGuestLink(t, w.s, w.webWang, second,
+		map[string]any{"note": "检验科-李四", "can_edit_brief": true})
+	secondGuest := w.s.GuestClient(guestKeyOf(t, secondLink))
+	for i, body := range []string{"第一次修订说明。", "第二次修订说明。"} {
+		res := revise(t, w.s, secondGuest, second,
+			map[string]any{"brief_md": body, "base_revision": i + 1})
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("第 %d 次修订状态码 = %d, 想 200", i+2, res.StatusCode)
+		}
+	}
+	res = w.s.Do(t, w.webWang, http.MethodDelete,
+		"/api/v1/tickets/"+second+"/guest-links/"+strconv.FormatInt(secondLink.ID, 10), nil, nil)
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("撤销访客链接状态码 = %d, 想 204", res.StatusCode)
+	}
+
+	var secondNote replyBody
+	w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets/"+second+"/replies",
+		map[string]string{"body_md": "链接撤销后的备注。"}, &secondNote)
+	assertWaitingOn(t, secondNote.WaitingOn, waitingOnBody{
+		Party: "assignee", Member: strp("王工"), Text: "王工（指派人）", Reason: "访客修订了说明",
+	}, "两次修订后本人备注")
+}
+
 // 第三位成员的回复不进入自派自任务的相关回复集，轮次和原因都保持不变。
 func Test自派自任务第三位成员回复不改轮次(t *testing.T) {
 	w := newHandoffWorld(t)

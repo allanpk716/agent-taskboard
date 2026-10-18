@@ -775,16 +775,16 @@ type WaitingOn struct {
 
 // 等待方推导的原因码 → 收件箱文案（原型 WHY 表）。
 const (
-	WhyNew            = "new"                 // 新指派给你
-	WhyGuestReplied   = "guest_replied"       // 访客回复了
-	WhyGuestCompleted = "guest_completed"     // 访客补全了说明
-	WhyGuestRevised   = "guest_revised"       // 访客修订了说明
-	WhyGuestMissing   = "guest_not_completed" // 访客未补全说明
-	WhyDelivered      = "delivered"           // 已交付，待你验收
-	WhyAssigneeReply  = "assignee_replied"    // 指派人回复了，待你答复
-	WhySentBack       = "sent_back"           // 发起人退回修改
-	WhyCreatorReplied = "creator_replied"     // 发起人回复了
-	WhyAgentReplied   = "agent_replied"       // 你的 Agent 回复了
+	WhyNew               = "new"                 // 新指派给你
+	WhyGuestReplied      = "guest_replied"       // 访客回复了
+	WhyGuestCompleted    = "guest_completed"     // 访客补全了说明
+	WhyGuestRevised      = "guest_revised"       // 访客修订了说明
+	WhyGuestNotCompleted = "guest_not_completed" // 访客未补全说明
+	WhyDelivered         = "delivered"           // 已交付，待你验收
+	WhyAssigneeReply     = "assignee_replied"    // 指派人回复了，待你答复
+	WhySentBack          = "sent_back"           // 发起人退回修改
+	WhyCreatorReplied    = "creator_replied"     // 发起人回复了
+	WhyAgentReplied      = "agent_replied"       // 你的 Agent 回复了
 )
 
 // WhyText 把原因码翻成收件箱/等待方文案。
@@ -798,7 +798,7 @@ func WhyText(why string) string {
 		return "访客补全了说明"
 	case WhyGuestRevised:
 		return "访客修订了说明"
-	case WhyGuestMissing:
+	case WhyGuestNotCompleted:
 		return "访客未补全说明"
 	case WhyDelivered:
 		return "已交付，待你验收"
@@ -814,23 +814,20 @@ func WhyText(why string) string {
 	return ""
 }
 
-// WaitingOnOf 推导当前轮到谁。规则照抄 prototype/member-handoff 的 turnOf
-// （spec「等待方与收件箱」，#37 的查询也复用这一个函数）：
-// guestLinks 与 now 是轮次规则的输入；#126 只打通输入，不改变下面的规则。
+// WaitingOnOf 按 GLOSSARY「等待方」推导当前轮到谁。guestLinks 与 now 是
+// 轮次规则的输入；访客的 brief_revised 与访客回复同属访客一方行动。
 //
-//	已关闭                     → 无等待方
-//	尚无回复 或 最后是访客回复    → 指派人（未指派 → department）
-//	任务 且 创建者是成员 且 创建者≠指派人（“有对手”）：
-//	    指派人一方回复            → 创建者（why = delivered 若该回复带 deliver，否则 assignee_replied）
-//	    创建者一方回复            → 指派人（why = sent_back 若此前存在指派人的 deliver，否则 creator_replied）
-//	    第三位成员回复            → 不改变轮次（不参与相关回复集）
-//	其余情况（反馈、自派自）成员回复 → 访客
-//	成员 Agent 的回复算其所属成员一方；改派后，原指派人的回复按当前指派人重新计算、不再参与推导
-//
-// 相关事件集 = type=reply 且（访客 或 无对手 或 actor∈{指派人, 对手}），
-// 加上访客的 brief_revised（成员修订说明不算轮次事件）。
-// 未指派轮到本部门时原因只写「尚未指派」或「访客回复了」（prototype/ticket-query
-// 的修正：不能写「新指派给你」）。
+//	已关闭 → 无等待方
+//	仍有效的「可填写说明」链接、访客未填过且尚无回复 → 访客（待补全）
+//	可填写说明链接全部失效、访客仍未填且尚无回复 → 指派人/department（访客未补全说明）
+//	尚无其他回复 → 指派人/department（新指派或尚未指派）
+//	最后是访客一方行动 → 指派人/department
+//	有对手任务：指派人一方回复 → 创建者；创建者一方回复 → 指派人
+//	自派自：交付后 → 本人验收；有有效访客链接时普通回复 → 访客；
+//	  无链接时按 Agent/本人/退回规则留在本人
+//	反馈工单成员回复 → 访客
+//	第三位成员的回复不参与推导；成员 Agent 算所属成员一方；
+//	改派后原指派人的旧回复不再参与推导
 func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 	if t.Status == "closed" {
 		return WaitingOn{Party: "none", Text: "无（已关闭）"}
@@ -879,7 +876,7 @@ func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 			// 未指派：原因只写 尚未指派（why=new/creator_replied）或 访客回复了。
 			reason := "尚未指派"
 			switch why {
-			case WhyGuestReplied, WhyGuestCompleted, WhyGuestRevised, WhyGuestMissing:
+			case WhyGuestReplied, WhyGuestCompleted, WhyGuestRevised, WhyGuestNotCompleted:
 				reason = WhyText(why)
 			}
 			return WaitingOn{Party: "department", Text: "本部门（未指派）", Reason: reason, Why: why, SinceSeq: since}
@@ -892,7 +889,7 @@ func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 			return WaitingOn{Party: "guest", Text: "访客补全说明"}
 		}
 		if hasEditGuestLink(guestLinks) {
-			return toAssignee(WhyGuestMissing)
+			return toAssignee(WhyGuestNotCompleted)
 		}
 	}
 	if last == nil {
@@ -902,14 +899,7 @@ func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 		if last.Deliver {
 			return toAssignee(WhyDelivered)
 		}
-		hasGuestLink := false
-		for _, l := range guestLinks {
-			if l.RevokedAt == nil && now.Before(l.ExpiresAt) {
-				hasGuestLink = true
-				break
-			}
-		}
-		if hasGuestLink {
+		if hasActiveGuestLink(guestLinks, now) {
 			return WaitingOn{Party: "guest", Text: "访客", SinceSeq: since}
 		}
 		if last.Actor.AgentID != 0 {
@@ -917,9 +907,23 @@ func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 		}
 		why := WhyNew
 		deliveredBefore := false
+		guestRevisionsBefore := 0
 		for i := range t.Timeline {
 			e := &t.Timeline[i]
-			if e.Type != "reply" || e.Seq >= last.Seq {
+			if e.Seq >= last.Seq {
+				continue
+			}
+			if e.Type == "brief_revised" {
+				if e.Actor.MemberID == 0 {
+					guestRevisionsBefore++
+					why = WhyGuestRevised
+					if guestRevisionsBefore == 1 {
+						why = WhyGuestCompleted
+					}
+				}
+				continue
+			}
+			if e.Type != "reply" {
 				continue
 			}
 			if e.Actor.MemberID == 0 {
@@ -972,11 +976,24 @@ func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 
 func hasActiveEditGuestLink(links []GuestLinkInfo, now time.Time) bool {
 	for _, l := range links {
-		if l.CanEditBrief && l.RevokedAt == nil && now.Before(l.ExpiresAt) {
+		if l.CanEditBrief && activeGuestLink(l, now) {
 			return true
 		}
 	}
 	return false
+}
+
+func hasActiveGuestLink(links []GuestLinkInfo, now time.Time) bool {
+	for _, l := range links {
+		if activeGuestLink(l, now) {
+			return true
+		}
+	}
+	return false
+}
+
+func activeGuestLink(l GuestLinkInfo, now time.Time) bool {
+	return l.RevokedAt == nil && now.Before(l.ExpiresAt)
 }
 
 func hasEditGuestLink(links []GuestLinkInfo) bool {

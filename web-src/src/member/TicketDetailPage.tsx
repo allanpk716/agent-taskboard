@@ -25,6 +25,7 @@ import {
   type MemberRef,
 } from './memberApi'
 import { BriefBubble, EventLine, ReplyBubble } from '../shared/conversation'
+import { DimensionSelect } from '../guest/DimensionSelect'
 import { Lightbox } from '../shared/widgets'
 import { absoluteUrl, authorName, closeReasonText, fmtLinkExpiry, linkExpired } from '../shared/format'
 import { Confirm, Modal, copyText, invalidate, nav, toast } from './ui'
@@ -586,11 +587,19 @@ function BriefEditDialog({
           templateFields.map((f) => (
             <div className="fld" key={f.key}>
               <label htmlFor={`be-${f.key}`}>{f.title}</label>
-              <textarea
-                id={`be-${f.key}`}
-                value={fields[f.key] ?? ''}
-                onChange={(e) => setFields({ ...fields, [f.key]: e.target.value })}
-              />
+              {f.type === 'dimension' ? (
+                <DimensionSelect
+                  field={f}
+                  value={fields[f.key] ?? ''}
+                  onChange={(v) => setFields({ ...fields, [f.key]: v })}
+                />
+              ) : (
+                <textarea
+                  id={`be-${f.key}`}
+                  value={fields[f.key] ?? ''}
+                  onChange={(e) => setFields({ ...fields, [f.key]: e.target.value })}
+                />
+              )}
             </div>
           ))
         ) : (
