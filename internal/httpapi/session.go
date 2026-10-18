@@ -204,7 +204,11 @@ func (a *API) handleOwnPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	// Viewer 只带身份；ChangeOwnPassword 还需要当前会话 id 来保留这次登录。
 	sess, ok := a.sessionFromRequest(w, r)
-	if !ok || sess.Member.ID != viewer.Member.ID {
+	if !ok {
+		return
+	}
+	if sess.Member.ID != viewer.Member.ID {
+		WriteError(w, http.StatusUnauthorized, CodeUnauthenticated, "会话不存在或已过期", a.authHint(r))
 		return
 	}
 	var req struct {

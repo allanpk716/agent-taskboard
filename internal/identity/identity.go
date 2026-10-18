@@ -318,6 +318,7 @@ func (m *Manager) AdminResetMemberPassword(ctx context.Context, adminID, memberI
 		return "", err
 	}
 	defer tx.Rollback()
+	// 停用检查放进 UPDATE 条件：与并发停用串行化，不会给已停用账号发密码（#113）。
 	res, err := tx.ExecContext(ctx,
 		`UPDATE members SET password_hash = ? WHERE id = ? AND deactivated_at IS NULL`,
 		string(hash), memberID)
@@ -342,14 +343,6 @@ func (m *Manager) AdminResetMemberPassword(ctx context.Context, adminID, memberI
 			return "", ErrMemberInactive
 		}
 		return "", ErrMemberNotFound
-	}
-	var deactivated sql.NullString
-	if err := tx.QueryRowContext(ctx,
-		`SELECT deactivated_at FROM members WHERE id = ?`, memberID).Scan(&deactivated); err != nil {
-		return "", err
-	}
-	if nullStringSet(deactivated) {
-		return "", ErrMemberInactive
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE member_id = ?`, memberID); err != nil {
 		return "", err
