@@ -211,22 +211,46 @@ func Test快速标已读与新通知交错时不丢read事件(t *testing.T) {
 	}
 }
 
-func Test撤销客户端凭证后通知流立即结束(t *testing.T) {
+func Test撤销客户端凭证只结束对应凭证的通知流(t *testing.T) {
 	w := newHandoffWorld(t)
 	issued := w.s.IssueClientCredential(t, w.webLi, "WORKSTATION-01")
-	client := w.s.ClientCredentialClient(issued.Token)
-	stream := w.s.OpenSSE(t, client, "")
-	if ev := stream.Event(t); ev.Name != "hello" {
-		t.Fatalf("首帧 = %q, 想 hello", ev.Name)
+	other := w.s.IssueClientCredential(t, w.webLi, "WORKSTATION-02")
+	revokedStream := w.s.OpenSSE(t, w.s.ClientCredentialClient(issued.Token), "")
+	otherStream := w.s.OpenSSE(t, w.s.ClientCredentialClient(other.Token), "")
+	webStream := w.s.OpenSSE(t, w.webLi, "")
+	for i, stream := range []*tbtest.SSEStream{revokedStream, otherStream, webStream} {
+		if ev := stream.Event(t); ev.Name != "hello" {
+			t.Fatalf("第 %d 条流首帧 = %q, 想 hello", i+1, ev.Name)
+		}
 	}
 
-	clients := listClientsForStream(t, w.s, w.webLi)
 	res := w.s.Do(t, w.webLi, http.MethodDelete,
-		"/api/v1/me/clients/"+strconv.FormatInt(clients[0], 10), nil, nil)
+		"/api/v1/me/clients/"+strconv.FormatInt(issued.ID, 10), nil, nil)
 	if res.StatusCode != http.StatusNoContent {
 		t.Fatalf("撤销客户端凭证状态码 = %d, 想 204", res.StatusCode)
 	}
-	stream.Closed(t)
+	res2, err := w.s.ClientCredentialClient(issued.Token).Get(w.s.URL() + "/api/v1/notifications")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res2.Body.Close()
+	if res2.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("撤销后凭证状态 = %d, 想 401", res2.StatusCode)
+	}
+	revokedStream.Closed(t)
+
+	number := w.createHandoffTicket(t, w.webWang, "凭证仍有效的流继续工作", "李工").Number
+	for i, stream := range []*tbtest.SSEStream{otherStream, webStream} {
+		ev := stream.Event(t)
+		for ev.Name == "" {
+			ev = stream.Event(t)
+		}
+		var body notificationBody
+		decodeSSEData(t, ev, &body)
+		if ev.Name != "notification" || body.Ticket.Number != number {
+			t.Fatalf("第 %d 条有效流收到 = %s/%s, 想新通知 %s", i+1, ev.Name, body.Ticket.Number, number)
+		}
+	}
 }
 
 func Test通知流按假时钟间隔发送保活注释(t *testing.T) {

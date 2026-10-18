@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -82,7 +83,7 @@ func (a *API) handleNotificationsStream(w http.ResponseWriter, r *http.Request) 
 			if !ok {
 				return
 			}
-			if ev.Kind == notifications.EventKindDisconnect || !a.streamViewerValid(r, viewer.Member.ID) {
+			if !a.streamViewerValid(r, viewer.Member.ID) {
 				return
 			}
 			switch ev.Kind {
@@ -111,9 +112,14 @@ func (a *API) handleNotificationsStream(w http.ResponseWriter, r *http.Request) 
 const notificationPingInterval = 25 * time.Second
 
 func (a *API) streamViewerValid(r *http.Request, memberID int64) bool {
-	viewer, ok := a.viewerFromRequest(noopResponseWriter{}, r)
+	fresh := r.WithContext(withoutViewerContext{r.Context()})
+	viewer, ok := a.viewerFromRequest(noopResponseWriter{}, fresh)
 	return ok && viewer.Kind == identity.ViewerMember && viewer.Member.ID == memberID
 }
+
+type withoutViewerContext struct{ context.Context }
+
+func (withoutViewerContext) Value(any) any { return nil }
 
 type noopResponseWriter struct{}
 

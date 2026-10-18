@@ -81,7 +81,20 @@ func (s *subscriber) enqueue(ev StreamEvent, kind string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if kind == EventKindRead {
-		s.read = ev
+		seen := make(map[int64]struct{}, len(s.read.ReadIDs)+len(ev.ReadIDs))
+		ids := append([]int64(nil), s.read.ReadIDs...)
+		for _, id := range ids {
+			seen[id] = struct{}{}
+		}
+		for _, id := range ev.ReadIDs {
+			if _, ok := seen[id]; !ok {
+				ids = append(ids, id)
+				seen[id] = struct{}{}
+			}
+		}
+		s.read.ReadIDs = ids
+		s.read.UnreadCount = ev.UnreadCount
+		s.read.Kind = EventKindRead
 		for _, pending := range s.pending {
 			if pending == kind {
 				return
@@ -106,6 +119,7 @@ func (s *subscriber) run() {
 			pending := s.pending
 			read := s.read
 			s.pending = nil
+			s.read = StreamEvent{}
 			s.mu.Unlock()
 			for _, kind := range pending {
 				ev := StreamEvent{Kind: kind}
