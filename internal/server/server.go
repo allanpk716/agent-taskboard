@@ -87,7 +87,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	mux.Handle("/agent.md", docs)
 	mux.Handle("/llms.txt", docs)
 	mux.Handle("/api.md", docs)
-	mux.Handle("/", web)
+	mux.Handle("/", webapp.AgentRoutes(cfg.Server.PublicURL, web))
 
 	return &Server{
 		cfg:           cfg,
