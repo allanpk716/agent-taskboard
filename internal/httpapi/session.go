@@ -131,8 +131,7 @@ type loginRequest struct {
 
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "请求体不是合法的 JSON", "请求体应为 {\"username\": \"…\", \"password\": \"…\"}")
+	if !decodeJSON(w, r, &req, `{"username": "…", "password": "…"}`) {
 		return
 	}
 	sess, err := a.ident.Login(r.Context(), req.Username, req.Password)

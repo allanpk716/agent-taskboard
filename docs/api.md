@@ -6,6 +6,9 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 ## 通用约定
 
 - 所有接口都在 `/api/v1` 之下；网页只调用公开 API。
+- JSON 请求体必须是 UTF-8；不是合法 UTF-8 时返回 `400 invalid_utf8`。Windows 命令行可能把
+  内联中文转成本地代码页：把 JSON 写进文件后用 `curl --data-binary @body.json` 发送；
+  PowerShell 用 `[Text.Encoding]::UTF8.GetBytes(...)` 作为 `-Body`。
 - 错误一律写成 `{"error":{"code":"…","message":"…","hint":"…"}}`，`hint` 可选，告诉调用方下一步怎么做。
 - 成功创建资源返回 `201`。
 - 凭证四种，统一解析成一个 Viewer（`kind` 为 `member` / `guest`，成员带 `member` 与 `agent` / `client`，访客带 `guest_link`，见 spec「身份与凭证」模块）：
@@ -21,7 +24,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 
 | 方法与路径 | 说明 |
 |---|---|
-| `POST /api/v1/session` | 登录：`{"username","password"}` 换会话 cookie。错误 `invalid_credentials`(401)、`invalid_json`(400)。 |
+| `POST /api/v1/session` | 登录：`{"username","password"}` 换会话 cookie。错误 `invalid_credentials`(401)、`invalid_json`(400)、`invalid_utf8`(400)。 |
 | `GET /api/v1/session` | 当前凭证的身份（任何有效凭证；匿名 401 `unauthenticated`）。 |
 | `DELETE /api/v1/session` | 登出（幂等 204），清除会话 cookie。 |
 
@@ -198,7 +201,8 @@ spec 用户故事 84），没有 `inbox`：
     **唯一例外**：请求带 `guest_link` 且 `can_edit_brief` 为 `true` 时，免「至少一个
     维度标签」（成员这时不知道机型，由访客补全说明时选的维度值或初筛补上）；
     其余校验照常（标签仍须是字典里在用的值、模板必须启用等），模板的预设标签照常打上。
-  - `assignee`（#36）可写成员 id 或姓名；写成成员 Agent（署名写法或 Agent 名字）
+  - `assignee`（#36）可写数字成员 id、字符串成员 id 或姓名（`4`、`"4"`、`"陈工"`）；
+    其他 JSON 类型或非法数字 id 返回 `422 invalid_assignee`。写成成员 Agent（署名写法或 Agent 名字）
     返回 `422 assignee_must_be_member`（成员 Agent 不能被指派，hint 列出可选成员）；
     查无此人返回 `422 unknown_member`；账号已停用的成员返回 `422 assignee_deactivated`
     （#42：停用即时生效，不再接新工单）。建单时指派会在 `created` 事件后记一条
@@ -220,7 +224,7 @@ spec 用户故事 84），没有 `inbox`：
   是服务端生成的面向访客的转发文案（称呼对方 + 标题 + 请按提示写详细、可传日志照片 +
   链接 + 不用登录、有效期至某日），网页与成员 Agent 用同一份，与给被指派人的顶层
   `share_text` 互不混用。同一个 `Idempotency-Key` 重放返回首次结果，不会多出工单或链接。
-- 建单错误码：`422 title_required`、`422 invalid_kind`、
+- 建单错误码：`422 title_required`、`422 invalid_kind`、`422 invalid_assignee`、
   `422 dimension_label_required`（hint 给出字典里的维度标签示例）、
   `422 unknown_label_value`（附 `suggestions`：同维度里规范化后相等或互相包含的值，
   规范化 = 忽略大小写、空格、连字符和下划线）。
@@ -336,11 +340,11 @@ spec 用户故事 84），没有 `inbox`：
 
 ## 指派与改派（#36）
 
-- `POST /api/v1/tickets/{id}/assign {"assignee": "成员 id 或姓名"}`（仅成员；
+- `POST /api/v1/tickets/{id}/assign {"assignee": 4|"4"|"陈工"}`（仅成员；
   访客 403 `members_only`）。改派给当前指派人 → `422 already_assigned`；
   写成成员 Agent → `422 assignee_must_be_member`；查无此人 → `422 unknown_member`；
   指派停用成员 → `422 assignee_deactivated`（#42）
-  （hint 列出可选成员）。
+  （hint 列出可选成员）；其他 JSON 类型或非法数字 id → `422 invalid_assignee`。
 - 成功 `200`：`{assignee, waiting_on, share_text}`；`share_text` 只在改派给**他人**时
   非空：`赵工：工单「整理对照表」转给你了，让你的 Agent 读一下 /t/20261016-001`。
 - 记一条 `assigned{from, to}` 事件（文案「指派给 X」/「改派：X → Y」）并推进变更序号。

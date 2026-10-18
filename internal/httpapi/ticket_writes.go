@@ -282,9 +282,10 @@ func newWaitingOnView(waitingOn tickets.WaitingOn) waitingOnView {
 	return v
 }
 
-// assignTicketRequest 是 POST …/assign 的请求体：assignee 可写成员 id 或姓名。
+// assignTicketRequest 是 POST …/assign 的请求体：assignee 可写数字成员 id、
+// 字符串成员 id 或姓名。
 type assignTicketRequest struct {
-	Assignee string `json:"assignee"`
+	Assignee assigneeRef `json:"assignee"`
 }
 
 // assignTicketView 是改派成功（200）的响应；改派给他人时带一句可转发的
@@ -309,11 +310,15 @@ func (a *API) assignTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		return
 	}
 	var req assignTicketRequest
-	if !decodeJSON(w, r, &req, `{"assignee": "成员 id 或姓名；空字符串取消指派"}`) {
+	if !decodeJSON(w, r, &req, `{"assignee": 数字成员 id、字符串成员 id 或姓名；空字符串取消指派}`) {
+		return
+	}
+	if req.Assignee.invalid {
+		writeInvalidAssignee(w)
 		return
 	}
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
-		result, err := a.tickets.Assign(r.Context(), viewer, ref, req.Assignee)
+		result, err := a.tickets.Assign(r.Context(), viewer, ref, req.Assignee.ref)
 		if err != nil {
 			a.writeTicketError(w, r, ref, err)
 			return
