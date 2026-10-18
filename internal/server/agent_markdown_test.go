@@ -57,8 +57,8 @@ func Test工单和访客路径按Accept返回Markdown或SPA(t *testing.T) {
 		assertMarkdownGuide(t, res, []string{
 			"链接本身就是访客凭证",
 			"https://tb.example.com/api/v1/session",
-			"$TICKET_API?format=markdown",
-			"$TICKET_API/replies",
+			`curl -H "Authorization: Bearer $GUEST_TOKEN" "https://tb.example.com$TICKET_API?format=markdown"`,
+			`curl -X POST -H "Authorization: Bearer $GUEST_TOKEN" -H "Content-Type: application/json" -d '{"body_md":"…"}' "https://tb.example.com$TICKET_API/replies"`,
 			"Authorization: Bearer $GUEST_TOKEN",
 			"https://tb.example.com/agent.md",
 		})

@@ -110,6 +110,9 @@ func TestAPI自描述和未知路径提示(t *testing.T) {
 	if !strings.Contains(errBody.Error.Hint, "https://taskboard.example.com/agent.md") {
 		t.Fatalf("未知路径 hint 没有说明书：%q", errBody.Error.Hint)
 	}
+	if strings.Contains(errBody.Error.Hint, "; ") {
+		t.Fatalf("未知路径 hint 的中文句子不应使用半角分号：%q", errBody.Error.Hint)
+	}
 }
 
 func Test未登录提示指向说明书而不是密码登录(t *testing.T) {

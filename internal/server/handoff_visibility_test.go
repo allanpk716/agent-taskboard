@@ -32,20 +32,30 @@ func Test访客与Markdown不出现交接字段(t *testing.T) {
 		}
 	}
 
-	var assigned ticketResponseBody
+	var assigned map[string]any
 	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+created.Number, nil, &assigned)
-	if assigned.HandoffShareText == nil {
-		t.Fatal("有指派人时 handoff_share_text 不应为 null")
+	if _, ok := assigned["handoff_share_text"]; !ok {
+		t.Fatal("成员 JSON 应出现 handoff_share_text 键")
+	}
+	if assigned["handoff_share_text"] == nil {
+		t.Fatal("有指派人 handoff_share_text 不应为 null")
 	}
 
-	var unassigned ticketResponseBody
+	var unassignedCreated createAssignedResponse
 	res = s.Do(t, web, http.MethodPost, "/api/v1/tickets", map[string]any{
 		"title": "未指派", "brief_md": "……", "labels": []string{"机型:UD-2300"},
-	}, &unassigned)
-	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+unassigned.Number, nil, &unassigned)
-	if unassigned.HandoffText == "" || unassigned.HandoffShareText != nil {
-		t.Fatalf("未指派 handoff_text/handoff_share_text = %q/%v, 想 Agent 段/null",
-			unassigned.HandoffText, unassigned.HandoffShareText)
+	}, &unassignedCreated)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("未指派建单状态码 = %d, 想 201", res.StatusCode)
+	}
+	var unassigned map[string]any
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+unassignedCreated.Number, nil, &unassigned)
+	if unassigned["handoff_text"] == "" || unassigned["handoff_share_text"] != nil {
+		t.Fatalf("未指派 handoff_text/handoff_share_text = %v/%v, 想 Agent 段/null",
+			unassigned["handoff_text"], unassigned["handoff_share_text"])
+	}
+	if _, ok := unassigned["handoff_share_text"]; !ok {
+		t.Fatal("未指派成员 JSON 也应出现 handoff_share_text 键")
 	}
 
 	var guest map[string]any

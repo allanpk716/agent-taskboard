@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, api } from '../api'
 import type { TemplateField } from '../shared/types'
-import { fetchMembers, uploadMemberAttachment, type MemberRef } from './memberApi'
+import { fetchMembers, fetchTicket, uploadMemberAttachment, type MemberRef } from './memberApi'
 import { HandoffPanel } from './HandoffDialog'
 import { Confirm, invalidate, nav, toast } from './ui'
 import { chipClass } from './TicketsPage'
@@ -411,8 +411,13 @@ function NewTicketForm({
       // 暂存的附件此刻上传（建单本身不认领 att: 引用），再把引用写进说明。
       const warnings = await attachStagedFiles(created.number, template, brief, files)
       created.warnings = [...created.warnings, ...warnings]
-      if (created.share_text)
-        created.handoff_text = created.share_text.split(/\n\s*\n/).slice(1).join('\n\n')
+      if (created.share_text) {
+        try {
+          created.handoff_text = (await fetchTicket(created.number)).handoff_text
+        } catch {
+          created.share_text = undefined
+        }
+      }
       invalidate()
       onDone(created, title.trim(), assignee)
       window.scrollTo(0, 0)

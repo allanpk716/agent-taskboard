@@ -83,11 +83,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/", api.Handler())
-	docs := agentdocs.Handler(cfg.Server.PublicURL)
-	mux.Handle("/agent.md", docs)
-	mux.Handle("/llms.txt", docs)
-	mux.Handle("/api.md", docs)
-	mux.Handle("/", webapp.AgentRoutes(cfg.Server.PublicURL, web))
+	mux.Handle("/", agentdocs.Handler(cfg.Server.PublicURL, webapp.AgentRoutes(cfg.Server.PublicURL, web)))
 
 	return &Server{
 		cfg:           cfg,

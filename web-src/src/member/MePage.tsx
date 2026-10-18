@@ -178,6 +178,10 @@ export function MePage({ me }: { me: Me }) {
           Agent
         </div>
         <div className="hint">为名下的 Agent 签发具名 token</div>
+        <div className="hint">
+          可以有几个、分别署名「{me.name} 的 Agent · 名字」、分别撤销。Agent
+          不能冒充本人，也不能签发 token；成员没有「本人 API token」——自己用命令行时，也建一个具名 Agent。
+        </div>
         {error && <div className="errbox">{error}</div>}
         <table className="mini-tbl">
           <tbody>

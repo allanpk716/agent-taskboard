@@ -21,6 +21,7 @@ import {
   revokeGuestLink,
   uploadMemberAttachment,
   type GuestLink,
+  type Me,
   type MemberRef,
 } from './memberApi'
 import { BriefBubble, EventLine, ReplyBubble } from '../shared/conversation'
@@ -155,7 +156,7 @@ function AssignDialog({
 }: {
   ticket: MemberTicket
   members: MemberRef[]
-  me?: { id: number; name: string }
+  me?: Me
   onChanged: () => void
   onClose: () => void
 }) {
@@ -168,19 +169,23 @@ function AssignDialog({
     if (!choice) return
     try {
       const res = await assignTicket(ticket.number, choice)
+      const fresh = await fetchTicket(ticket.number)
       onChanged()
-      if (choice === me?.name) {
+      if (res.assignee?.id === me?.id) {
         onClose()
         toast(`已指派给 ${choice}`)
         return
       }
-      const agentText = res.share_text?.split(/\n\s*\n/).slice(1).join('\n\n')
-      if (!res.share_text || !agentText) {
+      if (!res.share_text || !fresh.handoff_text) {
         onClose()
         toast(`已指派给 ${choice}`)
         return
       }
-      setHandoff({ text: agentText, shareText: res.share_text, assignee: choice })
+      setHandoff({
+        text: fresh.handoff_text,
+        shareText: res.share_text,
+        assignee: res.assignee?.name ?? choice,
+      })
     } catch (e) {
       setErr(e instanceof ApiError ? `${e.code}：${e.message}` : '指派失败，请重试')
     }
@@ -524,7 +529,7 @@ export function TicketDetailPage({
   me,
 }: {
   ticketRef: string
-  me?: { id: number; name: string }
+  me?: Me
 }) {
   const [ticket, setTicket] = useState<MemberTicket | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -799,7 +804,7 @@ export function TicketDetailPage({
           handoffText={ticket.handoff_text ?? ''}
           handoffShareText={ticket.handoff_share_text}
           assigneeName={ticket.assignee?.member?.name ?? null}
-          isAssignee={!!ticket.assignee?.member && ticket.assignee.member.name === me?.name}
+          isAssignee={!!ticket.assignee?.member && ticket.assignee.member.id === me?.id}
           onClose={() => setDialog(null)}
         />
       )}

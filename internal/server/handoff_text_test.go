@@ -39,7 +39,7 @@ func Test读工单返回交接文案且与建单shareText一致(t *testing.T) {
 1. 先读说明书：%s/agent.md
 2. 凭证：用我在网页「我的 → Agent」签发的 token，请求头 Authorization: Bearer <token>；没有就先停下来让我去签发，不要用密码登录。
 3. 读工单：curl -H "Authorization: Bearer $TOKEN" "%s/api/v1/tickets/%s?format=markdown"
-4. 照工单末尾「下一步」做；之后的待办看 %s/api/v1/inbox.`,
+4. 照工单末尾「下一步」做；之后的待办看 %s/api/v1/inbox。`,
 		created.Number, s.URL(), s.URL(), created.Number, s.URL())
 	if read.HandoffText != wantAgent {
 		t.Fatalf("handoff_text = %q\n想 %q", read.HandoffText, wantAgent)

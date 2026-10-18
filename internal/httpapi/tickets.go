@@ -237,7 +237,7 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 			res.Assignee = &memberRef{ID: full.AssigneeID, Name: full.AssigneeName}
 			// 指派给他人时才附一句可转发的 share_text（自派自不需要通知自己）。
 			if full.AssigneeID != full.Creator.MemberID {
-				share := newHandoffText(a.requestBaseURL(r)).createShare(full.AssigneeName, full.Number, full.Title)
+				share := newHandoffText(a.requestBaseURL(r)).share(false, full.AssigneeName, full.Number, full.Title)
 				res.ShareText = &share
 			}
 		}
@@ -665,7 +665,7 @@ type ticketView struct {
 
 	// 成员交接文案（#98）：访客视角不出现这两个字段。
 	HandoffText      *string `json:"handoff_text,omitempty"`
-	HandoffShareText *string `json:"handoff_share_text,omitempty"`
+	HandoffShareText any     `json:"handoff_share_text,omitempty"`
 }
 
 // attachmentView 是附件列表项（#33）：id 是 att: 引用，url 是下载地址
@@ -709,10 +709,11 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 	}
 	if !isGuest {
 		text := newHandoffText(a.requestBaseURL(r))
-		handoff := text.agent(full.Number, full.Title)
+		handoff := text.agentSection(full.Number, full.Title)
 		v.HandoffText = &handoff
+		v.HandoffShareText = (*string)(nil)
 		if full.AssigneeID != 0 {
-			share := text.createShare(full.AssigneeName, full.Number, full.Title)
+			share := text.share(false, full.AssigneeName, full.Number, full.Title)
 			v.HandoffShareText = &share
 		}
 	}

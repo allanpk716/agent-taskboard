@@ -81,7 +81,7 @@ func (a *API) Handler() http.Handler {
 			return
 		}
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
-			"接口说明见 "+a.docsURL(r)+"; 主要接口在 /api/v1/tickets、/api/v1/inbox、/api/v1/labels")
+			"接口说明见 "+a.docsURL(r)+"；主要接口在 /api/v1/tickets、/api/v1/inbox、/api/v1/labels")
 	})
 	return recoverMiddleware(a.clientScopeMiddleware(mux))
 }

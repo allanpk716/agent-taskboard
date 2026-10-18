@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/allanpk716/agent-taskboard/internal/publicbase"
 )
 
 // AgentRoutes 在 SPA 回退前给偏好 Markdown 的 Agent 返回不查库的指引。
@@ -98,26 +100,16 @@ func serveAgentRoute(w http.ResponseWriter, r *http.Request, publicURL, value st
     GUEST_TOKEN=<链接里的密钥>
     curl -H "Authorization: Bearer $GUEST_TOKEN" "%s/api/v1/session"
     TICKET_API=<session 响应里 ticket.api 的值>
-    curl -H "Authorization: Bearer $GUEST_TOKEN" "$TICKET_API?format=markdown"
+    curl -H "Authorization: Bearer $GUEST_TOKEN" "%s$TICKET_API?format=markdown"
 
 ## 回复
 
-    curl -X POST -H "Authorization: Bearer $GUEST_TOKEN" -H "Content-Type: application/json" -d '{"body_md":"…"}' "$TICKET_API/replies"
+    curl -X POST -H "Authorization: Bearer $GUEST_TOKEN" -H "Content-Type: application/json" -d '{"body_md":"…"}' "%s$TICKET_API/replies"
 
 说明书：<%s/agent.md>
-`, base, base)
+`, base, base, base, base)
 }
 
 func publicBaseURL(publicURL string, r *http.Request) string {
-	if base := strings.TrimRight(publicURL, "/"); base != "" {
-		return base
-	}
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	if forwarded := r.Header.Get("X-Forwarded-Proto"); forwarded != "" {
-		scheme = forwarded
-	}
-	return scheme + "://" + r.Host
+	return publicbase.FromRequest(publicURL, r)
 }

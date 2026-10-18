@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/allanpk716/agent-taskboard/internal/identity"
+	"github.com/allanpk716/agent-taskboard/internal/publicbase"
 )
 
 // viewerFromRequest 把请求上的凭证（网页会话 cookie、Agent token 或访客链接密钥）
@@ -74,17 +75,7 @@ func (a *API) docsURL(r *http.Request) string {
 }
 
 func (a *API) requestBaseURL(r *http.Request) string {
-	if base := strings.TrimRight(a.cfg.Server.PublicURL, "/"); base != "" {
-		return base
-	}
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	if forwarded := r.Header.Get("X-Forwarded-Proto"); forwarded != "" {
-		scheme = forwarded
-	}
-	return scheme + "://" + r.Host
+	return publicbase.FromRequest(a.cfg.Server.PublicURL, r)
 }
 
 type viewerContextKeyType struct{}

@@ -1,4 +1,4 @@
-// Package agentdocs serves the public Markdown documentation used by agents.
+// Package agentdocs 提供给 Agent 看的公开 Markdown 文档。
 package agentdocs
 
 import (
@@ -7,13 +7,14 @@ import (
 	"strings"
 
 	"github.com/allanpk716/agent-taskboard/docs"
+	"github.com/allanpk716/agent-taskboard/internal/publicbase"
 )
 
 //go:embed agent.md
 var agentMarkdown string
 
-// Handler returns the public documentation routes.
-func Handler(publicURL string) http.Handler {
+// Handler 挂公开文档路由，其余路径交给 next（SPA 回退仍在文档之后）。
+func Handler(publicURL string, next http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/agent.md", serveMarkdown(publicURL, func(base string) string {
 		return strings.ReplaceAll(agentMarkdown, "{{BASE}}", base)
@@ -22,6 +23,7 @@ func Handler(publicURL string) http.Handler {
 		return strings.ReplaceAll(agentMarkdown, "{{BASE}}", base)
 	}))
 	mux.HandleFunc("/api.md", serveMarkdown(publicURL, func(string) string { return docs.APIMarkdown }))
+	mux.Handle("/", next)
 	return mux
 }
 
@@ -32,17 +34,7 @@ func serveMarkdown(publicURL string, render func(base string) string) http.Handl
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		base := strings.TrimRight(publicURL, "/")
-		if base == "" {
-			scheme := "http"
-			if r.TLS != nil {
-				scheme = "https"
-			}
-			if forwarded := r.Header.Get("X-Forwarded-Proto"); forwarded != "" {
-				scheme = forwarded
-			}
-			base = scheme + "://" + r.Host
-		}
+		base := publicbase.FromRequest(publicURL, r)
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = w.Write([]byte(render(base)))
