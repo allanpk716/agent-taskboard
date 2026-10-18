@@ -185,7 +185,7 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createTicketRequest
-	if !decodeJSON(w, r, &req, `{"kind?": "task|report", "template?": "模板 key", "title": "…", "brief_md?": "…", "fields?": {"问句？": "…"}, "labels": ["维度:值"], "assignee?": 数字成员 id、字符串成员 id 或姓名, "guest_link?": {"note": "…", "valid_days?": 30, "can_edit_brief": true}}`) {
+	if !decodeJSON(w, r, &req, `{"kind?": "task|report", "template?": "模板 key", "title": "…", "brief_md?": "…", "fields?": {"问句？": "…"}, "labels": ["维度:值"], "assignee?": "成员 id 或姓名（id 也可写成数字，如 4）", "guest_link?": {"note": "…", "valid_days?": 30, "can_edit_brief": true}}`) {
 		return
 	}
 	if req.Assignee.invalid {

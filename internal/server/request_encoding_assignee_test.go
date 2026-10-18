@@ -2,7 +2,9 @@ package server_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
@@ -242,6 +244,35 @@ func Test建单与改派accept数字成员id并拒绝非法assignee(t *testing.T
 	assertAssignee(adminID, "陈工")
 	if after := countRows(t, s, "timeline_events"); after != before {
 		t.Fatalf("非法 assignee 改派写入事件：%d → %d", before, after)
+	}
+}
+
+func Test建单与改派非法JSON提示是合法示例(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	number := mustCreateTicket(t, s, web, "非法 JSON 提示用工单")
+
+	for name, path := range map[string]string{
+		"建单": "/api/v1/tickets",
+		"改派": "/api/v1/tickets/" + number + "/assign",
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := postRaw(t, s, web, http.MethodPost, path, []byte(`{`))
+			if res.StatusCode != http.StatusBadRequest {
+				t.Fatalf("状态码 = %d, 想 400：%s", res.StatusCode, readAll(t, res))
+			}
+			var got errorBody
+			tbtest.DecodeJSON(t, res, &got)
+			const prefix = "请求体应为 "
+			if !strings.HasPrefix(got.Error.Hint, prefix) {
+				t.Fatalf("hint = %q, 想以 %q 开头", got.Error.Hint, prefix)
+			}
+			example := strings.TrimPrefix(got.Error.Hint, prefix)
+			if !json.Valid([]byte(example)) {
+				t.Fatalf("hint 示例不是合法 JSON：%q", example)
+			}
+		})
 	}
 }
 

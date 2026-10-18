@@ -310,7 +310,7 @@ func (a *API) assignTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		return
 	}
 	var req assignTicketRequest
-	if !decodeJSON(w, r, &req, `{"assignee": 数字成员 id、字符串成员 id 或姓名；空字符串取消指派}`) {
+	if !decodeJSON(w, r, &req, `{"assignee": "成员 id 或姓名（id 也可写成数字，如 4）；空字符串取消指派"}`) {
 		return
 	}
 	if req.Assignee.invalid {
