@@ -7,7 +7,7 @@ import { ApiError } from '../api'
 import { closeReasonText, fmtShort } from '../shared/format'
 import { api } from '../api'
 import { nav, useInvalidate, useLocationSearch } from './ui'
-import { LabelFacetPanel, LabelFilterSummary } from './LabelFacets'
+import { LabelFacetPanel, LabelFilterSummary, toggleLabelCondition } from './LabelFacets'
 import { useLayoutTier } from './useLayoutTier'
 
 export interface ListFilters {
@@ -136,17 +136,45 @@ export function chipClass(label: string): string {
   return `chip c${i < 0 ? 0 : (i % 6) + 1}`
 }
 
-export function LabelChips({ labels }: { labels: string[] }) {
+export function LabelChips({
+  labels,
+  onToggle,
+}: {
+  labels: string[]
+  onToggle?: (label: string) => void
+}) {
   if (!labels?.length) return null
   return (
     <>
       {labels.map((l) => (
-        <span key={l} className={`${chipClass(l)}${l.includes(':') ? ' dimension' : ''}`}>
-          {l}
-        </span>
+        onToggle ? (
+          <button
+            key={l}
+            type="button"
+            className={`${chipClass(l)} filterable${l.includes(':') ? ' dimension' : ''}`}
+            title="点击按此筛选"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onToggle(l)
+            }}
+          >
+            {l}
+          </button>
+        ) : (
+          <span key={l} className={`${chipClass(l)}${l.includes(':') ? ' dimension' : ''}`}>
+            {l}
+          </span>
+        )
       ))}
     </>
   )
+}
+
+export function ticketLabelFilterPath(label: string, search = 'status=open'): string {
+  const filters = filtersFromSearch(search)
+  const patch = toggleLabelCondition(filters, label)
+  return `/tickets?${toQuery({ ...filters, ...patch })}`
 }
 
 export function TicketCard({
@@ -155,12 +183,14 @@ export function TicketCard({
   selected,
   desktop,
   me,
+  onLabelClick,
 }: {
   item: TicketListItem
   href?: string
   selected?: boolean
   desktop?: boolean
   me?: { name: string }
+  onLabelClick?: (label: string) => void
 }) {
   const target = href ?? `/t/${item.number}`
   return (
@@ -189,7 +219,7 @@ export function TicketCard({
             {item.assignee ?? '未指派'}
           </div>
           <div className="pc-row-labels">
-            <LabelChips labels={item.labels} />
+            <LabelChips labels={item.labels} onToggle={onLabelClick} />
           </div>
         </>
       ) : (
@@ -210,7 +240,7 @@ export function TicketCard({
             {item.number} · 发起人 {item.creator} · 指派 {item.assignee ?? '未指派'}
           </div>
           <div className="tc-foot">
-            <LabelChips labels={item.labels} />
+            <LabelChips labels={item.labels} onToggle={onLabelClick} />
           </div>
         </>
       )}
@@ -592,6 +622,7 @@ export function TicketsPage({
               me={me}
               selected={selected === it.number}
               href={detailHref(it.number)}
+              onLabelClick={(label) => update(toggleLabelCondition(filters, label))}
             />
           ))}
           {data?.next && (
@@ -804,7 +835,12 @@ export function TicketsPage({
       {error && <div className="ecard">{error}</div>}
       {!error && items.length === 0 && data && <div className="ecard">没有符合条件的工单</div>}
       {items.map((it) => (
-        <TicketCard key={it.number} item={it} href={detailHref(it.number)} />
+        <TicketCard
+          key={it.number}
+          item={it}
+          href={detailHref(it.number)}
+          onLabelClick={(label) => update(toggleLabelCondition(filters, label))}
+        />
       ))}
       {data?.next && (
         <div className="submitrow">

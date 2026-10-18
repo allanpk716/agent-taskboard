@@ -784,6 +784,11 @@
   margin: 2px 3px 2px 0;
   vertical-align: middle;
 }
+.chip.filterable {
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
 .chip i {
   font-style: normal;
   margin-left: 5px;

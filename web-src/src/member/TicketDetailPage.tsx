@@ -28,9 +28,15 @@ import {
 import { BriefBubble, EventLine, ReplyBubble } from '../shared/conversation'
 import { Lightbox } from '../shared/widgets'
 import { absoluteUrl, authorName, closeReasonText, fmtLinkExpiry, linkExpired } from '../shared/format'
-import { Confirm, Modal, copyText, invalidate, nav, toast } from './ui'
+import { Confirm, Modal, copyText, invalidate, nav, toast, useLocationSearch } from './ui'
 import { HandoffDialog } from './HandoffDialog'
-import { LabelChips, chipClass } from './TicketsPage'
+import {
+  LabelChips,
+  chipClass,
+  filtersFromSearch,
+  toQuery,
+} from './TicketsPage'
+import { toggleLabelCondition } from './LabelFacets'
 import { useLayoutTier } from './useLayoutTier'
 
 /* ---------------- 弹窗：打标签 ---------------- */
@@ -528,6 +534,7 @@ function TicketInfoColumn({
   onAssign,
   onLabels,
   onLinks,
+  onLabelToggle,
 }: {
   ticket: MemberTicket
   links: GuestLink[] | null
@@ -535,6 +542,7 @@ function TicketInfoColumn({
   onAssign: () => void
   onLabels: () => void
   onLinks: () => void
+  onLabelToggle: (label: string) => void
 }) {
   const open = ticket.status === 'open'
   return (
@@ -562,7 +570,7 @@ function TicketInfoColumn({
       <section>
         <div className="sec-t">标签</div>
         <div className="ival">
-          <LabelChips labels={ticket.labels ?? []} />
+          <LabelChips labels={ticket.labels ?? []} onToggle={onLabelToggle} />
           <button className="btn sm ghost" onClick={onLabels}>
             编辑
           </button>
@@ -613,6 +621,7 @@ export function TicketDetailPage({
   returnTo?: string
 }) {
   const tier = useLayoutTier()
+  const search = useLocationSearch()
   const [ticket, setTicket] = useState<MemberTicket | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [lightbox, setLightbox] = useState<string | null>(null)
@@ -685,6 +694,21 @@ export function TicketDetailPage({
   const closed = !open
   const deliveredToMe =
     open && ticket.viewer.your_turn && ticket.waiting_on.reason.includes('交付') && ticket.waiting_on.reason.includes('验收')
+
+  function toggleDetailLabel(label: string) {
+    const params = new URLSearchParams(search)
+    const fromInbox = params.get('list') === 'inbox'
+    params.delete('list')
+    const filters = fromInbox
+      ? filtersFromSearch('status=open')
+      : filtersFromSearch(params.toString())
+    const query = toQuery({ ...filters, ...toggleLabelCondition(filters, label) })
+    if (tier === 'narrow' || tier === 'mobile') {
+      nav(`/tickets?${query}`)
+      return
+    }
+    nav(`/t/${ticket!.number}?${query}`)
+  }
 
   function StatusBadge() {
     if (closed) return <span className="badge closed">已关闭 · {closeReasonText(ticket!.close_reason)}</span>
@@ -818,7 +842,7 @@ export function TicketDetailPage({
           <div className="kv">
             <span>标签</span>
             <span>
-              <LabelChips labels={ticket.labels ?? []} />{' '}
+              <LabelChips labels={ticket.labels ?? []} onToggle={toggleDetailLabel} />{' '}
               <button className="btn sm ghost" onClick={() => setDialog('label')}>
                 ＋
               </button>
@@ -909,6 +933,7 @@ export function TicketDetailPage({
           onAssign={() => setDialog('assign')}
           onLabels={() => setDialog('label')}
           onLinks={() => setDialog('links')}
+          onLabelToggle={toggleDetailLabel}
         />
       )}
 
@@ -922,6 +947,7 @@ export function TicketDetailPage({
             onAssign={() => setDialog('assign')}
             onLabels={() => setDialog('label')}
             onLinks={() => setDialog('links')}
+            onLabelToggle={toggleDetailLabel}
           />
         </div>
       ) : (

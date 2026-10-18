@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { fetchInbox, reasonClass, type InboxItem, type InboxResponse } from './memberApi'
 import { nav, useInvalidate } from './ui'
-import { TicketCard } from './TicketsPage'
+import { TicketCard, ticketLabelFilterPath } from './TicketsPage'
 
 export function InboxPage({
   desktop,
@@ -94,6 +94,7 @@ export function InboxPage({
               me={me}
               selected={selected === it.number}
               href={`/t/${it.number}?list=inbox`}
+              onLabelClick={(label) => nav(ticketLabelFilterPath(label))}
             />
           ))}
         </div>
