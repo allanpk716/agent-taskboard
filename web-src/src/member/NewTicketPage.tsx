@@ -1,6 +1,6 @@
 // 建单（#41）：第一步选「用模板」或「自由格式」；第二步填表单——模板工单
 // 复用 #39 的 FieldForm（按字段分区、维度字段可按别名搜索、统一附件区，
-// 附件先暂存本机，建单后立即上传并把引用写进说明）；自由格式一整块
+// 附件先暂存本机，建单后立即上传并挂到整单附件列表）；自由格式一整块
 // Markdown 说明。维度标签先经 resolve 换成标准值（建单接口只收标准值）；
 // 缺必填只弹确认、不拦截（spec 用户故事 6）；创建指派给同事后嵌入
 // 「交给 Agent」面板。
@@ -11,7 +11,7 @@ import { fetchMembers, fetchTicket, uploadMemberAttachment, type MemberRef } fro
 import { HandoffPanel } from './HandoffDialog'
 import { Confirm, invalidate, nav, toast } from './ui'
 import { chipClass } from './TicketsPage'
-import { FieldForm, appendRef, missingRequired, type StagedFile } from '../guest/FieldForm'
+import { FieldForm, missingRequired, type StagedFile } from '../guest/FieldForm'
 
 interface TemplateSummary {
   key: string
@@ -211,54 +211,35 @@ function stageFilesOf(fieldKey: string, picked: File[]): StagedFile[] {
   }))
 }
 
-/** 建单后补传暂存附件：上传拿 att: 引用，再 PATCH 说明把引用挂上
- *（模板工单按字段挂到对应字段；自由格式追加到整块说明末尾）。 */
+/** 建单后补传暂存附件：上传后 PATCH attachment_ids，不再往说明字段里拼引用。 */
 async function attachStagedFiles(
   number: string,
-  template: TemplateDetail | null,
-  brief: string,
   stagedFiles: StagedFile[],
 ): Promise<{ field: string; message: string }[]> {
   const staged = stagedFiles.filter((f) => f.blob)
   if (staged.length === 0) return []
   const warnings: { field: string; message: string }[] = []
-  const refsByField: Record<string, string[]> = {}
+  const attachmentIds: string[] = []
   for (const f of staged) {
     try {
       const att = await uploadMemberAttachment(number, f.blob!)
-      ;(refsByField[f.fieldKey] ??= []).push(att.markdown)
+      attachmentIds.push(att.id)
     } catch (err) {
       const why = err instanceof ApiError ? `${err.message}${err.hint ? `（${err.hint}）` : ''}` : '上传失败'
       warnings.push({ field: f.name, message: `未能附上（${why}），请打开工单后用回复补充。` })
     }
   }
-  if (Object.keys(refsByField).length === 0) return warnings
+  if (attachmentIds.length === 0) return warnings
   try {
     const fresh = await api(`/api/v1/tickets/${encodeURIComponent(number)}`)
-    if (template) {
-      const merged: Record<string, string> = { ...(fresh.brief.fields ?? {}) }
-      const byTitle = new Map(template.fields.map((f) => [f.key, f.title]))
-      for (const [fieldKey, refs] of Object.entries(refsByField)) {
-        const title = byTitle.get(fieldKey) ?? fieldKey
-        merged[title] = appendRef(merged[title] ?? '', refs.join('\n'))
-      }
-      await api(`/api/v1/tickets/${encodeURIComponent(number)}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ fields: merged, base_revision: fresh.brief.revision }),
-        idempotencyKey: crypto.randomUUID(),
-      })
-    } else {
-      let merged = brief
-      for (const refs of Object.values(refsByField)) merged = appendRef(merged, refs.join('\n'))
-      await api(`/api/v1/tickets/${encodeURIComponent(number)}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ brief_md: merged, base_revision: fresh.brief.revision }),
-        idempotencyKey: crypto.randomUUID(),
-      })
-    }
+    await api(`/api/v1/tickets/${encodeURIComponent(number)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ attachment_ids: attachmentIds, base_revision: fresh.brief.revision }),
+      idempotencyKey: crypto.randomUUID(),
+    })
   } catch (err) {
     const why = err instanceof ApiError ? err.message : '网络问题'
-    warnings.push({ field: '附件', message: `已上传，但没能写进说明（${why}），请打开工单后补充。` })
+    warnings.push({ field: '附件', message: `已上传，但没能挂到附件条（${why}），请打开工单后补充。` })
   }
   return warnings
 }
@@ -408,8 +389,8 @@ function NewTicketForm({
         idempotencyKey: idemKeyRef.current,
       })
       idemKeyRef.current = undefined // 成功：下一次建单是新动作
-      // 暂存的附件此刻上传（建单本身不认领 att: 引用），再把引用写进说明。
-      const warnings = await attachStagedFiles(created.number, template, brief, files)
+      // 暂存的附件此刻上传并挂到整单附件列表（建单本身不带附件）。
+      const warnings = await attachStagedFiles(created.number, files)
       created.warnings = [...created.warnings, ...warnings]
       if (created.share_text) {
         try {
