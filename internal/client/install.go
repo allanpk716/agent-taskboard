@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -35,12 +36,15 @@ type FileSystem interface {
 	InstallDir() (string, error)
 	Executable() (string, error)
 	CopyExecutable(dest string) error
+	RenameExecutable(old, dest string) error
+	RemoveExecutable(path string) error
 }
 
 // ProcessManager 启动安装后的进程并安排延迟删除。
 type ProcessManager interface {
 	Start(path string, args []string) error
 	DeleteLater(path string) error
+	QuitExisting() error
 }
 
 // LifecycleDependencies 是安装、卸载和开机自启需要的窄适配器。
@@ -97,16 +101,25 @@ func InstallIfNeeded(deps LifecycleDependencies, serverURL string) (bool, error)
 	}
 	installed := filepath.Join(dir, "taskboard-client.exe")
 	if samePath(exe, installed) {
+		_ = deps.Files.RemoveExecutable(installed + ".old")
 		if err := installUserState(deps, installed, serverURL); err != nil {
 			return false, err
 		}
 		return false, nil
+	}
+	if _, err := os.Stat(installed); err == nil {
+		if err := deps.Files.RenameExecutable(installed, installed+".old"); err != nil {
+			return false, fmt.Errorf("备份正在运行的客户端失败：%w", err)
+		}
 	}
 	if err := deps.Files.CopyExecutable(installed); err != nil {
 		return false, fmt.Errorf("复制客户端到用户目录失败：%w", err)
 	}
 	if err := installUserState(deps, installed, serverURL); err != nil {
 		return false, err
+	}
+	if err := deps.Process.QuitExisting(); err != nil {
+		return false, fmt.Errorf("通知正在运行的客户端退出失败：%w", err)
 	}
 	if err := deps.Process.Start(installed, []string{"--autostart"}); err != nil {
 		return false, fmt.Errorf("从安装位置重启客户端失败：%w", err)

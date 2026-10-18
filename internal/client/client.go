@@ -133,6 +133,8 @@ type App struct {
 	tokenSignal       chan struct{}
 	streamCancel      context.CancelFunc
 	shutdown          context.CancelFunc
+	httpClient        *http.Client
+	streamClient      *http.Client
 }
 
 // New 装配客户端核心。
@@ -153,7 +155,10 @@ func New(cfg Config, deps Dependencies) *App {
 	if deps.Clock == nil {
 		deps.Clock = clock.Real{}
 	}
-	return &App{cfg: cfg, deps: deps, loginSignal: make(chan struct{}, 1), tokenSignal: make(chan struct{}, 1)}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = 30 * time.Second
+	return &App{cfg: cfg, deps: deps, loginSignal: make(chan struct{}, 1), tokenSignal: make(chan struct{}, 1),
+		httpClient: &http.Client{Timeout: 30 * time.Second}, streamClient: &http.Client{Transport: transport}}
 }
 
 // Run 阻塞运行客户端，直到 ctx 取消。
@@ -161,12 +166,27 @@ func (a *App) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	a.ctx, a.shutdown = runCtx, cancel
 	defer cancel()
-	if a.deps.Lock != nil && !a.cfg.AfterUpdate {
-		release, err := a.deps.Lock.Acquire()
-		if err != nil {
-			return err
+	var releaseLock func()
+	if a.deps.Lock != nil {
+		if a.cfg.AfterUpdate {
+			if a.deps.Update != nil {
+				_ = a.deps.Update.SendQuit()
+			}
+			var err error
+			releaseLock, err = a.acquireLockAfterUpdate(runCtx)
+			if err != nil {
+				return err
+			}
+		} else {
+			var err error
+			releaseLock, err = a.deps.Lock.Acquire()
+			if err != nil {
+				return err
+			}
 		}
-		defer release()
+	}
+	if releaseLock != nil {
+		defer releaseLock()
 	}
 	a.deps.Tray.SetState(TrayDisconnected)
 	trayDone := a.runAdapter(runCtx, func() error {
@@ -204,6 +224,23 @@ func (a *App) Run(ctx context.Context) error {
 	return err
 }
 
+func (a *App) acquireLockAfterUpdate(ctx context.Context) (func(), error) {
+	deadline := a.deps.Clock.After(30 * time.Second)
+	for {
+		release, err := a.deps.Lock.Acquire()
+		if err == nil {
+			return release, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-deadline:
+			return nil, err
+		case <-a.deps.Clock.After(100 * time.Millisecond):
+		}
+	}
+}
+
 func (a *App) runAdapter(ctx context.Context, run func() error) <-chan error {
 	done := make(chan error, 1)
 	go func() { done <- run() }()
@@ -231,7 +268,6 @@ func (a *App) serve(ctx context.Context) error {
 		}
 		a.mu.Lock()
 		a.token = token
-		a.failures = 0
 		a.needLoginPrompted = false
 		a.mu.Unlock()
 		a.deps.Tray.SetState(TrayNormal)
@@ -243,7 +279,10 @@ func (a *App) serve(ctx context.Context) error {
 			continue
 		}
 		if err != nil {
-			return err
+			if !a.retryAfterFailure(ctx, err) {
+				return nil
+			}
+			continue
 		}
 		if version.Less(a.cfg.Version, minVersion) {
 			a.deps.Tray.SetUnread(nil)
@@ -281,17 +320,23 @@ func (a *App) serve(ctx context.Context) error {
 		}
 		if err != nil {
 			a.deps.Tray.SetState(TrayDisconnected)
-			delay := time.Second << a.failures
-			if delay <= 0 || delay > time.Minute {
-				delay = time.Minute
-			}
-			a.failures++
-			if err := a.cfg.RetryWait(ctx, delay); err != nil {
-				return nil
-			}
+			a.retryAfterFailure(ctx, err)
 		}
 	}
 	return nil
+}
+
+func (a *App) retryAfterFailure(ctx context.Context, err error) bool {
+	_ = err
+	a.deps.Tray.SetState(TrayDisconnected)
+	a.mu.Lock()
+	delay := time.Second << a.failures
+	if delay <= 0 || delay > time.Minute {
+		delay = time.Minute
+	}
+	a.failures++
+	a.mu.Unlock()
+	return a.cfg.RetryWait(ctx, delay) == nil
 }
 
 func (a *App) serverMinVersion(ctx context.Context, token string) (string, error) {
@@ -301,7 +346,7 @@ func (a *App) serverMinVersion(ctx context.Context, token string) (string, error
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("User-Agent", a.userAgent())
-	res, err := http.DefaultClient.Do(req)
+	res, err := a.httpClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -444,7 +489,7 @@ func (a *App) exchange(ctx context.Context, code, verifier string) (string, erro
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", a.userAgent())
-	res, err := http.DefaultClient.Do(req)
+	res, err := a.httpClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -512,7 +557,7 @@ func (a *App) stream(ctx context.Context, token string) error {
 	if last > 0 {
 		req.Header.Set("Last-Event-ID", strconv.FormatInt(last, 10))
 	}
-	res, err := http.DefaultClient.Do(req)
+	res, err := a.streamClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -524,36 +569,55 @@ func (a *App) stream(ctx context.Context, token string) error {
 		data, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
 		return fmt.Errorf("notification stream: status %d: %s", res.StatusCode, data)
 	}
-	sc := bufio.NewScanner(res.Body)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	lines := make(chan string)
+	readDone := make(chan error, 1)
+	go func() {
+		sc := bufio.NewScanner(res.Body)
+		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for sc.Scan() {
+			select {
+			case <-streamCtx.Done():
+				readDone <- streamCtx.Err()
+				return
+			case lines <- sc.Text():
+			}
+		}
+		readDone <- sc.Err()
+	}()
 	var event string
 	var data strings.Builder
-	for sc.Scan() {
+	idle := a.deps.Clock.After(time.Minute)
+	for {
 		select {
-		case <-streamCtx.Done():
-			return nil
-		default:
-		}
-		line := sc.Text()
-		switch {
-		case line == "":
-			if event == "" && data.Len() == 0 {
-				continue
+		case <-idle:
+			cancel()
+			<-readDone
+			return errors.New("notification stream idle timeout")
+		case err := <-readDone:
+			return err
+		case line := <-lines:
+			idle = a.deps.Clock.After(time.Minute)
+			switch {
+			case line == "":
+				if event == "" && data.Len() == 0 {
+					continue
+				}
+				if err := a.handleEvent(event, data.String(), streamNumber); err != nil {
+					cancel()
+					<-readDone
+					return err
+				}
+				event, data = "", strings.Builder{}
+			case strings.HasPrefix(line, "event:"):
+				event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			case strings.HasPrefix(line, "data:"):
+				if data.Len() > 0 {
+					data.WriteByte('\n')
+				}
+				data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
 			}
-			if err := a.handleEvent(event, data.String(), streamNumber); err != nil {
-				return err
-			}
-			event, data = "", strings.Builder{}
-		case strings.HasPrefix(line, "event:"):
-			event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-		case strings.HasPrefix(line, "data:"):
-			if data.Len() > 0 {
-				data.WriteByte('\n')
-			}
-			data.WriteString(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
 		}
 	}
-	return sc.Err()
 }
 
 func (a *App) handleEvent(event, raw string, streamNumber int) error {
@@ -576,6 +640,9 @@ func (a *App) handleEvent(event, raw string, streamNumber int) error {
 		} else {
 			a.syncUnread(nil, body.UnreadCount, body.LatestID)
 		}
+		a.mu.Lock()
+		a.failures = 0
+		a.mu.Unlock()
 		if a.deps.Update != nil && streamNumber > 1 {
 			a.mu.Lock()
 			token := a.token
@@ -724,7 +791,7 @@ func (a *App) markAllRead() {
 }
 
 func (a *App) viewAll() {
-	_ = a.deps.Browser.Open(a.cfg.ServerURL + "/notifications")
+	_ = a.deps.Browser.Open(a.cfg.ServerURL + "/")
 }
 
 func (a *App) openNotification(n Notification) {
@@ -759,7 +826,7 @@ func (a *App) loadUnread(token string, count int, latest int64) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("User-Agent", a.userAgent())
-	res, err := http.DefaultClient.Do(req)
+	res, err := a.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -794,7 +861,7 @@ func (a *App) deleteJSON(ctx context.Context, token, path string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("User-Agent", a.userAgent())
-	res, err := http.DefaultClient.Do(req)
+	res, err := a.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -824,7 +891,7 @@ func (a *App) postJSON(ctx context.Context, token, path string, in, out any) err
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("User-Agent", a.userAgent())
-	res, err := http.DefaultClient.Do(req)
+	res, err := a.httpClient.Do(req)
 	if err != nil {
 		return err
 	}

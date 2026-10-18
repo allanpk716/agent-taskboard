@@ -209,6 +209,8 @@ func TestAfterUpdate进程发就绪信号并弹更新Toast(t *testing.T) {
 	fake.lifecycle = fx.lifecycle
 	fake.updater = fx.updater
 	fake.clock = clock.NewFake(time.Now())
+	oldRelease := fake.lock.AcquireMust(t)
+	fake.updater.quitOld = oldRelease
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -217,17 +219,30 @@ func TestAfterUpdate进程发就绪信号并弹更新Toast(t *testing.T) {
 		RetryWait: func(context.Context, time.Duration) error { return nil }, AfterUpdate: true,
 	}, client.Dependencies{
 		Tray: fake.tray, Toaster: fake.toaster, Store: fake.store, Browser: fake.browser,
-		Lifecycle: &fake.lifecycle, Update: fake.updater, Clock: fake.clock,
+		Lock: fake.lock, Lifecycle: &fake.lifecycle, Update: fake.updater, Clock: fake.clock,
 	})
 	done := make(chan error, 1)
 	go func() { done <- app.Run(ctx) }()
+	go func() {
+		for i := 0; i < 100 && fake.lock.acquiredCount() < 2; i++ {
+			time.Sleep(time.Millisecond)
+			fake.clock.Advance(100 * time.Millisecond)
+		}
+	}()
 
 	fx.updater.waitStarted(t)
+	if got := fake.lock.acquiredCount(); got != 2 {
+		t.Fatalf("更新进程获取单实例锁次数 = %d, 想 2", got)
+	}
+	if fake.lock.heldByUpdate() != true {
+		t.Fatal("更新完成后单实例锁应由新进程持有")
+	}
 	toasts := fake.toaster.shown(t)
 	if len(toasts) == 0 || toasts[0].Text != "客户端已更新到 1.2.0" {
 		t.Fatalf("更新 Toast = %+v", toasts)
 	}
 	cancel()
+	oldRelease()
 	waitClient(t, done)
 }
 
@@ -379,6 +394,8 @@ type fakeUpdateAdapter struct {
 	signaled  chan struct{}
 	once      sync.Once
 	autoReady bool
+	quitOld   func()
+	quit      chan struct{}
 }
 
 func newBadLatestProxy(t testing.TB, backend string) *httptest.Server {
@@ -412,7 +429,7 @@ func newBadLatestProxy(t testing.TB, backend string) *httptest.Server {
 }
 
 func newFakeUpdateAdapter() *fakeUpdateAdapter {
-	return &fakeUpdateAdapter{signaled: make(chan struct{}), autoReady: true}
+	return &fakeUpdateAdapter{signaled: make(chan struct{}), quit: make(chan struct{}), autoReady: true}
 }
 
 func (u *fakeUpdateAdapter) Start(path string, args []string) (client.UpdateProcess, error) {
@@ -431,8 +448,22 @@ func (u *fakeUpdateAdapter) Start(path string, args []string) (client.UpdateProc
 
 func (u *fakeUpdateAdapter) Ready() <-chan struct{} { return u.signaled }
 
+func (u *fakeUpdateAdapter) Quit() <-chan struct{} { return u.quit }
+
 func (u *fakeUpdateAdapter) SendReady() error {
 	u.once.Do(func() { close(u.signaled) })
+	return nil
+}
+
+func (u *fakeUpdateAdapter) SendQuit() error {
+	u.mu.Lock()
+	quit := u.quitOld
+	quitCh := u.quit
+	u.mu.Unlock()
+	if quit != nil {
+		quit()
+	}
+	close(quitCh)
 	return nil
 }
 

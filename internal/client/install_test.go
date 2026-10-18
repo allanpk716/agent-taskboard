@@ -104,6 +104,41 @@ func Test覆盖安装且安装目录内不再复制(t *testing.T) {
 	}
 }
 
+func Test旧版运行时覆盖安装先改名并通知退出(t *testing.T) {
+	fx := newInstallFixture(t)
+	if err := os.WriteFile(fx.files.installPath, []byte("MZ old running"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fx.files.executable = fx.download
+	fx.files.occupiedTarget = true
+
+	installed, err := client.InstallIfNeeded(fx.deps(), "https://taskboard.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !installed {
+		t.Fatal("覆盖安装后仍应从安装位置重启")
+	}
+	if got := readFile(t, fx.files.installPath); string(got) != "MZ downloaded" {
+		t.Fatalf("安装后的 exe = %q, 想新下载内容", got)
+	}
+	if got := readFile(t, fx.files.installPath+".old"); string(got) != "MZ old running" {
+		t.Fatalf("旧版备份 = %q, 想原运行中的内容", got)
+	}
+	if fx.process.quitExisting != 1 {
+		t.Fatalf("通知旧实例退出次数 = %d, 想 1", fx.process.quitExisting)
+	}
+
+	fx.files.executable = fx.files.installPath
+	fx.files.occupiedTarget = false
+	if _, err := client.InstallIfNeeded(fx.deps(), "https://taskboard.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(fx.files.installPath + ".old"); !os.IsNotExist(err) {
+		t.Fatalf("下次启动应尽力删除 .old：%v", err)
+	}
+}
+
 func Test托盘卸载撤销凭证清理本机并请求删除自身(t *testing.T) {
 	fake := newFakeDesktop(t)
 	s := fake.startService(t)
@@ -201,16 +236,18 @@ func (a *fakeAutostart) Disable() error            { a.enabled = false; return n
 func (t *fakeToastRegistration) Unregister() error { t.unregistered = true; return nil }
 
 type fakeFileSystem struct {
-	download    string
-	installDir  string
-	installPath string
-	executable  string
-	copies      []string
+	download       string
+	installDir     string
+	installPath    string
+	executable     string
+	copies         []string
+	occupiedTarget bool
 }
 
 type fakeProcessManager struct {
 	started      []fakeStart
 	deletedLater []string
+	quitExisting int
 }
 
 func (f *fakeFileSystem) InstallDir() (string, error) { return f.installDir, nil }
@@ -218,6 +255,11 @@ func (f *fakeFileSystem) Executable() (string, error) { return f.executable, nil
 func (f *fakeFileSystem) CopyExecutable(dest string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
+	}
+	if f.occupiedTarget {
+		if _, err := os.Stat(dest); err == nil {
+			return os.ErrPermission
+		}
 	}
 	data, err := os.ReadFile(f.download)
 	if err != nil {
@@ -230,12 +272,26 @@ func (f *fakeFileSystem) CopyExecutable(dest string) error {
 	return nil
 }
 
+func (f *fakeFileSystem) RenameExecutable(src, dest string) error {
+	if err := os.Rename(src, dest); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (f *fakeFileSystem) RemoveExecutable(path string) error { return os.Remove(path) }
+
 func (p *fakeProcessManager) Start(path string, args []string) error {
 	p.started = append(p.started, fakeStart{path: path, args: args})
 	return nil
 }
 func (p *fakeProcessManager) DeleteLater(path string) error {
 	p.deletedLater = append(p.deletedLater, path)
+	return nil
+}
+
+func (p *fakeProcessManager) QuitExisting() error {
+	p.quitExisting++
 	return nil
 }
 

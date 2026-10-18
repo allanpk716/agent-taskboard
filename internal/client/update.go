@@ -23,7 +23,9 @@ type UpdateProcess interface {
 type UpdateProcessManager interface {
 	Start(path string, args []string) (UpdateProcess, error)
 	Ready() <-chan struct{}
+	Quit() <-chan struct{}
 	SendReady() error
+	SendQuit() error
 }
 
 type clientLatest struct {
@@ -78,7 +80,7 @@ func (a *App) clientLatest(ctx context.Context, token string) (clientLatest, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("User-Agent", a.userAgent())
-	res, err := http.DefaultClient.Do(req)
+	res, err := a.httpClient.Do(req)
 	if err != nil {
 		return clientLatest{}, err
 	}
@@ -101,7 +103,7 @@ func (a *App) downloadClient(ctx context.Context, token, rawURL, dest string) ([
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("User-Agent", a.userAgent())
-	res, err := http.DefaultClient.Do(req)
+	res, err := a.httpClient.Do(req)
 	if err != nil {
 		return [32]byte{}, 0, err
 	}
@@ -143,6 +145,11 @@ func (a *App) replaceExecutable(ctx context.Context, exe, temp string) bool {
 	if err == nil {
 		select {
 		case <-a.deps.Update.Ready():
+			if a.shutdown != nil {
+				a.shutdown()
+			}
+			return true
+		case <-a.deps.Update.Quit():
 			if a.shutdown != nil {
 				a.shutdown()
 			}

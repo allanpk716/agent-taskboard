@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -211,6 +212,85 @@ func Test断线后带LastEventID重连并补上新通知(t *testing.T) {
 	waitClient(t, done)
 }
 
+func Test服务短暂不可用时客户端不退出并在恢复后重连(t *testing.T) {
+	fake := newFakeDesktop(t)
+	s := fake.startService(t)
+	webLi := s.Login("李工", "secret-pass")
+	issued := s.IssueClientCredential(t, webLi, "TEST-PC")
+	fake.store.token = issued.Token
+	proxy := newOutageProxy(t, s.URL())
+	proxy.setDown(true)
+	t.Cleanup(proxy.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := fake.startClient(t, ctx, proxy.URL)
+	waitCondition(t, func() bool { return proxy.sessionChecks() >= 1 })
+	select {
+	case err := <-done:
+		t.Fatalf("服务短暂不可用时客户端提前退出：%v", err)
+	default:
+	}
+
+	proxy.setDown(false)
+	fake.waitState(t, client.TrayNormal)
+	cancel()
+	waitClient(t, done)
+}
+
+func Test连续断线时按指数退避等待(t *testing.T) {
+	fake := newFakeDesktop(t)
+	s := fake.startService(t)
+	webLi := s.Login("李工", "secret-pass")
+	issued := s.IssueClientCredential(t, webLi, "TEST-PC")
+	fake.store.token = issued.Token
+	var waits []time.Duration
+	var mu sync.Mutex
+	proxy := newFailingStreamProxy(t, s.URL(), 3)
+	t.Cleanup(proxy.Close)
+	fake.waitOverride = func(ctx context.Context, d time.Duration) error {
+		mu.Lock()
+		waits = append(waits, d)
+		mu.Unlock()
+		return ctx.Err()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := fake.startClient(t, ctx, proxy.URL)
+	waitCondition(t, func() bool { return proxy.streams() == 4 })
+	got := append([]time.Duration(nil), waits...)
+	if len(got) != 3 || got[0] != time.Second || got[1] != 2*time.Second || got[2] != 4*time.Second {
+		t.Fatalf("退避间隔 = %v, 想 [1s 2s 4s]", got)
+	}
+	cancel()
+	waitClient(t, done)
+}
+
+func TestSSE空闲超过六十秒时断开重连(t *testing.T) {
+	fake := newFakeDesktop(t)
+	s := fake.startService(t)
+	webLi := s.Login("李工", "secret-pass")
+	issued := s.IssueClientCredential(t, webLi, "TEST-PC")
+	fake.store.token = issued.Token
+	proxy := newSilentStreamProxy(t, s.URL())
+	t.Cleanup(proxy.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := fake.startClient(t, ctx, proxy.URL)
+	waitCondition(t, func() bool { return proxy.streams() == 1 })
+	fake.clock.Advance(61 * time.Second)
+	waitCondition(t, func() bool { return proxy.streams() >= 2 })
+	select {
+	case err := <-done:
+		t.Fatalf("空闲看门狗不应结束客户端：%v", err)
+	default:
+	}
+	cancel()
+	waitClient(t, done)
+}
+
 func Test凭证撤销后需要重新登录点击托盘后重新连接(t *testing.T) {
 	fake := newFakeDesktop(t)
 	s := fake.startService(t)
@@ -311,16 +391,37 @@ func Test全部标为已读使用已见最大通知(t *testing.T) {
 	t.Fatalf("全部已读后服务端/托盘 = %+v/%+v", unread, fake.tray.menuUnread())
 }
 
+func Test查看全部打开成员收件箱(t *testing.T) {
+	fake := newFakeDesktop(t)
+	s := fake.startService(t)
+	webLi := s.Login("李工", "secret-pass")
+	issued := s.IssueClientCredential(t, webLi, "TEST-PC")
+	fake.store.token = issued.Token
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := fake.startClient(t, ctx, s.URL())
+	fake.waitState(t, client.TrayNormal)
+
+	fake.tray.click(t, "view-all")
+	if got := fake.browser.opened(t); got != s.URL()+"/" {
+		t.Fatalf("查看全部打开 = %q, 想成员收件箱 %q", got, s.URL()+"/")
+	}
+	cancel()
+	waitClient(t, done)
+}
+
 type fakeDesktop struct {
-	t         testing.TB
-	service   *tbtest.Server
-	browser   *fakeBrowser
-	store     *fakeCredentialStore
-	tray      *fakeTray
-	toaster   *fakeToaster
-	lifecycle client.LifecycleDependencies
-	updater   *fakeUpdateAdapter
-	clock     *clock.Fake
+	t            testing.TB
+	service      *tbtest.Server
+	browser      *fakeBrowser
+	store        *fakeCredentialStore
+	tray         *fakeTray
+	toaster      *fakeToaster
+	lifecycle    client.LifecycleDependencies
+	updater      *fakeUpdateAdapter
+	clock        *clock.Fake
+	lock         *fakeInstanceLock
+	waitOverride func(context.Context, time.Duration) error
 }
 
 func newFakeDesktop(t testing.TB) *fakeDesktop {
@@ -330,6 +431,8 @@ func newFakeDesktop(t testing.TB) *fakeDesktop {
 		store:   newFakeCredentialStore(),
 		tray:    newFakeTray(),
 		toaster: newFakeToaster(),
+		clock:   clock.NewFake(time.Now()),
+		lock:    newFakeInstanceLock(),
 	}
 }
 
@@ -349,21 +452,27 @@ func (d *fakeDesktop) startClient(t testing.TB, ctx context.Context, serverURL s
 		Version:   "0.2.0",
 		Hostname:  "TEST-PC",
 		Nonces:    fixedNonces,
-		RetryWait: func(context.Context, time.Duration) error { return nil },
+		RetryWait: d.waitRetry,
 	}, d.dependencies())
 	done := make(chan error, 1)
 	go func() { done <- app.Run(ctx) }()
 	return done
 }
 
+func (d *fakeDesktop) waitRetry(ctx context.Context, delay time.Duration) error {
+	if d.waitOverride != nil {
+		return d.waitOverride(ctx, delay)
+	}
+	return ctx.Err()
+}
+
 func (d *fakeDesktop) dependencies() client.Dependencies {
 	deps := client.Dependencies{
 		Tray: d.tray, Toaster: d.toaster, Store: d.store, Browser: d.browser,
-		Lifecycle: &d.lifecycle,
+		Lock: d.lock, Lifecycle: &d.lifecycle, Clock: d.clock,
 	}
 	if d.updater != nil {
 		deps.Update = d.updater
-		deps.Clock = d.clock
 	}
 	return deps
 }
@@ -393,8 +502,8 @@ func (b *fakeBrowser) Open(u string) error {
 	b.mu.Lock()
 	b.urls = append(b.urls, u)
 	b.mu.Unlock()
-	if err := b.confirm(u); err != nil {
-		return err
+	if strings.Contains(u, "/client/connect?") {
+		return b.confirm(u)
 	}
 	return nil
 }
@@ -671,6 +780,170 @@ type breakingStreamProxy struct {
 	ids        []string
 	breakFirst bool
 	breaks     int
+}
+
+type outageProxy struct {
+	*httptest.Server
+	mu       sync.Mutex
+	down     bool
+	sessions int
+}
+
+func newOutageProxy(t testing.TB, backend string) *outageProxy {
+	t.Helper()
+	target, err := url.Parse(backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	p := &outageProxy{down: true}
+	p.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/session" {
+			p.mu.Lock()
+			p.sessions++
+			down := p.down
+			p.mu.Unlock()
+			if down {
+				http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+				return
+			}
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	return p
+}
+
+func (p *outageProxy) setDown(down bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.down = down
+}
+
+func (p *outageProxy) sessionChecks() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.sessions
+}
+
+type failingStreamProxy struct {
+	*httptest.Server
+	mu       sync.Mutex
+	count    int
+	failures int
+}
+
+func newFailingStreamProxy(t testing.TB, backend string, failures int) *failingStreamProxy {
+	t.Helper()
+	target, err := url.Parse(backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	p := &failingStreamProxy{failures: failures}
+	p.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/notifications/stream" {
+			proxy.ServeHTTP(w, r)
+			return
+		}
+		p.mu.Lock()
+		p.count++
+		fail := p.count <= p.failures
+		p.mu.Unlock()
+		if fail {
+			http.Error(w, "stream unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	return p
+}
+
+func (p *failingStreamProxy) streams() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.count
+}
+
+type silentStreamProxy struct {
+	*httptest.Server
+	mu  sync.Mutex
+	sse int
+}
+
+func newSilentStreamProxy(t testing.TB, backend string) *silentStreamProxy {
+	t.Helper()
+	target, err := url.Parse(backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	p := &silentStreamProxy{}
+	p.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/notifications/stream" {
+			proxy.ServeHTTP(w, r)
+			return
+		}
+		p.mu.Lock()
+		p.sse++
+		p.mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		<-r.Context().Done()
+	}))
+	return p
+}
+
+func (p *silentStreamProxy) streams() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.sse
+}
+
+type fakeInstanceLock struct {
+	mu       sync.Mutex
+	held     bool
+	acquired int
+}
+
+func newFakeInstanceLock() *fakeInstanceLock { return &fakeInstanceLock{} }
+
+func (l *fakeInstanceLock) Acquire() (func(), error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.held {
+		return nil, errors.New("already running")
+	}
+	l.held = true
+	l.acquired++
+	return func() {
+		l.mu.Lock()
+		l.held = false
+		l.mu.Unlock()
+	}, nil
+}
+
+func (l *fakeInstanceLock) AcquireMust(t testing.TB) func() {
+	t.Helper()
+	release, err := l.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return release
+}
+
+func (l *fakeInstanceLock) acquiredCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.acquired
+}
+
+func (l *fakeInstanceLock) heldByUpdate() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.held
 }
 
 func newBreakingStreamProxy(t testing.TB, backend string) *breakingStreamProxy {

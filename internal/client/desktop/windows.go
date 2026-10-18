@@ -34,6 +34,7 @@ const (
 	credentialTarget = "Taskboard Desktop Client"
 	mutexName        = "Local\\TaskboardDesktopClient"
 	readyEventName   = "Local\\TaskboardClientUpdateReady"
+	quitEventName    = "Local\\TaskboardClientQuit"
 	runValueName     = "TaskboardClient"
 	clientConfigKey  = `Software\Taskboard\Client`
 	aumidKey         = `SOFTWARE\Classes\AppUserModelId\` + appAUMID
@@ -293,10 +294,13 @@ func (w *WindowsToaster) Show(n client.Notification) {
 
 // WindowsUpdateManager 用命名事件传递新进程就绪信号，并保留可结束的更新进程句柄。
 type WindowsUpdateManager struct {
-	mu      sync.Mutex
-	event   windows.Handle
-	ready   chan struct{}
-	waiting bool
+	mu          sync.Mutex
+	event       windows.Handle
+	quitEvent   windows.Handle
+	ready       chan struct{}
+	quit        chan struct{}
+	waiting     bool
+	quitWaiting bool
 }
 
 func NewWindowsUpdateManager() (*WindowsUpdateManager, error) {
@@ -308,7 +312,15 @@ func NewWindowsUpdateManager() (*WindowsUpdateManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &WindowsUpdateManager{event: event}, nil
+	quitName, err := windows.UTF16PtrFromString(quitEventName)
+	if err != nil {
+		return nil, err
+	}
+	quitEvent, err := windows.CreateEvent(nil, 0, 0, quitName)
+	if err != nil {
+		return nil, err
+	}
+	return &WindowsUpdateManager{event: event, quitEvent: quitEvent}, nil
 }
 
 func (m *WindowsUpdateManager) Ready() <-chan struct{} {
@@ -340,6 +352,25 @@ func (m *WindowsUpdateManager) SendReady() error {
 	defer windows.CloseHandle(event)
 	return windows.SetEvent(event)
 }
+
+func (m *WindowsUpdateManager) Quit() <-chan struct{} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.quit == nil {
+		m.quit = make(chan struct{})
+	}
+	if !m.quitWaiting {
+		m.quitWaiting = true
+		go func() {
+			if _, err := windows.WaitForSingleObject(m.quitEvent, windows.INFINITE); err == nil {
+				close(m.quit)
+			}
+		}()
+	}
+	return m.quit
+}
+
+func (m *WindowsUpdateManager) SendQuit() error { return windows.SetEvent(m.quitEvent) }
 
 func (m *WindowsUpdateManager) Start(path string, args []string) (client.UpdateProcess, error) {
 	cmd := exec.Command(path, args...)
@@ -590,6 +621,15 @@ func (UserFileSystem) CopyExecutable(dest string) error {
 	return to.Close()
 }
 
+func (UserFileSystem) RenameExecutable(old, dest string) error { return os.Rename(old, dest) }
+
+func (UserFileSystem) RemoveExecutable(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 // ProcessLauncher 重启安装后的客户端，并安排卸载后的延迟删除。
 type ProcessLauncher struct{}
 
@@ -605,4 +645,17 @@ func (ProcessLauncher) DeleteLater(path string) error {
 	cmd := exec.Command("cmd", "/c", `timeout /t 2 & del "`+path+`"`)
 	cmd.SysProcAttr = &windows.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
 	return cmd.Start()
+}
+
+func (ProcessLauncher) QuitExisting() error {
+	name, err := windows.UTF16PtrFromString(quitEventName)
+	if err != nil {
+		return err
+	}
+	event, err := windows.CreateEvent(nil, 0, 0, name)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(event)
+	return windows.SetEvent(event)
 }
