@@ -11,6 +11,7 @@ const (
 	CodeUnauthenticated    = "unauthenticated"      // 未登录或凭证失效
 	CodeInvalidCredentials = "invalid_credentials"  // 用户名或密码不正确
 	CodeInvalidJSON        = "invalid_json"         // 请求体不是合法 JSON
+	CodeInvalidUTF8        = "invalid_utf8"         // 请求体不是合法的 UTF-8
 	CodeInvalidToken       = "invalid_token"        // Agent token 无效或已撤销
 	CodeWebSessionRequired = "web_session_required" // 只接受网页会话发起的请求（ADR 0003）
 	CodeNameRequired       = "name_required"        // Agent 名字为空
@@ -40,6 +41,7 @@ const (
 
 	// #36：成员间交接与收件箱。
 	CodeAssigneeMustBeMember = "assignee_must_be_member" // 指派对象是成员 Agent
+	CodeInvalidAssignee      = "invalid_assignee"        // assignee 类型或数字 id 非法
 	CodeUnknownMember        = "unknown_member"          // 指派对象不是成员
 	CodeAlreadyAssigned      = "already_assigned"        // 改派给当前指派人
 	CodeAssigneeDeactivated  = "assignee_deactivated"    // 指派对象的账号已停用（#42 评审修正）

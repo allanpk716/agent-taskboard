@@ -1,12 +1,15 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
@@ -20,7 +23,17 @@ import (
 
 // decodeJSON 把请求体解码进 out；不是合法 JSON 时写出 400 并返回 false。
 func decodeJSON(w http.ResponseWriter, r *http.Request, out any, want string) bool {
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(out); err != nil {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "请求体不是合法的 JSON", "请求体应为 "+want)
+		return false
+	}
+	if !utf8.Valid(body) {
+		WriteError(w, http.StatusBadRequest, CodeInvalidUTF8, "请求体不是合法的 UTF-8",
+			"Windows 命令行会把内联的中文转成本地代码页。把 JSON 写进文件后用 curl --data-binary @body.json 发送；PowerShell 用 [Text.Encoding]::UTF8.GetBytes(...) 作为 -Body")
+		return false
+	}
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(out); err != nil {
 		WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "请求体不是合法的 JSON", "请求体应为 "+want)
 		return false
 	}
@@ -127,7 +140,8 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 
 // createTicketRequest 是 POST /api/v1/tickets 的请求体。
 // 用模板创建时带 template 与 fields（类型由模板决定、缺必填只 warnings）；
-// assignee 可写成员 id 或姓名，写成成员 Agent → 422 assignee_must_be_member（#36）。
+// assignee 可写数字成员 id、字符串成员 id 或姓名，写成成员 Agent →
+// 422 assignee_must_be_member（#36）。
 // guest_link（#64「请人反馈」）非空时在同一事务里一并创建访客链接，
 // 链接带 can_edit_brief 权限时免「至少一个维度标签」。
 type createTicketRequest struct {
@@ -137,7 +151,7 @@ type createTicketRequest struct {
 	BriefMD   string            `json:"brief_md"`
 	Fields    map[string]string `json:"fields"`
 	Labels    []string          `json:"labels"`
-	Assignee  string            `json:"assignee"`
+	Assignee  assigneeRef       `json:"assignee"`
 	GuestLink *guestLinkRequest `json:"guest_link"`
 }
 
@@ -171,7 +185,11 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createTicketRequest
-	if !decodeJSON(w, r, &req, `{"kind?": "task|report", "template?": "模板 key", "title": "…", "brief_md?": "…", "fields?": {"问句？": "…"}, "labels": ["维度:值"], "assignee?": "成员 id 或姓名", "guest_link?": {"note": "…", "valid_days?": 30, "can_edit_brief": true}}`) {
+	if !decodeJSON(w, r, &req, `{"kind?": "task|report", "template?": "模板 key", "title": "…", "brief_md?": "…", "fields?": {"问句？": "…"}, "labels": ["维度:值"], "assignee?": "成员 id 或姓名（id 也可写成数字，如 4）", "guest_link?": {"note": "…", "valid_days?": 30, "can_edit_brief": true}}`) {
+		return
+	}
+	if req.Assignee.invalid {
+		writeInvalidAssignee(w)
 		return
 	}
 	// guest_link 复用单建访客链接的请求体与校验（note 必填；错误码也一致，#64），
@@ -199,7 +217,7 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 			Labels:      req.Labels,
 			TemplateKey: req.Template,
 			Fields:      req.Fields,
-			Assignee:    req.Assignee,
+			Assignee:    req.Assignee.ref,
 			Creator:     viewer,
 			GuestLink:   guestSpec,
 		})
