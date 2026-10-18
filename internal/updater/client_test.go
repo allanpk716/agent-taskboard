@@ -262,6 +262,15 @@ func Test客户端失败不阻断服务端和前端更新(t *testing.T) {
 	if !strings.Contains(res.ClientError, "SHA256") {
 		t.Fatalf("client 组件错误 = %q, 想包含 SHA256", res.ClientError)
 	}
+	foundClientStep := false
+	for _, step := range res.Steps {
+		if strings.Contains(step, "客户端 未知 → 1.0.0 失败：") && strings.Contains(step, "SHA256") {
+			foundClientStep = true
+		}
+	}
+	if !foundClientStep {
+		t.Fatalf("更新步骤缺少客户端失败说明：%v", res.Steps)
+	}
 	if got := WebVersion(webDir); got != "1.0.0" {
 		t.Fatalf("前端版本 = %q, 想 1.0.0", got)
 	}
