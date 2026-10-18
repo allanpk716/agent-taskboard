@@ -11,7 +11,7 @@ import { fetchMembers, fetchTicket, uploadMemberAttachment, type MemberRef } fro
 import { HandoffPanel } from './HandoffDialog'
 import { Confirm, invalidate, nav, toast } from './ui'
 import { chipClass } from './TicketsPage'
-import { FieldForm, missingRequired, type StagedFile } from '../guest/FieldForm'
+import { FieldForm, appendRef, missingRequired, type StagedFile } from '../guest/FieldForm'
 
 interface TemplateSummary {
   key: string
@@ -198,20 +198,20 @@ export function NewTicketPage() {
 /* ---------------- 第二步：表单 ---------------- */
 
 /** 暂存选中的文件（本机预览；建单成功后才上传，照 #39 入口页的模式）。 */
-function stageFilesOf(fieldKey: string, picked: File[]): StagedFile[] {
+function stageFilesOf(fieldKey: string, picked: File[], area: boolean): StagedFile[] {
   return picked.map((file, i) => ({
     id: `${fieldKey}-${Date.now()}-${i}-${file.name}`,
     name: file.name,
     size: file.size,
     fieldKey,
-    area: true,
+    area,
     status: 'ready' as const,
     previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
     blob: file,
   }))
 }
 
-/** 建单后补传暂存附件：上传后 PATCH attachment_ids，不再往说明字段里拼引用。 */
+/** 建单后补传暂存附件：字段内的引用写回字段，附件区的文件挂整张工单的附件。 */
 async function attachStagedFiles(
   number: string,
   stagedFiles: StagedFile[],
@@ -219,22 +219,33 @@ async function attachStagedFiles(
   const staged = stagedFiles.filter((f) => f.blob)
   if (staged.length === 0) return []
   const warnings: { field: string; message: string }[] = []
+  const refsByField: Record<string, string[]> = {}
   const attachmentIds: string[] = []
   for (const f of staged) {
     try {
       const att = await uploadMemberAttachment(number, f.blob!)
-      attachmentIds.push(att.id)
+      if (f.area) attachmentIds.push(att.id)
+      else (refsByField[f.fieldKey] ??= []).push(att.markdown)
     } catch (err) {
       const why = err instanceof ApiError ? `${err.message}${err.hint ? `（${err.hint}）` : ''}` : '上传失败'
       warnings.push({ field: f.name, message: `未能附上（${why}），请打开工单后用回复补充。` })
     }
   }
-  if (attachmentIds.length === 0) return warnings
+  if (attachmentIds.length === 0 && Object.keys(refsByField).length === 0) return warnings
   try {
     const fresh = await api(`/api/v1/tickets/${encodeURIComponent(number)}`)
+    const body: Record<string, unknown> = { base_revision: fresh.brief.revision }
+    if (Object.keys(refsByField).length > 0) {
+      const merged: Record<string, string> = { ...(fresh.brief.fields ?? {}) }
+      for (const [fieldKey, refs] of Object.entries(refsByField)) {
+        merged[fieldKey] = appendRef(merged[fieldKey] ?? '', refs.join('\n'))
+      }
+      body.fields = merged
+    }
+    if (attachmentIds.length > 0) body.attachment_ids = attachmentIds
     await api(`/api/v1/tickets/${encodeURIComponent(number)}`, {
       method: 'PATCH',
-      body: JSON.stringify({ attachment_ids: attachmentIds, base_revision: fresh.brief.revision }),
+      body: JSON.stringify(body),
       idempotencyKey: crypto.randomUUID(),
     })
   } catch (err) {
@@ -289,8 +300,8 @@ function NewTicketForm({
     setLabels(next)
   }
 
-  function stageFiles(fieldKey: string, picked: File[]) {
-    setFiles((fs) => [...fs, ...stageFilesOf(fieldKey, picked)])
+  function stageFiles(fieldKey: string, picked: File[], area: boolean) {
+    setFiles((fs) => [...fs, ...stageFilesOf(fieldKey, picked, area)])
   }
 
   async function addLabel() {
@@ -454,7 +465,7 @@ function NewTicketForm({
             fields={template.fields}
             values={values}
             onChange={(k, v) => setValues({ ...values, [k]: v })}
-            onPickFiles={(fieldKey, picked) => stageFiles(fieldKey, picked)}
+            onPickFiles={(fieldKey, picked, area) => stageFiles(fieldKey, picked, area)}
             files={files}
             onRemoveFile={(id) => setFiles((fs) => fs.filter((f) => f.id !== id))}
           />
