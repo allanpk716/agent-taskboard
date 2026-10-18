@@ -160,6 +160,7 @@ spec 用户故事 84），没有 `inbox`：
 | `GET /api/v1/members` | 列出全部成员（按 id，各项带 `active`），供建单/改派的下拉选择与管理页。 |
 | `POST /api/v1/members` | 创建成员账号（**仅管理员网页会话**，#42）。 |
 | `POST /api/v1/members/{id}/deactivate` | 停用成员账号（**仅管理员网页会话**，幂等；#42）。 |
+| `POST /api/v1/members/{id}/reactivate` | 恢复成员账号（**仅管理员网页会话**，幂等；#112）。 |
 | `POST /api/v1/members/{id}/triager` | 设置初筛人（**仅管理员网页会话**，幂等）。 |
 | `POST /api/v1/members/{id}/reset-password` | 重置成员密码（**仅管理员网页会话**；撤销网页会话与全部客户端凭证）。 |
 
@@ -177,11 +178,15 @@ spec 用户故事 84），没有 `inbox`：
   网页上操作，spec 用户故事 88；MVP 不接 LDAP/SSO）。错误码：`422 username_required`、
   `422 invalid_username`（含空格或斜杠）、`409 username_taken`。
 - 停用 `{"id": …, "active": false, "deactivated": 是否这次发生}`；幂等。**停用即时生效**：
-  该成员不能再登录（401 `member_deactivated`），已有会话与其名下 Agent token 一并失效
-  （401）；账号、历史署名与事件保留（停用不是删除）。错误码：`422 cannot_deactivate_self`
+  该成员不能再登录（401 `member_deactivated`）；同一事务里删除已有会话、撤销全部客户端凭证，
+  并把名下全部未撤销 Agent token 写入撤销时间（与单个撤销同用 `revoked_at`，之后请求 401）；
+  账号、历史署名与事件保留（停用不是删除）。错误码：`422 cannot_deactivate_self`
   （不能停用自己的账号）、`404 member_not_found`。
+- 恢复 `{"id": …, "active": true, "reactivated": 是否这次发生}`；幂等，只清除停用标记。
+  密码沿用停用前的值，可重新登录；已撤销的 Agent token、已删除的会话和已撤销的客户端凭证
+  都不会复活，指派给该成员的开启工单会按等待方规则回到收件箱。错误码：`404 member_not_found`。
 - 越权：非管理员 403 `admin_required`；Agent token 403 `web_session_required`
-  （ADR 0003：Agent 不能创建或停用账号）；访客 403 `members_only`；匿名 401。
+  （ADR 0003：Agent 不能创建、停用或恢复账号）；访客 403 `members_only`；匿名 401。
 
 ## 工单（#29：建单与读取；#30：回复、修订、关闭与时间线）
 

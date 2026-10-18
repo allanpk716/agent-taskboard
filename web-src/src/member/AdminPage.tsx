@@ -11,6 +11,7 @@ import {
   deactivateMemberAccount,
   fetchDictionary,
   fetchMemberAccounts,
+  reactivateMemberAccount,
   setMemberTriager,
   mergeLabels,
   renameLabel,
@@ -83,6 +84,8 @@ function MembersTab({ me }: { me: Me }) {
   const [creating, setCreating] = useState(false)
   const [created, setCreated] = useState<CreatedMember | null>(null)
   const [revoking, setRevoking] = useState<MemberAccount | null>(null)
+  const [reactivating, setReactivating] = useState<MemberAccount | null>(null)
+  const [showInactive, setShowInactive] = useState(false)
 
   async function refresh() {
     try {
@@ -110,6 +113,20 @@ function MembersTab({ me }: { me: Me }) {
     }
   }
 
+  async function doReactivate() {
+    if (!reactivating) return
+    try {
+      await reactivateMemberAccount(reactivating.id)
+      setShowInactive(false)
+      toast(`✓ 已恢复 ${reactivating.name}；可用原密码登录`)
+      await refresh()
+    } catch (e) {
+      setError(e instanceof ApiError ? `${e.message}（${e.code}）` : '恢复失败')
+    } finally {
+      setReactivating(null)
+    }
+  }
+
   async function doSetTriager(member: MemberAccount, triager: boolean) {
     try {
       await setMemberTriager(member.id, triager)
@@ -121,23 +138,37 @@ function MembersTab({ me }: { me: Me }) {
     }
   }
 
+  const inactiveCount = members?.filter((m) => !m.active).length ?? 0
+  const visibleMembers = (members ?? [])
+    .filter((m) => m.active || showInactive)
+    .sort((a, b) => Number(b.active) - Number(a.active))
+
   return (
     <div className="mcard">
       <div className="hint" style={{ marginTop: 0 }}>
-        创建和停用成员账号只能在网页上操作（管理员）；账号只能停用，不能删除。
+        创建、停用和恢复成员账号只能在网页上操作（管理员）；账号只能停用，不能删除。
       </div>
       {error && <div className="errbox">{error}</div>}
+      <label className="ckrow">
+        <input
+          type="checkbox"
+          checked={showInactive}
+          onChange={(e) => setShowInactive(e.target.checked)}
+        />
+        显示已停用（{inactiveCount}）
+      </label>
       <table className="mini-tbl">
         <tbody>
-          {(members ?? []).map((m) => (
-            <tr key={m.id} data-member={m.username}>
+          {visibleMembers.map((m) => (
+            <tr key={m.id} data-member={m.username} className={m.active ? undefined : 'member-inactive'}>
               <td>
                 <b>{m.name}</b>
                 {m.name === me.name && <span className="hint">（我）</span>}
+                {!m.active && <span className="badge closed">已停用</span>}
                 <div className="hint mono">{m.username}</div>
               </td>
               <td>
-                {m.active ? <span className="badge open">使用中</span> : <span className="badge closed">已停用</span>}
+                {m.active && <span className="badge open">使用中</span>}
               </td>
               <td>
                 <input
@@ -155,7 +186,11 @@ function MembersTab({ me }: { me: Me }) {
                   <button className="btn sm ghost" onClick={() => setRevoking(m)}>
                     停用
                   </button>
-                ) : null}
+                ) : (
+                  <button className="btn sm ghost" onClick={() => setReactivating(m)}>
+                    恢复
+                  </button>
+                )}
               </td>
             </tr>
           ))}
@@ -188,11 +223,24 @@ function MembersTab({ me }: { me: Me }) {
       {revoking && (
         <Confirm
           title={`停用 ${revoking.name}`}
-          body={<>停用后不能登录，名下 Agent token 一并失效；已有的回复和事件保留。</>}
+          body={
+            <>
+              停用后 TA 将不能登录，名下全部 Agent token 会被撤销（恢复后也不会复活），所有登录会被注销；已有的指派保留
+            </>
+          }
           yesLabel="停用"
           danger
           onYes={() => void doDeactivate()}
           onCancel={() => setRevoking(null)}
+        />
+      )}
+      {reactivating && (
+        <Confirm
+          title={`恢复 ${reactivating.name}`}
+          body={<>恢复后 TA 可以用原来的密码登录；Agent token 不会恢复，需要 TA 重新签发</>}
+          yesLabel="恢复"
+          onYes={() => void doReactivate()}
+          onCancel={() => setReactivating(null)}
         />
       )}
     </div>

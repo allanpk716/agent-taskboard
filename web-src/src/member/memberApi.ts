@@ -347,6 +347,10 @@ export async function deactivateMemberAccount(id: number): Promise<void> {
   await api(`/api/v1/members/${id}/deactivate`, { method: 'POST' })
 }
 
+export async function reactivateMemberAccount(id: number): Promise<void> {
+  await api(`/api/v1/members/${id}/reactivate`, { method: 'POST' })
+}
+
 export async function setMemberTriager(id: number, triager: boolean): Promise<void> {
   await api(`/api/v1/members/${id}/triager`, {
     method: 'POST',

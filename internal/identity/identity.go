@@ -202,9 +202,10 @@ func (m *Manager) DeactivateMember(ctx context.Context, id int64) (bool, error) 
 		return false, err
 	}
 	defer tx.Rollback()
+	now := m.clock.Now().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE members SET deactivated_at = ? WHERE id = ?`,
-		m.clock.Now().Format(time.RFC3339Nano), id); err != nil {
+		now, id); err != nil {
 		return false, err
 	}
 	// 已登录的会话一并清掉：停用即时生效。
@@ -212,6 +213,40 @@ func (m *Manager) DeactivateMember(ctx context.Context, id int64) (bool, error) 
 		return false, err
 	}
 	if err := m.revokeAllClientCredentialsTx(ctx, tx, id); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE agent_tokens SET revoked_at = ? WHERE member_id = ? AND revoked_at IS NULL`,
+		now, id); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ReactivateMember 恢复成员账号（#112）：只清停用标记。密码、历史会话、
+// Agent token 与客户端凭证都不变，因此停用时撤销的 token 不会复活。
+// 已启用账号的再恢复是幂等成功。返回是否发生了变化。
+func (m *Manager) ReactivateMember(ctx context.Context, id int64) (bool, error) {
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var deactivated sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT deactivated_at FROM members WHERE id = ?`, id).Scan(&deactivated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrMemberNotFound
+	}
+	if err != nil {
+		return false, err
+	}
+	if !deactivated.Valid || deactivated.String == "" {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE members SET deactivated_at = NULL WHERE id = ?`, id); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {
