@@ -16,6 +16,7 @@ export interface InboxItem {
   title: string
   role: 'assignee' | 'creator'
   reason: string
+  reason_code: string
   since_seq: number | null
   read_new: string
   read_full: string

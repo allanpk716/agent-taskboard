@@ -757,6 +757,7 @@ type WaitingOn struct {
 const (
 	WhyNew            = "new"              // 新指派给你
 	WhyGuestReplied   = "guest_replied"    // 访客回复了
+	WhyPendingTriage  = "pending_triage"   // 待初筛
 	WhyDelivered      = "delivered"        // 已交付，待你验收
 	WhyAssigneeReply  = "assignee_replied" // 指派人回复了，待你答复
 	WhySentBack       = "sent_back"        // 发起人退回修改
@@ -770,6 +771,8 @@ func WhyText(why string) string {
 		return "新指派给你"
 	case WhyGuestReplied:
 		return "访客回复了"
+	case WhyPendingTriage:
+		return "待初筛"
 	case WhyDelivered:
 		return "已交付，待你验收"
 	case WhyAssigneeReply:

@@ -50,7 +50,7 @@ export function InboxPage({
 
   if (desktop) {
     const filtered = (data?.items ?? []).filter((it) => {
-      return mode === 'mine' || it.reason.includes('访客')
+      return mode === 'mine' || it.reason_code === 'guest_replied'
     })
     const shown = q
       ? filtered.filter((it) => it.title.includes(q) || it.number.includes(q) || it.labels.some((l) => l.includes(q)))
