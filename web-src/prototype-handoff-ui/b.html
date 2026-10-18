@@ -1,0 +1,226 @@
+<!doctype html><html lang="zh"><head>
+<!-- 一次性原型（#91 交接文案入口），不合并 -->
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>交接文案入口候选</title><style>
+*{box-sizing:border-box}
+html,body{margin:0;background:#d9dde4;color:#1f2937;font-family:system-ui,"Microsoft YaHei",sans-serif;font-size:14px}
+button,input,textarea,select{font-family:inherit}
+.proto{position:sticky;top:0;z-index:100;background:#111827;color:#fff;padding:8px 10px;box-shadow:0 3px 12px rgba(15,23,42,.18)}
+.proto-top{display:flex;gap:8px;align-items:center;min-width:0}
+.proto-title{font-weight:800;white-space:nowrap}
+.proto-desc{font-size:12px;color:#cbd5e1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.seg{display:flex;gap:4px;overflow-x:auto;scrollbar-width:thin;padding-bottom:1px}
+.seg button{background:#374151;color:#fff;border:0;border-radius:6px;padding:5px 9px;font-size:12px;white-space:nowrap;cursor:pointer}
+.seg button.on{background:#2a6fdb}
+.seg.who{margin-top:7px}
+.note{margin-top:7px;font-size:11.5px;color:#9aa3b2;line-height:1.5}
+:root{--proto-h:120px}#stage{min-height:calc(100vh - var(--proto-h));display:flex;align-items:center;justify-content:center;overflow:hidden;padding:16px}
+.frame-pc{width:1366px;height:800px;background:#f5f6f8;display:flex;overflow:hidden;position:relative;transform-origin:center;box-shadow:0 18px 50px rgba(15,23,42,.2);border-radius:4px}
+.phone-shell{width:375px;height:760px;background:#111827;border-radius:28px;padding:9px;box-shadow:0 18px 50px rgba(15,23,42,.24);position:relative;transform-origin:center}
+.phone{width:100%;height:100%;background:#f5f6f8;border-radius:20px;overflow:hidden;display:flex;flex-direction:column;position:relative}
+.scale-wrap{position:relative}.scale-wrap>*{transform-origin:0 0}
+.btn{background:#2a6fdb;color:#fff;border:0;border-radius:8px;padding:8px 14px;font-size:14px;cursor:pointer}
+.btn:hover{background:#245fc0}.btn.ghost{background:#eef3fc;color:#2a6fdb}.btn.plain{background:none;border:0;color:#6b7280;cursor:pointer}.btn.sm{padding:5px 10px;font-size:12.5px}.btn.block{width:100%}
+.muted{color:#6b7280}.small{font-size:12.5px}.tiny{font-size:11.5px}
+.chip{display:inline-block;font-size:11.5px;padding:1px 7px;border-radius:10px;background:#f0f2f6;color:#4b5563;margin:0 4px 2px 0;white-space:nowrap}.chip.dim{background:#e8f0fd;color:#245fc0}
+.badge{display:inline-block;font-size:11px;padding:1px 6px;border-radius:4px;background:#f0f2f6;color:#4b5563}.badge.task{background:#ecfdf3;color:#15803d}.badge.closed{background:#f3f4f6;color:#9ca3af}
+.wait{font-size:12px;color:#b45309;font-weight:600}
+.dot{display:inline-block;min-width:18px;padding:0 5px;border-radius:9px;background:#d64545;color:#fff;font-size:11px;text-align:center;line-height:18px;font-style:normal}
+.side{width:212px;flex:none;background:#fff;border-right:1px solid #e6e9f0;display:flex;flex-direction:column;padding:14px 10px}
+.side .brand{font-weight:800;font-size:16px;padding:2px 8px 14px}.side .nav{display:flex;flex-direction:column;gap:2px}
+.side .it{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:7px;cursor:pointer;color:#374151}.side .it.on{background:#eef3fc;color:#2a6fdb;font-weight:600}
+.side .foot{margin-top:auto;border-top:1px solid #f0f2f6;padding:10px 8px 0;font-size:12.5px}
+.lcol{width:380px;flex:none;background:#fff;border-right:1px solid #e6e9f0;display:flex;flex-direction:column;overflow:hidden}
+.lhead{padding:12px 14px;border-bottom:1px solid #f0f2f6}
+.search{width:100%;padding:7px 10px;border:1px solid #d7dde8;border-radius:7px;font-size:13px;background:#fafbfc}
+.fchips{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}.fc{font-size:12px;padding:3px 9px;border-radius:12px;border:1px solid #dfe4ec;color:#4b5563;background:#fff}.fc.on{background:#2a6fdb;border-color:#2a6fdb;color:#fff}
+.lbody{overflow:auto;flex:1}.row{padding:10px 14px;border-bottom:1px solid #f3f4f7;cursor:pointer}.row.on{background:#eef3fc;box-shadow:inset 3px 0 #2a6fdb}
+.row .t{font-weight:600;margin:3px 0;line-height:1.4}.row .m{font-size:12px;color:#6b7280}
+.dcol{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}.dhead{background:#fff;border-bottom:1px solid #e6e9f0;padding:12px 18px}.dhead h2{font-size:17px;margin:4px 0 2px;line-height:1.4}
+.acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}.dmain{flex:1;display:flex;overflow:hidden}
+.thread{flex:1;min-width:0;display:flex;flex-direction:column}.convo{flex:1;overflow:auto;padding:14px 18px;min-width:0;display:flex;flex-direction:column}
+.msg{background:#fff;border:1px solid #e6e9f0;border-radius:10px;padding:10px 12px;margin-bottom:10px;max-width:760px}.msg .who{font-size:12px;color:#6b7280;margin-bottom:5px}.msg .tx{line-height:1.6;white-space:pre-wrap}.sys{text-align:center;font-size:12px;color:#9aa3b2;margin:6px 0 12px}
+.composer{background:#fff;border-top:1px solid #e6e9f0;padding:10px 18px;display:flex;gap:8px;align-items:center}.composer textarea{flex:1;height:54px;padding:8px 10px;border:1px solid #d7dde8;border-radius:8px;font-size:13.5px;resize:none}
+.meta{width:290px;flex:none;border-left:1px solid #e6e9f0;background:#fff;overflow:auto;padding:14px 16px}.mblk{padding:10px 0;border-bottom:1px solid #f0f2f6}.mblk .h{font-size:11.5px;color:#9aa3b2;margin-bottom:5px;display:flex}.mblk .h a{margin-left:auto;color:#2a6fdb;cursor:pointer}
+.link{font-size:12.5px;background:#f6f7f9;border-radius:7px;padding:7px 9px;margin-top:5px}.link .u{color:#2a6fdb;word-break:break-all}
+.modal-mask{position:absolute;inset:0;background:rgba(17,24,39,.35);display:flex;align-items:center;justify-content:center;z-index:40;padding:20px}
+.modal{background:#fff;border-radius:10px;box-shadow:0 18px 45px rgba(15,23,42,.25);width:min(680px,92%);max-height:88%;display:flex;flex-direction:column;overflow:hidden}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid #e6e9f0;font-weight:700}
+.modal-body{padding:14px 16px;overflow:auto}.modal-foot{display:flex;gap:8px;justify-content:flex-end;padding:12px 16px;border-top:1px solid #e6e9f0}
+.handoff-pre{margin:0;white-space:pre-wrap;word-break:break-word;font-family:Consolas,"Courier New",monospace;font-size:11.5px;line-height:1.55;background:#f3f4f6;border:1px solid #e6e9f0;border-radius:7px;padding:9px;color:#374151}
+.collapse{max-height:5.1em;overflow:hidden}.handoff-card{background:#f8fafc;border:1px solid #e6e9f0;border-radius:8px;padding:8px;margin-top:5px}
+.two-seg{display:flex;border:1px solid #cfdaf0;border-radius:7px;overflow:hidden;margin-bottom:8px}.two-seg button{flex:1;border:0;background:#fff;color:#4b5563;padding:5px 4px;font-size:11px;cursor:pointer}.two-seg button.on{background:#2a6fdb;color:#fff}
+.no-token{font-size:11.5px;color:#b45309;line-height:1.45;margin-top:6px}.no-token a{color:#b45309;text-decoration:underline}
+.toast{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);background:#111827;color:#fff;border-radius:8px;padding:9px 13px;box-shadow:0 10px 25px rgba(15,23,42,.3);z-index:60;font-size:12.5px;display:flex;gap:8px;align-items:center;max-width:90%}
+.toast button{border:0;background:none;color:#93c5fd;padding:0;text-decoration:underline;cursor:pointer;white-space:nowrap}
+.mob-top{background:#fff;border-bottom:1px solid #e6e9f0;padding:10px 12px;display:flex;align-items:center;gap:8px}.mob-title{font-weight:800;font-size:15px}
+.mob-info{background:#fff;border-bottom:1px solid #e6e9f0}.mob-info-head{display:flex;gap:9px;align-items:center;padding:10px 12px}.mob-info-body{padding:0 12px 12px;display:none}.mob-info.open .mob-info-body{display:block}
+.mob-convo{flex:1;overflow:auto;padding:12px;background:#f5f6f8}.mob-msg{background:#fff;border:1px solid #e6e9f0;border-radius:9px;padding:9px;margin-bottom:8px}.mob-tabbar{height:56px;background:#fff;border-top:1px solid #e6e9f0;display:flex}.mob-tabbar div{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:10.5px;color:#6b7280;gap:2px}.mob-tabbar div.on{color:#2a6fdb;font-weight:700}
+.sheet-mask{position:absolute;inset:0;background:rgba(17,24,39,.35);z-index:45;display:flex;align-items:flex-end}
+.sheet{background:#fff;width:100%;max-height:84%;border-radius:14px 14px 0 0;padding:14px 14px 18px;overflow:auto}
+.banner{background:#fff;border-bottom:1px solid #e6e9f0;padding:8px 12px;display:flex;align-items:center;gap:8px}.banner span{font-size:12px;color:#374151;flex:1}
+.timeline-card{align-self:center;background:#fff;border:1px solid #dbe6f8;border-left:3px solid #2a6fdb;border-radius:8px;padding:9px 11px;margin:10px 0;display:flex;align-items:center;gap:10px;max-width:520px}.timeline-card .txt{font-size:12px;line-height:1.5;flex:1}
+.copy-source{position:absolute;left:-9999px;top:0;width:1px;height:1px}
+.handoff-textarea{width:100%;display:block;font-family:Consolas,"Courier New",monospace;font-size:12px;line-height:1.55;background:#f3f4f6;border:1px solid #e6e9f0;border-radius:7px;padding:9px;color:#374151;resize:none}
+.me-wrap{flex:1;overflow:auto;background:#f5f6f8}.me-page{max-width:860px;margin:0 auto;padding:24px}.card{background:#fff;border:1px solid #e6e9f0;border-radius:10px;padding:16px}
+.section-title{font-size:18px;font-weight:800;margin:0}.section-sub{font-size:12.5px;color:#6b7280;margin:4px 0 0}
+.table{width:100%;border-collapse:collapse;margin-top:14px}.table th{text-align:left;font-size:12px;color:#6b7280;font-weight:500;padding:8px 0;border-bottom:1px solid #e6e9f0}.table td{padding:10px 0;border-bottom:1px solid #f0f2f6;font-size:13px}
+.token-box{font-family:Consolas,"Courier New",monospace;background:#f3f4f6;border:1px solid #e6e9f0;border-radius:7px;padding:10px;word-break:break-all;font-size:12px}
+.next-tip{margin-top:12px;background:#fff8e6;border:1px solid #f2dfa5;color:#8a5300;border-radius:7px;padding:9px;font-size:12.5px;line-height:1.55}
+.assign-form label{display:block;font-size:12px;color:#6b7280;margin-bottom:5px}.assign-form select{width:100%;padding:8px;border:1px solid #d7dde8;border-radius:7px;font-size:13.5px}
+</style></head><body>
+<div class="proto" id="bar"></div><div id="stage"><div class="frame-pc"></div></div><script>window.CAND='B';</script>
+<script>
+const CAND = window.CAND || 'A'
+const NAMES = {
+  A: ['候选 A · 信息栏常驻卡片', '把交接文案固定放在右侧信息栏，改派后用弹窗完整确认'],
+  B: ['候选 B · 标题栏按钮 + 预览弹窗', '详情不放常驻文案，按需从标题栏或菜单打开预览'],
+  C: ['候选 C · 对话流内嵌 + 一键复制', '入口跟随指派事件和待办横幅，点击直接复制']
+}
+const S = { scene:'s1', who:'wang', expanded:false, info:true, mode:'both', openB:true, drawerB:true, assignedC:true, toastShown:false, openAssignC:false, viewC:false, copiedC:'' }
+const T = { no:'T-0124', title:'升级 3 号机固件到 2.4.1 并验证', assignee:'王梦龙', creator:'陈工', labels:['固件','机型:UD-2300'] }
+const HUMAN = `王梦龙：陈工派给你一张任务工单 T-0124「升级 3 号机固件到 2.4.1 并验证」，网页：http://taskboard.lan/t/T-0124\n要交给你的 Agent，把下面这段转给它：`
+const AGENT = `请处理 agent-taskboard 上的工单 T-0124「升级 3 号机固件到 2.4.1 并验证」。\n1. 先读说明书：http://taskboard.lan/agent.md\n2. 凭证：用我在网页「我的 → Agent」签发的 token，请求头 Authorization: Bearer <token>；没有就先停下来让我去签发，不要用密码登录。\n3. 读工单：curl -H "Authorization: Bearer $TOKEN" "http://taskboard.lan/api/v1/tickets/T-0124?format=markdown"\n4. 照工单末尾「下一步」做；之后的待办看 /api/v1/inbox。`
+const BOTH = HUMAN + '\n\n' + AGENT
+const $ = id => document.getElementById(id)
+const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))
+const chips = a => a.map(x => `<span class="chip ${x.includes(':') ? 'dim' : ''}">${esc(x)}</span>`).join('')
+const effectiveWho = () => (S.scene === 's1' || S.scene === 's3') ? S.who : (S.scene === 's4' ? 'wang' : 'chen')
+const modeText = () => effectiveWho() === 'wang' ? AGENT : (S.mode === 'both' ? BOTH : AGENT)
+const set = o => { Object.assign(S,o); render() }
+let toastTimer, toastEl
+function toast(msg, content, actionLabel){
+  clearTimeout(toastTimer); if(toastEl) toastEl.remove()
+  const el = document.createElement('div')
+  el.className = 'toast'
+  el.innerHTML = esc(msg) + (content ? ' <button>查看内容</button>' : '')
+  const btn = el.querySelector('button')
+  if(actionLabel) btn.onclick = () => { el.remove(); copyText(content,true) }
+  else if(content) btn.onclick = () => { set({viewC:true,copiedC:content}) }
+  document.querySelector(CAND === 'C' && S.scene === 's3' ? '.phone' : '.frame-pc').appendChild(el)
+  toastEl = el
+  toastTimer = setTimeout(() => { el.remove(); if(toastEl === el) toastEl = null }, 2500)
+}
+async function copyText(text, special, toastMsg='已复制交接文案'){
+  let ok = false
+  try { await navigator.clipboard.writeText(text); ok = true }
+  catch(e) {
+    const ta = document.createElement('textarea')
+    ta.value = text; ta.className = 'copy-source'; document.body.appendChild(ta); ta.focus(); ta.select()
+    ok = document.getSelection().toString() === text
+    setTimeout(() => ta.remove(), 100)
+  }
+  if(ok) toast(toastMsg, special ? text : '')
+  else toast('复制失败，请手动选择文字')
+}
+function protoBar(){
+  const scenes = [['s1','PC 工单详情'],['s2','改派完成'],['s3','手机工单详情'],['s4','我的 → Agent']]
+  const people = [['wang','我是王梦龙（指派人）'],['chen','我是陈工（发起人）']]
+  return `<div class="proto-top"><b class="proto-title">${esc(NAMES[CAND][0])}</b><span class="proto-desc">${esc(NAMES[CAND][1])}</span></div>
+  <div class="seg">${scenes.map(([k,n]) => `<button class="${S.scene===k?'on':''}" onclick="set({scene:'${k}',mode:'both',openB:true,drawerB:true,viewC:false})">${n}</button>`).join('')}</div>
+  ${S.scene==='s2' ? '<div class="note">改派由发起人陈工操作（本场景固定陈工视角）。</div>' : `<div class="seg who">${people.map(([k,n]) => `<button class="${S.who===k?'on':''}" onclick="set({who:'${k}',viewC:false})">${n}</button>`).join('')}</div>`}
+  <div class="note">一次性静态原型。身份切换影响场景 1 和场景 3；场景 4 三个候选相同。</div>`
+}
+function side(){
+  return `<aside class="side"><div class="brand">工单板</div><button class="btn block">＋ 请人反馈</button>
+  <div class="nav">${[['收件箱','2'],['工单',''],['工具',''],['我的',''],['管理','']].map(([n,b],i) => `<div class="it ${i===0?'on':''}">${n}${b?`<i class="dot">${b}</i>`:''}</div>`).join('')}</div>
+  <div class="foot"><b>${effectiveWho()==='wang'?'王梦龙':'陈工'}</b><div class="tiny muted">工单板 v0.2.0</div></div></aside>`
+}
+const ROWS = [
+  {no:'T-0128', title:'UD-2300 开机后报警 E21，无法进样', who:'陈工'},
+  {no:'T-0125', title:'打印报告时条码缺一截', who:'陈工'},
+  {no:T.no, title:T.title, who:'王梦龙', on:true},
+  {no:'T-0119', title:'质控结果导出 Excel 乱码', who:'李娜'}
+]
+function list(){return `<div class="lcol"><div class="lhead"><b>工单</b><span class="small muted">4 张</span><input class="search" placeholder="搜索标题、编号、标签…"><div class="fchips"><span class="fc on">进行中</span><span class="fc">指派给我</span><span class="fc">固件</span></div></div><div class="lbody">${ROWS.map(r=>`<div class="row ${r.on?'on':''}"><div class="tiny muted">${r.no}<span style="float:right">昨天</span></div><div class="t">${esc(r.title)}</div><div class="m">等待 指派人 · ${r.who}</div></div>`).join('')}</div></div>`}
+function assignmentCard(compact){
+  const label = effectiveWho()==='wang' ? '复制给我的 Agent' : '复制发给王梦龙'
+  return `<div class="timeline-card" style="${compact?'max-width:100%;':''}"><div class="txt"><b>陈工 把工单指派给 王梦龙 · 今天 10:32</b><br><span class="tiny muted">等待 指派人</span></div><button class="btn sm" onclick="copyText(${effectiveWho()==='wang'?'AGENT':'BOTH'},true)">${label}</button></div>`
+}
+function conversation(withAssignment){
+  return `<div class="thread"><div class="convo"><div class="sys">陈工 创建任务工单 · 10-17 09:20</div>
+  <div class="msg"><div class="who"><b>陈工</b> · 成员 · 10-17 09:21</div><div class="tx">请把 3 号机固件升级到 2.4.1，升级后按说明书跑一次自检和验证。</div></div>
+  <div class="msg"><div class="who"><b>王梦龙</b> · 成员 · 10-17 10:20</div><div class="tx">收到，我先确认现场备件和当前固件版本。</div></div>
+  ${withAssignment ? assignmentCard() : '<div class="sys">陈工 把工单指派给 王梦龙 · 今天 10:32</div>'}
+  </div><div class="composer"><textarea placeholder="回复…"></textarea><button class="btn">发送</button></div></div>`
+}
+function actions(){
+  const b = CAND==='B' ? '<button class="btn ghost sm" onclick="set({openB:true})">🤖 交给 Agent</button>' : ''
+  return `<button class="btn ghost sm">🏷 标签</button><button class="btn ghost sm">👤 改派</button>${b}<button class="btn ghost sm">🔗 访客链接</button><button class="btn ghost sm">✔ 关闭</button>`
+}
+function noToken(){return effectiveWho()==='wang' ? `<div class="no-token">你还没签发 Agent token → <a>去「我的 → Agent」</a></div>` : ''}
+function preview(opts={}){
+  return `${opts.seg ? `<div class="two-seg"><button class="${S.mode==='both'?'on':''}" onclick="set({mode:'both'})">发给王梦龙（含人话行）</button><button class="${S.mode==='agent'?'on':''}" onclick="set({mode:'agent'})">只要 Agent 段</button></div>` : ''}
+  <pre class="handoff-pre ${opts.collapsed && !S.expanded ? 'collapse' : ''}">${esc(modeText())}</pre>
+  ${opts.collapsed ? `<button class="btn plain tiny" onclick="set({expanded:!S.expanded})">${S.expanded?'收起':'展开全文'}</button>` : ''}
+  <div style="display:flex;gap:6px;margin-top:8px"><button class="btn block" onclick="copyText(modeText())">复制交接文案</button></div>${noToken()}`
+}
+function meta(){
+  const handoff = CAND==='A' ? `<div class="mblk"><div class="h">交给 Agent</div><div class="handoff-card">${preview({collapsed:true,seg:S.who==='chen'})}</div></div>` : ''
+  return `<div class="mblk"><div class="h">状态</div><span class="badge task">任务</span> <span class="wait">等待 指派人</span></div>
+  <div class="mblk"><div class="h">指派人<a>改派</a></div>${T.assignee}</div>${handoff}
+  <div class="mblk"><div class="h">发起人</div>${T.creator}</div><div class="mblk"><div class="h">标签</div>${chips(T.labels)}</div><div class="mblk"><div class="h">访客链接</div><span class="muted small">还没有</span></div>`
+}
+function detail(){
+  const banner = CAND==='C' && S.who==='wang' ? `<div class="banner"><span>这张工单等你处理</span><button class="btn sm" onclick="copyText(AGENT,true)">复制给我的 Agent</button></div>` : ''
+  return `<div class="dcol"><div class="dhead"><div><span class="badge task">任务</span> <span class="small muted">${T.no}</span></div><h2>${esc(T.title)}</h2><div class="acts">${actions()}</div></div>${banner}<div class="dmain">${conversation(CAND==='C')}<div class="meta">${meta()}</div></div></div>`
+}
+function modal(title, body, foot){
+  return `<div class="modal-mask" onclick="if(event.target===this)closeOverlay()"><div class="modal"><div class="modal-head"><span>${title}</span><button class="btn plain" onclick="closeOverlay()">✕</button></div><div class="modal-body">${body}</div><div class="modal-foot">${foot}</div></div></div>`
+}
+function closeOverlay(){ set({openB:false,drawerB:false,openAssignC:false}) }
+function assignFirst(){
+  return modal('改派 · T-0124', `<div class="assign-form"><label>指派给（只能指派成员）</label><select><option>王梦龙</option><option>李娜</option></select><div class="small muted" style="margin-top:8px">改派后，原指派人和新指派人的收件箱都会变化。</div></div>`, `<button class="btn ghost" onclick="closeOverlay()">取消</button><button class="btn" onclick="confirmAssign()">确认改派</button>`)
+}
+function confirmAssign(){
+  if(CAND==='C'){ set({assignedC:true,openAssignC:false,toastShown:true}); toast('已指派给 王梦龙', BOTH, '复制交接文案'); return }
+  set({openB:true})
+}
+function handoffModal(withSeg){
+  return modal('交给 Agent', preview({seg:withSeg && S.who==='chen'}), `<span class="tiny muted" style="margin-right:auto;align-self:center">文案不含凭证，对方的 Agent 用它主人自己签的 token</span><button class="btn ghost" onclick="closeOverlay()">关闭</button>`)
+}
+function assignedModal(){return modal('已指派给 王梦龙', preview({seg:CAND==='B'}), '<button class="btn ghost" onclick="closeOverlay()">关闭</button>')}
+function pc(){
+  let app = side()+list()
+  if(S.scene==='s4') return side()+mePage()
+  if(S.scene==='s2'){
+    if(CAND==='A') return app+withOverlay(detail(),assignedModal())
+    if(CAND==='B') return app+withOverlay(detail(),S.openB?assignedModal():null)
+    return app+detail()
+  }
+  if(CAND==='B' && S.openB) return app+withOverlay(detail(),handoffModal(true))
+  if(CAND==='C' && S.viewC) return app+withOverlay(detail(),modal('刚复制的交接文案',`<textarea class="handoff-textarea" readonly style="height:260px">${esc(S.copiedC)}</textarea>`,'<button class="btn ghost" onclick="set({viewC:false})">关闭</button>'))
+  return app+detail()
+}
+function withOverlay(base,overlay){return base+(overlay||'')}
+function mobile(){
+  const isC=CAND==='C'
+  const banner=isC&&S.who==='wang' ? `<div class="banner"><span>这张工单等你处理</span><button class="btn sm" onclick="copyText(AGENT,true)">复制给我的 Agent</button></div>` : ''
+  const info=`<div class="mob-info ${S.info?'open':''}"><div class="mob-info-head" onclick="set({info:!S.info})"><span class="badge task">任务</span><b style="flex:1">${T.no}</b><span class="tiny muted">${S.info?'收起':'展开信息'}</span></div><div class="mob-info-body"><div class="small">状态：等待 指派人</div><div class="small">指派人：王梦龙 · 发起人：陈工</div><div style="margin:5px 0">${chips(T.labels)}</div>${CAND==='A'?`<div class="handoff-card">${preview({collapsed:true,seg:S.who==='chen'})}</div>`:''}</div></div>`
+  const menu=CAND==='B' ? '<button class="btn plain" onclick="set({drawerB:true})">⋯</button>' : ''
+  const overlay=CAND==='B'&&S.drawerB ? `<div class="sheet-mask" onclick="if(event.target===this)closeOverlay()"><div class="sheet"><b>交给 Agent</b><div style="margin-top:10px">${preview({seg:S.who==='chen'})}</div></div></div>` : ''
+  const cv=CAND==='C'?`<div class="mob-convo">${assignmentCard(true)}<div class="mob-msg"><div class="tiny muted">陈工 · 成员</div><div style="margin-top:4px">请把 3 号机固件升级到 2.4.1，升级后跑一次自检和验证。</div></div><div class="mob-msg"><div class="tiny muted">王梦龙 · 成员</div><div style="margin-top:4px">收到，我先确认现场备件和当前固件版本。</div></div>${S.viewC?`<textarea class="handoff-textarea" readonly style="height:240px">${esc(S.copiedC)}</textarea>`:''}</div>`:`<div class="mob-convo"><div class="mob-msg"><div class="tiny muted">陈工 · 成员</div><div style="margin-top:4px">请把 3 号机固件升级到 2.4.1，升级后跑一次自检和验证。</div></div><div class="sys">陈工 把工单指派给 王梦龙</div></div>`
+  return `${banner}<div class="mob-top"><span class="mob-title">工单板</span><span class="tiny muted">${T.no}</span><span style="margin-left:auto">${menu}</span></div>${info}${cv}<div class="mob-tabbar"><div class="on">📥 收件箱</div><div>🗂 工单</div><div>👤 我的</div></div>${overlay}`
+}
+function mePage(){
+  return `<div class="me-wrap"><div class="me-page"><div class="card"><h1 class="section-title">Agent</h1><p class="section-sub">为名下的 Agent 签发具名 token</p>
+  <table class="table"><tr><th>名字</th><th>状态</th><th>最近使用</th><th></th></tr><tr><td>办公室电脑</td><td>生效中</td><td>昨天 18:20</td><td><button class="btn ghost sm">撤销</button></td></tr></table>
+  <div style="margin-top:14px"><button class="btn">生成 token</button></div></div></div>
+  ${modal('✓ token 已生成（只显示这一次）', `<div class="small muted">王梦龙 的 Agent · 办公室电脑</div><div class="token-box" style="margin-top:7px">tbk_live_example_only_not_a_real_token</div><div class="next-tip"><b>下一步：</b>把这个 token 配进你的 Agent。以后接到工单，在工单上复制交接文案发给它就行——文案里不带 token。</div>`, '<button class="btn ghost" onclick="closeOverlay()">关闭</button><button class="btn" onclick="copyText(\'tbk_live_example_only_not_a_real_token\',false,\'已复制 token\')">复制</button>')}`
+}
+function scene(){
+  if(S.scene==='s3') return `<div class="scale-wrap phone-scale"><div class="phone-shell"><div class="phone">${mobile()}</div></div></div>`
+  return `<div class="scale-wrap"><div class="frame-pc">${pc()}</div></div>`
+}
+function render(){
+  $('bar').innerHTML=protoBar(); $('stage').innerHTML=scene(); fit()
+  document.documentElement.style.setProperty('--proto-h', $('bar').offsetHeight+'px')
+  if(CAND==='C' && S.scene==='s2' && S.assignedC && !S.toastShown){ S.toastShown=true; toast('已指派给 王梦龙', BOTH, '复制交接文案') }
+}
+function fit(){
+  const wrap=$('stage').firstElementChild, box=wrap.firstElementChild
+  const w=box.offsetWidth,h=box.offsetHeight,pw=Math.max(innerWidth-32,1),ph=Math.max(innerHeight-32,1)
+  const scale=Math.min(pw/w,ph/h,1)
+  box.style.transform=`scale(${scale})`; wrap.style.width=w*scale+'px'; wrap.style.height=h*scale+'px'
+}
+addEventListener('resize',fit)
+render()</script></body></html>
