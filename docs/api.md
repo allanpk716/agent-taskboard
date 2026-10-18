@@ -260,6 +260,10 @@ spec 用户故事 84），没有 `inbox`：
     `agent` 为 `null`；`agent.revoked` 为 `true` 表示这个具名 Agent 已被撤销——
     历史署名照实标注「（已停用）」（#28 评审修正：撤销不删历史，展示反映现状）。
     时间线事件带 `seq`（单内递增）、`change`、`at`、`actor`、`type`。
+  - `brief.last_revised` 是说明的最后修订者：`{type: "member"|"guest",
+    display_name, revision, at}`。没有修订过时取创建者、版本为 1、时间为建单时间；
+    访客修订时 `type` 为 `guest`，`display_name` 取访客链接备注（#129）。成员端与
+    访客端读到同一份元数据；顶层 `creator` 与信息栏「发起人」仍表示创建者。
   - `viewer`：`{kind, member, agent, role(assignee|creator|member|guest), your_turn, can}`；
     `can` 是完整能力表 `reply/upload/edit_brief/label/close/reopen/manage_guest_links/deliver/assign`。
     `role`：本人是指派人 → `assignee`（自派自时优先算指派人），否则创建者一方 → `creator`，
@@ -451,7 +455,8 @@ spec 用户故事 84），没有 `inbox`：
   `number, seq, url, kind, title, status, close_reason, template, creator, assignee,
   labels, waiting_on, created_at, updated_at, closed_at, reply_count, last_change,
   read_full`（时间线不在列表里给）；`include=brief` 附带 `brief`（拼好的 Markdown、
-  模板工单的 `fields`）；`q` 命中附 `matched_in/snippet`。
+  模板工单的 `fields`，含 `revision` 与 `last_revised`）；`q` 命中附
+  `matched_in/snippet`。
 - `format=markdown` 返回 `text/markdown`：一张表格（编号/标题/状态/指派人/轮到/标签/更新，
   命中信息内联在标题行）+ 末尾「下一步」（读全文、跟 `next` 翻页、`changed_after` 增量）。
 
