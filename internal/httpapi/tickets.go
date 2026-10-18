@@ -551,12 +551,12 @@ type waitingOnView struct {
 }
 
 type briefView struct {
-	Fields         *map[string]string   `json:"fields"`
-	Markdown       string               `json:"markdown"`
-	Revision       int64                `json:"revision"`
-	Template       *string              `json:"template"`
-	TemplateFields []templateFieldView  `json:"template_fields,omitempty"` // 创建时版本的字段定义（访客网页按问句渲染说明气泡，#38）
-	TemplateGroups []templateGroupView  `json:"template_groups,omitempty"` // 创建时版本的分组（#63）；不分组时省略
+	Fields         *map[string]string  `json:"fields"`
+	Markdown       string              `json:"markdown"`
+	Revision       int64               `json:"revision"`
+	Template       *string             `json:"template"`
+	TemplateFields []templateFieldView `json:"template_fields,omitempty"` // 创建时版本的字段定义（访客网页按问句渲染说明气泡，#38）
+	TemplateGroups []templateGroupView `json:"template_groups,omitempty"` // 创建时版本的分组（#63）；不分组时省略
 }
 
 // fieldViewsOf 把工单保存的模板快照字段定义转成对外结构（与模板接口同形；

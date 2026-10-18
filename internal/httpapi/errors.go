@@ -134,6 +134,9 @@ const (
 	CodeInvalidReadRequest     = "invalid_read_request"   // 请求体不是 ids/ticket/up_to 三选一
 	CodeAgentCannotMarkRead    = "agent_cannot_mark_read" // 成员 Agent 不能替主人消费未读
 	CodeTooManyNotificationIDs = "too_many_notification_ids"
+	CodeInvalidAfter           = "invalid_after"
+	CodeInvalidBefore          = "invalid_before"
+	CodeInvalidLastEventID     = "invalid_last_event_id"
 
 	// #80：桌面客户端凭证。
 	CodeInvalidClientPort        = "invalid_client_port"

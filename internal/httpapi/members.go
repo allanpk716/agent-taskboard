@@ -55,11 +55,12 @@ func (a *API) handleMembersRef(w http.ResponseWriter, r *http.Request) {
 	id, sub, hasSub := strings.Cut(ref, "/")
 	if !hasSub || (sub != "deactivate" && sub != "triager" && sub != "reset-password") {
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
-			"成员账号接口：GET|POST /api/v1/members、POST /api/v1/members/{id}/deactivate|triager")
+			"成员账号接口：GET|POST /api/v1/members、POST /api/v1/members/{id}/deactivate|triager|reset-password")
 		return
 	}
 	if r.Method != http.MethodPost {
-		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "停用账号用 POST")
+		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法",
+			"停用账号、设置初筛人和重置密码都用 POST")
 		return
 	}
 	if sub == "triager" {

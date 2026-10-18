@@ -1,14 +1,12 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 )
@@ -30,9 +28,8 @@ func (a *API) handleClientConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req clientConnectRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "请求体不是合法的 JSON",
-			"请求体应为 {\"port\": 49161, \"state\": \"…\", \"code_challenge\": \"…\", \"hostname\": \"…\"}")
+	if !decodeJSON(w, r, &req,
+		`{"port": 49161, "state": "…", "code_challenge": "…", "hostname": "…"}`) {
 		return
 	}
 	port, err := clientPort(req.Port)
@@ -69,9 +66,7 @@ func (a *API) handleClientToken(w http.ResponseWriter, r *http.Request) {
 		Code         string `json:"code"`
 		CodeVerifier string `json:"code_verifier"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "请求体不是合法的 JSON",
-			"请求体应为 {\"code\": \"…\", \"code_verifier\": \"…\"}")
+	if !decodeJSON(w, r, &req, `{"code": "…", "code_verifier": "…"}`) {
 		return
 	}
 	cred, err := a.ident.ExchangeClientCode(r.Context(), req.Code, req.CodeVerifier)
@@ -189,11 +184,4 @@ func clientPort(raw any) (int, error) {
 	default:
 		return 0, fmt.Errorf("invalid port")
 	}
-}
-
-func formatTime(t time.Time) string {
-	if t.IsZero() {
-		return ""
-	}
-	return t.Format(time.RFC3339Nano)
 }

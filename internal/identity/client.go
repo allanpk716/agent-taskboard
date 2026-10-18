@@ -13,13 +13,16 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 )
 
-const clientTokenPrefix = "tbc_"
+const ClientTokenPrefix = "tbc_"
 const clientCodeTTL = 10 * time.Minute
 
 var ErrClientCredentialNotFound = errors.New("没有这个客户端凭证")
 var ErrInvalidClientCode = errors.New("客户端连接 code 无效、已过期或 verifier 不匹配")
 var ErrInvalidClientPort = errors.New("客户端回调端口必须是 1-65535")
 var ErrInvalidClientConnect = errors.New("客户端连接参数不合法")
+
+// IsClientToken 判断 Bearer token 是否为桌面客户端凭证。
+func IsClientToken(token string) bool { return strings.HasPrefix(token, ClientTokenPrefix) }
 
 // Client 是解析凭证时携带的桌面客户端信息。
 type Client struct {
@@ -51,7 +54,7 @@ type ClientCredentialInfo struct {
 	ClientVersion string
 }
 
-// ClientConnectRequest 校验并保存浏览器确认后的短时 code 参数。
+// CreateClientConnect 校验浏览器确认参数并创建短时 code。
 func (m *Manager) CreateClientConnect(ctx context.Context, member Member, port int, state, challenge, hostname string) (string, error) {
 	if port < 1 || port > 65535 {
 		return "", ErrInvalidClientPort
@@ -110,7 +113,7 @@ func (m *Manager) ExchangeClientCode(ctx context.Context, code, verifier string)
 	if _, err := randRead(buf); err != nil {
 		return ClientCredential{}, err
 	}
-	token := clientTokenPrefix + base64URLEncode(buf)
+	token := ClientTokenPrefix + base64URLEncode(buf)
 	now := m.clock.Now()
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -251,6 +254,14 @@ func (m *Manager) RevokeCurrentClientCredential(ctx context.Context, client Clie
 		return ErrClientCredentialNotFound
 	}
 	return nil
+}
+
+func (m *Manager) revokeAllClientCredentialsTx(ctx context.Context, tx *sql.Tx, memberID int64) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE client_credentials SET revoked_at = ?
+		WHERE member_id = ? AND revoked_at IS NULL`,
+		m.clock.Now().Format(time.RFC3339Nano), memberID)
+	return err
 }
 
 func validPKCEVerifier(v string) bool {

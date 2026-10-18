@@ -187,11 +187,8 @@ func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assig
 			return AssignResult{}, err
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := m.commitAndWake(tx, notified); err != nil {
 		return AssignResult{}, err
-	}
-	if m.notifier != nil {
-		m.notifier.Wake(notified)
 	}
 
 	after, err := m.ByRef(ctx, ref)

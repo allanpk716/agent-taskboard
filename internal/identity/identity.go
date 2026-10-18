@@ -211,10 +211,7 @@ func (m *Manager) DeactivateMember(ctx context.Context, id int64) (bool, error) 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE member_id = ?`, id); err != nil {
 		return false, err
 	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE client_credentials SET revoked_at = ?
-		WHERE member_id = ? AND revoked_at IS NULL`,
-		m.clock.Now().Format(time.RFC3339Nano), id); err != nil {
+	if err := m.revokeAllClientCredentialsTx(ctx, tx, id); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -277,10 +274,7 @@ func (m *Manager) AdminResetMemberPassword(ctx context.Context, adminID, memberI
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE member_id = ?`, memberID); err != nil {
 		return "", err
 	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE client_credentials SET revoked_at = ?
-		WHERE member_id = ? AND revoked_at IS NULL`,
-		m.clock.Now().Format(time.RFC3339Nano), memberID); err != nil {
+	if err := m.revokeAllClientCredentialsTx(ctx, tx, memberID); err != nil {
 		return "", err
 	}
 	if err := tx.Commit(); err != nil {

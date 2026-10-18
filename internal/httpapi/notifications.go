@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/notifications"
@@ -45,20 +46,36 @@ type notificationActorView struct {
 
 func (a *API) SetNotifications(m *notifications.Manager) { a.notifications = m }
 
-func (a *API) handleNotifications(w http.ResponseWriter, r *http.Request) {
+func (a *API) notificationMember(w http.ResponseWriter, r *http.Request) (identity.Viewer, bool) {
 	viewer, ok := a.viewerFromRequest(w, r)
 	if !ok {
-		return
+		return identity.Viewer{}, false
 	}
 	if viewer.Kind == identity.ViewerGuest {
-		WriteError(w, http.StatusForbidden, CodeMembersOnly, "通知接口仅限成员使用", "访客请继续使用工单链接和反馈入口")
+		WriteError(w, http.StatusForbidden, CodeMembersOnly, "通知接口仅限成员使用",
+			"访客请继续使用工单链接和反馈入口")
+		return identity.Viewer{}, false
+	}
+	return viewer, true
+}
+
+func formatTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339Nano)
+}
+
+func (a *API) handleNotifications(w http.ResponseWriter, r *http.Request) {
+	viewer, ok := a.notificationMember(w, r)
+	if !ok {
 		return
 	}
 	q := notifications.ListQuery{MemberID: viewer.Member.ID}
 	if raw := r.URL.Query().Get("after"); raw != "" {
 		n, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || n < 0 {
-			WriteError(w, http.StatusBadRequest, "invalid_after", "after 必须是非负整数", "after 使用上次响应返回的 cursor")
+			WriteError(w, http.StatusBadRequest, CodeInvalidAfter, "after 必须是非负整数", "after 使用上次响应返回的 cursor")
 			return
 		}
 		q.After = &n
@@ -66,7 +83,7 @@ func (a *API) handleNotifications(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("before"); raw != "" {
 		n, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
-			WriteError(w, http.StatusBadRequest, "invalid_before", "before 必须是整数", "before 使用本页最后一条通知的 id")
+			WriteError(w, http.StatusBadRequest, CodeInvalidBefore, "before 必须是整数", "before 使用本页最后一条通知的 id")
 			return
 		}
 		q.Before = &n
@@ -113,12 +130,8 @@ func (a *API) handleNotifications(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleNotificationsUnread(w http.ResponseWriter, r *http.Request) {
-	viewer, ok := a.viewerFromRequest(w, r)
+	viewer, ok := a.notificationMember(w, r)
 	if !ok {
-		return
-	}
-	if viewer.Kind == identity.ViewerGuest {
-		WriteError(w, http.StatusForbidden, CodeMembersOnly, "通知接口仅限成员使用", "访客请继续使用工单链接和反馈入口")
 		return
 	}
 	out, err := a.notifications.Unread(r.Context(), viewer.Member.ID)
@@ -139,12 +152,8 @@ func (a *API) handleNotificationsRead(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "")
 		return
 	}
-	viewer, ok := a.viewerFromRequest(w, r)
+	viewer, ok := a.notificationMember(w, r)
 	if !ok {
-		return
-	}
-	if viewer.Kind == identity.ViewerGuest {
-		WriteError(w, http.StatusForbidden, CodeMembersOnly, "通知接口仅限成员使用", "访客请继续使用工单链接和反馈入口")
 		return
 	}
 	if viewer.Agent != nil {
@@ -212,7 +221,7 @@ func (a *API) handleNotificationsRead(w http.ResponseWriter, r *http.Request) {
 func newNotificationItemView(it notifications.Item) notificationItemView {
 	readAt := ""
 	if it.ReadAt != nil {
-		readAt = it.ReadAt.Format("2006-01-02T15:04:05.999999999Z07:00")
+		readAt = formatTime(*it.ReadAt)
 	}
 	v := notificationItemView{
 		ID: it.ID, Kind: it.Kind, Reason: it.Reason, Text: it.Text, Summary: it.Summary,
@@ -222,7 +231,7 @@ func newNotificationItemView(it notifications.Item) notificationItemView {
 				AgentID: it.ActorAgentID, Name: it.ActorName}},
 		ReadNew:   fmt.Sprintf("/api/v1/tickets/%s/timeline?after=%d", it.Number, it.EventSeq-1),
 		ReadFull:  "/api/v1/tickets/" + it.Number + "?format=markdown",
-		CreatedAt: it.CreatedAt.Format("2006-01-02T15:04:05.999999999Z07:00"),
+		CreatedAt: formatTime(it.CreatedAt),
 	}
 	if readAt != "" {
 		v.ReadAt = &readAt

@@ -85,7 +85,7 @@ func (a *API) Handler() http.Handler {
 func (a *API) clientScopeMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, hasToken := bearerToken(r)
-		if !hasToken || !strings.HasPrefix(token, "tbc_") {
+		if !hasToken || !identity.IsClientToken(token) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -201,9 +201,7 @@ func (a *API) handleOwnPassword(w http.ResponseWriter, r *http.Request) {
 		OldPassword string `json:"old_password"`
 		NewPassword string `json:"new_password"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "请求体不是合法的 JSON",
-			"请求体应为 {\"old_password\": \"…\", \"new_password\": \"…\"}")
+	if !decodeJSON(w, r, &req, `{"old_password": "…", "new_password": "…"}`) {
 		return
 	}
 	err := a.ident.ChangeOwnPassword(r.Context(), viewer.Member.ID, req.OldPassword, req.NewPassword)

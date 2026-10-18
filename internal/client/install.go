@@ -50,15 +50,10 @@ type ProcessManager interface {
 // LifecycleDependencies 是安装、卸载和开机自启需要的窄适配器。
 type LifecycleDependencies struct {
 	Config    ServerConfigStore
-	Autostart Autostart
+	Autostart AutostartManager
 	Toast     ToastRegistrar
 	Files     FileSystem
 	Process   ProcessManager
-}
-
-// Autostart 合并自启项的读行为和写行为，供适配层暴露完整能力。
-type Autostart interface {
-	AutostartManager
 }
 
 // ResolveServerURL 按参数、环境变量、已保存地址和自身尾部戳解析平台地址。

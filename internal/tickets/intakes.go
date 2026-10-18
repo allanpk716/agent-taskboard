@@ -448,11 +448,8 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 			return SubmissionResult{}, fmt.Errorf("写入标签 %s 失败：%w", l, err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := m.commitAndWake(tx, notified); err != nil {
 		return SubmissionResult{}, err
-	}
-	if m.notifier != nil {
-		m.notifier.Wake(notified)
 	}
 	t.Number = number
 	return SubmissionResult{

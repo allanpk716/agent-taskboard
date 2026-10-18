@@ -12,6 +12,12 @@ type StreamEvent struct {
 	UnreadCount int
 }
 
+const (
+	EventKindNotify     = "notify"
+	EventKindRead       = "read"
+	EventKindDisconnect = "disconnect"
+)
+
 type subscriber struct {
 	mu      sync.Mutex
 	pending []string
@@ -74,7 +80,7 @@ func (b *streamBroker) publish(memberID int64, ev StreamEvent, kind string) {
 func (s *subscriber) enqueue(ev StreamEvent, kind string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if kind == "read" {
+	if kind == EventKindRead {
 		s.read = ev
 		for _, pending := range s.pending {
 			if pending == kind {
@@ -103,7 +109,7 @@ func (s *subscriber) run() {
 			s.mu.Unlock()
 			for _, kind := range pending {
 				ev := StreamEvent{Kind: kind}
-				if kind == "read" {
+				if kind == EventKindRead {
 					ev = read
 				}
 				select {
@@ -148,19 +154,19 @@ func (m *Manager) Wake(memberIDs []int64) {
 			continue
 		}
 		seen[id] = struct{}{}
-		m.streams.publish(id, StreamEvent{Kind: "notify"}, "notify")
+		m.streams.publish(id, StreamEvent{Kind: EventKindNotify}, EventKindNotify)
 	}
 }
 
 // WakeRead 在已读事务提交后广播具体读状态。
 func (m *Manager) WakeRead(memberID int64, result MarkReadResult) {
 	m.streams.publish(memberID,
-		StreamEvent{Kind: "read", ReadIDs: result.IDs, UnreadCount: result.UnreadCount}, "read")
+		StreamEvent{Kind: EventKindRead, ReadIDs: result.IDs, UnreadCount: result.UnreadCount}, EventKindRead)
 }
 
 // WakeDisconnect 要求该成员的连接立刻重新校验凭证。
 func (m *Manager) WakeDisconnect(memberID int64) {
-	m.streams.publish(memberID, StreamEvent{Kind: "disconnect"}, "disconnect")
+	m.streams.publish(memberID, StreamEvent{Kind: EventKindDisconnect}, EventKindDisconnect)
 }
 
 // Close 结束所有订阅，用于服务停机。

@@ -14,6 +14,38 @@ import (
 
 const maxSummary = 120
 
+const (
+	KindTurn = "turn"
+	KindFYI  = "fyi"
+
+	ReasonAssigned        = "assigned"
+	ReasonDelivered       = "delivered"
+	ReasonAssigneeReplied = "assignee_replied"
+	ReasonReturned        = "returned"
+	ReasonCreatorReplied  = "creator_replied"
+	ReasonGuestReplied    = "guest_replied"
+	ReasonDepartment      = "department"
+	ReasonClosed          = "closed"
+	ReasonReopened        = "reopened"
+	ReasonUnassigned      = "unassigned"
+	ReasonBriefRevised    = "brief_revised"
+	ReasonThirdPartyReply = "third_party_reply"
+)
+
+type notificationStyle struct {
+	reason string
+	suffix string
+}
+
+var notificationStyles = map[string]notificationStyle{
+	tickets.WhyNew:            {ReasonAssigned, " 回复了"},
+	tickets.WhyGuestReplied:   {ReasonGuestReplied, " 回复了"},
+	tickets.WhyDelivered:      {ReasonDelivered, " 交付了"},
+	tickets.WhyAssigneeReply:  {ReasonAssigneeReplied, " 回复了"},
+	tickets.WhySentBack:       {ReasonReturned, " 退回"},
+	tickets.WhyCreatorReplied: {ReasonCreatorReplied, " 回复了"},
+}
+
 // Rules 是成员通知规则模块。它只依据事件前后的工单状态、操作者和有效
 // 初筛人推导接收人，等待方本身复用 tickets.WaitingOnOf。
 type Rules struct{}
@@ -30,21 +62,21 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 			if selfAction(in.Actor, id) {
 				continue
 			}
-			out = append(out, Decision{MemberID: id, Kind: "turn", Reason: "department",
+			out = append(out, Decision{MemberID: id, Kind: KindTurn, Reason: ReasonDepartment,
 				Text: "新工单「" + in.After.Title + "」轮到本部门，待初筛"})
 		}
-	case "assigned":
+	case ReasonAssigned:
 		turn := tickets.WaitingOnOf(in.After)
 		if turn.Party == "assignee" && turn.MemberID != 0 && !selfAction(in.Actor, turn.MemberID) {
 			out = append(out, Decision{
-				MemberID: turn.MemberID, Kind: "turn", Reason: "assigned",
+				MemberID: turn.MemberID, Kind: KindTurn, Reason: ReasonAssigned,
 				Text: notificationTextActor(in.Actor) + " 把工单「" + in.After.Title + "」指派给你",
 			})
 		}
 		if in.Before.AssigneeID != 0 && in.Before.AssigneeID != in.After.AssigneeID &&
 			!selfAction(in.Actor, in.Before.AssigneeID) {
 			out = append(out, Decision{
-				MemberID: in.Before.AssigneeID, Reason: "unassigned", Kind: "fyi",
+				MemberID: in.Before.AssigneeID, Reason: ReasonUnassigned, Kind: KindFYI,
 				Text: notificationTextActor(in.Actor) + unassignText(in.After, in.Before.AssigneeName),
 			})
 		}
@@ -54,7 +86,7 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 			for _, id := range in.Triagers {
 				if !selfAction(in.Actor, id) && !hasDecisionFor(out, id) {
 					out = append(out, Decision{
-						MemberID: id, Reason: "department", Kind: "turn",
+						MemberID: id, Reason: ReasonDepartment, Kind: KindTurn,
 						Text:    "工单「" + in.After.Title + "」轮到本部门，待初筛",
 						Summary: replySummary(in.Event.BodyMD),
 					})
@@ -63,32 +95,32 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 		} else if turn.MemberID != 0 && !selfAction(in.Actor, turn.MemberID) && oppositeActor(in.After, turn.MemberID, in.Actor) {
 			summary := replySummary(in.Event.BodyMD)
 			out = append(out, Decision{
-				MemberID: turn.MemberID, Kind: "turn", Reason: notificationReason(turn.Why),
+				MemberID: turn.MemberID, Kind: KindTurn, Reason: notificationReason(turn.Why),
 				Text:    notificationTextActor(in.Actor) + replySuffix(turn.Why) + "「" + in.After.Title + "」",
 				Summary: summary,
 			})
 		}
 		if in.Actor.MemberID != 0 && in.Actor.MemberID != in.After.Creator.MemberID &&
 			in.Actor.MemberID != in.After.AssigneeID {
-			out = append(out, fyiForStakeholders(in, "third_party_reply",
+			out = append(out, fyiForStakeholders(in, ReasonThirdPartyReply,
 				notificationTextActor(in.Actor)+" 回复了「"+in.After.Title+"」")...)
 		}
-	case "brief_revised":
+	case ReasonBriefRevised:
 		if in.Actor.MemberID != 0 {
 			break
 		}
-		out = append(out, fyiForStakeholders(in, "brief_revised",
+		out = append(out, fyiForStakeholders(in, ReasonBriefRevised,
 			notificationTextActor(in.Actor)+" 修订了「"+in.After.Title+"」的说明")...)
 		for i := range out {
-			if out[i].Reason == "brief_revised" {
+			if out[i].Reason == ReasonBriefRevised {
 				out[i].Summary = "第 " + strconv.FormatInt(in.Event.Revision, 10) + " 版"
 			}
 		}
-	case "closed":
-		out = append(out, fyiForStakeholders(in, "closed",
+	case ReasonClosed:
+		out = append(out, fyiForStakeholders(in, ReasonClosed,
 			notificationTextActor(in.Actor)+" 关闭了「"+in.After.Title+"」")...)
-	case "reopened":
-		out = append(out, fyiForStakeholders(in, "reopened",
+	case ReasonReopened:
+		out = append(out, fyiForStakeholders(in, ReasonReopened,
 			notificationTextActor(in.Actor)+" 重新开启了「"+in.After.Title+"」")...)
 	}
 	return out
@@ -155,32 +187,11 @@ func oppositeActor(t tickets.Full, recipient int64, actor tickets.Author) bool {
 }
 
 func notificationReason(why string) string {
-	switch why {
-	case tickets.WhyNew:
-		return "assigned"
-	case tickets.WhyGuestReplied:
-		return "guest_replied"
-	case tickets.WhyDelivered:
-		return "delivered"
-	case tickets.WhyAssigneeReply:
-		return "assignee_replied"
-	case tickets.WhySentBack:
-		return "returned"
-	case tickets.WhyCreatorReplied:
-		return "creator_replied"
-	}
-	return ""
+	return notificationStyles[why].reason
 }
 
 func replySuffix(why string) string {
-	switch notificationReason(why) {
-	case "delivered":
-		return " 交付了"
-	case "returned":
-		return " 退回"
-	default:
-		return " 回复了"
-	}
+	return notificationStyles[why].suffix
 }
 
 // Manager 提供通知写入（由工单事务调用）与读取。

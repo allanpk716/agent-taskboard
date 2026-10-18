@@ -167,11 +167,8 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 			return ReplyResult{}, err
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := m.commitAndWake(tx, notified); err != nil {
 		return ReplyResult{}, err
-	}
-	if m.notifier != nil {
-		m.notifier.Wake(notified)
 	}
 
 	after, err := m.ByRef(ctx, ref)
@@ -340,11 +337,8 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 			return Ticket{}, err
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := m.commitAndWake(tx, notified); err != nil {
 		return Ticket{}, err
-	}
-	if m.notifier != nil {
-		m.notifier.Wake(notified)
 	}
 
 	full.Title = title
@@ -431,11 +425,8 @@ func (m *Manager) Close(ctx context.Context, viewer identity.Viewer, ref string,
 			return Ticket{}, err
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := m.commitAndWake(tx, notified); err != nil {
 		return Ticket{}, err
-	}
-	if m.notifier != nil {
-		m.notifier.Wake(notified)
 	}
 
 	full.Status = "closed"
@@ -492,11 +483,8 @@ func (m *Manager) Reopen(ctx context.Context, viewer identity.Viewer, ref string
 			return Full{}, err
 		}
 	}
-	if err := tx.Commit(); err != nil {
+	if err := m.commitAndWake(tx, notified); err != nil {
 		return Full{}, err
-	}
-	if m.notifier != nil {
-		m.notifier.Wake(notified)
 	}
 
 	// 重开后的等待方按最后一条相关回复推导（spec：重开后照常推导）。

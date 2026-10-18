@@ -173,8 +173,8 @@ func newGuestLinkView(l tickets.GuestLinkInfo) guestLinkView {
 			ExpiresAt:    l.ExpiresAt.Format(time.RFC3339Nano),
 			CanEditBrief: l.CanEditBrief,
 		},
-		CreatedBy:    newAuthorView(l.CreatedBy),
-		CreatedAt:    l.CreatedAt.Format(time.RFC3339Nano),
+		CreatedBy: newAuthorView(l.CreatedBy),
+		CreatedAt: l.CreatedAt.Format(time.RFC3339Nano),
 	}
 	if l.RevokedAt != nil {
 		t := l.RevokedAt.Format(time.RFC3339Nano)

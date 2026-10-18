@@ -21,7 +21,7 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 	if token, ok := bearerToken(r); ok {
 		var viewer identity.Viewer
 		var err error
-		if strings.HasPrefix(token, "tbc_") {
+		if identity.IsClientToken(token) {
 			viewer, err = a.ident.ViewerFromClientToken(r.Context(), token, r.UserAgent())
 		} else {
 			viewer, err = a.ident.ViewerFromAgentToken(r.Context(), token)

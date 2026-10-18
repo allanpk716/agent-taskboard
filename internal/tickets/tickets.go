@@ -200,6 +200,16 @@ func NewManager(db *sql.DB, c clock.Clock, lm *labels.Manager, tm *templates.Man
 
 func (m *Manager) SetNotifier(n Notifier) { m.notifier = n }
 
+func (m *Manager) commitAndWake(tx *sql.Tx, notified []int64) error {
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if m.notifier != nil {
+		m.notifier.Wake(notified)
+	}
+	return nil
+}
+
 // Labels 返回标签字典模块（HTTP 层组 hint 用；完整字典接口在 #31）。
 func (m *Manager) Labels() *labels.Manager { return m.labels }
 
@@ -453,11 +463,8 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, err
 		linkCreated = link
 	}
 
-	if err := tx.Commit(); err != nil {
+	if err := m.commitAndWake(tx, notified); err != nil {
 		return CreateResult{}, err
-	}
-	if m.notifier != nil {
-		m.notifier.Wake(notified)
 	}
 	full, err := m.ByRef(ctx, number)
 	if err != nil {

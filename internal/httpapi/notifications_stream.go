@@ -30,7 +30,7 @@ func (a *API) handleNotificationsStream(w http.ResponseWriter, r *http.Request) 
 	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
 		n, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || n < 0 {
-			WriteError(w, http.StatusBadRequest, "invalid_last_event_id",
+			WriteError(w, http.StatusBadRequest, CodeInvalidLastEventID,
 				"Last-Event-ID 必须是非负整数", "重连时带上最后收到的通知 id")
 			return
 		}
@@ -82,11 +82,11 @@ func (a *API) handleNotificationsStream(w http.ResponseWriter, r *http.Request) 
 			if !ok {
 				return
 			}
-			if ev.Kind == "disconnect" || !a.streamViewerValid(r, viewer.Member.ID) {
+			if ev.Kind == notifications.EventKindDisconnect || !a.streamViewerValid(r, viewer.Member.ID) {
 				return
 			}
 			switch ev.Kind {
-			case "notify":
+			case notifications.EventKindNotify:
 				replay, err := a.notifications.List(r.Context(), notifications.ListQuery{
 					MemberID: viewer.Member.ID, After: &last, Limit: -1,
 				})
@@ -98,7 +98,7 @@ func (a *API) handleNotificationsStream(w http.ResponseWriter, r *http.Request) 
 					last = it.ID
 				}
 				flush(w)
-			case "read":
+			case notifications.EventKindRead:
 				writeSSEData(w, "", "read", map[string]any{
 					"ids": ev.ReadIDs, "unread_count": ev.UnreadCount,
 				})
