@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/agentdocs"
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
@@ -82,6 +83,10 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 
 	mux := http.NewServeMux()
 	mux.Handle("/api/", api.Handler())
+	docs := agentdocs.Handler(cfg.Server.PublicURL)
+	mux.Handle("/agent.md", docs)
+	mux.Handle("/llms.txt", docs)
+	mux.Handle("/api.md", docs)
 	mux.Handle("/", web)
 
 	return &Server{

@@ -33,7 +33,7 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 			switch {
 			case errors.Is(err, identity.ErrInvalidCredentials):
 				WriteError(w, http.StatusUnauthorized, CodeInvalidToken, "凭证无效或已撤销",
-					"检查 token 是否完整；访客可以把整条访客链接的密钥传进来")
+					a.authHint(r))
 			case errors.Is(err, identity.ErrLinkRevoked):
 				WriteError(w, http.StatusUnauthorized, CodeLinkRevoked, "访客链接已被撤销",
 					"请联系发链接的成员重新获取一条新链接")
@@ -50,18 +50,41 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 
 	cookie, err := r.Cookie(SessionCookieName)
 	if err != nil || cookie.Value == "" {
-		WriteError(w, http.StatusUnauthorized, CodeUnauthenticated, "未登录", "先调用 POST /api/v1/session 登录")
+		WriteError(w, http.StatusUnauthorized, CodeUnauthenticated, "未登录", a.authHint(r))
 		return identity.Viewer{}, false
 	}
 	viewer, err := a.ident.ViewerFromSession(r.Context(), cookie.Value)
 	if err != nil {
 		if errors.Is(err, identity.ErrInvalidCredentials) {
-			WriteError(w, http.StatusUnauthorized, CodeUnauthenticated, "会话不存在或已过期", "重新登录")
+			WriteError(w, http.StatusUnauthorized, CodeUnauthenticated, "会话不存在或已过期", a.authHint(r))
 			return identity.Viewer{}, false
 		}
 		panic(err)
 	}
 	return viewer, true
+}
+
+func (a *API) authHint(r *http.Request) string {
+	return "Agent 用主人在网页「我的 → Agent」签发的 token：Authorization: Bearer <token>；说明见 " +
+		a.docsURL(r) + "。网页用户请先登录。"
+}
+
+func (a *API) docsURL(r *http.Request) string {
+	return a.requestBaseURL(r) + "/agent.md"
+}
+
+func (a *API) requestBaseURL(r *http.Request) string {
+	if base := strings.TrimRight(a.cfg.Server.PublicURL, "/"); base != "" {
+		return base
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if forwarded := r.Header.Get("X-Forwarded-Proto"); forwarded != "" {
+		scheme = forwarded
+	}
+	return scheme + "://" + r.Host
 }
 
 type viewerContextKeyType struct{}

@@ -11,6 +11,9 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
   PowerShell 用 `[Text.Encoding]::UTF8.GetBytes(...)` 作为 `-Body`。
 - 错误一律写成 `{"error":{"code":"…","message":"…","hint":"…"}}`，`hint` 可选，告诉调用方下一步怎么做。
 - 成功创建资源返回 `201`。
+- 所有写请求建议带 `Idempotency-Key`；地址、凭证用法和起手流程见公开说明书
+  `GET /agent.md`（`/llms.txt` 是它的别名），完整接口清单见 `GET /api.md`。两份 Markdown
+  无需凭证，正文中的地址按 `[server] public_url`（未配置时按请求的 scheme/host）生成绝对地址。
 - 凭证四种，统一解析成一个 Viewer（`kind` 为 `member` / `guest`，成员带 `member` 与 `agent` / `client`，访客带 `guest_link`，见 spec「身份与凭证」模块）：
   1. **成员本人**：网页会话 cookie `tb_session`（HttpOnly + Secure + SameSite=Lax）。本人操作的唯一来源。
   2. **成员 Agent**：`Authorization: Bearer <Agent token>`，token 由 `POST /api/v1/me/agent-tokens` 签发（前缀 `tbag_`）。ADR 0003：用 token 的操作一律署名为「某成员 的 Agent · 名字」，永远不算本人。
@@ -21,6 +24,22 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 - 撤销 Agent token 立即生效：每次请求都实时查库校验（token 只存哈希，无状态 JWT 不可用）。
 
 ## 会话与身份
+
+`GET /api/v1` 与 `GET /api/v1/` 公开返回 API 自描述 JSON：
+
+```json
+{
+  "name": "agent-taskboard",
+  "version": "…",
+  "docs": {"agent": "…/agent.md", "api": "…/api.md"},
+  "auth": "成员 Agent 用主人在网页「我的 → Agent」签发的 token：Authorization: Bearer <token>；访客用访客链接里的凭证",
+  "entry_points": {"tickets": "…/api/v1/tickets", "inbox": "…/api/v1/inbox"}
+}
+```
+
+`entry_points` 另含会话、标签字典和模板入口，全部是绝对地址；`version` 与
+`GET /api/v1/health` 的 `server_version` 一致。`/api/v1/*` 下未知路径仍返回
+404 `not_found`，hint 指向说明书。
 
 | 方法与路径 | 说明 |
 |---|---|
