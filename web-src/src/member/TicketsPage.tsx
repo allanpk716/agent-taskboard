@@ -10,6 +10,7 @@ import { nav, useInvalidate, useLocationSearch } from './ui'
 import { LabelFacetPanel, LabelFilterSummary } from './LabelFacets'
 import {
   filtersFromSearch,
+  labelDimension,
   toQuery,
   toggleLabelCondition,
   type ListFilters,
@@ -43,7 +44,7 @@ interface ListResponse {
 /** 标签 chip 配色：按维度在种子维度表中的位置循环取色（只影响观感）。 */
 const DIMENSIONS = ['产品线', '系统', '机型', '部门', '算法', '立项', '子项目']
 export function chipClass(label: string): string {
-  const dim = label.includes(':') ? label.split(':', 1)[0] : ''
+  const dim = labelDimension(label)
   const i = DIMENSIONS.indexOf(dim)
   return `chip c${i < 0 ? 0 : (i % 6) + 1}`
 }

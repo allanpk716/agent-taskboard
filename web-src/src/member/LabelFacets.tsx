@@ -6,6 +6,7 @@ import {
   toggleLabelCondition,
   type LabelConditionMode,
   type ListFilters,
+  labelDimension,
 } from './listFilters'
 
 interface CountsResponse {
@@ -248,7 +249,7 @@ export function LabelFilterSummary({
   const chipRowRef = useRef<HTMLDivElement | null>(null)
   const dimensions = new Map<string, string[]>()
   for (const label of filters.labelAny) {
-    const dim = label.split(':', 1)[0]
+    const dim = labelDimension(label)
     dimensions.set(dim, [...(dimensions.get(dim) ?? []), label.slice(dim.length + 1)])
   }
   const includes = [...dimensions].map(([dim, values]) => ({
