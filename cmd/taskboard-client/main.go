@@ -16,6 +16,7 @@ import (
 
 func main() {
 	server := flag.String("server", "", "Taskboard 平台地址")
+	afterUpdate := flag.Bool("after-update", false, "自动更新后的新进程启动参数")
 	showVersion := flag.Bool("version", false, "显示客户端版本后退出")
 	flag.Parse()
 	if *showVersion {
@@ -54,7 +55,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	app := client.New(client.Config{
-		ServerURL: serverURL, Version: version.Client, Hostname: hostname,
+		ServerURL: serverURL, Version: version.Client, Hostname: hostname, AfterUpdate: *afterUpdate,
 	}, system.Dependencies())
 	if err := app.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "桌面客户端退出：%v\n", err)

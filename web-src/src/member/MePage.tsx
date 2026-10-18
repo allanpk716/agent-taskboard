@@ -112,7 +112,7 @@ export function MePage({ me }: { me: Me }) {
         </div>
       )}
 
-      <div className="mcard" data-testid="client-card">
+      <div className="mcard" id="client" data-testid="client-card">
         <div className="sec-t" style={{ marginTop: 0 }}>
           桌面客户端
         </div>

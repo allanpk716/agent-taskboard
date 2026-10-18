@@ -33,6 +33,7 @@ const (
 	appGUID          = "{83A12D6C-CBB4-4BE6-9A1B-01E94734D782}"
 	credentialTarget = "Taskboard Desktop Client"
 	mutexName        = "Local\\TaskboardDesktopClient"
+	readyEventName   = "Local\\TaskboardClientUpdateReady"
 	runValueName     = "TaskboardClient"
 	clientConfigKey  = `Software\Taskboard\Client`
 	aumidKey         = `SOFTWARE\Classes\AppUserModelId\` + appAUMID
@@ -47,6 +48,7 @@ type System struct {
 	Store     *CredentialManager
 	Browser   *ShellBrowser
 	Lock      *NamedMutex
+	Update    *WindowsUpdateManager
 	Lifecycle *client.LifecycleDependencies
 }
 
@@ -65,17 +67,21 @@ func NewSystem() (*System, error) {
 		Config: RegistryConfig{}, Autostart: RunAutostart{}, Toast: ToastRegistration{},
 		Files: UserFileSystem{}, Process: ProcessLauncher{},
 	}
+	updates, err := NewWindowsUpdateManager()
+	if err != nil {
+		return nil, fmt.Errorf("创建更新就绪事件失败：%w", err)
+	}
 	return &System{
 		Tray: &WindowsTray{}, Toaster: &WindowsToaster{appID: appAUMID},
 		Store: &CredentialManager{}, Browser: &ShellBrowser{}, Lock: &NamedMutex{name: mutexName},
-		Lifecycle: lifecycle,
+		Update: updates, Lifecycle: lifecycle,
 	}, nil
 }
 
 // Dependencies 返回客户端核心需要的适配器集合。
 func (s *System) Dependencies() client.Dependencies {
 	return client.Dependencies{Tray: s.Tray, Toaster: s.Toaster, Store: s.Store, Browser: s.Browser,
-		Lock: s.Lock, Lifecycle: s.Lifecycle}
+		Lock: s.Lock, Update: s.Update, Lifecycle: s.Lifecycle}
 }
 
 // NewLifecycle 返回安装阶段使用的适配器；此时还没有创建托盘和 Toast。
@@ -201,6 +207,8 @@ func iconFor(state client.TrayState) ([]byte, string) {
 		return ico(color.RGBA{R: 226, G: 66, B: 52, A: 255}), "Taskboard：有未读通知"
 	case client.TrayNeedLogin:
 		return ico(color.RGBA{R: 242, G: 148, B: 0, A: 255}), "Taskboard：需要重新登录"
+	case client.TrayOutdated:
+		return ico(color.RGBA{R: 220, G: 0, B: 107, A: 255}), "Taskboard：版本过旧"
 	case client.TrayDisconnected:
 		return ico(color.RGBA{R: 117, G: 117, B: 117, A: 255}), "Taskboard：连接中断"
 	default:
@@ -265,15 +273,96 @@ func (w *WindowsToaster) Show(n client.Notification) {
 	}
 	w.items[key] = n
 	w.mu.Unlock()
+	title := n.Ticket.Number + " " + n.Ticket.Title
 	body := n.Text
-	if n.Summary != "" {
+	if title == " " {
+		title = n.Text
+		body = ""
+	} else if n.Summary != "" {
 		body += "\n" + n.Summary
 	}
 	notification := toast.Notification{
-		AppID: w.appID, Title: n.Ticket.Number + " " + n.Ticket.Title, Body: body,
+		AppID: w.appID, Title: title, Body: body,
 		ActivationType: toast.Foreground, ActivationArguments: key,
 	}
+	if n.Reason == "outdated" {
+		notification.Duration = toast.Long
+	}
 	go func() { _ = notification.Push() }()
+}
+
+// WindowsUpdateManager 用命名事件传递新进程就绪信号，并保留可结束的更新进程句柄。
+type WindowsUpdateManager struct {
+	mu      sync.Mutex
+	event   windows.Handle
+	ready   chan struct{}
+	waiting bool
+}
+
+func NewWindowsUpdateManager() (*WindowsUpdateManager, error) {
+	name, err := windows.UTF16PtrFromString(readyEventName)
+	if err != nil {
+		return nil, err
+	}
+	event, err := windows.CreateEvent(nil, 0, 0, name)
+	if err != nil {
+		return nil, err
+	}
+	return &WindowsUpdateManager{event: event}, nil
+}
+
+func (m *WindowsUpdateManager) Ready() <-chan struct{} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ready == nil {
+		m.ready = make(chan struct{})
+	}
+	if !m.waiting {
+		m.waiting = true
+		go func() {
+			if _, err := windows.WaitForSingleObject(m.event, windows.INFINITE); err == nil {
+				close(m.ready)
+			}
+		}()
+	}
+	return m.ready
+}
+
+func (m *WindowsUpdateManager) SendReady() error {
+	name, err := windows.UTF16PtrFromString(readyEventName)
+	if err != nil {
+		return err
+	}
+	event, err := windows.OpenEvent(windows.EVENT_MODIFY_STATE, false, name)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(event)
+	return windows.SetEvent(event)
+}
+
+func (m *WindowsUpdateManager) Start(path string, args []string) (client.UpdateProcess, error) {
+	cmd := exec.Command(path, args...)
+	cmd.SysProcAttr = &windows.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	handle, err := windows.OpenProcess(windows.PROCESS_TERMINATE|windows.SYNCHRONIZE, false, uint32(cmd.Process.Pid))
+	if err != nil {
+		_ = cmd.Process.Kill()
+		return nil, err
+	}
+	return WindowsUpdateProcess{handle: handle}, nil
+}
+
+type WindowsUpdateProcess struct{ handle windows.Handle }
+
+func (p WindowsUpdateProcess) Stop() error {
+	if err := windows.TerminateProcess(p.handle, 1); err != nil && !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		return err
+	}
+	_, _ = windows.WaitForSingleObject(p.handle, 5000)
+	return windows.CloseHandle(p.handle)
 }
 
 // CredentialManager 用 Windows Credential Manager 保存客户端凭证。

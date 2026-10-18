@@ -19,6 +19,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/version"
 )
 
 // TrayState 是托盘图标对用户可见的状态。
@@ -29,6 +32,7 @@ const (
 	TrayUnread       TrayState = "unread"
 	TrayNeedLogin    TrayState = "need-login"
 	TrayDisconnected TrayState = "disconnected"
+	TrayOutdated     TrayState = "outdated"
 )
 
 // Notification 是客户端对外展示的一条通知。
@@ -52,6 +56,8 @@ type Config struct {
 	Hostname  string
 	Nonces    func(int) ([]byte, error)
 	RetryWait func(context.Context, time.Duration) error
+	// AfterUpdate 表示本进程是自动更新启动的新进程；初始化后要通知旧进程退出。
+	AfterUpdate bool
 }
 
 // TrayCallbacks 是托盘菜单命令回到核心的入口。
@@ -103,6 +109,8 @@ type Dependencies struct {
 	Browser   Browser
 	Lock      InstanceLock
 	Lifecycle *LifecycleDependencies
+	Update    UpdateProcessManager
+	Clock     clock.Clock
 }
 
 // App 是客户端核心。
@@ -116,9 +124,13 @@ type App struct {
 	lastID            int64
 	unread            []Notification
 	needLoginPrompted bool
+	updating          bool
+	initialUpdateDone bool
+	streamCount       int
 	failures          int
 	loginRequired     bool
 	loginSignal       chan struct{}
+	tokenSignal       chan struct{}
 	streamCancel      context.CancelFunc
 	shutdown          context.CancelFunc
 }
@@ -138,7 +150,10 @@ func New(cfg Config, deps Dependencies) *App {
 		cfg.RetryWait = waitContext
 	}
 	cfg.ServerURL = strings.TrimRight(cfg.ServerURL, "/")
-	return &App{cfg: cfg, deps: deps, loginSignal: make(chan struct{}, 1)}
+	if deps.Clock == nil {
+		deps.Clock = clock.Real{}
+	}
+	return &App{cfg: cfg, deps: deps, loginSignal: make(chan struct{}, 1), tokenSignal: make(chan struct{}, 1)}
 }
 
 // Run 阻塞运行客户端，直到 ctx 取消。
@@ -146,7 +161,7 @@ func (a *App) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	a.ctx, a.shutdown = runCtx, cancel
 	defer cancel()
-	if a.deps.Lock != nil {
+	if a.deps.Lock != nil && !a.cfg.AfterUpdate {
 		release, err := a.deps.Lock.Acquire()
 		if err != nil {
 			return err
@@ -168,9 +183,24 @@ func (a *App) Run(ctx context.Context) error {
 	toastDone := a.runAdapter(runCtx, func() error {
 		return a.deps.Toaster.Run(runCtx, a.openNotification)
 	})
+	if a.cfg.AfterUpdate && a.deps.Update != nil {
+		_ = a.deps.Update.SendReady()
+		a.deps.Toaster.Show(Notification{Reason: "updated", Text: "客户端已更新到 " + a.cfg.Version})
+	}
+	updateDone := make(chan struct{})
+	if a.deps.Update != nil {
+		go func() {
+			defer close(updateDone)
+			a.updateLoop(runCtx)
+		}()
+	} else {
+		close(updateDone)
+	}
 	err := a.serve(runCtx)
+	cancel()
 	<-trayDone
 	<-toastDone
+	<-updateDone
 	return err
 }
 
@@ -205,6 +235,40 @@ func (a *App) serve(ctx context.Context) error {
 		a.needLoginPrompted = false
 		a.mu.Unlock()
 		a.deps.Tray.SetState(TrayNormal)
+		minVersion, err := a.serverMinVersion(ctx, token)
+		if errors.Is(err, errInvalidCredential) {
+			a.enterNeedLogin()
+			a.deps.Tray.SetUnread(nil)
+			a.deps.Tray.SetState(TrayNeedLogin)
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if version.Less(a.cfg.Version, minVersion) {
+			a.deps.Tray.SetUnread(nil)
+			a.deps.Tray.SetState(TrayOutdated)
+			a.deps.Toaster.Show(Notification{
+				Reason: "outdated", Text: "客户端版本过旧，请重新下载",
+				Ticket: struct {
+					Number string `json:"number"`
+					Title  string `json:"title"`
+					URL    string `json:"url"`
+				}{URL: "/me#client"},
+			})
+			<-ctx.Done()
+			return nil
+		}
+		if a.deps.Update != nil && !a.initialUpdateDone {
+			a.initialUpdateDone = true
+			if a.checkUpdate(ctx, token) {
+				return nil
+			}
+		}
+		select {
+		case a.tokenSignal <- struct{}{}:
+		default:
+		}
 		err = a.stream(ctx, token)
 		if ctx.Err() != nil {
 			return nil
@@ -228,6 +292,57 @@ func (a *App) serve(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (a *App) serverMinVersion(ctx context.Context, token string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.cfg.ServerURL+"/api/v1/session", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("User-Agent", a.userAgent())
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	if res.StatusCode == http.StatusUnauthorized {
+		return "", errInvalidCredential
+	}
+	if res.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
+		return "", fmt.Errorf("session: status %d: %s", res.StatusCode, data)
+	}
+	var body struct {
+		MinClientVersion string `json:"min_client_version"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		return "", err
+	}
+	return body.MinClientVersion, nil
+}
+
+func (a *App) updateLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-a.tokenSignal:
+		}
+		for ctx.Err() == nil {
+			select {
+			case <-ctx.Done():
+				return
+			case <-a.deps.Clock.After(6 * time.Hour):
+			}
+			a.mu.Lock()
+			token := a.token
+			a.mu.Unlock()
+			if a.checkUpdate(ctx, token) {
+				return
+			}
+		}
+	}
 }
 
 func (a *App) waitIfLoginRequired(ctx context.Context) bool {
@@ -375,6 +490,8 @@ func (a *App) stream(ctx context.Context, token string) error {
 	streamCtx, cancel := context.WithCancel(ctx)
 	a.mu.Lock()
 	a.streamCancel = cancel
+	a.streamCount++
+	streamNumber := a.streamCount
 	a.mu.Unlock()
 	defer func() {
 		cancel()
@@ -423,7 +540,7 @@ func (a *App) stream(ctx context.Context, token string) error {
 			if event == "" && data.Len() == 0 {
 				continue
 			}
-			if err := a.handleEvent(event, data.String()); err != nil {
+			if err := a.handleEvent(event, data.String(), streamNumber); err != nil {
 				return err
 			}
 			event, data = "", strings.Builder{}
@@ -439,7 +556,7 @@ func (a *App) stream(ctx context.Context, token string) error {
 	return sc.Err()
 }
 
-func (a *App) handleEvent(event, raw string) error {
+func (a *App) handleEvent(event, raw string, streamNumber int) error {
 	switch event {
 	case "hello":
 		var body struct {
@@ -458,6 +575,14 @@ func (a *App) handleEvent(event, raw string) error {
 			}
 		} else {
 			a.syncUnread(nil, body.UnreadCount, body.LatestID)
+		}
+		if a.deps.Update != nil && streamNumber > 1 {
+			a.mu.Lock()
+			token := a.token
+			a.mu.Unlock()
+			if a.checkUpdate(a.ctx, token) {
+				return nil
+			}
 		}
 	case "notification":
 		var n Notification
@@ -603,6 +728,13 @@ func (a *App) viewAll() {
 }
 
 func (a *App) openNotification(n Notification) {
+	switch n.Reason {
+	case "outdated":
+		_ = a.deps.Browser.Open(a.absolute(n.Ticket.URL))
+		return
+	case "updated":
+		return
+	}
 	if n.ID == 0 {
 		a.reconnect()
 		return

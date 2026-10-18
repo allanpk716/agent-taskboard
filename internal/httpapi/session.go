@@ -158,7 +158,7 @@ func (a *API) current(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	view := newSessionView(viewer)
+	view := a.newSessionView(viewer)
 	if viewer.Kind == identity.ViewerGuest {
 		seq := strconv.FormatInt(viewer.GuestLink.TicketSeq, 10)
 		full, err := a.tickets.ByRef(r.Context(), seq)
@@ -267,12 +267,13 @@ type sessionTicketView struct {
 // sessionView 是 GET /api/v1/session 和登录响应的结构：成员带 inbox，
 // 访客（#32）改带链接指向的工单。
 type sessionView struct {
-	Viewer viewerView         `json:"viewer"`
-	Inbox  string             `json:"inbox,omitempty"`
-	Ticket *sessionTicketView `json:"ticket,omitempty"`
+	Viewer           viewerView         `json:"viewer"`
+	Inbox            string             `json:"inbox,omitempty"`
+	Ticket           *sessionTicketView `json:"ticket,omitempty"`
+	MinClientVersion string             `json:"min_client_version"`
 }
 
-func newSessionView(v identity.Viewer) sessionView {
+func (a *API) newSessionView(v identity.Viewer) sessionView {
 	vv := viewerView{Kind: string(v.Kind)}
 	if v.Kind == identity.ViewerGuest {
 		note := v.GuestLink.Note
@@ -281,7 +282,7 @@ func newSessionView(v identity.Viewer) sessionView {
 		vv.LinkNote = &note
 		vv.LinkExpiresAt = &expiresAt
 		vv.CanEditBrief = &canEdit
-		return sessionView{Viewer: vv}
+		return sessionView{Viewer: vv, MinClientVersion: a.cfg.Server.MinClientVersion}
 	}
 	member := v.Member
 	vv.Member = &member
@@ -291,7 +292,7 @@ func newSessionView(v identity.Viewer) sessionView {
 	if v.Client != nil {
 		vv.Client = &clientView{ID: v.Client.ID, Hostname: v.Client.Hostname}
 	}
-	return sessionView{Viewer: vv, Inbox: "/api/v1/inbox"}
+	return sessionView{Viewer: vv, Inbox: "/api/v1/inbox", MinClientVersion: a.cfg.Server.MinClientVersion}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

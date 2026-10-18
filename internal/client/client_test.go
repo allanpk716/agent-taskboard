@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/client"
+	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
 )
 
@@ -318,6 +319,8 @@ type fakeDesktop struct {
 	tray      *fakeTray
 	toaster   *fakeToaster
 	lifecycle client.LifecycleDependencies
+	updater   *fakeUpdateAdapter
+	clock     *clock.Fake
 }
 
 func newFakeDesktop(t testing.TB) *fakeDesktop {
@@ -347,13 +350,22 @@ func (d *fakeDesktop) startClient(t testing.TB, ctx context.Context, serverURL s
 		Hostname:  "TEST-PC",
 		Nonces:    fixedNonces,
 		RetryWait: func(context.Context, time.Duration) error { return nil },
-	}, client.Dependencies{
-		Tray: d.tray, Toaster: d.toaster, Store: d.store, Browser: d.browser,
-		Lifecycle: &d.lifecycle,
-	})
+	}, d.dependencies())
 	done := make(chan error, 1)
 	go func() { done <- app.Run(ctx) }()
 	return done
+}
+
+func (d *fakeDesktop) dependencies() client.Dependencies {
+	deps := client.Dependencies{
+		Tray: d.tray, Toaster: d.toaster, Store: d.store, Browser: d.browser,
+		Lifecycle: &d.lifecycle,
+	}
+	if d.updater != nil {
+		deps.Update = d.updater
+		deps.Clock = d.clock
+	}
+	return deps
 }
 
 func (d *fakeDesktop) waitState(t testing.TB, want client.TrayState) {
