@@ -359,6 +359,14 @@ export async function reactivateMemberAccount(id: number): Promise<void> {
   await api(`/api/v1/members/${id}/reactivate`, { method: 'POST' })
 }
 
+export interface ResetMemberPasswordResult {
+  initial_password: string
+}
+
+export async function resetMemberPassword(id: number): Promise<ResetMemberPasswordResult> {
+  return api(`/api/v1/members/${id}/reset-password`, { method: 'POST' })
+}
+
 export async function setMemberTriager(id: number, triager: boolean): Promise<void> {
   await api(`/api/v1/members/${id}/triager`, {
     method: 'POST',

@@ -31,6 +31,9 @@ var ErrMemberNotFound = errors.New("没有这位成员")
 
 // ErrCannotDeactivateSelf 表示不能停用自己的账号（#42：防止管理员把自己锁在门外）。
 var ErrCannotDeactivateSelf = errors.New("不能停用自己的账号")
+
+// ErrMemberInactive 表示目标账号已停用，不能执行当前管理操作。
+var ErrMemberInactive = errors.New("成员账号已停用")
 var ErrCannotResetSelf = errors.New("不能重置自己的密码")
 var ErrInvalidOldPassword = errors.New("原密码不正确")
 var ErrPasswordTooShort = errors.New("新密码至少 8 位")
@@ -301,6 +304,17 @@ func (m *Manager) ChangeOwnPassword(ctx context.Context, memberID int64, current
 func (m *Manager) AdminResetMemberPassword(ctx context.Context, adminID, memberID int64) (string, error) {
 	if adminID == memberID {
 		return "", ErrCannotResetSelf
+	}
+	var deactivated sql.NullString
+	if err := m.db.QueryRowContext(ctx,
+		`SELECT deactivated_at FROM members WHERE id = ?`, memberID).Scan(&deactivated); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrMemberNotFound
+		}
+		return "", err
+	}
+	if deactivated.Valid {
+		return "", ErrMemberInactive
 	}
 	password, err := GenerateInitialPassword()
 	if err != nil {

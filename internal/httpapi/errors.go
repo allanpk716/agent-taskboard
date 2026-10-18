@@ -114,6 +114,7 @@ const (
 	CodeUsernameTaken        = "username_taken"         // 登录名已存在（409）
 	CodeMemberNotFound       = "member_not_found"       // 没有这位成员（404）
 	CodeMemberDeactivated    = "member_deactivated"     // 账号已停用（登录 401）
+	CodeMemberInactive       = "member_inactive"        // 重置密码的目标账号已停用
 	CodeCannotDeactivateSelf = "cannot_deactivate_self" // 不能停用自己的账号
 
 	// 幂等（评审修正）：同键并发重放。
