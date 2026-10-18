@@ -151,6 +151,19 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 	if err := touchLastChange(ctx, tx, full.Seq, change); err != nil {
 		return ReplyResult{}, err
 	}
+	if m.turnNotifier != nil {
+		after := full
+		after.LastChange = change
+		after.Timeline = append(append([]Event{}, full.Timeline...), Event{
+			Seq: eventSeq, Change: change, At: now, Actor: author, Type: "reply",
+			BodyMD: in.BodyMD, ReplyNo: replyNo, Deliver: in.Deliver,
+		})
+		if err := m.turnNotifier.NotifyTx(ctx, tx, TurnNotificationInput{
+			Before: full, After: after, Actor: author, Event: after.Timeline[len(after.Timeline)-1],
+		}); err != nil {
+			return ReplyResult{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return ReplyResult{}, err
 	}

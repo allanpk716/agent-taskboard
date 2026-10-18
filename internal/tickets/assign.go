@@ -115,17 +115,17 @@ func (m *Manager) MemberNames(ctx context.Context) []string {
 // insertAssignedEvent 记一条 assigned 事件：from 为空表示创建时指派
 // （文案「指派给 X」），否则是改派（文案「改派：X → Y」）。
 func (m *Manager) insertAssignedEvent(ctx context.Context, tx *sql.Tx, ticketSeq int64,
-	actor Author, from, to string, at time.Time) error {
+	actor Author, from, to string, at time.Time) (int64, int64, error) {
 	eventSeq, change, err := m.appendEvent(ctx, tx, ticketSeq, at, actor, "assigned")
 	if err != nil {
-		return err
+		return 0, 0, err
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE timeline_events SET assign_from = ?, assign_to = ? WHERE ticket_seq = ? AND seq = ?`,
 		nullStr(from), to, ticketSeq, eventSeq); err != nil {
-		return fmt.Errorf("写入 assigned 事件的附加字段失败：%w", err)
+		return 0, 0, fmt.Errorf("写入 assigned 事件的附加字段失败：%w", err)
 	}
-	return touchLastChange(ctx, tx, ticketSeq, change)
+	return eventSeq, change, touchLastChange(ctx, tx, ticketSeq, change)
 }
 
 // Assign 以 viewer 的身份把 ref 指向的工单改派给 assignee（成员 id 或姓名），
@@ -155,8 +155,22 @@ func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assig
 		`UPDATE tickets SET assignee_id = ? WHERE seq = ?`, toID, full.Seq); err != nil {
 		return AssignResult{}, fmt.Errorf("改派失败：%w", err)
 	}
-	if err := m.insertAssignedEvent(ctx, tx, full.Seq, authorOf(viewer), fromName, toName, now); err != nil {
+	eventSeq, _, err := m.insertAssignedEvent(ctx, tx, full.Seq, authorOf(viewer), fromName, toName, now)
+	if err != nil {
 		return AssignResult{}, err
+	}
+	if m.turnNotifier != nil {
+		after := full
+		after.AssigneeID = toID
+		after.AssigneeName = toName
+		after.Timeline = append(append([]Event{}, full.Timeline...), Event{
+			Seq: eventSeq, At: now, Actor: authorOf(viewer), Type: "assigned",
+			AssignFrom: fromName, AssignTo: toName,
+		})
+		if err := m.turnNotifier.NotifyTx(ctx, tx, TurnNotificationInput{Before: full, After: after,
+			Actor: authorOf(viewer), Event: after.Timeline[len(after.Timeline)-1]}); err != nil {
+			return AssignResult{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return AssignResult{}, err

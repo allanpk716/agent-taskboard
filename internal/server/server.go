@@ -16,6 +16,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/labels"
+	"github.com/allanpk716/agent-taskboard/internal/notifications"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
 	"github.com/allanpk716/agent-taskboard/internal/store"
 	"github.com/allanpk716/agent-taskboard/internal/templates"
@@ -67,8 +68,12 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 		return nil, err
 	}
 	idem := idempotency.NewManager(st.DB, c)
-	api := httpapi.NewAPI(ident, tickets.NewManager(st.DB, c, labelDict, templateDict, atts),
+	notificationStore := notifications.NewManager(st.DB, c)
+	ticketStore := tickets.NewManager(st.DB, c, labelDict, templateDict, atts)
+	ticketStore.SetTurnNotifier(notificationStore)
+	api := httpapi.NewAPI(ident, ticketStore,
 		templateDict, idem, atts, backups, cfg)
+	api.SetNotifications(notificationStore)
 	web, err := webapp.New(cfg.WebDir)
 	if err != nil {
 		return nil, err

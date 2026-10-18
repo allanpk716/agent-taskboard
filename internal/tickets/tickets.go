@@ -170,16 +170,32 @@ type Full struct {
 
 // Manager 是工单核心的对外入口：「以某个 Viewer 建单」「读某张工单」。
 type Manager struct {
-	db        *sql.DB
-	clk       clock.Clock
-	labels    *labels.Manager
-	templates *templates.Manager
-	atts      *attachments.Manager // 附件认领在回复/说明修订的同一事务里（#33）
+	db           *sql.DB
+	clk          clock.Clock
+	labels       *labels.Manager
+	templates    *templates.Manager
+	atts         *attachments.Manager // 附件认领在回复/说明修订的同一事务里（#33）
+	turnNotifier TurnNotifier
+}
+
+// TurnNotificationInput 是通知规则模块的输入：事件前后的完整工单状态与操作者。
+type TurnNotificationInput struct {
+	Before Full
+	After  Full
+	Actor  Author
+	Event  Event
+}
+
+// TurnNotifier 在工单事件同一事务里生成「轮到我」通知。
+type TurnNotifier interface {
+	NotifyTx(context.Context, *sql.Tx, TurnNotificationInput) error
 }
 
 func NewManager(db *sql.DB, c clock.Clock, lm *labels.Manager, tm *templates.Manager, am *attachments.Manager) *Manager {
 	return &Manager{db: db, clk: c, labels: lm, templates: tm, atts: am}
 }
+
+func (m *Manager) SetTurnNotifier(n TurnNotifier) { m.turnNotifier = n }
 
 // Labels 返回标签字典模块（HTTP 层组 hint 用；完整字典接口在 #31）。
 func (m *Manager) Labels() *labels.Manager { return m.labels }
@@ -388,8 +404,20 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, err
 		return CreateResult{}, err
 	}
 	if assigneeID != 0 {
-		if err := m.insertAssignedEvent(ctx, tx, t.Seq, creator, "", assigneeName, now); err != nil {
+		eventSeq, _, err := m.insertAssignedEvent(ctx, tx, t.Seq, creator, "", assigneeName, now)
+		if err != nil {
 			return CreateResult{}, err
+		}
+		if m.turnNotifier != nil {
+			after := Full{Ticket: t}
+			after.Timeline = []Event{
+				{Seq: 1, At: now, Actor: creator, Type: "created"},
+				{Seq: eventSeq, At: now, Actor: creator, Type: "assigned", AssignTo: assigneeName},
+			}
+			if err := m.turnNotifier.NotifyTx(ctx, tx, TurnNotificationInput{After: after, Actor: creator,
+				Event: after.Timeline[1]}); err != nil {
+				return CreateResult{}, err
+			}
 		}
 	}
 	for _, l := range in.Labels {

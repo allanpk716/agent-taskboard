@@ -11,6 +11,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
+	"github.com/allanpk716/agent-taskboard/internal/notifications"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
 	"github.com/allanpk716/agent-taskboard/internal/templates"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
@@ -21,13 +22,14 @@ const SessionCookieName = "tb_session"
 
 // API 挂载 /api/v1 下的接口。
 type API struct {
-	ident     *identity.Manager
-	tickets   *tickets.Manager
-	templates *templates.Manager
-	idem      *idempotency.Manager
-	atts      *attachments.Manager
-	backups   *ops.Backups
-	cfg       config.Config
+	ident         *identity.Manager
+	tickets       *tickets.Manager
+	templates     *templates.Manager
+	idem          *idempotency.Manager
+	atts          *attachments.Manager
+	backups       *ops.Backups
+	notifications *notifications.Manager
+	cfg           config.Config
 }
 
 func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager, backups *ops.Backups, cfg config.Config) *API {
@@ -43,6 +45,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/tickets", a.handleTicketsRoot)
 	mux.HandleFunc("/api/v1/tickets/", a.handleTicketRef)
 	mux.HandleFunc("/api/v1/inbox", a.handleInbox)
+	mux.HandleFunc("/api/v1/notifications", a.handleNotifications)
+	mux.HandleFunc("/api/v1/notifications/unread", a.handleNotificationsUnread)
 	mux.HandleFunc("/api/v1/members", a.handleMembersRoot)
 	mux.HandleFunc("/api/v1/members/", a.handleMembersRef)
 	mux.HandleFunc("/api/v1/labels", a.handleLabelsRoot)
