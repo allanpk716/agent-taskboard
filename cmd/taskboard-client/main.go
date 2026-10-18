@@ -8,37 +8,38 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strings"
 
 	"github.com/allanpk716/agent-taskboard/internal/client"
 	"github.com/allanpk716/agent-taskboard/internal/client/desktop"
 	"github.com/allanpk716/agent-taskboard/internal/version"
 )
 
-// DefaultServerURL 由发布构建用 -ldflags -X 注入；命令行参数和环境变量可覆盖。
-var DefaultServerURL = "http://127.0.0.1:8080"
-
 func main() {
-	server := flag.String("server", DefaultServerURL, "Taskboard 平台地址")
+	server := flag.String("server", "", "Taskboard 平台地址")
 	showVersion := flag.Bool("version", false, "显示客户端版本后退出")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version.Client)
 		return
 	}
-	envServer := strings.TrimSpace(os.Getenv("TASKBOARD_SERVER_URL"))
-	explicitServer := false
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "server" {
-			explicitServer = true
-		}
-	})
-	if envServer != "" && !explicitServer {
-		*server = envServer
-	}
-	if strings.TrimSpace(*server) == "" {
-		fmt.Fprintln(os.Stderr, "缺少 Taskboard 平台地址")
+	exe, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "读取客户端路径失败：%v\n", err)
 		os.Exit(2)
+	}
+	lifecycle := desktop.NewLifecycle()
+	serverURL, err := client.ResolveServerURL(*server, os.Getenv("TASKBOARD_SERVER_URL"), lifecycle.Config, exe)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	installed, err := client.InstallIfNeeded(*lifecycle, serverURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "安装 Taskboard 桌面客户端失败：%v\n", err)
+		os.Exit(1)
+	}
+	if installed {
+		return
 	}
 	system, err := desktop.NewSystem()
 	if err != nil {
@@ -53,7 +54,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	app := client.New(client.Config{
-		ServerURL: strings.TrimRight(*server, "/"), Version: version.Client, Hostname: hostname,
+		ServerURL: serverURL, Version: version.Client, Hostname: hostname,
 	}, system.Dependencies())
 	if err := app.Run(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "桌面客户端退出：%v\n", err)

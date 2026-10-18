@@ -17,3 +17,6 @@ type System struct{}
 func NewSystem() (*System, error) { return nil, ErrUnsupportedDesktop }
 
 func (*System) Dependencies() client.Dependencies { return client.Dependencies{} }
+
+// NewLifecycle 在非 Windows 平台没有可用实现。
+func NewLifecycle() *client.LifecycleDependencies { return nil }

@@ -13,7 +13,10 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"unsafe"
@@ -22,6 +25,7 @@ import (
 	"git.sr.ht/~jackmordaunt/go-toast/v2"
 	"github.com/allanpk716/agent-taskboard/internal/client"
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 )
 
 const (
@@ -29,15 +33,21 @@ const (
 	appGUID          = "{83A12D6C-CBB4-4BE6-9A1B-01E94734D782}"
 	credentialTarget = "Taskboard Desktop Client"
 	mutexName        = "Local\\TaskboardDesktopClient"
+	runValueName     = "TaskboardClient"
+	clientConfigKey  = `Software\Taskboard\Client`
+	aumidKey         = `SOFTWARE\Classes\AppUserModelId\` + appAUMID
+	activatorKey     = `SOFTWARE\Classes\CLSID\{83A12D6C-CBB4-4BE6-9A1B-01E94734D782}\LocalServer32`
+	activatorCLSID   = `SOFTWARE\Classes\CLSID\{83A12D6C-CBB4-4BE6-9A1B-01E94734D782}`
 )
 
 // System 是 Windows 适配层的一组实现。
 type System struct {
-	Tray    *WindowsTray
-	Toaster *WindowsToaster
-	Store   *CredentialManager
-	Browser *ShellBrowser
-	Lock    *NamedMutex
+	Tray      *WindowsTray
+	Toaster   *WindowsToaster
+	Store     *CredentialManager
+	Browser   *ShellBrowser
+	Lock      *NamedMutex
+	Lifecycle *client.LifecycleDependencies
 }
 
 // NewSystem 初始化 Windows 适配层。toastAppData 需要在进程启动早期注册一次。
@@ -51,15 +61,29 @@ func NewSystem() (*System, error) {
 	}); err != nil {
 		return nil, fmt.Errorf("注册 Toast 应用标识失败：%w", err)
 	}
+	lifecycle := &client.LifecycleDependencies{
+		Config: RegistryConfig{}, Autostart: RunAutostart{}, Toast: ToastRegistration{},
+		Files: UserFileSystem{}, Process: ProcessLauncher{},
+	}
 	return &System{
 		Tray: &WindowsTray{}, Toaster: &WindowsToaster{appID: appAUMID},
 		Store: &CredentialManager{}, Browser: &ShellBrowser{}, Lock: &NamedMutex{name: mutexName},
+		Lifecycle: lifecycle,
 	}, nil
 }
 
 // Dependencies 返回客户端核心需要的适配器集合。
 func (s *System) Dependencies() client.Dependencies {
-	return client.Dependencies{Tray: s.Tray, Toaster: s.Toaster, Store: s.Store, Browser: s.Browser, Lock: s.Lock}
+	return client.Dependencies{Tray: s.Tray, Toaster: s.Toaster, Store: s.Store, Browser: s.Browser,
+		Lock: s.Lock, Lifecycle: s.Lifecycle}
+}
+
+// NewLifecycle 返回安装阶段使用的适配器；此时还没有创建托盘和 Toast。
+func NewLifecycle() *client.LifecycleDependencies {
+	return &client.LifecycleDependencies{
+		Config: RegistryConfig{}, Autostart: RunAutostart{}, Toast: ToastRegistration{},
+		Files: UserFileSystem{}, Process: ProcessLauncher{},
+	}
 }
 
 // WindowsTray 用 systray 实现托盘。
@@ -118,8 +142,9 @@ func (t *WindowsTray) buildMenu(cb client.TrayCallbacks) {
 	allRead := systray.AddMenuItem("全部标为已读", "保留更新的通知")
 	viewAll := systray.AddMenuItem("查看全部", "在浏览器中打开通知")
 	logout := systray.AddMenuItem("退出登录", "撤销这台电脑的凭证")
+	uninstall := systray.AddMenuItem("卸载", "撤销凭证并删除这台电脑上的客户端")
 	quit := systray.AddMenuItem("退出", "关闭桌面客户端")
-	for _, item := range []*systray.MenuItem{allRead, viewAll, logout, quit} {
+	for _, item := range []*systray.MenuItem{allRead, viewAll, logout, uninstall, quit} {
 		item.Disable()
 	}
 	allRead.Enable()
@@ -129,6 +154,7 @@ func (t *WindowsTray) buildMenu(cb client.TrayCallbacks) {
 	t.watch(allRead, cb.MarkAllRead)
 	t.watch(viewAll, cb.ViewAll)
 	t.watch(logout, cb.Logout)
+	t.watch(uninstall, cb.Uninstall)
 	t.watch(quit, cb.Quit)
 	for i := range t.slots {
 		i := i
@@ -360,4 +386,134 @@ func (m *NamedMutex) Acquire() (func(), error) {
 		return nil, errors.New("Taskboard 桌面客户端已经在运行")
 	}
 	return func() { _ = windows.CloseHandle(handle) }, nil
+}
+
+// RegistryConfig 在 HKCU 保存客户端解析出的平台地址。
+type RegistryConfig struct{}
+
+func (RegistryConfig) ServerURL() (string, bool, error) {
+	key, err := registry.OpenKey(registry.CURRENT_USER, clientConfigKey, registry.READ)
+	if err != nil {
+		if errors.Is(err, registry.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	defer key.Close()
+	value, _, err := key.GetStringValue("ServerURL")
+	if errors.Is(err, registry.ErrNotExist) || value == "" {
+		return "", false, nil
+	}
+	return value, value != "", err
+}
+
+func (RegistryConfig) SaveServerURL(rawURL string) error {
+	key, _, err := registry.CreateKey(registry.CURRENT_USER, clientConfigKey, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer key.Close()
+	return key.SetStringValue("ServerURL", rawURL)
+}
+
+func (RegistryConfig) DeleteServerURL() error {
+	if err := registry.DeleteKey(registry.CURRENT_USER, clientConfigKey); err != nil && !errors.Is(err, registry.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// RunAutostart 维护 HKCU Run 自启项。
+type RunAutostart struct{}
+
+func (RunAutostart) Enable(command string) error {
+	key, _, err := registry.CreateKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer key.Close()
+	return key.SetStringValue(runValueName, command)
+}
+
+func (RunAutostart) Disable() error {
+	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Run`, registry.SET_VALUE)
+	if err != nil {
+		if errors.Is(err, registry.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	defer key.Close()
+	if err := key.DeleteValue(runValueName); err != nil && !errors.Is(err, registry.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// ToastRegistration 删除 go-toast 写入 HKCU 的 AUMID 和激活 COM 注册。
+type ToastRegistration struct{}
+
+func (ToastRegistration) Unregister() error {
+	if err := registry.DeleteKey(registry.CURRENT_USER, aumidKey); err != nil && !errors.Is(err, registry.ErrNotExist) {
+		return err
+	}
+	if err := registry.DeleteKey(registry.CURRENT_USER, activatorKey); err != nil && !errors.Is(err, registry.ErrNotExist) {
+		return err
+	}
+	_ = registry.DeleteKey(registry.CURRENT_USER, activatorCLSID)
+	return nil
+}
+
+// UserFileSystem 复制自身到 %LOCALAPPDATA%\Programs\taskboard-client。
+type UserFileSystem struct{}
+
+func (UserFileSystem) InstallDir() (string, error) {
+	root := os.Getenv("LOCALAPPDATA")
+	if root == "" {
+		return "", errors.New("没有 LOCALAPPDATA 环境变量")
+	}
+	return filepath.Join(root, "Programs", "taskboard-client"), nil
+}
+
+func (UserFileSystem) Executable() (string, error) { return os.Executable() }
+
+func (UserFileSystem) CopyExecutable(dest string) error {
+	source, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	from, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer from.Close()
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	to, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(to, from); err != nil {
+		_ = to.Close()
+		return err
+	}
+	return to.Close()
+}
+
+// ProcessLauncher 重启安装后的客户端，并安排卸载后的延迟删除。
+type ProcessLauncher struct{}
+
+func (ProcessLauncher) Start(path string, args []string) error {
+	cmd := exec.Command(path, args...)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	return cmd.Process.Release()
+}
+
+func (ProcessLauncher) DeleteLater(path string) error {
+	cmd := exec.Command("cmd", "/c", `timeout /t 2 & del "`+path+`"`)
+	cmd.SysProcAttr = &windows.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+	return cmd.Start()
 }

@@ -311,12 +311,13 @@ func Test全部标为已读使用已见最大通知(t *testing.T) {
 }
 
 type fakeDesktop struct {
-	t       testing.TB
-	service *tbtest.Server
-	browser *fakeBrowser
-	store   *fakeCredentialStore
-	tray    *fakeTray
-	toaster *fakeToaster
+	t         testing.TB
+	service   *tbtest.Server
+	browser   *fakeBrowser
+	store     *fakeCredentialStore
+	tray      *fakeTray
+	toaster   *fakeToaster
+	lifecycle client.LifecycleDependencies
 }
 
 func newFakeDesktop(t testing.TB) *fakeDesktop {
@@ -348,6 +349,7 @@ func (d *fakeDesktop) startClient(t testing.TB, ctx context.Context, serverURL s
 		RetryWait: func(context.Context, time.Duration) error { return nil },
 	}, client.Dependencies{
 		Tray: d.tray, Toaster: d.toaster, Store: d.store, Browser: d.browser,
+		Lifecycle: &d.lifecycle,
 	})
 	done := make(chan error, 1)
 	go func() { done <- app.Run(ctx) }()
@@ -535,6 +537,8 @@ func (tr *fakeTray) click(t testing.TB, name string) {
 		cb.ViewAll()
 	case "logout":
 		cb.Logout()
+	case "uninstall":
+		cb.Uninstall()
 	}
 }
 

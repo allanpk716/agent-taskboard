@@ -60,6 +60,7 @@ type TrayCallbacks struct {
 	MarkAllRead func()
 	ViewAll     func()
 	Logout      func()
+	Uninstall   func()
 	Quit        func()
 	OpenUnread  func(Notification)
 }
@@ -96,11 +97,12 @@ type InstanceLock interface {
 
 // Dependencies 是必须由装配层提供的桌面适配器。
 type Dependencies struct {
-	Tray    Tray
-	Toaster Toaster
-	Store   CredentialStore
-	Browser Browser
-	Lock    InstanceLock
+	Tray      Tray
+	Toaster   Toaster
+	Store     CredentialStore
+	Browser   Browser
+	Lock      InstanceLock
+	Lifecycle *LifecycleDependencies
 }
 
 // App 是客户端核心。
@@ -158,6 +160,7 @@ func (a *App) Run(ctx context.Context) error {
 			MarkAllRead: a.markAllRead,
 			ViewAll:     a.viewAll,
 			Logout:      a.logout,
+			Uninstall:   a.uninstall,
 			Quit:        cancel,
 			OpenUnread:  a.openNotification,
 		})
