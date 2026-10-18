@@ -129,6 +129,10 @@ const (
 	CodeGroupByRequired  = "group_by_required"  // 计数缺 group_by
 	CodeInvalidGroupBy   = "invalid_group_by"   // 不能按这个维度分组
 	CodeInvalidActorKind = "invalid_actor_kind" // actor_kind 只能是 member/agent
+
+	// #78：成员标通知已读。
+	CodeInvalidReadRequest  = "invalid_read_request"   // 请求体不是 ids/ticket/up_to 三选一
+	CodeAgentCannotMarkRead = "agent_cannot_mark_read" // 成员 Agent 不能替主人消费未读
 )
 
 // ErrorBody 是统一错误格式 {error:{code, message, hint?}} 的内层；
