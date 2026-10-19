@@ -19,8 +19,8 @@ FROM timeline_events e
 JOIN tickets t ON t.seq = e.ticket_seq
 WHERE e.type = 'reply'
   AND e.actor_member_id IS NOT NULL
-  AND e.actor_member_id != t.creator_member_id
-  AND e.actor_member_id != t.assignee_id;
+  AND e.actor_member_id IS NOT t.creator_member_id
+  AND e.actor_member_id IS NOT t.assignee_id;
 
 WITH backfill AS (
   SELECT c.ticket_seq, c.member_id, m.name,

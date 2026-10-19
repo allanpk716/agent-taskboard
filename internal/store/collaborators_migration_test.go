@@ -169,6 +169,10 @@ func Test迁移按回复矩阵补入协作者并在时间线显示系统(t *test
 		 VALUES (1,'20261016-001','task','开启旧工单','open','旧说明',1,2,
 		         '2026-10-16T09:00:00+08:00',10),
 		        (2,'20261016-002','task','关闭旧工单','closed','旧说明',1,2,
+		         '2026-10-16T09:00:00+08:00',10),
+		        (3,'20261016-003','task','未指派旧工单','open','旧说明',NULL,NULL,
+		         '2026-10-16T09:00:00+08:00',10),
+		        (4,'20261016-004','report','反馈旧工单','open','旧说明',NULL,2,
 		         '2026-10-16T09:00:00+08:00',10)`,
 		`INSERT INTO ticket_labels (ticket_seq,label) VALUES (1,'机型:UD-2300'),(2,'机型:UD-2300')`,
 		`INSERT INTO timeline_events (ticket_seq,seq,change_seq,type,actor_member_id,actor_agent_id,at,body_md,reason,assign_from,assign_to)
@@ -181,7 +185,9 @@ func Test迁移按回复矩阵补入协作者并在时间线显示系统(t *test
 		        (1,7,7,'reply',6,NULL,'2026-10-16T09:04:00+08:00','停用前回复',NULL,NULL,NULL),
 		        (2,1,8,'created',1,NULL,'2026-10-16T10:00:00+08:00',NULL,NULL,NULL,NULL),
 		        (2,2,9,'reply',4,NULL,'2026-10-16T10:01:00+08:00','关闭单里也有回复',NULL,NULL,NULL),
-		        (2,3,10,'closed',2,NULL,'2026-10-16T10:02:00+08:00',NULL,'done',NULL,NULL)`,
+		        (2,3,10,'closed',2,NULL,'2026-10-16T10:02:00+08:00',NULL,'done',NULL,NULL),
+		        (3,1,11,'reply',4,NULL,'2026-10-16T11:00:00+08:00','未指派时回复过',NULL,NULL,NULL),
+		        (4,1,12,'reply',5,1,'2026-10-16T11:01:00+08:00','反馈入口旧库里的 Agent 回复',NULL,NULL,NULL)`,
 	}
 	for _, q := range seed {
 		if _, err := db.Exec(q); err != nil {
@@ -200,13 +206,12 @@ func Test迁移按回复矩阵补入协作者并在时间线显示系统(t *test
 	var collaborators string
 	if err := s.DB.QueryRowContext(context.Background(), `
 		SELECT group_concat(member_id, ',') FROM (
-			SELECT member_id FROM ticket_collaborators WHERE ticket_seq=1
-			UNION ALL SELECT member_id FROM ticket_collaborators WHERE ticket_seq=2
+			SELECT member_id FROM ticket_collaborators ORDER BY ticket_seq, member_id
 		)`).Scan(&collaborators); err != nil {
 		t.Fatal(err)
 	}
-	if collaborators != "4,5,6,4" {
-		t.Fatalf("回填协作者 = %q, 想 4,5,6,4（前任回复过要补；没回复的前任不补；Agent 回复算主人；停用成员保留；关闭工单覆盖）", collaborators)
+	if collaborators != "4,5,6,4,4,5" {
+		t.Fatalf("回填协作者 = %q, 想 4,5,6,4,4,5（前任回复过要补；没回复的前任不补；Agent 回复算主人；停用成员保留；关闭工单覆盖；NULL 创建者/指派人不落队）", collaborators)
 	}
 
 	manager := tickets.NewManager(s.DB, clock.Real{}, labels.NewManager(s.DB),
@@ -243,7 +248,7 @@ func Test迁移按回复矩阵补入协作者并在时间线显示系统(t *test
 		}
 	}
 	if len(rendered) != 3 {
-		t.Fatalf("系统加入事件数 = %d, 想 3：%v", len(rendered), rendered)
+		t.Fatalf("工单 1 的系统加入事件数 = %d, 想 3：%v", len(rendered), rendered)
 	}
 	md := markdownview.Ticket(markdownview.Input{
 		Number: full.Number, Title: full.Title, Status: full.Status,
@@ -266,6 +271,9 @@ func Test迁移按回复矩阵补入协作者并在时间线显示系统(t *test
 	}
 	if notes != 0 {
 		t.Fatalf("迁移不应发通知：count=%d", notes)
+	}
+	if beforeEvents != 6 {
+		t.Fatalf("系统加入事件数 = %d, 想 6", beforeEvents)
 	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
