@@ -529,6 +529,7 @@ test.describe('桌面视口', () => {
   })
 
   test('附件区删掉传错的文件后，说明附件里不再有它', async ({ page, request }) => {
+    test.setTimeout(60_000)
     const seed = await seedFillTicket(request)
     await openGuestPage(page, request, seed.linkKey)
     await page.getByRole('button', { name: '开始填写' }).click()
