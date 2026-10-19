@@ -112,7 +112,7 @@ export function MemberApp() {
   const page = (
     <>
       {route.page === 'inbox' && <InboxPage key={route.page} />}
-      {route.page === 'tickets' && <TicketsPage key={route.page} />}
+      {route.page === 'tickets' && <TicketsPage key={route.page} me={me} />}
       {route.page === 'new' && <NewTicketPage key={navSeq} />}
       {route.page === 'feedback' && <FeedbackRequestPage key={navSeq} me={me} />}
       {route.page === 'detail' && (

@@ -130,6 +130,9 @@ func cmdCreateAdmin(args []string) error {
 	if *username == "" || *password == "" {
 		return fmt.Errorf("create-admin 需要 -username 和 -password")
 	}
+	if identity.HasReplacementChar(*name) {
+		return fmt.Errorf("名字含乱码字符（�），请检查终端编码；请用 UTF-8 编码提交")
+	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {

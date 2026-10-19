@@ -179,7 +179,8 @@ spec 用户故事 84），没有 `inbox`：
 
   `initial_password` 只在创建响应里出现一次，成员用它首次登录（创建和停用账号只能在
   网页上操作，spec 用户故事 88；MVP 不接 LDAP/SSO）。错误码：`422 username_required`、
-  `422 invalid_username`（含空格或斜杠）、`409 username_taken`。
+  `422 invalid_username`（含空格或斜杠）、`422 invalid_name`（名字含替换字符 `�`）、
+  `409 username_taken`。
 - 停用 `{"id": …, "active": false, "deactivated": 是否这次发生}`；幂等。**停用即时生效**：
   该成员不能再登录（401 `member_deactivated`）；同一事务里删除已有会话、撤销全部客户端凭证，
   并把名下全部未撤销 Agent token 写入撤销时间（与单个撤销同用 `revoked_at`，之后请求 401）；

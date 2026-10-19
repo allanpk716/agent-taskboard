@@ -551,7 +551,7 @@ function NewTicketForm({
             onChange={(e) => setAssignee(e.target.value)}
           >
             <option value="">暂不指派</option>
-            {members.map((m) => (
+            {members.filter((m) => m.active !== false).map((m) => (
               <option key={m.id} value={m.name}>
                 {m.name}
               </option>

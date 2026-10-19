@@ -213,6 +213,11 @@ func (a *API) createMember(w http.ResponseWriter, r *http.Request) {
 			"登录名用小写字母和数字（可带连字符），不要有空格或斜杠")
 		return
 	}
+	if identity.HasReplacementChar(req.Name) {
+		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidName, "名字含乱码字符（�），请检查终端编码",
+			"请用 UTF-8 编码提交")
+		return
+	}
 	password, err := identity.GenerateInitialPassword()
 	if err != nil {
 		panic(err)
