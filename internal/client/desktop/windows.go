@@ -428,8 +428,8 @@ type windowsCredential struct {
 	TargetName         *uint16
 	Comment            *uint16
 	LastWritten        windows.Filetime
-	CredentialBlob     *byte
 	CredentialBlobSize uint32
+	CredentialBlob     *byte
 	Persist            uint32
 	AttributeCount     uint32
 	Attributes         uintptr
