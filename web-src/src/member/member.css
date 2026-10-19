@@ -7,6 +7,12 @@
   font: 15px/1.6 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
   color: #222;
   min-height: 100vh;
+  /* 抵消 style.css 里给登录页用的全局 main 卡片样式（#137） */
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 /* #100：PC / 平板响应式外壳。mobile 保留原有顶栏 + 底部标签栏。 */
