@@ -762,7 +762,7 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 	}
 	if !isGuest {
 		text := newHandoffText(a.requestBaseURL(r))
-		handoff := text.agentSection(full.Number, full.Title)
+		handoff := text.instruction(full.Number, full.Title)
 		v.HandoffText = &handoff
 		v.HandoffShareText = (*string)(nil)
 		if full.AssigneeID != 0 {

@@ -10,6 +10,7 @@ import {
   fetchClientLatest,
   issueAgentToken,
   logout,
+  rotateAgentToken,
   revokeAgentToken,
   revokeClient,
   type AgentTokenRow,
@@ -58,6 +59,16 @@ export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }
       setError(e instanceof ApiError ? e.message : '撤销失败')
     } finally {
       setRevoking(null)
+    }
+  }
+
+  async function rotate(tk: AgentTokenRow) {
+    try {
+      const issued = await rotateAgentToken(tk.id)
+      setIssued(issued)
+      await refresh()
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : '换新失败')
     }
   }
 
@@ -208,9 +219,14 @@ export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }
                 </td>
                 <td>
                   {tk.revoked_at ? null : (
-                    <button className="btn sm ghost" onClick={() => setRevoking(tk)}>
-                      撤销
-                    </button>
+                    <>
+                      <button className="btn sm ghost" onClick={() => void rotate(tk)}>
+                        换新
+                      </button>{' '}
+                      <button className="btn sm ghost" onClick={() => setRevoking(tk)}>
+                        撤销
+                      </button>
+                    </>
                   )}
                 </td>
               </tr>
@@ -248,7 +264,7 @@ export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }
           }}
         />
       )}
-      {issued && <TokenOnceDialog me={me} token={issued} onClose={() => setIssued(null)} />}
+      {issued && <TokenOnceDialog token={issued} onClose={() => setIssued(null)} />}
       {changingPassword && (
         <ChangePasswordDialog onClose={() => setChangingPassword(false)} />
       )}
@@ -418,7 +434,7 @@ function IssueTokenDialog({
         onChange={(e) => setName(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && void issue()}
       />
-      <div className="hint">token 只在生成时显示一次，请立刻交给这个 Agent 的配置。</div>
+      <div className="hint">token 会写进接入文案，只在生成后显示一次，请整段贴给这个 Agent。</div>
       {error && <div className="errbox">{error}</div>}
       <div className="mrow">
         <button className="btn ghost" onClick={onClose}>
@@ -433,20 +449,17 @@ function IssueTokenDialog({
   )
 }
 
-/** token 只显示这一次：显示 + 复制，关闭后不再出现。 */
-function TokenOnceDialog({ me, token, onClose }: { me: Me; token: IssuedToken; onClose: () => void }) {
+/** 接入文案只显示这一次：token 包含在其中，关闭后不再出现。 */
+function TokenOnceDialog({ token, onClose }: { token: IssuedToken; onClose: () => void }) {
   return (
-    <Modal title="✓ token 已生成（只显示这一次）" onClose={onClose}>
-      <div className="fldlab">
-        {me.name} 的 Agent · {token.name}
-      </div>
-      <div className="linkbox mono" data-token-value>
-        {token.token}
-      </div>
+    <Modal title={`✓ 已生成「${token.name}」的 token（只显示这一次）`} onClose={onClose}>
       <div className="hint">
-        下一步：把这个 token 配进你的 Agent。以后接到工单，在工单上复制交接文案发给它就行——文案里不带 token。
+        把下面这段<b>接入文案</b>整段贴给这个 Agent，它会自己把 token 存好。<b>只需做一次</b>
+        ，以后每张工单只要复制「工单指令」。
       </div>
-      <div className="hint">用它做 Bearer token 调用 API；撤销立即失效，历史署名保留。</div>
+      <pre className="handoff-pre" data-onboarding-preview>
+        {token.onboarding_text}
+      </pre>
       <div className="mrow">
         <button className="btn ghost" onClick={onClose}>
           关闭
@@ -455,12 +468,15 @@ function TokenOnceDialog({ me, token, onClose }: { me: Me; token: IssuedToken; o
         <button
           className="btn"
           onClick={() =>
-            void copyText(token.token).then((ok) => toast(ok ? '已复制' : '复制失败，请手动选择复制'))
+            void copyText(token.onboarding_text).then((ok) =>
+              toast(ok ? '已复制' : '复制失败，请手动选择复制'),
+            )
           }
         >
-          复制
+          复制接入文案
         </button>
       </div>
+      <div className="hint">接入文案含明文 token，别转发给别人。弄丢了就在列表里点「换新」。</div>
     </Modal>
   )
 }

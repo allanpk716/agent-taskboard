@@ -301,7 +301,7 @@ test('详情页打标签改派关闭与重开', async ({ page, request }) => {
   await page.locator('.actrow').getByRole('button', { name: /指派|改派/ }).click()
   await page.getByLabel('指派给').selectOption('王工')
   await page.getByRole('button', { name: /确认指派|确认改派/ }).click()
-  await expect(page.locator('.modal')).toContainText('发给王工（含人话行）')
+  await expect(page.locator('.modal')).toContainText('📨 发给 王工')
   await expect(page.locator('[data-handoff-preview]')).toContainText('转给你了')
   await page.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(page.locator('.mmeta')).toContainText('王工')

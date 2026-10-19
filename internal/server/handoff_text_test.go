@@ -36,9 +36,9 @@ func Test读工单返回交接文案且与建单shareText一致(t *testing.T) {
 			read.HandoffText, read.HandoffShareText)
 	}
 	wantAgent := fmt.Sprintf(`请处理 agent-taskboard 上的工单 %s「整理对照表」。
-1. 先读说明书：%s/agent.md
-2. 凭证：用我在网页「我的 → Agent」签发的 token，请求头 Authorization: Bearer <token>；没有就先停下来让我去签发，不要用密码登录。
-3. 读工单：curl -H "Authorization: Bearer $TOKEN" "%s/api/v1/tickets/%s?format=markdown"
+1. 凭证：用环境变量 TASKBOARD_TOKEN，请求头 Authorization: Bearer $TASKBOARD_TOKEN；读不到或返回 401 就停下来，让我去「我的 → Agent」生成 token 并把接入文案贴给你，不要用密码登录。
+2. 不熟悉平台先读说明书：%s/agent.md
+3. 读工单：curl -H "Authorization: Bearer $TASKBOARD_TOKEN" "%s/api/v1/tickets/%s?format=markdown"
 4. 照工单末尾「下一步」做；之后的待办看 %s/api/v1/inbox。`,
 		created.Number, s.URL(), s.URL(), created.Number, s.URL())
 	if read.HandoffText != wantAgent {
@@ -53,7 +53,7 @@ func Test读工单返回交接文案且与建单shareText一致(t *testing.T) {
 	}
 	s.Do(t, s.AgentClient(wangToken), http.MethodPost, "/api/v1/tickets/"+created.Number+"/assign",
 		map[string]string{"assignee": "赵工"}, &reassigned)
-	wantReassign := fmt.Sprintf("赵工：工单 %s「整理对照表」转给你了，网页 %s/t/%s（也在你的收件箱里）。下面这段交给你的 Agent：\n\n%s",
+	wantReassign := fmt.Sprintf("赵工：工单 %s「整理对照表」转给你了，网页 %s/t/%s（也在你的收件箱里）。\n下面这段交给你的 Agent（第一次用，先在「我的 → Agent」生成 token，把接入文案贴给它）：\n\n%s",
 		created.Number, s.URL(), created.Number, wantAgent)
 	if reassigned.ShareText == nil || *reassigned.ShareText != wantReassign {
 		t.Fatalf("改派 share_text = %v\n想 %q", reassigned.ShareText, wantReassign)

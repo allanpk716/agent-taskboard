@@ -29,7 +29,7 @@ func (a *API) handleAPIRoot(w http.ResponseWriter, r *http.Request) {
 		Name:    "agent-taskboard",
 		Version: version.Server,
 		Docs:    apiRootDocs{Agent: base + "/agent.md", API: base + "/api.md"},
-		Auth: "成员 Agent 用主人在网页「我的 → Agent」签发的 token：Authorization: Bearer <token>；" +
+		Auth: "成员 Agent 用主人在网页「我的 → Agent」签发的 token：Authorization: Bearer $TASKBOARD_TOKEN；" +
 			"访客用访客链接里的凭证",
 		EntryPoints: map[string]string{
 			"tickets":   base + "/api/v1/tickets",

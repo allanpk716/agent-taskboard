@@ -19,7 +19,8 @@ test('wide detail keeps actions in the header and shows ordered ticket informati
   await expect(actions).toHaveText([
     '🏷 标签',
     '👤 改派',
-    '🤖 交给 Agent',
+    '🤖 让我的 Agent 处理',
+    '📨 发给 王工',
     '🔗 访客链接',
     '✔ 关闭',
   ])
@@ -46,7 +47,7 @@ test('wide detail keeps actions in the header and shows ordered ticket informati
   await expect(info).toContainText(url)
   await expect(info).toContainText('剩余')
   await expect(info).toContainText('已使用 0 次')
-  await expect(info).not.toContainText('交给 Agent')
+  await expect(info).not.toContainText('让我的 Agent 处理')
 
   const token = new URL(url).pathname.slice(3)
   const reply = await request.post(`/api/v1/tickets/${number}/replies`, {

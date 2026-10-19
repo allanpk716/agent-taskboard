@@ -303,6 +303,27 @@ func (s *Server) IssueAgentToken(t testing.TB, c *http.Client, name string) (int
 	return issued.ID, issued.Token
 }
 
+// AgentTokenRow 是测试侧的 Agent token 列表行。
+type AgentTokenRow struct {
+	ID        int64   `json:"id"`
+	Name      string  `json:"name"`
+	CreatedAt string  `json:"created_at"`
+	RevokedAt *string `json:"revoked_at"`
+}
+
+// AgentTokens 读取网页会话当前成员名下的 Agent token 列表（不含明文 token）。
+func (s *Server) AgentTokens(t testing.TB, c *http.Client) []AgentTokenRow {
+	t.Helper()
+	var got struct {
+		Tokens []AgentTokenRow `json:"tokens"`
+	}
+	res := s.Do(t, c, http.MethodGet, "/api/v1/me/agent-tokens", nil, &got)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("读取 Agent token 列表失败：状态码 %d", res.StatusCode)
+	}
+	return got.Tokens
+}
+
 // ClientConnect 是一次「连接这台电脑」请求得到的一次性 code 和回调信息。
 type ClientConnect struct {
 	Code         string

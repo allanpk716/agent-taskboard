@@ -92,6 +92,58 @@ func (m *Manager) IssueAgentToken(ctx context.Context, member Member, name strin
 	return tok, nil
 }
 
+// RotateAgentToken 撤销 member 名下仍有效的 token，并在同一事务里签发同名
+// 新 token。明文同样只在返回值里出现一次；旧 id 不存在、不属于本人或已撤销
+// 时都报 ErrAgentTokenNotFound。
+func (m *Manager) RotateAgentToken(ctx context.Context, member Member, id int64) (AgentToken, error) {
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AgentToken{}, err
+	}
+	defer tx.Rollback()
+
+	var (
+		name      string
+		revokedAt sql.NullString
+	)
+	err = tx.QueryRowContext(ctx,
+		`SELECT name, revoked_at FROM agent_tokens WHERE id = ? AND member_id = ?`, id, member.ID).
+		Scan(&name, &revokedAt)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && revokedAt.Valid) {
+		return AgentToken{}, ErrAgentTokenNotFound
+	}
+	if err != nil {
+		return AgentToken{}, err
+	}
+
+	buf := make([]byte, 32)
+	if _, err := randRead(buf); err != nil {
+		return AgentToken{}, err
+	}
+	token := agentTokenPrefix + base64URLEncode(buf)
+	now := m.clock.Now()
+	tok := AgentToken{Agent: Agent{Name: name}, Token: token, CreatedAt: now}
+	res, err := tx.ExecContext(ctx,
+		`UPDATE agent_tokens SET revoked_at = ? WHERE id = ? AND member_id = ? AND revoked_at IS NULL`,
+		now.Format(time.RFC3339Nano), id, member.ID)
+	if err != nil {
+		return AgentToken{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 { // 并发换新只成功一次，不多签一把
+		return AgentToken{}, ErrAgentTokenNotFound
+	}
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO agent_tokens (member_id, name, token_hash, created_at)
+		VALUES (?, ?, ?, ?)
+		RETURNING id`,
+		member.ID, name, hashToken(token), now.Format(time.RFC3339Nano),
+	).Scan(&tok.Agent.ID)
+	if err != nil {
+		return AgentToken{}, err
+	}
+	return tok, tx.Commit()
+}
+
 // RevokeAgentToken 撤销 member 名下的一个 Agent token；撤销立即生效。
 // 已撤销的再撤销是幂等成功；不属于该成员或不存在的 id 报 ErrAgentTokenNotFound。
 func (m *Manager) RevokeAgentToken(ctx context.Context, member Member, id int64) error {

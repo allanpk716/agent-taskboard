@@ -3,7 +3,7 @@
 // 附件先暂存本机，建单后立即上传并挂到整张工单的附件）；自由格式一整块
 // Markdown 说明。维度标签先经 resolve 换成标准值（建单接口只收标准值）；
 // 缺必填只弹确认、不拦截（spec 用户故事 6）；创建指派给同事后嵌入
-// 「交给 Agent」面板。
+// 「发给指派人」交接面板。
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, api } from '../api'
 import type { TemplateField } from '../shared/types'
@@ -135,13 +135,12 @@ export function NewTicketPage() {
         )}
         {t.share_text ? (
           <>
-            <div className="sec-t">交给 Agent</div>
+            <div className="sec-t">📨 发给 {assignee}</div>
             <HandoffPanel
               handoffText={t.handoff_text ?? ''}
               handoffShareText={t.share_text}
               assigneeName={assignee}
-              isAssignee={false}
-              defaultMode="share"
+              mode="share"
             />
             <div className="btnrow">
               <button

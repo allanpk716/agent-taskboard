@@ -280,6 +280,7 @@ export interface IssuedToken {
   name: string
   token: string
   created_at: string
+  onboarding_text: string
 }
 
 export async function fetchAgentTokens(): Promise<AgentTokenRow[]> {
@@ -296,6 +297,10 @@ export async function issueAgentToken(name: string): Promise<IssuedToken> {
 
 export async function revokeAgentToken(id: number): Promise<void> {
   await api(`/api/v1/me/agent-tokens/${id}`, { method: 'DELETE' })
+}
+
+export async function rotateAgentToken(id: number): Promise<IssuedToken> {
+  return api(`/api/v1/me/agent-tokens/${id}/rotate`, { method: 'POST' })
 }
 
 /* ---------------- 桌面客户端（#80） ---------------- */
