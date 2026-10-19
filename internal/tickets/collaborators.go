@@ -76,24 +76,24 @@ func (m *Manager) resolveCollaborator(ctx context.Context, ref string) (Collabor
 	return Collaborator{ID: id, Name: name, Deactivated: nullStringSet(deactivated)}, nil
 }
 
+// CanManageCollaborators 判断当前成员凭证能否维护这张工单的协作者：
+// 管理员、创建者、当前指派人，以及未指派时的有效初筛人。
 func (m *Manager) CanManageCollaborators(ctx context.Context, viewer identity.Viewer, full Full) (bool, error) {
+	if viewer.Kind != identity.ViewerMember {
+		return false, nil
+	}
 	id := viewer.Member.ID
-	if viewer.Member.IsAdmin || id == full.Creator.MemberID || (full.AssigneeID != 0 && id == full.AssigneeID) {
+	isAdmin, err := memberIsAdmin(ctx, m.db, id)
+	if err != nil {
+		return false, err
+	}
+	if isAdmin || creatorOrAssignee(id, full) {
 		return true, nil
 	}
 	if full.AssigneeID != 0 {
 		return false, nil
 	}
-	triagers, err := EffectiveTriagers(ctx, m.db)
-	if err != nil {
-		return false, err
-	}
-	for _, t := range triagers {
-		if t == id {
-			return true, nil
-		}
-	}
-	return false, nil
+	return effectiveTriagerContains(ctx, m.db, id)
 }
 
 func (m *Manager) insertCollaboratorEvent(ctx context.Context, tx *sql.Tx, full Full,
