@@ -194,6 +194,9 @@ export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }
           Agent
         </div>
         <div className="hint">为名下的 Agent 签发具名 token</div>
+        <div className="hint" data-agent-model-notice>
+          工单内容会交给这个 Agent 所用的模型处理，请按公司规定选用模型
+        </div>
         <div className="hint">
           可以有几个、分别署名「{me.name} 的 Agent · 名字」、分别撤销。Agent
           不能冒充本人，也不能签发 token；成员没有「本人 API token」——自己用命令行时，也建一个具名 Agent。

@@ -215,8 +215,8 @@ spec 用户故事 84），没有 `inbox`：
 | `GET /api/v1/tickets/{id}` | 读一张可见范围内的工单；`?format=markdown` 返回给 Agent 读的 Markdown。 |
 | `PATCH /api/v1/tickets/{id}` | 修订标题/说明（创建者一方；持「可填写说明」链接的访客；乐观锁）。 |
 | `POST /api/v1/tickets/{id}/replies` | 回复（成员、成员 Agent、访客）；`deliver: true` 仅指派人一方（#36）。 |
-| `POST /api/v1/tickets/{id}/close` | 关闭（任何成员；访客 403 `members_only`）。 |
-| `POST /api/v1/tickets/{id}/reopen` | 重新开启（任何成员；访客 403 `members_only`）。 |
+| `POST /api/v1/tickets/{id}/close` | 关闭（可见范围内的成员；访客 403 `members_only`）。 |
+| `POST /api/v1/tickets/{id}/reopen` | 重新开启（可见范围内的成员；访客 403 `members_only`）。 |
 | `POST /api/v1/tickets/{id}/assign` | 改派（#36，仅成员；记 `assigned` 事件，附改派版 `share_text`；支持 `Idempotency-Key`）。 |
 | `POST /api/v1/tickets/{id}/collaborators` | 加入协作者（#158；请求 `{"member": 成员id或姓名}`，返回最新名单；支持 `Idempotency-Key`）。 |
 | `DELETE /api/v1/tickets/{id}/collaborators/{成员id}` | 移除协作者（#158；返回最新名单；支持 `Idempotency-Key`）。 |
@@ -242,9 +242,9 @@ spec 用户故事 84），没有 `inbox`：
     **唯一例外**：请求带 `guest_link` 且 `can_edit_brief` 为 `true` 时，免「至少一个
     维度标签」（成员这时不知道机型，由访客补全说明时选的维度值或初筛补上）；
     其余校验照常（标签仍须是字典里在用的值、模板必须启用等），模板的预设标签照常打上。
-- **读取语义**：详情、时间线和访问记录对可见范围外的成员及成员 Agent 返回与
-  工单不存在完全一致的 `404 ticket_not_found`；附件下载返回与附件不存在完全一致
-  的 `404 attachment_not_found`。每次被拒都在这张工单的访问记录里追加一条
+- **读写语义**：详情、时间线、访问记录和所有工单写操作对可见范围外的成员
+  及成员 Agent 返回与工单不存在完全一致的 `404 ticket_not_found`；附件上传、
+  下载同样先过可见范围。每次被拒都在这张工单的访问记录里追加一条
   `denied`（`entry_method` 为 `member_visibility` 或 `agent_visibility`）。
   管理员读取照常记录 `view` / `download`。正文中的 `#序号` 引用只保留编号；
   不向看不到被引用工单的访问者补充标题。
@@ -379,13 +379,13 @@ spec 用户故事 84），没有 `inbox`：
 ### 关闭与重新开启（#30）
 
 - 关闭请求体 `{"reason": "done|wontfix|duplicate", "duplicate_of?": "编号或序号"}`；
-  任何成员（含成员 Agent）都可关闭。缺失/非法 reason → `422 invalid_close_reason`；
+  可见范围内的成员（含成员 Agent）都可关闭。缺失/非法 reason → `422 invalid_close_reason`；
   `duplicate` 必须带 `duplicate_of`（`422 duplicate_of_required`；写成其他类型 →
   `422 invalid_duplicate_of`），且必须指向存在的工单（否则 `404 ticket_not_found`）；
   重复关闭 → `409 already_closed`。
 - 成功 `200`：`{status: "closed", close_reason, duplicate_of?}`；记一条 `closed` 事件
   （`reason`，重复时 `duplicate_of` 为原工单编号）。
-- 重开 `POST …/reopen` 任何成员可用；未关闭时 `409 not_closed`。成功 `200`：
+- 重开 `POST …/reopen` 可见范围内的成员可用；未关闭时 `409 not_closed`。成功 `200`：
   `{status: "open", waiting_on}`，记一条 `reopened` 事件；重开后可继续回复，
   轮次按最后一条相关回复推导。
 
@@ -785,13 +785,13 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 成员把一张工单交给其他部门：创建访客链接后，第一位访客先明确认领；之后这台
 设备凭 `tbgd_` 凭证查看和回复。链接地址 `/g/<密钥>` 里的 `tbg_` 密钥只在认领
 接口中使用，已认领链接单凭密钥一律 401 `link_claimed`。
-一张工单可以有多条链接，每条都有成员写的备注（如「检验科-张三」）；任何成员
-（含成员 Agent）都能为任意工单创建、撤销、延期。
+一张工单可以有多条链接，每条都有成员写的备注（如「检验科-张三」）；可见范围内的
+成员（含成员 Agent）能创建、列出、撤销、延期这些链接。
 
 | 方法与路径 | 说明 |
 |---|---|
 | `POST /api/v1/tickets/{id}/guest-links` | 创建：`{"note", "valid_days"?, "expires_at"?, "can_edit_brief"}`；支持 `Idempotency-Key`（地址里的密钥只出现一次，重放返回首次结果）。 |
-| `GET /api/v1/tickets/{id}/guest-links` | 列表（任何成员；**不回显密钥**）。 |
+| `GET /api/v1/tickets/{id}/guest-links` | 列表（可见范围内的成员；**不回显密钥**）。 |
 | `DELETE /api/v1/tickets/{id}/guest-links/{链接id}` | 撤销（立即生效，幂等 204）。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/extend` | 延期：`{"valid_days"|"expires_at"}`（二选一，必填其一）。 |
 | `GET /api/v1/guest-link` | 用 `tbg_` 密钥读取认领页信息：邀请人、备注、有效期、可见范围提示；未认领时不返回工单内容。 |

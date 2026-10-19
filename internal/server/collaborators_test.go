@@ -73,7 +73,7 @@ func Test创建者可以加入协作者并记录时间线和通知(t *testing.T)
 func Test协作者加入权限矩阵(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("管理员", "secret-pass")
-	for _, name := range []string{"创建者", "指派人", "初筛人", "旁观者", "协作人"} {
+	for _, name := range []string{"创建者", "指派人", "初筛人", "旁观者", "协作人", "协作对象"} {
 		s.CreateMember(name, "secret-pass")
 	}
 	admin := s.Login("管理员", "secret-pass")
@@ -103,22 +103,29 @@ func Test协作者加入权限矩阵(t *testing.T) {
 	if res := addCollaborator(t, s, assignee, assigned, "协作人"); res.StatusCode != http.StatusCreated {
 		t.Fatalf("指派人加入状态码 = %d, 想 201", res.StatusCode)
 	}
-	if res := addCollaborator(t, s, admin, assigned, "旁观者"); res.StatusCode != http.StatusCreated {
+	if res := addCollaborator(t, s, admin, assigned, "协作对象"); res.StatusCode != http.StatusCreated {
 		t.Fatalf("管理员加入状态码 = %d, 想 201", res.StatusCode)
 	}
 	if res := addCollaborator(t, s, triager, unassigned, "协作人"); res.StatusCode != http.StatusCreated {
 		t.Fatalf("未指派时初筛人加入状态码 = %d, 想 201", res.StatusCode)
 	}
 	assigned2 := create("指派人")
+	if res := addCollaborator(t, s, creator, assigned2, "协作人"); res.StatusCode != http.StatusCreated {
+		t.Fatalf("给已指派工单加入协作者状态码 = %d", res.StatusCode)
+	}
 	for name, c := range map[string]*http.Client{"已指派初筛人": triager, "普通成员": outsider, "协作者": collaborator} {
 		res := addCollaborator(t, s, c, assigned2, "旁观者")
-		if res.StatusCode != http.StatusForbidden {
-			t.Fatalf("%s加入状态码 = %d, 想 403", name, res.StatusCode)
+		wantStatus, wantCode := http.StatusForbidden, "collaborator_not_allowed"
+		if name == "已指派初筛人" || name == "普通成员" {
+			wantStatus, wantCode = http.StatusNotFound, "ticket_not_found"
+		}
+		if res.StatusCode != wantStatus {
+			t.Fatalf("%s加入状态码 = %d, 想 %d", name, res.StatusCode, wantStatus)
 		}
 		var got errorBody
 		tbtest.DecodeJSON(t, res, &got)
-		if got.Error.Code != "collaborator_not_allowed" {
-			t.Errorf("%s错误码 = %q, 想 collaborator_not_allowed", name, got.Error.Code)
+		if got.Error.Code != wantCode {
+			t.Errorf("%s错误码 = %q, 想 %s", name, got.Error.Code, wantCode)
 		}
 	}
 }

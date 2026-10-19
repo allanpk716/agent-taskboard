@@ -244,6 +244,9 @@ func (a *API) setTicketLabels(w http.ResponseWriter, r *http.Request, ref string
 	if !ok {
 		return
 	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+		return
+	}
 	var req setTicketLabelsRequest
 	if !decodeJSON(w, r, &req, `{"add": ["维度:值"], "remove": [], "allow_new": false}`) {
 		return

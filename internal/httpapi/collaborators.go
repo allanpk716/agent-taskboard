@@ -56,6 +56,9 @@ func (a *API) addCollaborator(w http.ResponseWriter, r *http.Request, ref string
 		WriteError(w, http.StatusForbidden, CodeMembersOnly, "协作者管理只对成员开放", "访客不能查看或管理协作者")
 		return
 	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+		return
+	}
 	var req addCollaboratorRequest
 	if !decodeJSON(w, r, &req, `{"member": "成员 id 或姓名（id 也可写成数字，如 4）"}`) {
 		return
@@ -101,6 +104,9 @@ func (a *API) removeCollaborator(w http.ResponseWriter, r *http.Request, ref, ra
 		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidAssignee, "成员 id 必须是正整数", "")
 		return
 	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+		return
+	}
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
 		result, err := a.tickets.RemoveCollaborator(r.Context(), viewer, ref, id)
 		if err != nil {
@@ -114,6 +120,9 @@ func (a *API) removeCollaborator(w http.ResponseWriter, r *http.Request, ref, ra
 func (a *API) leaveCollaborators(w http.ResponseWriter, r *http.Request, ref string) {
 	viewer, ok := a.memberFromRequest(w, r)
 	if !ok {
+		return
+	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
 		return
 	}
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {

@@ -93,6 +93,9 @@ func (a *API) createGuestLink(w http.ResponseWriter, r *http.Request, ref string
 	if !ok {
 		return
 	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+		return
+	}
 	var req guestLinkRequest
 	if !decodeJSON(w, r, &req, `{"note": "检验科-张三", "valid_days": 30, "expires_at": "2026-12-01", "can_edit_brief": false}`) {
 		return
@@ -118,7 +121,11 @@ func (a *API) createGuestLink(w http.ResponseWriter, r *http.Request, ref string
 }
 
 func (a *API) listGuestLinks(w http.ResponseWriter, r *http.Request, ref string) {
-	if _, ok := a.memberFromRequest(w, r); !ok {
+	viewer, ok := a.memberFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
 		return
 	}
 	links, err := a.tickets.GuestLinks(r.Context(), ref)
@@ -138,6 +145,9 @@ func (a *API) revokeGuestLink(w http.ResponseWriter, r *http.Request, ref string
 	if !ok {
 		return
 	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+		return
+	}
 	if err := a.tickets.RevokeGuestLink(r.Context(), viewer, ref, id); err != nil {
 		a.writeTicketError(w, r, ref, err)
 		return
@@ -148,6 +158,9 @@ func (a *API) revokeGuestLink(w http.ResponseWriter, r *http.Request, ref string
 func (a *API) extendGuestLink(w http.ResponseWriter, r *http.Request, ref string, id int64) {
 	viewer, ok := a.memberFromRequest(w, r)
 	if !ok {
+		return
+	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
 		return
 	}
 	var req guestLinkRequest
