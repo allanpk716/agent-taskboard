@@ -103,12 +103,15 @@ func (a *API) resetGuestAccessCode(w http.ResponseWriter, r *http.Request, ref s
 	if !ok {
 		return
 	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+		return
+	}
 	code, err := a.tickets.ResetGuestAccessCode(r.Context(), viewer, ref, id)
 	if err != nil {
 		switch {
 		case errors.Is(err, tickets.ErrGuestLinkNotFound):
 			a.writeTicketError(w, r, ref, err)
-		case errors.Is(err, tickets.ErrLinkAlreadyClaimed):
+		case errors.Is(err, tickets.ErrLinkNotClaimed):
 			WriteError(w, http.StatusConflict, CodeLinkUnclaimed, "这条链接尚未认领，不需要重置访问码", "等待访客认领后再重置")
 		default:
 			a.writeTicketError(w, r, ref, err)

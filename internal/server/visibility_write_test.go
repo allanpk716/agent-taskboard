@@ -79,6 +79,7 @@ func Test可见范围外成员与Agent写入工单得到一致的404无副作用
 		{name: "列出访客链接", method: http.MethodGet, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/guest-links" }},
 		{name: "撤销访客链接", method: http.MethodDelete, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/guest-links/1" }},
 		{name: "延期访客链接", method: http.MethodPost, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/guest-links/1/extend" }, body: map[string]any{"valid_days": 90}},
+		{name: "重置访问码", method: http.MethodPost, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/guest-links/1/reset-access-code" }},
 		{name: "上传附件", method: http.MethodPost, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/attachments" }, upload: true},
 	}
 

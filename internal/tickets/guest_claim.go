@@ -16,6 +16,8 @@ var (
 	ErrClaimNameRequired = errors.New("认领需要填写你的称呼")
 	// ErrLinkAlreadyClaimed 表示链接已被另一位访客抢先认领。
 	ErrLinkAlreadyClaimed = errors.New("这条链接已被认领")
+	// ErrLinkNotClaimed 表示链接还没有访客认领。
+	ErrLinkNotClaimed = errors.New("这条链接尚未认领")
 	// ErrAccessCodeRequired 表示凭访问码进入时没有填访问码。
 	ErrAccessCodeRequired = errors.New("请输入 6 位数字访问码")
 	// ErrAccessCodeInvalid 表示访问码不正确。
@@ -218,7 +220,7 @@ func (m *Manager) ResetGuestAccessCode(ctx context.Context, viewer identity.View
 		return "", err
 	}
 	if !claimedAt.Valid {
-		return "", ErrLinkAlreadyClaimed
+		return "", ErrLinkNotClaimed
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM guest_devices WHERE guest_link_id = ?`, id); err != nil {
 		return "", err
