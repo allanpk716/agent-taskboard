@@ -8,6 +8,7 @@ import (
 
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/publicbase"
+	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
 
 // viewerFromRequest 把请求上的凭证（网页会话 cookie、Agent token 或访客链接密钥）
@@ -22,7 +23,9 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 	if token, ok := bearerToken(r); ok {
 		var viewer identity.Viewer
 		var err error
-		if identity.IsClientToken(token) {
+		if guestCredential, ok := identity.ParseGuestAgentCredential(token); ok {
+			viewer, err = a.guestAgentViewer(r, guestCredential)
+		} else if identity.IsClientToken(token) {
 			viewer, err = a.ident.ViewerFromClientToken(r.Context(), token, r.UserAgent())
 		} else if identity.IsGuestDeviceKey(token) {
 			viewer, err = a.ident.ViewerFromGuestDevice(r.Context(), token)
@@ -73,6 +76,12 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 				}
 				WriteError(w, http.StatusUnauthorized, CodeLinkClaimed, "这条链接已被认领",
 					"如果不是你认领的，请联系邀请人重新处理；请勿把链接转发给别人")
+			case errors.Is(err, tickets.ErrAccessCodeInvalid):
+				WriteError(w, http.StatusUnauthorized, CodeAccessCodeInvalid, err.Error(),
+					"访客 Agent 凭证是 tbg_<链接密钥>:<访问码>；连续输错 5 次会锁定")
+			case errors.Is(err, tickets.ErrAccessCodeLocked):
+				WriteError(w, http.StatusForbidden, CodeAccessCodeLocked, err.Error(),
+					"请联系能管理这条链接的成员重置访问码")
 			default:
 				panic(err)
 			}
@@ -98,6 +107,29 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 		panic(err)
 	}
 	return viewer, true
+}
+
+func (a *API) guestAgentViewer(r *http.Request, credential identity.GuestAgentCredential) (identity.Viewer, error) {
+	link, err := a.ident.GuestLinkForKey(r.Context(), credential.Key)
+	if errors.Is(err, identity.ErrLinkClaimed) {
+		var status *identity.LinkStatusError
+		if errors.As(err, &status) {
+			return a.tickets.ViewerFromGuestAgentCredential(r.Context(), status.Link, credential.AccessCode)
+		}
+		return identity.Viewer{}, err
+	}
+	if errors.Is(err, identity.ErrLinkUnclaimed) {
+		// ViewerFromGuestKey carries the link identity needed for the denied access record.
+		_, statusErr := a.ident.ViewerFromGuestKey(r.Context(), credential.Key)
+		if statusErr != nil {
+			return identity.Viewer{}, statusErr
+		}
+		return identity.Viewer{}, err
+	}
+	if err != nil {
+		return identity.Viewer{}, err
+	}
+	return a.tickets.ViewerFromGuestAgentCredential(r.Context(), link, credential.AccessCode)
 }
 
 // guestDeviceFromCookie lets same-origin <img> and attachment links use the

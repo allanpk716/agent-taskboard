@@ -43,6 +43,7 @@ func Test公开说明书和接口参考无需凭证可读(t *testing.T) {
 func Test说明书地址按public_url或请求地址生成(t *testing.T) {
 	s := tbtest.Start(t, tbtest.WithPublicURL("https://taskboard.example.com"))
 	assertAgentDocContains(t, s, "https://taskboard.example.com/api/v1/tickets")
+	assertAgentDocContains(t, s, "Authorization: Bearer tbg_<链接密钥>:<访问码>")
 
 	s = tbtest.Start(t)
 	assertAgentDocContains(t, s, s.URL()+"/api/v1/tickets")

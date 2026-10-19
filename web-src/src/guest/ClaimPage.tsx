@@ -78,6 +78,14 @@ export function ClaimPage({
                 <strong data-access-code>{issued.code}</strong>
                 <p>请截图保存访问码。它只显示这一次；换设备或清除浏览器记录后凭它重新进入。</p>
               </div>
+              <div className="agent-handoff">
+                <div>让我的 Agent 处理</div>
+                <code>{window.location.origin}/g/{linkKey}</code>
+                <div>
+                  访问码：<code data-agent-access-code>{issued.code}</code>
+                </div>
+                <p>需要 Agent 代处理时，把链接和访问码原样交给它，不要转发给其他人。</p>
+              </div>
               <button className="btn claim-button" onClick={() => onClaimed(issued.token)}>
                 我已保存，打开工单
               </button>
