@@ -6,6 +6,7 @@ const baseURL = `http://127.0.0.1:${port}`
 export default defineConfig({
   testDir: 'e2e',
   timeout: 30_000,
+  expect: { timeout: 15_000 },
   fullyParallel: false, // 同一个服务实例，串行跑
   use: { baseURL, viewport: { width: 390, height: 844 } },
   outputDir: 'test-results',

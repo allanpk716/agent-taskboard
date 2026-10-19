@@ -80,6 +80,7 @@ test('工单列表按状态、指派与本人/Agent筛选，支持关键词', as
   await page.getByPlaceholder(/搜索/).fill(closedTitle)
   await page.getByPlaceholder(/搜索/).press('Enter')
   await expect(page).toHaveURL(/q=/)
+  await page.reload()
   await expect(page.locator('.tcard', { hasText: c })).toBeVisible()
   await expect(page.locator('.tcard', { hasText: a })).toHaveCount(0)
 })

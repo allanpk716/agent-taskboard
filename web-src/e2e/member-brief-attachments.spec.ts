@@ -125,7 +125,11 @@ test('成员修改模板说明时按字段键保存，其余字段保持不变',
   await dim.press('Enter')
   await expect(dim).toHaveValue('US-1680')
   await page.getByLabel('什么时候发生的？').fill('昨天下午 3 点左右')
+  const saved = page.waitForResponse(
+    (res) => res.url().includes(`/api/v1/tickets/${number}`) && res.request().method() === 'PATCH',
+  )
   await page.getByRole('button', { name: '保存修改' }).click()
+  await saved
   await page.reload()
 
   const brief = page.locator('[data-bubble="brief"]')
