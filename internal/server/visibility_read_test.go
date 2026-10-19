@@ -86,6 +86,41 @@ func Test可见范围外成员与Agent读取工单得到一致的404并留下被
 	}
 }
 
+func Test附件下载在可见范围判断前不泄露附件状态(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("管理员", "secret-pass")
+	s.CreateMember("创建者", "secret-pass")
+	s.CreateMember("旁观者", "secret-pass")
+	creator := s.Login("创建者", "secret-pass")
+	outsider := s.Login("旁观者", "secret-pass")
+	number := mustCreateTicket(t, s, creator, "附件存在性不外泄")
+	pending := mustUploadAttachment(t, s, creator, number, "待用.txt", []byte("secret"))
+
+	hidden := "/api/v1/attachments/" + pending.ID + "/" + url.PathEscape("别的文件名.txt")
+	missing := "/api/v1/attachments/att_999999/" + url.PathEscape("别的文件名.txt")
+	got := s.Do(t, outsider, http.MethodGet, hidden, nil, nil)
+	if got.StatusCode != http.StatusNotFound {
+		t.Fatalf("可见范围外附件下载状态码 = %d, 想 404", got.StatusCode)
+	}
+	var hiddenErr, missingErr errorBody
+	tbtest.DecodeJSON(t, got, &hiddenErr)
+	want := s.Do(t, outsider, http.MethodGet, missing, nil, nil)
+	tbtest.DecodeJSON(t, want, &missingErr)
+	if hiddenErr != missingErr {
+		t.Fatalf("可见范围外附件响应泄露存在性：\n%+v\n%+v", hiddenErr, missingErr)
+	}
+	records := readAccessRecords(t, s, s.Login("管理员", "secret-pass"), number)
+	denied := 0
+	for _, record := range records.Records {
+		if record.Action == "denied" {
+			denied++
+		}
+	}
+	if denied != 1 {
+		t.Fatalf("附件被拒记录 = %d, 想 1：%+v", denied, records.Records)
+	}
+}
+
 func Test管理员能读全部工单且查看照常记录(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("管理员", "secret-pass")

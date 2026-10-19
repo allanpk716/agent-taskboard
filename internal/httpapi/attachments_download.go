@@ -39,6 +39,18 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 			"附件引用从上传响应或工单读取接口拿")
 		return
 	}
+	viewer, ok := a.viewerFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if viewer.Kind == identity.ViewerGuest && viewer.GuestLink.TicketSeq != att.TicketSeq {
+		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
+			"访客链接只能访问它所指向的那张工单")
+		return
+	}
+	if !a.attachmentTicketVisible(w, r, viewer, att) {
+		return
+	}
 	if att.State != "attached" {
 		WriteError(w, http.StatusNotFound, CodeAttachmentNotFound, "附件还在待用状态，不能下载",
 			"先在说明或回复里引用它（attachment_ids 或正文 att: 引用）")
@@ -48,34 +60,6 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, CodeAttachmentNotFound, "地址里的文件名与附件不符",
 			"用工单读取接口 attachments[].url 里的完整地址")
 		return
-	}
-
-	if _, ok := bearerToken(r); ok {
-		viewer, ok := a.viewerFromRequest(w, r)
-		if !ok {
-			return
-		}
-		if viewer.Kind == identity.ViewerGuest && viewer.GuestLink.TicketSeq != att.TicketSeq {
-			WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
-				"访客链接只能访问它所指向的那张工单")
-			return
-		}
-		if !a.attachmentTicketVisible(w, r, viewer, att) {
-			return
-		}
-	} else {
-		viewer, ok := a.viewerFromRequest(w, r)
-		if !ok {
-			return
-		}
-		if viewer.Kind == identity.ViewerGuest && viewer.GuestLink.TicketSeq != att.TicketSeq {
-			WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
-				"访客链接只能访问它所指向的那张工单")
-			return
-		}
-		if !a.attachmentTicketVisible(w, r, viewer, att) {
-			return
-		}
 	}
 
 	content, err := os.ReadFile(a.atts.Path(att.ID))
