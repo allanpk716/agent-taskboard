@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
@@ -119,6 +120,46 @@ func Test协作者加入权限矩阵(t *testing.T) {
 		if got.Error.Code != "collaborator_not_allowed" {
 			t.Errorf("%s错误码 = %q, 想 collaborator_not_allowed", name, got.Error.Code)
 		}
+	}
+}
+
+func Test系统操作者在成员网页和Markdown时间线正常显示(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("创建者", "secret-pass")
+	s.CreateMember("李工", "secret-pass")
+	creator := s.Login("创建者", "secret-pass")
+	number := mustCreateTicket(t, s, creator, "系统操作者显示")
+	if res := addCollaborator(t, s, creator, number, "李工"); res.StatusCode != http.StatusCreated {
+		t.Fatalf("加入协作者状态码 = %d", res.StatusCode)
+	}
+	if _, err := s.Store().DB.Exec(`
+		UPDATE timeline_events
+		SET actor_system=1, actor_member_id=NULL, actor_agent_id=NULL
+		WHERE ticket_seq=1 AND type='collaborator_added'`); err != nil {
+		t.Fatal(err)
+	}
+
+	var got ticketResponseBody
+	s.Do(t, creator, http.MethodGet, "/api/v1/tickets/"+number, nil, &got)
+	found := false
+	for _, event := range got.Timeline {
+		if event.Type != "collaborator_added" {
+			continue
+		}
+		found = true
+		if event.Actor.Member != nil || event.Actor.Agent != nil ||
+			event.Actor.AuthorName == nil || *event.Actor.AuthorName != "系统" {
+			t.Fatalf("网页时间线的系统操作者不对：%+v", event.Actor)
+		}
+	}
+	if !found {
+		t.Fatal("时间线上没有协作者加入事件")
+	}
+
+	md := string(readAll(t, s.Do(t, creator, http.MethodGet,
+		"/api/v1/tickets/"+number+"?format=markdown", nil, nil)))
+	if !strings.Contains(md, "系统 把 李工 加入协作") {
+		t.Fatalf("Markdown 时间线的系统操作者不对：\n%s", md)
 	}
 }
 
