@@ -1,7 +1,7 @@
 //go:build windows
 
 // Package desktop 提供 Windows 桌面适配层：托盘、Toast、凭据管理器、
-// 系统浏览器和命名 mutex。这里不做自动化测试，行为靠真实 Windows 手工验收。
+// 系统浏览器和命名 mutex。图标编码有单元测试，系统行为靠真实 Windows 手工验收。
 package desktop
 
 import (
@@ -66,7 +66,7 @@ func NewSystem() (*System, error) {
 	}
 	lifecycle := &client.LifecycleDependencies{
 		Config: RegistryConfig{}, Autostart: RunAutostart{}, Toast: ToastRegistration{},
-		Files: UserFileSystem{}, Process: ProcessLauncher{},
+		Files: UserFileSystem{}, Process: ProcessLauncher{}, InstallAlert: firstInstallNotifier{},
 	}
 	updates, err := NewWindowsUpdateManager()
 	if err != nil {
@@ -89,7 +89,7 @@ func (s *System) Dependencies() client.Dependencies {
 func NewLifecycle() *client.LifecycleDependencies {
 	return &client.LifecycleDependencies{
 		Config: RegistryConfig{}, Autostart: RunAutostart{}, Toast: ToastRegistration{},
-		Files: UserFileSystem{}, Process: ProcessLauncher{},
+		Files: UserFileSystem{}, Process: ProcessLauncher{}, InstallAlert: firstInstallNotifier{},
 	}
 }
 
@@ -103,11 +103,16 @@ type WindowsTray struct {
 }
 
 func (t *WindowsTray) Run(ctx context.Context, cb client.TrayCallbacks) error {
-	go func() {
+	go guard("托盘退出监听", func() {
 		<-ctx.Done()
 		systray.Quit()
-	}()
+	})
 	systray.Run(func() {
+		defer func() {
+			if err := recover(); err != nil {
+				NewFatalReporter().Fatalf(1, "托盘初始化发生内部错误：%v", err)
+			}
+		}()
 		t.mu.Lock()
 		t.ready = true
 		t.mu.Unlock()
@@ -120,21 +125,25 @@ func (t *WindowsTray) Run(ctx context.Context, cb client.TrayCallbacks) error {
 }
 
 func (t *WindowsTray) SetState(state client.TrayState) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.state = state
-	if t.ready {
-		t.applyLocked()
-	}
+	guard("托盘状态更新", func() {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		t.state = state
+		if t.ready {
+			t.applyLocked()
+		}
+	})
 }
 
 func (t *WindowsTray) SetUnread(items []client.Notification) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.unread = append([]client.Notification(nil), items...)
-	if t.ready {
-		t.applyLocked()
-	}
+	guard("托盘未读更新", func() {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		t.unread = append([]client.Notification(nil), items...)
+		if t.ready {
+			t.applyLocked()
+		}
+	})
 }
 
 func (t *WindowsTray) buildMenu(cb client.TrayCallbacks) {
@@ -179,11 +188,11 @@ func (t *WindowsTray) buildMenu(cb client.TrayCallbacks) {
 }
 
 func (t *WindowsTray) watch(item *systray.MenuItem, onClick func()) {
-	go func() {
+	go guard("托盘菜单回调", func() {
 		for range item.ClickedCh {
-			onClick()
+			guard("托盘菜单命令", onClick)
 		}
-	}()
+	})
 }
 
 func (t *WindowsTray) applyLocked() {
@@ -207,7 +216,7 @@ func iconFor(state client.TrayState) ([]byte, string) {
 	case client.TrayUnread:
 		return ico(color.RGBA{R: 226, G: 66, B: 52, A: 255}), "Taskboard：有未读通知"
 	case client.TrayNeedLogin:
-		return ico(color.RGBA{R: 242, G: 148, B: 0, A: 255}), "Taskboard：需要重新登录"
+		return ico(color.RGBA{R: 242, G: 148, B: 0, A: 255}), "Taskboard：需要登录"
 	case client.TrayOutdated:
 		return ico(color.RGBA{R: 220, G: 0, B: 107, A: 255}), "Taskboard：版本过旧"
 	case client.TrayDisconnected:
@@ -237,12 +246,13 @@ func ico(c color.Color) []byte {
 	binary.LittleEndian.PutUint16(out[0:], 0)
 	binary.LittleEndian.PutUint16(out[2:], 1)
 	binary.LittleEndian.PutUint16(out[4:], 1)
-	out[5] = size
+	// ICONDIRENTRY 从第 6 字节开始：宽、高、调色板数、保留、色面、位深、数据长度、数据偏移。
 	out[6] = size
-	binary.LittleEndian.PutUint16(out[12:], 1)
-	binary.LittleEndian.PutUint16(out[14:], 32)
-	binary.LittleEndian.PutUint32(out[16:], uint32(pngBuf.Len()))
-	binary.LittleEndian.PutUint32(out[20:], 22)
+	out[7] = size
+	binary.LittleEndian.PutUint16(out[10:], 1)
+	binary.LittleEndian.PutUint16(out[12:], 32)
+	binary.LittleEndian.PutUint32(out[14:], uint32(pngBuf.Len()))
+	binary.LittleEndian.PutUint32(out[18:], 22)
 	return append(out, pngBuf.Bytes()...)
 }
 
@@ -255,12 +265,14 @@ type WindowsToaster struct {
 
 func (w *WindowsToaster) Run(ctx context.Context, onClick func(client.Notification)) error {
 	toast.SetActivationCallback(func(args string, _ []toast.UserData) {
-		w.mu.Lock()
-		n, ok := w.items[args]
-		w.mu.Unlock()
-		if ok {
-			onClick(n)
-		}
+		guard("Toast 点击回调", func() {
+			w.mu.Lock()
+			n, ok := w.items[args]
+			w.mu.Unlock()
+			if ok {
+				onClick(n)
+			}
+		})
 	})
 	<-ctx.Done()
 	return nil
@@ -289,7 +301,7 @@ func (w *WindowsToaster) Show(n client.Notification) {
 	if n.Reason == "outdated" {
 		notification.Duration = toast.Long
 	}
-	go func() { _ = notification.Push() }()
+	go guard("Toast 显示", func() { _ = notification.Push() })
 }
 
 // WindowsUpdateManager 用命名事件传递新进程就绪信号，并保留可结束的更新进程句柄。
@@ -303,12 +315,21 @@ type WindowsUpdateManager struct {
 	quitWaiting bool
 }
 
+// createNamedEvent 打开已存在的同名事件时，x/sys 返回有效句柄加 ERROR_ALREADY_EXISTS，视为成功。
+func createNamedEvent(name *uint16) (windows.Handle, error) {
+	handle, err := windows.CreateEvent(nil, 0, 0, name)
+	if handle != 0 && errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+		return handle, nil
+	}
+	return handle, err
+}
+
 func NewWindowsUpdateManager() (*WindowsUpdateManager, error) {
 	name, err := windows.UTF16PtrFromString(readyEventName)
 	if err != nil {
 		return nil, err
 	}
-	event, err := windows.CreateEvent(nil, 0, 0, name)
+	event, err := createNamedEvent(name)
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +337,7 @@ func NewWindowsUpdateManager() (*WindowsUpdateManager, error) {
 	if err != nil {
 		return nil, err
 	}
-	quitEvent, err := windows.CreateEvent(nil, 0, 0, quitName)
+	quitEvent, err := createNamedEvent(quitName)
 	if err != nil {
 		return nil, err
 	}
@@ -331,11 +352,11 @@ func (m *WindowsUpdateManager) Ready() <-chan struct{} {
 	}
 	if !m.waiting {
 		m.waiting = true
-		go func() {
+		go guard("更新就绪事件监听", func() {
 			if _, err := windows.WaitForSingleObject(m.event, windows.INFINITE); err == nil {
 				close(m.ready)
 			}
-		}()
+		})
 	}
 	return m.ready
 }
@@ -361,11 +382,11 @@ func (m *WindowsUpdateManager) Quit() <-chan struct{} {
 	}
 	if !m.quitWaiting {
 		m.quitWaiting = true
-		go func() {
+		go guard("更新退出事件监听", func() {
 			if _, err := windows.WaitForSingleObject(m.quitEvent, windows.INFINITE); err == nil {
 				close(m.quit)
 			}
-		}()
+		})
 	}
 	return m.quit
 }
@@ -500,12 +521,14 @@ func (m *NamedMutex) Acquire() (func(), error) {
 		return nil, err
 	}
 	handle, err := windows.CreateMutex(nil, true, name)
+	if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+		if handle != 0 {
+			_ = windows.CloseHandle(handle)
+		}
+		return nil, client.ErrAlreadyRunning
+	}
 	if err != nil {
 		return nil, err
-	}
-	if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
-		_ = windows.CloseHandle(handle)
-		return nil, errors.New("Taskboard 桌面客户端已经在运行")
 	}
 	return func() { _ = windows.CloseHandle(handle) }, nil
 }
@@ -665,7 +688,7 @@ func (ProcessLauncher) QuitExisting() error {
 	if err != nil {
 		return err
 	}
-	event, err := windows.CreateEvent(nil, 0, 0, name)
+	event, err := createNamedEvent(name)
 	if err != nil {
 		return err
 	}

@@ -81,6 +81,26 @@ func Test安装目录外启动会复制保存地址写自启并重启(t *testing
 	}
 }
 
+func Test首次安装提示在重启前显示且安装目录内不显示(t *testing.T) {
+	fx := newInstallFixture(t)
+	fx.files.executable = fx.download
+	if _, err := client.InstallIfNeeded(fx.deps(), "https://taskboard.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if got := *fx.events; len(got) != 2 || got[0] != "dialog" || got[1] != "start" {
+		t.Fatalf("首次安装事件顺序 = %v，想 [dialog start]", got)
+	}
+
+	fx.files.executable = fx.files.installPath
+	*fx.events = nil
+	if _, err := client.InstallIfNeeded(fx.deps(), "https://taskboard.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if len(*fx.events) != 0 {
+		t.Fatalf("安装目录内启动不应弹首次安装提示：%v", *fx.events)
+	}
+}
+
 func Test覆盖安装且安装目录内不再复制(t *testing.T) {
 	fx := newInstallFixture(t)
 	fx.files.executable = fx.download
@@ -198,12 +218,14 @@ func Test托盘卸载撤销凭证清理本机并请求删除自身(t *testing.T)
 }
 
 type installFixture struct {
-	download  string
-	files     *fakeFileSystem
-	config    *fakeServerConfig
-	autostart *fakeAutostart
-	toast     *fakeToastRegistration
-	process   *fakeProcessManager
+	download     string
+	files        *fakeFileSystem
+	config       *fakeServerConfig
+	autostart    *fakeAutostart
+	toast        *fakeToastRegistration
+	process      *fakeProcessManager
+	events       *[]string
+	installAlert *fakeInstallAlert
 }
 
 func newInstallFixture(t testing.TB) installFixture {
@@ -219,18 +241,20 @@ func newInstallFixture(t testing.TB) installFixture {
 	if err := os.WriteFile(download, []byte("MZ downloaded"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	events := &[]string{}
 	return installFixture{
 		download: download,
 		files: &fakeFileSystem{download: download, installDir: installDir, installPath: installPath,
 			executable: download},
 		config: &fakeServerConfig{}, autostart: &fakeAutostart{enabled: true}, toast: &fakeToastRegistration{},
-		process: &fakeProcessManager{},
+		process: &fakeProcessManager{events: events},
+		events:  events, installAlert: &fakeInstallAlert{events: events},
 	}
 }
 
 func (f installFixture) deps() client.LifecycleDependencies {
 	return client.LifecycleDependencies{Config: f.config, Autostart: f.autostart, Toast: f.toast,
-		Files: f.files, Process: f.process}
+		Files: f.files, Process: f.process, InstallAlert: f.installAlert}
 }
 
 func readFile(t testing.TB, path string) []byte {
@@ -282,6 +306,14 @@ type fakeProcessManager struct {
 	started      []fakeStart
 	deletedLater []string
 	quitExisting int
+	events       *[]string
+}
+
+type fakeInstallAlert struct{ events *[]string }
+
+func (a fakeInstallAlert) NotifyFirstInstall() error {
+	*a.events = append(*a.events, "dialog")
+	return nil
 }
 
 func (f *fakeFileSystem) InstallDir() (string, error) { return f.installDir, nil }
@@ -337,6 +369,7 @@ func (f *fakeFileSystem) RemoveExecutable(path string) error { return os.Remove(
 
 func (p *fakeProcessManager) Start(path string, args []string) error {
 	p.started = append(p.started, fakeStart{path: path, args: args})
+	*p.events = append(*p.events, "start")
 	return nil
 }
 func (p *fakeProcessManager) DeleteLater(path string) error {

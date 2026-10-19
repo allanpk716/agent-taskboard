@@ -62,6 +62,9 @@ type Config struct {
 	AfterInstall bool
 }
 
+// ErrAlreadyRunning 表示同用户的 Taskboard 桌面客户端已在运行。
+var ErrAlreadyRunning = errors.New("Taskboard 桌面客户端已经在运行")
+
 // TrayCallbacks 是托盘菜单命令回到核心的入口。
 type TrayCallbacks struct {
 	Reconnect   func()
@@ -801,7 +804,7 @@ func (a *App) enterNeedLogin() {
 	a.needLoginPrompted = true
 	a.mu.Unlock()
 	if prompt {
-		a.deps.Toaster.Show(Notification{Reason: "relogin", Text: "需要重新登录 Taskboard"})
+		a.deps.Toaster.Show(Notification{Reason: "relogin", Text: "需要登录 Taskboard"})
 	}
 }
 

@@ -47,13 +47,25 @@ type ProcessManager interface {
 	QuitExisting() error
 }
 
+// InstallAlert 在首次复制安装完成后提示用户。对话框必须阻塞到用户确认。
+type InstallAlert interface {
+	NotifyFirstInstall() error
+}
+
+// FatalReporter 把致命错误写进固定日志，并向用户展示系统对话框。
+type FatalReporter interface {
+	Infof(format string, args ...any)
+	Fatalf(exitCode int, format string, args ...any)
+}
+
 // LifecycleDependencies 是安装、卸载和开机自启需要的窄适配器。
 type LifecycleDependencies struct {
-	Config    ServerConfigStore
-	Autostart AutostartManager
-	Toast     ToastRegistrar
-	Files     FileSystem
-	Process   ProcessManager
+	Config       ServerConfigStore
+	Autostart    AutostartManager
+	Toast        ToastRegistrar
+	Files        FileSystem
+	Process      ProcessManager
+	InstallAlert InstallAlert
 }
 
 // ResolveServerURL 按参数、环境变量、已保存地址和自身尾部戳解析平台地址。
@@ -116,6 +128,11 @@ func InstallIfNeeded(deps LifecycleDependencies, serverURL string) (bool, error)
 	}
 	if err := installUserState(deps, installed, serverURL); err != nil {
 		return false, err
+	}
+	if deps.InstallAlert != nil {
+		if err := deps.InstallAlert.NotifyFirstInstall(); err != nil {
+			return false, fmt.Errorf("显示首次安装提示失败：%w", err)
+		}
 	}
 	if err := deps.Process.QuitExisting(); err != nil {
 		return false, fmt.Errorf("通知正在运行的客户端退出失败：%w", err)
