@@ -33,7 +33,8 @@ test('工单列表按状态、指派与本人/Agent筛选，支持关键词', as
   // 造三张：A 成员建的开启未指派；B 成员 Agent 建的开启指派给我；C 已关闭。
   const a = await createTicket(request, { title: '成员本人创建的工单', labels: ['机型:UD-2300'] })
   const b = await createTicketViaAgent(request, '成员 Agent 创建的工单', '管理员')
-  const c = await createTicket(request, { title: '随后被关闭的工单', labels: ['机型:US-1680'] })
+  const closedTitle = `随后被关闭的工单 ${Date.now()}`
+  const c = await createTicket(request, { title: closedTitle, labels: ['机型:US-1680'] })
   const closed = await request.post(`/api/v1/tickets/${c}/close`, { data: { reason: 'done' } })
   expect(closed.ok()).toBeTruthy()
 
@@ -76,7 +77,7 @@ test('工单列表按状态、指派与本人/Agent筛选，支持关键词', as
 
   // 关键词：状态切回全部后，只命中标题含关键词的那张
   await grp('状态').getByRole('button', { name: '全部' }).click()
-  await page.getByPlaceholder(/搜索/).fill('随后被关闭')
+  await page.getByPlaceholder(/搜索/).fill(closedTitle)
   await page.getByPlaceholder(/搜索/).press('Enter')
   await expect(page).toHaveURL(/q=/)
   await expect(page.locator('.tcard', { hasText: c })).toBeVisible()

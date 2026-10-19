@@ -22,6 +22,9 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 - 请求同时带 Bearer 和 cookie 时按 Bearer 解析，且解析失败不回退到 cookie：凭证坏了应当报错（401），而不是悄悄当作本人。Bearer 先按客户端凭证、成员 Agent token、访客设备凭证、访客链接密钥的顺序解析。
 - 401 错误码：`unauthenticated`（未登录/会话过期）、`invalid_token`（Agent token 或访客链接密钥未知）、`link_revoked`（访客链接已撤销）、`link_expired`（访客链接已过期）。访客链接的撤销与过期即时生效：每个请求都实时查库（密钥只存哈希）。
 - 撤销 Agent token 立即生效：每次请求都实时查库校验（token 只存哈希，无状态 JWT 不可用）。
+- **可见范围**：成员与成员 Agent 只能读取创建者、当前指派人、协作者，以及
+  工单尚未指派时的有效初筛人可见的工单；管理员能读取全部。成员 Agent 的
+  可见范围与其主人相同。标签、维度和别名字典仍对全体成员共享。
 - 访客链接另有 `link_unclaimed`（未认领）与 `link_claimed`（已被认领，单凭密钥不可用）。
   访问码错误返回 401 `access_code_invalid`；连续输错 5 次后返回 403 `access_code_locked`，
   只能由成员重置解除。
@@ -209,9 +212,9 @@ spec 用户故事 84），没有 `inbox`：
 | 方法与路径 | 说明 |
 |---|---|
 | `POST /api/v1/tickets` | 建单（成员/成员 Agent；访客 403 `members_only`，访客建单走反馈入口 #35）。可带 `guest_link` 一并创建访客链接（#64「请人反馈」）。 |
-| `GET /api/v1/tickets` | 条件列表（#37，仅成员；见「查询与计数（#37）」）。 |
-| `GET /api/v1/tickets/counts` | 按一个维度计数（#37，仅成员；筛选与列表相同）。 |
-| `GET /api/v1/tickets/{id}` | 读一张工单；`?format=markdown` 返回给 Agent 读的 Markdown。 |
+| `GET /api/v1/tickets` | 条件列表（#37，仅成员；只返回当前凭证可见范围内的工单，见「查询与计数（#37）」）。 |
+| `GET /api/v1/tickets/counts` | 按一个维度计数（#37，仅成员；筛选与可见范围均与列表相同）。 |
+| `GET /api/v1/tickets/{id}` | 读一张可见范围内的工单；`?format=markdown` 返回给 Agent 读的 Markdown。 |
 | `PATCH /api/v1/tickets/{id}` | 修订标题/说明（创建者一方；持「可填写说明」链接的访客；乐观锁）。 |
 | `POST /api/v1/tickets/{id}/replies` | 回复（成员、成员 Agent、访客）；`deliver: true` 仅指派人一方（#36）。 |
 | `POST /api/v1/tickets/{id}/close` | 关闭（任何成员；访客 403 `members_only`）。 |
@@ -220,11 +223,11 @@ spec 用户故事 84），没有 `inbox`：
 | `POST /api/v1/tickets/{id}/collaborators` | 加入协作者（#158；请求 `{"member": 成员id或姓名}`，返回最新名单；支持 `Idempotency-Key`）。 |
 | `DELETE /api/v1/tickets/{id}/collaborators/{成员id}` | 移除协作者（#158；返回最新名单；支持 `Idempotency-Key`）。 |
 | `POST /api/v1/tickets/{id}/collaborators/leave` | 本人退出协作（#158；返回最新名单；支持 `Idempotency-Key`）。 |
-| `GET /api/v1/tickets/{id}/timeline?after=N` | 时间线增量读取。 |
-| `GET /api/v1/tickets/{id}/access-records` | 读取访问记录（仅成员与成员 Agent；只读，无删改接口）。 |
+| `GET /api/v1/tickets/{id}/timeline?after=N` | 时间线增量读取（仅可见范围内的成员与成员 Agent）。 |
+| `GET /api/v1/tickets/{id}/access-records` | 读取访问记录（仅可见范围内的成员与成员 Agent；只读，无删改接口）。 |
 | `POST /api/v1/tickets/{id}/attachments` | 上传一个待用附件（multipart；见「附件（#33）」）。 |
 | `GET /api/v1/attachments/{att_N}/{filename}` | 附件下载（与工单相同的凭证，或访客链接的签名地址）。 |
-| `GET /api/v1/inbox` | 收件箱（#36，仅成员）：轮到我的开启工单 + 原因 + `read_new`。 |
+| `GET /api/v1/inbox` | 收件箱（#36，仅成员）：轮到我且在我可见范围内的开启工单 + 原因 + `read_new`。 |
 
 （labels 在 #31；guest-links 见下。）
 
@@ -241,6 +244,12 @@ spec 用户故事 84），没有 `inbox`：
     **唯一例外**：请求带 `guest_link` 且 `can_edit_brief` 为 `true` 时，免「至少一个
     维度标签」（成员这时不知道机型，由访客补全说明时选的维度值或初筛补上）；
     其余校验照常（标签仍须是字典里在用的值、模板必须启用等），模板的预设标签照常打上。
+- **读取语义**：详情、时间线和访问记录对可见范围外的成员及成员 Agent 返回与
+  工单不存在完全一致的 `404 ticket_not_found`；附件下载返回与附件不存在完全一致
+  的 `404 attachment_not_found`。每次被拒都在这张工单的访问记录里追加一条
+  `denied`（`entry_method` 为 `member_visibility` 或 `agent_visibility`）。
+  管理员读取照常记录 `view` / `download`。正文中的 `#序号` 引用只保留编号；
+  不向看不到被引用工单的访问者补充标题。
   - `assignee`（#36）可写数字成员 id、字符串成员 id 或姓名（`4`、`"4"`、`"陈工"`）；
     其他 JSON 类型或非法数字 id 返回 `422 invalid_assignee`。写成成员 Agent（署名写法或 Agent 名字）
     返回 `422 assignee_must_be_member`（成员 Agent 不能被指派，hint 列出可选成员）；
@@ -408,6 +417,7 @@ spec 用户故事 84），没有 `inbox`：
   一条 `download`，`attachment` 写明附件引用与文件名；访客签名地址被实际取用时按
   链接备注署名。访客链接已撤销或已过期时记录 `denied`，`entry_method` 为
   `revoked` 或 `expired`。
+  成员或成员 Agent 访问可见范围外的工单同样记录 `denied`，附件下载的被拒记录带对应 `attachment`。
 - `actor.kind` 为 `member`、`agent`、`admin` 或 `guest`；`actor.name` 分别是成员姓名、
   「某成员 的 Agent · 名字」、管理员姓名（`is_admin: true`）或访客链接备注。
 - 列表、搜索、计数、收件箱、通知带出标题、读取访问记录本身都不产生访问记录，
@@ -508,7 +518,9 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 ## 查询与计数（#37）
 
 初筛、统计、查重 Agent 按条件列出工单、计数并做增量拉取。两个接口都仅限成员
-（访客 403 `members_only`，匿名 401）；筛选条件完全相同。
+（访客 403 `members_only`，匿名 401）；筛选条件完全相同，且都先套用当前成员
+或成员 Agent 的可见范围：创建者、当前指派人、协作者、未指派时的有效初筛人，
+管理员为全部工单。
 
 ### GET /api/v1/tickets（条件列表）
 

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/allanpk716/agent-taskboard/internal/identity"
 )
 
 // ListQuery 是一次列表/计数查询的全部筛选条件（HTTP 层解析好成员与标签后填入；
@@ -49,6 +51,9 @@ type ListQuery struct {
 
 	ChangedAfter *int64 // 只返回变更序号大于它的工单
 	Q            string // 关键词（标题、说明与回复，忽略大小写、空格和连字符）
+
+	// Viewer 是发起查询的成员凭证；可见范围过滤由 visibility.go 统一提供。
+	Viewer identity.Viewer
 }
 
 // TicketMeta 是列表摘要需要的工单元数据：创建/更新/关闭时间与最后变更序号，
@@ -78,20 +83,8 @@ type ListRow struct {
 // 遍历用 ByRef 逐张取完整投影，等待方、标签、时间都从时间线推导——
 // 与收件箱同一套真相，不另存会漂移的状态。
 func (m *Manager) QueryList(ctx context.Context, q ListQuery) ([]ListRow, error) {
-	rows, err := m.db.QueryContext(ctx, `SELECT seq FROM tickets ORDER BY seq`)
+	seqs, err := m.VisibleSeqs(ctx, q.Viewer)
 	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var seqs []int64
-	for rows.Next() {
-		var seq int64
-		if err := rows.Scan(&seq); err != nil {
-			return nil, err
-		}
-		seqs = append(seqs, seq)
-	}
-	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	out := []ListRow{}

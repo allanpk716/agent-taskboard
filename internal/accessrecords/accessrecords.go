@@ -163,6 +163,19 @@ func (m *Manager) RecordGuestLinkDenied(ctx context.Context, ticketSeq, linkID i
 	return err
 }
 
+// RecordDenied 记录成员或成员 Agent 访问可见范围外工单的尝试。
+func (m *Manager) RecordDenied(ctx context.Context, ticketSeq int64, v identity.Viewer, att ...attachments.AttachmentInfo) error {
+	now := m.clk.Now()
+	kind, name, memberID, agentID, linkID, note, entry := actorOf(v)
+	var attachment *Attachment
+	if len(att) > 0 {
+		attachment = &Attachment{ID: att[0].Ref(), Filename: att[0].Filename}
+	}
+	_, err := m.insert(ctx, ticketSeq, kind, name, memberID, agentID, linkID, note, entry+"_visibility",
+		"denied", attachment, now, now, 1)
+	return err
+}
+
 func (m *Manager) insert(ctx context.Context, ticketSeq int64, kind, name string, memberID, agentID, linkID int64,
 	note, entry, action string, att *Attachment, first, last time.Time, count int) (sql.Result, error) {
 	var attID *int64

@@ -156,6 +156,9 @@ func Test凭Markdown的下一步写出交付与验收请求(t *testing.T) {
 	}
 
 	// 不轮到的人（旁观成员）：指引去查收件箱。
+	if res := addCollaborator(t, w.s, w.webWang, number, "赵工"); res.StatusCode != http.StatusCreated {
+		t.Fatalf("把赵工加入协作状态码 = %d", res.StatusCode)
+	}
 	md = w.readMarkdown(t, w.zhaoA, "/api/v1/tickets/"+number+"?format=markdown")
 	for _, want := range []string{"现在不需要你行动", "GET /api/v1/inbox"} {
 		if !strings.Contains(md, want) {
