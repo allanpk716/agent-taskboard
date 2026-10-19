@@ -747,6 +747,8 @@ export function TicketDetailPage({
   me?: Me
   returnTo?: string
 }) {
+  const actorHelp =
+    '（访客与系统事件始终显示；成员 Agent 的回复算它所属成员一方；访客自报「由 Agent 写成」的算 Agent）'
   const tier = useLayoutTier()
   const search = useLocationSearch()
   const [ticket, setTicket] = useState<MemberTicket | null>(null)
@@ -881,12 +883,19 @@ export function TicketDetailPage({
               </button>
             ))}
           </span>
-          <span className="hint">（访客与系统事件始终显示；成员 Agent 的回复算它所属成员一方；访客自报「由 Agent 写成」的算 Agent）</span>
+          <details className="actor-help">
+            <summary title={actorHelp} aria-label="操作方筛选说明">
+              ⓘ
+            </summary>
+            <span className="hint">{actorHelp}</span>
+          </details>
         </div>
         <BriefBubble
+          key={ticket.number}
           ticket={ticket}
           onImageClick={setLightbox}
           onEditBrief={open && can.edit_brief ? () => setDialog('brief') : undefined}
+          collapseEmpty
         />
         {ticket.timeline.map((e) =>
           e.type === 'reply' ? (
@@ -1084,7 +1093,7 @@ export function TicketDetailPage({
           />
         </div>
       ) : (
-        detailMain
+        <div className="detail-main">{detailMain}</div>
       )}
 
       {dialog === 'label' && <LabelDialog ticket={ticket} onChanged={changed} onClose={() => setDialog(null)} />}

@@ -398,6 +398,7 @@ test('建单（模板）：缺必填项弹出确认，仍创建后逐项提示',
   // 暂存的附件建单后挂到整单附件条，不进入任何字段
   await page.getByRole('button', { name: '打开工单' }).click()
   await expect(page.locator('[data-bubble="brief"]')).toContainText('BM-10vet')
+  await page.locator('[data-bubble="brief"]').getByRole('button', { name: /另有 \d+ 项未填写 ▸/ }).click()
   await expect(page.getByText('（未填写）').first()).toBeVisible()
   await expect(page.locator('[data-bubble="brief"] .atts .att')).toHaveCount(1)
   await expect(page.locator('[data-bubble="brief"] .atts .att')).toContainText('现场日志.log')

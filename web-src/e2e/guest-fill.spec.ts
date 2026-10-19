@@ -520,6 +520,8 @@ test.describe('桌面视口', () => {
     await member.goto(`/t/${seed.number}`)
     const brief = member.locator('[data-bubble="brief"]')
     await expect(brief.locator('.atts .att')).toContainText('质控日志.log', { timeout: 15000 })
+    // 成员端空字段默认折叠；先展开再检查它没有吞掉统一附件区的引用。
+    await brief.getByRole('button', { name: /另有 \d+ 项未填写 ▸/ }).click()
     const guess = brief.locator('.f', { hasText: '你的猜测或补充？' })
     await expect(guess).not.toContainText('att:')
     await expect(guess.getByRole('link', { name: '质控日志.log' })).toHaveCount(0)
