@@ -3,6 +3,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -52,6 +53,7 @@ type guestLinkView struct {
 //	GET    /api/v1/tickets/{id}/guest-links            列表（任何成员；不含密钥）
 //	DELETE /api/v1/tickets/{id}/guest-links/{链接id}    撤销（立即生效，幂等 204）
 //	POST   /api/v1/tickets/{id}/guest-links/{链接id}/extend  延期（已失效的不能延期）
+//	POST   /api/v1/tickets/{id}/guest-links/{链接id}/reset-access-code  重置访问码
 func (a *API) handleGuestLinks(w http.ResponseWriter, r *http.Request, ref string, rest []string) {
 	if len(rest) == 0 {
 		switch r.Method {
@@ -84,8 +86,36 @@ func (a *API) handleGuestLinks(w http.ResponseWriter, r *http.Request, ref strin
 		a.extendGuestLink(w, r, ref, id)
 		return
 	}
+	if len(rest) == 2 && rest[1] == "reset-access-code" {
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "重置访问码用 POST")
+			return
+		}
+		a.resetGuestAccessCode(w, r, ref, id)
+		return
+	}
 	WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
-		"访客链接接口：POST …/guest-links、GET …/guest-links、DELETE …/guest-links/{id}、POST …/guest-links/{id}/extend")
+		"访客链接接口：POST …/guest-links、GET …/guest-links、DELETE …/guest-links/{id}、POST …/guest-links/{id}/extend、POST …/guest-links/{id}/reset-access-code")
+}
+
+func (a *API) resetGuestAccessCode(w http.ResponseWriter, r *http.Request, ref string, id int64) {
+	viewer, ok := a.memberFromRequestFor(w, r, "访客不能管理访客链接")
+	if !ok {
+		return
+	}
+	code, err := a.tickets.ResetGuestAccessCode(r.Context(), viewer, ref, id)
+	if err != nil {
+		switch {
+		case errors.Is(err, tickets.ErrGuestLinkNotFound):
+			a.writeTicketError(w, r, ref, err)
+		case errors.Is(err, tickets.ErrLinkAlreadyClaimed):
+			WriteError(w, http.StatusConflict, CodeLinkUnclaimed, "这条链接尚未认领，不需要重置访问码", "等待访客认领后再重置")
+		default:
+			a.writeTicketError(w, r, ref, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"access_code": code})
 }
 
 func (a *API) createGuestLink(w http.ResponseWriter, r *http.Request, ref string) {
@@ -190,6 +220,8 @@ func newGuestLinkView(l tickets.GuestLinkInfo) guestLinkView {
 	switch {
 	case l.RevokedAt != nil:
 		v.Status = "revoked"
+	case l.AccessCodeLockedAt != nil:
+		v.Status = "access_code_locked"
 	case l.ClaimedAt != nil:
 		v.Status = "claimed"
 	default:

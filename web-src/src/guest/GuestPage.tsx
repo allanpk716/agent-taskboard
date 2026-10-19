@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api'
 import { Conversation } from './Conversation'
-import { ClaimPage, type ClaimInfo } from './ClaimPage'
+import { AccessCodePage, ClaimPage, type ClaimInfo } from './ClaimPage'
 import { Composer } from './Composer'
 import { GroupedBriefForm } from './GroupedBriefForm'
 import { LandingPage } from './LandingPage'
@@ -21,6 +21,7 @@ type Phase =
   | { kind: 'loading' }
   | { kind: 'invalid'; code: string }
   | { kind: 'claim'; info: ClaimInfo }
+  | { kind: 'enter'; info: ClaimInfo }
   | { kind: 'ready'; ticket: TicketView }
 
 /** 链接失效整页提示（prototype a.html 的 expired 状态）。 */
@@ -69,7 +70,7 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
     try {
       if (!guestDeviceToken(linkKey)) {
         const info = await guestRawApi(linkKey, '/api/v1/guest-link')
-        setPhase({ kind: 'claim', info })
+        setPhase(info.state === 'unclaimed' ? { kind: 'claim', info } : { kind: 'enter', info })
         return
       }
       const sess: GuestSession = await guestApi(linkKey, '/api/v1/session')
@@ -119,6 +120,19 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
         info={phase.info}
         linkKey={linkKey}
         onClaimed={(token) => {
+          saveGuestDeviceToken(linkKey, token)
+          setPhase({ kind: 'loading' })
+          void load()
+        }}
+      />
+    )
+  }
+  if (phase.kind === 'enter') {
+    return (
+      <AccessCodePage
+        info={phase.info}
+        linkKey={linkKey}
+        onEntered={(token) => {
           saveGuestDeviceToken(linkKey, token)
           setPhase({ kind: 'loading' })
           void load()

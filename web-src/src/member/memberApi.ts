@@ -501,7 +501,7 @@ export interface GuestLink {
   created_by: { member?: { name: string }; agent?: { name: string } | null }
   created_at: string
   use_count?: number
-  status: 'unclaimed' | 'claimed' | 'revoked'
+  status: 'unclaimed' | 'claimed' | 'access_code_locked' | 'revoked'
   claim_name?: string
   claimed_at?: string
   device_count?: number
@@ -532,6 +532,15 @@ export async function createGuestLink(
 
 export async function revokeGuestLink(number: string, id: number): Promise<void> {
   await api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}`, { method: 'DELETE' })
+}
+
+export async function resetGuestAccessCode(
+  number: string,
+  id: number,
+): Promise<{ access_code: string }> {
+  return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}/reset-access-code`, {
+    method: 'POST',
+  })
 }
 
 /** 延期：valid_days（7/30/90）或 expires_at（YYYY-MM-DD，管满该日全天）二选一。 */

@@ -24,16 +24,55 @@ func (a *API) handleGuestLinkClaim(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.claimGuestLink(w, r)
+	case "/api/v1/guest-links/enter":
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "凭访问码进入用 POST")
+			return
+		}
+		a.enterGuestLink(w, r)
 	default:
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "")
 	}
 }
 
-func (a *API) guestClaimLink(w http.ResponseWriter, r *http.Request) (identity.GuestLink, bool) {
+func (a *API) enterGuestLink(w http.ResponseWriter, r *http.Request) {
+	link, ok := a.guestClaimLink(w, r, true)
+	if !ok {
+		return
+	}
+	var req struct {
+		AccessCode string `json:"access_code"`
+	}
+	if !decodeJSON(w, r, &req, `{"access_code": "123456"}`) {
+		return
+	}
+	result, err := a.tickets.EnterGuestLink(r.Context(), link, req.AccessCode)
+	if err != nil {
+		switch {
+		case errors.Is(err, tickets.ErrAccessCodeRequired):
+			WriteError(w, http.StatusUnprocessableEntity, CodeAccessCodeRequired, err.Error(), "访问码是认领时显示的 6 位数字")
+		case errors.Is(err, tickets.ErrAccessCodeInvalid):
+			WriteError(w, http.StatusUnauthorized, CodeAccessCodeInvalid, err.Error(), "请核对访问码；连续输错 5 次会锁定")
+		case errors.Is(err, tickets.ErrAccessCodeLocked):
+			WriteError(w, http.StatusForbidden, CodeAccessCodeLocked, err.Error(), "请联系能管理这条链接的成员重置访问码")
+		default:
+			panic(err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"device_token": result.DeviceToken})
+	http.SetCookie(w, &http.Cookie{
+		Name: GuestDeviceCookieName, Value: result.DeviceToken, Path: "/",
+		HttpOnly: true, SameSite: http.SameSiteLaxMode,
+		Expires: result.ClaimedAt.Add(365 * 24 * time.Hour),
+	})
+}
+
+func (a *API) guestClaimLink(w http.ResponseWriter, r *http.Request, allowClaimed bool) (identity.GuestLink, bool) {
 	token, ok := bearerToken(r)
 	if !ok || identity.IsGuestDeviceKey(token) {
 		WriteError(w, http.StatusUnauthorized, CodeUnauthenticated, "未登录",
-			"访客认领接口用链接里的 tbg_ 密钥作为 Bearer 凭证")
+			"访客认领和凭访问码进入接口用链接里的 tbg_ 密钥作为 Bearer 凭证")
 		return identity.GuestLink{}, false
 	}
 	link, err := a.ident.GuestLinkForKey(r.Context(), token)
@@ -44,6 +83,12 @@ func (a *API) guestClaimLink(w http.ResponseWriter, r *http.Request) (identity.G
 		case errors.Is(err, identity.ErrLinkRevoked), errors.Is(err, identity.ErrLinkExpired):
 			a.writeLinkStatusError(w, r, err)
 		case errors.Is(err, identity.ErrLinkClaimed):
+			if allowClaimed {
+				var status *identity.LinkStatusError
+				if errors.As(err, &status) {
+					return status.Link, true
+				}
+			}
 			a.writeLinkStatusError(w, r, err)
 		default:
 			panic(err)
@@ -70,7 +115,7 @@ func (a *API) writeLinkStatusError(w http.ResponseWriter, r *http.Request, err e
 }
 
 func (a *API) guestLinkInfo(w http.ResponseWriter, r *http.Request) {
-	link, ok := a.guestClaimLink(w, r)
+	link, ok := a.guestClaimLink(w, r, true)
 	if !ok {
 		return
 	}
@@ -98,7 +143,7 @@ func (a *API) guestLinkInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) claimGuestLink(w http.ResponseWriter, r *http.Request) {
-	link, ok := a.guestClaimLink(w, r)
+	link, ok := a.guestClaimLink(w, r, true)
 	if !ok {
 		return
 	}
@@ -122,7 +167,8 @@ func (a *API) claimGuestLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"device_token": result.DeviceToken, "claimed_at": result.ClaimedAt,
+		"device_token": result.DeviceToken, "access_code": result.AccessCode,
+		"claimed_at": result.ClaimedAt,
 	})
 	http.SetCookie(w, &http.Cookie{
 		Name: GuestDeviceCookieName, Value: result.DeviceToken, Path: "/",

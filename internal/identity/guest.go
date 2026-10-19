@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -46,6 +47,7 @@ type GuestLink struct {
 	ExpiresAt    time.Time
 	CanEditBrief bool
 	ClaimName    string
+	EntryMethod  string
 }
 
 // NewGuestKey 生成一条访客链接的密钥（明文）。明文只在创建响应里出现一次，
@@ -65,6 +67,15 @@ func NewGuestDeviceKey() (string, error) {
 		return "", err
 	}
 	return "tbgd_" + base64URLEncode(buf), nil
+}
+
+// NewAccessCode generates the one-time six-digit code shown to a guest.
+func NewAccessCode() (string, error) {
+	n, err := cryptoRandInt(1000000)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%06d", n), nil
 }
 
 // IsGuestDeviceKey 用于凭证解析前的分派。
@@ -166,20 +177,22 @@ func (m *Manager) ViewerFromGuestDevice(ctx context.Context, token string) (View
 		expiresAt string
 		revokedAt sql.NullString
 		claimName string
+		entry     string
 		canEdit   int
 	)
 	err := m.db.QueryRowContext(ctx, `
-		SELECT g.id, g.ticket_seq, g.note, g.expires_at, g.revoked_at, g.claim_name, g.can_edit_brief
+		SELECT g.id, g.ticket_seq, g.note, g.expires_at, g.revoked_at, g.claim_name, g.can_edit_brief,
+		       d.entry_method
 		FROM guest_devices d JOIN guest_links g ON g.id = d.guest_link_id
 		WHERE d.token_hash = ?`, hashToken(token)).
-		Scan(&id, &ticketSeq, &note, &expiresAt, &revokedAt, &claimName, &canEdit)
+		Scan(&id, &ticketSeq, &note, &expiresAt, &revokedAt, &claimName, &canEdit, &entry)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Viewer{}, ErrInvalidCredentials
 	}
 	if err != nil {
 		return Viewer{}, err
 	}
-	link := GuestLink{ID: id, TicketSeq: ticketSeq, Note: note, ClaimName: claimName}
+	link := GuestLink{ID: id, TicketSeq: ticketSeq, Note: note, ClaimName: claimName, EntryMethod: entry}
 	if revokedAt.Valid {
 		return Viewer{}, &LinkStatusError{Link: link, Status: "revoked", Err: ErrLinkRevoked}
 	}

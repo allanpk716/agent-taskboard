@@ -29,6 +29,10 @@ export function eventText(e: TimelineEvent): string {
       return `创建了访客链接「${e.note}」`
     case 'guest_link_claimed':
       return `${e.actor?.author_name ?? '访客'} 认领了访客链接「${e.note}」`
+    case 'guest_access_locked':
+      return `访客链接「${e.note}」连续输错访问码，输码已锁定`
+    case 'guest_access_reset':
+      return `重置了访客链接「${e.note}」的访问码`
     case 'guest_link_revoked':
       return `撤销了访客链接「${e.note}」`
     case 'guest_link_extended':
