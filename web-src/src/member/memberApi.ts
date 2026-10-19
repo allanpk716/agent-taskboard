@@ -2,7 +2,9 @@
 import { api, ApiError } from '../api'
 import { compressImage } from '../shared/compress'
 import { fetchServerVersion } from '../shared/health'
-import type { Author, TicketView } from '../shared/types'
+import type { Author, Collaborator, TicketView } from '../shared/types'
+
+export type { Collaborator } from '../shared/types'
 
 export interface Me {
   id: number
@@ -449,6 +451,28 @@ export async function assignTicket(
   return api(`/api/v1/tickets/${encodeURIComponent(number)}/assign`, {
     method: 'POST',
     body: JSON.stringify({ assignee }),
+  })
+}
+
+export async function addCollaborator(number: string, member: string): Promise<{ collaborators: Collaborator[] }> {
+  return api(`/api/v1/tickets/${encodeURIComponent(number)}/collaborators`, {
+    method: 'POST',
+    body: JSON.stringify({ member }),
+    idempotencyKey: crypto.randomUUID(),
+  })
+}
+
+export async function removeCollaborator(number: string, memberID: number): Promise<{ collaborators: Collaborator[] }> {
+  return api(`/api/v1/tickets/${encodeURIComponent(number)}/collaborators/${memberID}`, {
+    method: 'DELETE',
+    idempotencyKey: crypto.randomUUID(),
+  })
+}
+
+export async function leaveCollaborators(number: string): Promise<{ collaborators: Collaborator[] }> {
+  return api(`/api/v1/tickets/${encodeURIComponent(number)}/collaborators/leave`, {
+    method: 'POST',
+    idempotencyKey: crypto.randomUUID(),
   })
 }
 

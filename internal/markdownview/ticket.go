@@ -28,6 +28,7 @@ type Event struct {
 	AttachmentIDs []string // reply 引用的附件（#33）
 	AssignFrom    string   // assigned 事件的改派前指派人；空 = 创建时指派（#36）
 	AssignTo      string   // assigned 事件的指派对象（#36）
+	Collaborator  string   // 协作者事件的对象（#158）
 }
 
 // Attachment 是附件小节里的一项（#33）：URL 由 HTTP 层按当前凭证生成
@@ -272,6 +273,12 @@ func eventText(e Event) string {
 			return "指派给 " + e.AssignTo
 		}
 		return "改派：" + e.AssignFrom + " → " + e.AssignTo
+	case "collaborator_added":
+		return "把 " + e.Collaborator + " 加入协作"
+	case "collaborator_removed":
+		return "把 " + e.Collaborator + " 移出协作"
+	case "collaborator_left":
+		return e.Collaborator + " 退出协作"
 	case "label_added":
 		return "打上标签 " + e.Label
 	case "label_removed":

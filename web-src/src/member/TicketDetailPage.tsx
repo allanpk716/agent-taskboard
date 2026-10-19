@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, ApiError } from '../api'
 import type { MemberTicket } from './memberApi'
 import {
+  addCollaborator,
   assignTicket,
   changeLabels,
   closeTicket,
@@ -16,9 +17,11 @@ import {
   fetchGuestLinks,
   fetchMembers,
   fetchTicket,
+  leaveCollaborators,
   markTicketNotificationsRead,
   reopenTicket,
   replyTicket,
+  removeCollaborator,
   revokeGuestLink,
   uploadMemberAttachment,
   type GuestLink,
@@ -26,6 +29,7 @@ import {
   type AccessRecordsResponse,
   type Me,
   type MemberRef,
+  type Collaborator,
 } from './memberApi'
 import { BriefBubble, EventLine, ReplyBubble } from '../shared/conversation'
 import { DimensionSelect } from '../guest/DimensionSelect'
@@ -238,6 +242,146 @@ function AssignDialog({
         <span className="sp" />
         <button className="btn" disabled={!choice} onClick={() => void confirm()}>
           确认{changing ? '改派' : '指派'}
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
+function CollaboratorsDialog({
+  ticket,
+  members,
+  me,
+  onChanged,
+  onClose,
+}: {
+  ticket: MemberTicket
+  members: MemberRef[]
+  me?: Me
+  onChanged: () => void
+  onClose: () => void
+}) {
+  const [choice, setChoice] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+  const collaborators = ticket.collaborators ?? []
+  const blocked = new Set<number>([
+    ticket.creator.member?.id ?? 0,
+    ticket.assignee?.member?.id ?? 0,
+    ...collaborators.map((c) => c.id),
+  ])
+  const candidates = members.filter((m) => m.active !== false && !blocked.has(m.id))
+
+  function handle(e: unknown, fallback: string) {
+    setErr(e instanceof ApiError ? `${e.code}：${e.message}` : fallback)
+  }
+
+  async function add() {
+    if (!choice) return
+    try {
+      await addCollaborator(ticket.number, choice)
+      setChoice('')
+      setErr(null)
+      onChanged()
+    } catch (e) {
+      handle(e, '加入协作者失败，请重试')
+    }
+  }
+
+  async function remove(c: Collaborator) {
+    try {
+      await removeCollaborator(ticket.number, c.id)
+      setErr(null)
+      onChanged()
+    } catch (e) {
+      handle(e, '移除协作者失败，请重试')
+    }
+  }
+
+  async function leave() {
+    try {
+      await leaveCollaborators(ticket.number)
+      setErr(null)
+      onChanged()
+      onClose()
+    } catch (e) {
+      handle(e, '退出协作失败，请重试')
+    }
+  }
+
+  return (
+    <Modal title={`协作者 · ${ticket.number}`} onClose={onClose}>
+      <table className="mini-tbl">
+        <tbody>
+          {collaborators.length === 0 && (
+            <tr>
+              <td className="hint">还没有协作者</td>
+            </tr>
+          )}
+          {collaborators.map((c) => (
+            <tr key={c.id} data-collaborator={c.id}>
+              <td>
+                {c.name}
+                {c.deactivated && <DeactivatedBadge />}
+              </td>
+              <td className="hint">{new Date(c.added_at).toLocaleDateString('zh-CN')}</td>
+              <td>
+                {c.id === me?.id ? (
+                  <button className="btn sm ghost" onClick={() => void leave()}>
+                    退出
+                  </button>
+                ) : (
+                  ticket.viewer.can.manage_collaborators && (
+                    <button
+                      className="btn sm ghost"
+                      aria-label={`移除 ${c.name}`}
+                      onClick={() => {
+                        void remove(c)
+                      }}
+                    >
+                      移除
+                    </button>
+                  )
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {ticket.viewer.can.manage_collaborators && (
+        <>
+          <div className="inrow top-gap">
+            <select
+              className="sel"
+              aria-label="选择成员"
+              value={choice}
+              onChange={(e) => setChoice(e.target.value)}
+            >
+              <option value="">— 选择成员 —</option>
+              {candidates.map((m) => (
+                <option key={m.id} value={m.name}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+            <button className="btn" disabled={!choice} onClick={() => void add()}>
+              加入
+            </button>
+          </div>
+          <div className="hint">创建者、指派人和管理员可以加人；未指派时初筛人也可以加人。</div>
+        </>
+      )}
+      {ticket.viewer.can.leave_collaborators && !ticket.viewer.can.manage_collaborators && (
+        <div className="inrow top-gap">
+          <button className="btn ghost" onClick={() => void leave()}>
+            退出协作
+          </button>
+        </div>
+      )}
+      {err && <div className="errbox">{err}</div>}
+      <div className="mrow">
+        <span className="sp" />
+        <button className="btn ghost" onClick={onClose}>
+          完成
         </button>
       </div>
     </Modal>
@@ -572,6 +716,7 @@ function TicketInfoColumn({
   knownUrls,
   accessRecords,
   onAssign,
+  onCollaborators,
   onLabels,
   onLinks,
   onLabelToggle,
@@ -581,6 +726,7 @@ function TicketInfoColumn({
   knownUrls: Record<number, string>
   accessRecords: AccessRecordsResponse | null
   onAssign: () => void
+  onCollaborators: () => void
   onLabels: () => void
   onLinks: () => void
   onLabelToggle: (label: string) => void
@@ -593,6 +739,24 @@ function TicketInfoColumn({
         <div className="ival">
           <span className="badge kind">{ticket.kind === 'task' ? '任务' : '反馈'}</span>
           <span>{open ? `等待 ${ticket.waiting_on.text}` : '已关闭'}</span>
+        </div>
+      </section>
+      <section>
+        <div className="sec-t">协作者</div>
+        <div className="ival stacked">
+          {(ticket.collaborators ?? []).length === 0 ? (
+            <span className="hint">暂无</span>
+          ) : (
+            (ticket.collaborators ?? []).map((c) => (
+              <span key={c.id}>
+                {c.name}
+                {c.deactivated && <DeactivatedBadge />}
+              </span>
+            ))
+          )}
+          <button className="btn sm ghost" onClick={onCollaborators}>
+            管理
+          </button>
         </div>
       </section>
       <section>
@@ -801,7 +965,7 @@ export function TicketDetailPage({
   const [error, setError] = useState<string | null>(null)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const [actor, setActor] = useState<ActorFilter>('all')
-  const [dialog, setDialog] = useState<'label' | 'brief' | 'assign' | 'links' | 'close' | 'reopen' | 'agent' | 'share' | null>(null)
+  const [dialog, setDialog] = useState<'label' | 'brief' | 'assign' | 'collaborators' | 'links' | 'close' | 'reopen' | 'agent' | 'share' | null>(null)
   const [mobileMenu, setMobileMenu] = useState(false)
   const [members, setMembers] = useState<MemberRef[]>([])
   const [guestLinks, setGuestLinks] = useState<GuestLink[] | null>(null)
@@ -1072,6 +1236,15 @@ export function TicketDetailPage({
               <b>{closed ? '无（已关闭）' : ticket.waiting_on.text}</b>
             </div>
             <div className="kv">
+              <span>协作者</span>
+              <span>
+                {(ticket.collaborators ?? []).map((c) => c.name).join('、') || '暂无'}{' '}
+                <button className="btn sm ghost" onClick={() => setDialog('collaborators')}>
+                  管理
+                </button>
+              </span>
+            </div>
+            <div className="kv">
               <span>访客链接</span>
               <span>
                 <button className="btn sm ghost" onClick={() => setDialog('links')}>
@@ -1114,6 +1287,11 @@ export function TicketDetailPage({
           <button className="btn sm ghost" onClick={() => setDialog('links')}>
             🔗 访客链接
           </button>
+          {(can.manage_collaborators || can.leave_collaborators) && (
+            <button className="btn sm ghost" onClick={() => setDialog('collaborators')}>
+              🤝 协作者
+            </button>
+          )}
           {open ? (
             <button className="btn sm ghost" onClick={() => setDialog('close')}>
               ✔ 关闭
@@ -1129,6 +1307,7 @@ export function TicketDetailPage({
             <span>{ticket.kind === 'task' ? '任务' : '反馈'}</span>
             <span>{open ? `等待 ${ticket.waiting_on.text}` : '已关闭'}</span>
             <span>指派 {ticket.assignee?.member?.name ?? '未指派'}</span>
+            <span>{`协作者 ${(ticket.collaborators ?? []).length} 人`}</span>
             <span>{(ticket.labels ?? []).join('、') || '无标签'}</span>
             <span>{`访客链接 ${guestLinks?.length ?? 0} 条`}</span>
             <button type="button" className="btn sm ghost" onClick={() => setAllInfoOpen((v) => !v)}>
@@ -1145,6 +1324,7 @@ export function TicketDetailPage({
           knownUrls={knownLinkUrls}
           accessRecords={accessRecords}
           onAssign={() => setDialog('assign')}
+          onCollaborators={() => setDialog('collaborators')}
           onLabels={() => setDialog('label')}
           onLinks={() => setDialog('links')}
           onLabelToggle={toggleDetailLabel}
@@ -1160,6 +1340,7 @@ export function TicketDetailPage({
             knownUrls={knownLinkUrls}
             accessRecords={accessRecords}
             onAssign={() => setDialog('assign')}
+            onCollaborators={() => setDialog('collaborators')}
             onLabels={() => setDialog('label')}
             onLinks={() => setDialog('links')}
             onLabelToggle={toggleDetailLabel}
@@ -1173,6 +1354,15 @@ export function TicketDetailPage({
       {dialog === 'brief' && <BriefEditDialog ticket={ticket} onChanged={changed} onClose={() => setDialog(null)} />}
       {dialog === 'assign' && (
         <AssignDialog
+          ticket={ticket}
+          members={members}
+          me={me}
+          onChanged={changed}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === 'collaborators' && (
+        <CollaboratorsDialog
           ticket={ticket}
           members={members}
           me={me}

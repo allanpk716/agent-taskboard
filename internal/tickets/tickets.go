@@ -85,6 +85,8 @@ type Author struct {
 	LinkNote   string
 	AuthorName string
 	ViaAgent   bool
+	// System 表示平台自身（如上线迁移）是操作者，不是访客或成员。
+	System bool
 }
 
 // DisplayName 返回署名：成员「陈某」；成员 Agent「陈某 的 Agent · 名字」（ADR 0003）；
@@ -113,6 +115,9 @@ func (a Author) displayName(markDeactivated bool) string {
 			return name
 		}
 		return name
+	}
+	if a.System {
+		return "系统"
 	}
 	if a.ViaAgent {
 		return a.LinkNote + "（访客）的 Agent（自报）"
@@ -156,7 +161,16 @@ type Ticket struct {
 	CreatorIntakeID int64
 }
 
-// Event 是时间线上的一条事件，只追加不修改。
+// Collaborator 是一张工单上的一位协作者；名单只表示可见范围与通知关系，
+// 不改变等待方推导。
+type Collaborator struct {
+	ID          int64
+	Name        string
+	Deactivated bool
+	AddedAt     time.Time
+}
+
+// Event 是时间线上的一条事件，只追加。
 type Event struct {
 	Seq    int64 // 单内递增
 	Change int64 // 全局变更序号（与事件写入同事务推进）
@@ -166,24 +180,27 @@ type Event struct {
 	Label  string // label_added / label_removed 的标签（#31）
 
 	// 附加字段，按事件类型出现（写入端点在 #30；assigned 在 #36）。
-	BodyMD        string   // reply 的正文
-	ReplyNo       int64    // reply 在单内的序号
-	Deliver       bool     // reply 带「交付」标记（#36 启用）
-	Revision      int64    // brief_revised 修订后的版本号
-	Reason        string   // closed 的原因：done | wontfix | duplicate
-	DuplicateOf   string   // closed=重复时另一张工单的编号（"" = 无）
-	Note          string   // guest_link_created / guest_link_revoked 的备注（#32）
-	LinkExpires   string   // guest_link_extended 的新到期时刻（RFC3339，#32）
-	AttachmentIDs []string // reply 引用的附件（attachment_ids 与正文 att: 合并去重，#33）
-	AssignFrom    string   // assigned 事件的改派前指派人；空 = 创建时指派（#36）
-	AssignTo      string   // assigned 事件的指派对象（#36）
+	BodyMD         string   // reply 的正文
+	ReplyNo        int64    // reply 在单内的序号
+	Deliver        bool     // reply 带「交付」标记（#36 启用）
+	Revision       int64    // brief_revised 修订后的版本号
+	Reason         string   // closed 的原因：done | wontfix | duplicate
+	DuplicateOf    string   // closed=重复时另一张工单的编号（"" = 无）
+	Note           string   // guest_link_created / guest_link_revoked 的备注（#32）
+	LinkExpires    string   // guest_link_extended 的新到期时刻（RFC3339，#32）
+	AttachmentIDs  []string // reply 引用的附件（attachment_ids 与正文 att: 合并去重，#33）
+	AssignFrom     string   // assigned 事件的改派前指派人；空 = 创建时指派（#36）
+	AssignTo       string   // assigned 事件的指派对象（#36）
+	CollaboratorID int64    // 协作者事件的对象（#158）
+	Collaborator   string   // 协作者事件的对象姓名（#158）
 }
 
 // Full 是读取一张工单时的完整投影：核心字段 + 标签 + 完整时间线。
 type Full struct {
 	Ticket
-	Labels   []string
-	Timeline []Event
+	Labels        []string
+	Timeline      []Event
+	Collaborators []Collaborator
 }
 
 // Manager 是工单核心的对外入口：「以某个 Viewer 建单」「读某张工单」。
@@ -666,6 +683,10 @@ func (m *Manager) ByRef(ctx context.Context, ref string) (Full, error) {
 	if err != nil {
 		return Full{}, err
 	}
+	full.Collaborators, err = m.collaborators(ctx, t.Seq)
+	if err != nil {
+		return Full{}, err
+	}
 	full.Timeline, err = m.timeline(ctx, t.Seq)
 	if err != nil {
 		return Full{}, err
@@ -707,6 +728,7 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 		SELECT e.seq, e.change_seq, e.at, e.type, e.actor_member_id, mm.name, mm.deactivated_at, e.actor_agent_id, aa.name, aa.revoked_at,
 		       e.body_md, e.reply_no, e.deliver, e.revision, e.reason, e.duplicate_of, e.label,
 		       e.note, e.link_expires_at, e.attachment_ids, e.assign_from, e.assign_to,
+		       e.collaborator_member_id, e.collaborator_name, e.actor_system,
 		       e.actor_link_id, e.actor_link_note, e.actor_author_name, e.actor_via_agent
 		FROM timeline_events e
 		LEFT JOIN members mm ON mm.id = e.actor_member_id
@@ -739,6 +761,9 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 			attachmentIDs          sql.NullString
 			assignFrom             sql.NullString
 			assignTo               sql.NullString
+			collaboratorID         sql.NullInt64
+			collaboratorName       sql.NullString
+			actorSystem            int
 			actorLinkID            sql.NullInt64
 			actorLinkNote          sql.NullString
 			actorAuthorName        sql.NullString
@@ -748,6 +773,7 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 			&actorMemberID, &actorMemberName, &actorMemberDeactivated, &actorAgentID, &actorAgentName, &actorAgentRevoked,
 			&bodyMD, &replyNo, &deliver, &revision, &reason, &duplicateOf, &label,
 			&note, &linkExpiresAt, &attachmentIDs, &assignFrom, &assignTo,
+			&collaboratorID, &collaboratorName, &actorSystem,
 			&actorLinkID, &actorLinkNote, &actorAuthorName, &actorViaAgent); err != nil {
 			return nil, err
 		}
@@ -762,6 +788,7 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 			LinkNote:          actorLinkNote.String,
 			AuthorName:        actorAuthorName.String,
 			ViaAgent:          actorViaAgent == 1,
+			System:            actorSystem == 1,
 		}
 		e.BodyMD = bodyMD.String
 		e.ReplyNo = replyNo.Int64
@@ -777,6 +804,8 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 		}
 		e.AssignFrom = assignFrom.String
 		e.AssignTo = assignTo.String
+		e.CollaboratorID = collaboratorID.Int64
+		e.Collaborator = collaboratorName.String
 		if e.At, err = time.ParseInLocation(time.RFC3339Nano, at, clock.Beijing); err != nil {
 			return nil, fmt.Errorf("解析事件时间 %q 失败：%w", at, err)
 		}

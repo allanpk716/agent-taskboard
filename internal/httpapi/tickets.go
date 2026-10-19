@@ -129,6 +129,8 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.assignTicket(w, r, ref)
+	case "collaborators":
+		a.handleCollaborators(w, r, ref, rest)
 	case "guest-links":
 		a.handleGuestLinks(w, r, ref, rest)
 	case "attachments":
@@ -409,6 +411,17 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, ref strin
 		e := err.(*tickets.AssigneeDeactivatedError)
 		WriteError(w, http.StatusUnprocessableEntity, CodeAssigneeDeactivated, e.Error(),
 			a.memberNamesHint(r, "停用成员不再接新工单；从在岗成员里选一位"))
+	case errors.Is(err, tickets.ErrCollaboratorNotAllowed):
+		WriteError(w, http.StatusForbidden, CodeCollaboratorNotAllowed, err.Error(),
+			"创建者、指派人、管理员，以及未指派时的初筛人可以管理协作者；协作者可以自行退出")
+	case errors.Is(err, tickets.ErrAlreadyCollaborator):
+		WriteError(w, http.StatusConflict, CodeAlreadyCollaborator, err.Error(), "")
+	case errors.Is(err, tickets.ErrNotCollaborator):
+		WriteError(w, http.StatusConflict, CodeNotCollaborator, err.Error(), "")
+	case isCollaboratorDeactivated(err):
+		e := err.(*tickets.CollaboratorDeactivatedError)
+		WriteError(w, http.StatusUnprocessableEntity, CodeCollaboratorDeactivated, e.Error(),
+			a.memberNamesHint(r, "停用成员不能被加入协作；已在名单中的停用成员会保留"))
 	case errors.Is(err, templates.ErrNotFound):
 		WriteError(w, http.StatusNotFound, CodeTemplateNotFound, "没有这个模板",
 			"模板列表见 GET /api/v1/templates")
@@ -578,6 +591,11 @@ type authorView struct {
 
 func newAuthorView(a tickets.Author, includeAccountState bool) authorView {
 	v := authorView{}
+	if a.System {
+		name := "系统"
+		v.AuthorName = &name
+		return v
+	}
 	if a.MemberID != 0 {
 		v.Member = &memberRef{ID: a.MemberID, Name: a.MemberName}
 		if includeAccountState && a.MemberDeactivated {
@@ -666,15 +684,17 @@ func fieldViewsOf(defs []template.Field) []templateFieldView {
 }
 
 type canView struct {
-	Reply            bool `json:"reply"`
-	Upload           bool `json:"upload"`
-	EditBrief        bool `json:"edit_brief"`
-	Label            bool `json:"label"`
-	Close            bool `json:"close"`
-	Reopen           bool `json:"reopen"`
-	ManageGuestLinks bool `json:"manage_guest_links"`
-	Deliver          bool `json:"deliver"`
-	Assign           bool `json:"assign"`
+	Reply               bool `json:"reply"`
+	Upload              bool `json:"upload"`
+	EditBrief           bool `json:"edit_brief"`
+	Label               bool `json:"label"`
+	Close               bool `json:"close"`
+	Reopen              bool `json:"reopen"`
+	ManageGuestLinks    bool `json:"manage_guest_links"`
+	Deliver             bool `json:"deliver"`
+	Assign              bool `json:"assign"`
+	ManageCollaborators bool `json:"manage_collaborators"`
+	LeaveCollaborators  bool `json:"leave_collaborators"`
 }
 
 type ticketViewerView struct {
@@ -711,6 +731,7 @@ type eventView struct {
 	AttachmentIDs []string `json:"attachment_ids,omitempty"` // reply 引用的附件（#33）
 	From          string   `json:"from,omitempty"`           // assigned 事件的改派前指派人；空 = 创建时指派（#36）
 	To            string   `json:"to,omitempty"`             // assigned 事件的指派对象（#36）
+	Collaborator  string   `json:"collaborator,omitempty"`   // 协作者事件的对象（#158）
 }
 
 // newEventView 把时间线事件转成对外结构。
@@ -720,34 +741,43 @@ func newEventView(e tickets.Event, includeAccountState bool) eventView {
 		Label: e.Label, Note: e.Note, ReplyNo: e.ReplyNo, BodyMD: e.BodyMD, Deliver: e.Deliver,
 		Revision: e.Revision, Reason: e.Reason, DuplicateOf: e.DuplicateOf, ExpiresAt: e.LinkExpires,
 		AttachmentIDs: e.AttachmentIDs,
-		From:          e.AssignFrom, To: e.AssignTo,
+		From:          e.AssignFrom, To: e.AssignTo, Collaborator: e.Collaborator,
 	}
 }
 
 // visibleToGuest 报告事件对访客是否可见：标签事件不可见（其余事件——回复、
 // 状态变更、说明修订、访客链接、指派——都可见，spec「凭证与访问」）。
 func visibleToGuest(e tickets.Event) bool {
-	return e.Type != "label_added" && e.Type != "label_removed"
+	return e.Type != "label_added" && e.Type != "label_removed" &&
+		e.Type != "collaborator_added" && e.Type != "collaborator_removed" && e.Type != "collaborator_left"
+}
+
+type collaboratorView struct {
+	ID          int64     `json:"id"`
+	Name        string    `json:"name"`
+	Deactivated *bool     `json:"deactivated,omitempty"`
+	AddedAt     time.Time `json:"added_at"`
 }
 
 type ticketView struct {
-	Number      string           `json:"number"`
-	Seq         int64            `json:"seq"`
-	URL         string           `json:"url"`
-	Kind        string           `json:"kind"`
-	Title       string           `json:"title"`
-	Status      string           `json:"status"`
-	CloseReason *string          `json:"close_reason"`
-	Template    *string          `json:"template"`
-	Creator     authorView       `json:"creator"`
-	Assignee    *authorView      `json:"assignee"`
-	WaitingOn   waitingOnView    `json:"waiting_on"`
-	Labels      *[]string        `json:"labels,omitempty"` // 访客视角无此字段（#32）
-	Brief       briefView        `json:"brief"`
-	Attachments []attachmentView `json:"attachments"`      // 已挂上的（#33）
-	Usage       attachmentUsage  `json:"attachment_usage"` // 含待用附件（#33）
-	Viewer      ticketViewerView `json:"viewer"`
-	Timeline    []eventView      `json:"timeline"`
+	Number        string             `json:"number"`
+	Seq           int64              `json:"seq"`
+	URL           string             `json:"url"`
+	Kind          string             `json:"kind"`
+	Title         string             `json:"title"`
+	Status        string             `json:"status"`
+	CloseReason   *string            `json:"close_reason"`
+	Template      *string            `json:"template"`
+	Creator       authorView         `json:"creator"`
+	Assignee      *authorView        `json:"assignee"`
+	Collaborators []collaboratorView `json:"collaborators,omitempty"` // 访客视角无此字段（#158）
+	WaitingOn     waitingOnView      `json:"waiting_on"`
+	Labels        *[]string          `json:"labels,omitempty"` // 访客视角无此字段（#32）
+	Brief         briefView          `json:"brief"`
+	Attachments   []attachmentView   `json:"attachments"`      // 已挂上的（#33）
+	Usage         attachmentUsage    `json:"attachment_usage"` // 含待用附件（#33）
+	Viewer        ticketViewerView   `json:"viewer"`
+	Timeline      []eventView        `json:"timeline"`
 
 	// 成员交接文案（#98）：访客视角不出现这两个字段。
 	HandoffText      *string `json:"handoff_text,omitempty"`
@@ -825,6 +855,15 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 	if !isGuest {
 		labels := full.Labels
 		v.Labels = &labels
+		v.Collaborators = make([]collaboratorView, 0, len(full.Collaborators))
+		for _, c := range full.Collaborators {
+			cv := collaboratorView{ID: c.ID, Name: c.Name, AddedAt: c.AddedAt}
+			if c.Deactivated {
+				deactivated := true
+				cv.Deactivated = &deactivated
+			}
+			v.Collaborators = append(v.Collaborators, cv)
+		}
 	}
 	if full.CloseReason != "" {
 		c := full.CloseReason
@@ -844,6 +883,17 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 		}
 	}
 	tv.Can = capsOf(viewer, full)
+	manageCollaborators, err := a.tickets.CanManageCollaborators(r.Context(), viewer, full)
+	if err != nil {
+		panic(err)
+	}
+	tv.Can.ManageCollaborators = manageCollaborators
+	for _, c := range full.Collaborators {
+		if c.ID == viewer.Member.ID {
+			tv.Can.LeaveCollaborators = true
+			break
+		}
+	}
 	v.Viewer = tv
 	for _, e := range full.Timeline {
 		if isGuest && !visibleToGuest(e) {
@@ -940,7 +990,7 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer, atts []attac
 			Label: e.Label, BodyMD: e.BodyMD, Deliver: e.Deliver, Revision: e.Revision,
 			Reason: e.Reason, DuplicateOf: e.DuplicateOf, Note: e.Note, LinkExpiresAt: e.LinkExpires,
 			AttachmentIDs: e.AttachmentIDs,
-			AssignFrom:    e.AssignFrom, AssignTo: e.AssignTo,
+			AssignFrom:    e.AssignFrom, AssignTo: e.AssignTo, Collaborator: e.Collaborator,
 		})
 	}
 	return in

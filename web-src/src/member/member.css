@@ -350,6 +350,14 @@
   flex-wrap: wrap;
   min-height: 28px;
 }
+.dinfo .ival.stacked {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 4px;
+}
+.top-gap {
+  margin-top: 12px;
+}
 .link-card {
   border: 1px solid #e6e9f0;
   border-radius: 7px;

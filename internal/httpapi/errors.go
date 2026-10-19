@@ -46,6 +46,12 @@ const (
 	CodeAlreadyAssigned      = "already_assigned"        // 改派给当前指派人
 	CodeAssigneeDeactivated  = "assignee_deactivated"    // 指派对象的账号已停用（#42 评审修正）
 
+	// #158：协作者。
+	CodeCollaboratorNotAllowed  = "collaborator_not_allowed"
+	CodeAlreadyCollaborator     = "already_collaborator"
+	CodeNotCollaborator         = "not_collaborator"
+	CodeCollaboratorDeactivated = "collaborator_deactivated"
+
 	// #31：标签、字典与别名。
 	CodeMembersOnly        = "members_only"         // 仅成员可用（访客 403）
 	CodeAdminRequired      = "admin_required"       // 标签治理仅管理员

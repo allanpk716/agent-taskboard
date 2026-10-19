@@ -171,6 +171,10 @@ func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assig
 		`UPDATE tickets SET assignee_id = ? WHERE seq = ?`, nullInt(toID), full.Seq); err != nil {
 		return AssignResult{}, fmt.Errorf("改派失败：%w", err)
 	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM ticket_collaborators WHERE ticket_seq = ? AND member_id = ?`, full.Seq, toID); err != nil {
+		return AssignResult{}, fmt.Errorf("移出协作者失败：%w", err)
+	}
 	eventSeq, change, err := m.insertAssignedEvent(ctx, tx, full.Seq, authorOf(viewer), fromName, toName, now)
 	if err != nil {
 		return AssignResult{}, err
@@ -179,6 +183,12 @@ func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assig
 		after := full
 		after.AssigneeID = toID
 		after.AssigneeName = toName
+		after.Collaborators = []Collaborator{}
+		for _, c := range full.Collaborators {
+			if c.ID != toID {
+				after.Collaborators = append(after.Collaborators, c)
+			}
+		}
 		after.LastChange = change
 		after.Timeline = append(append([]Event{}, full.Timeline...), Event{
 			Seq: eventSeq, Change: change, At: now, Actor: authorOf(viewer), Type: "assigned",

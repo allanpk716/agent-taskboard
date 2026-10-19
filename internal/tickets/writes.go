@@ -575,10 +575,10 @@ func (m *Manager) appendEvent(ctx context.Context, tx *sql.Tx, ticketSeq int64, 
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO timeline_events (ticket_seq, seq, change_seq, type, actor_member_id, actor_agent_id, at,
-		                            actor_link_id, actor_link_note, actor_author_name, actor_via_agent)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                            actor_system, actor_link_id, actor_link_note, actor_author_name, actor_via_agent)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ticketSeq, seq, change, typ, memberID, agentID, at.Format(time.RFC3339Nano),
-		linkID, actor.LinkNote, authorName, boolToInt(actor.ViaAgent)); err != nil {
+		boolToInt(actor.System), linkID, actor.LinkNote, authorName, boolToInt(actor.ViaAgent)); err != nil {
 		return 0, 0, fmt.Errorf("写入 %s 事件失败：%w", typ, err)
 	}
 	return seq, change, nil
