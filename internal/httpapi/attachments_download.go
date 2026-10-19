@@ -64,6 +64,9 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 				"访客链接只能访问它所指向的那张工单")
 			return
 		}
+		if !a.attachmentTicketVisible(w, r, viewer, att) {
+			return
+		}
 	} else if q := r.URL.Query(); q.Has("sig") {
 		// 签名地址（<img src> 带不了 Bearer 头）：链接 id + 到期 + 签名。
 		linkID, exp, err1 := parseGuestURLQuery(q)
@@ -101,7 +104,11 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// 无 Bearer 也无签名：试会话 cookie（成员网页直接 <img src> 就走这条）。
-		if _, ok := a.viewerFromRequest(w, r); !ok {
+		viewer, ok := a.viewerFromRequest(w, r)
+		if !ok {
+			return
+		}
+		if !a.attachmentTicketVisible(w, r, viewer, att) {
 			return
 		}
 	}
@@ -161,6 +168,32 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(content)
+}
+
+// attachmentTicketVisible 把附件地址反查到工单后走统一可见范围判断；被拒
+// 响应与不存在的附件地址一致。
+func (a *API) attachmentTicketVisible(w http.ResponseWriter, r *http.Request, viewer identity.Viewer, att attachments.AttachmentInfo) bool {
+	if viewer.Kind != identity.ViewerMember {
+		return true
+	}
+	full, err := a.tickets.ByRef(r.Context(), strconv.FormatInt(att.TicketSeq, 10))
+	if err != nil {
+		a.writeTicketError(w, r, att.Ref(), err)
+		return false
+	}
+	visible, err := a.tickets.CanSee(r.Context(), viewer, full)
+	if err != nil {
+		panic(err)
+	}
+	if !visible {
+		if err := a.accessRecords.RecordDenied(r.Context(), att.TicketSeq, viewer, att); err != nil {
+			panic(err)
+		}
+		WriteError(w, http.StatusNotFound, CodeAttachmentNotFound, "没有这个附件",
+			"附件引用从上传响应或工单读取接口拿")
+		return false
+	}
+	return true
 }
 
 // parseGuestURLQuery 取出签名地址的 link 与 exp 参数（缺失时报错误文案）。

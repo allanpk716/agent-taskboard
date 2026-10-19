@@ -356,7 +356,7 @@ func cloneQuery(q url.Values) url.Values {
 // label/no_label、assignee/creator/waiting_on、时间范围、q、changed_after）。
 // 返回解析结果、别名回显（"写法 → 标准值"）与错误。
 func (a *API) parseQueryFilters(ctx context.Context, viewer identity.Viewer, q url.Values) (tickets.ListQuery, []string, *Error) {
-	fq := tickets.ListQuery{Status: "open", ViewerMemberID: viewer.Member.ID}
+	fq := tickets.ListQuery{Status: "open", ViewerMemberID: viewer.Member.ID, Viewer: viewer}
 	if s := q.Get("status"); s != "" {
 		if !containsStringIn([]string{"open", "closed", "all"}, s) {
 			return fq, nil, NewError(http.StatusUnprocessableEntity, CodeInvalidStatus,

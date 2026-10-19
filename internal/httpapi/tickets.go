@@ -362,6 +362,20 @@ func (a *API) loadTicketForViewer(w http.ResponseWriter, r *http.Request, viewer
 			"访客链接只能访问它所指向的那张工单")
 		return tickets.Full{}, false
 	}
+	if viewer.Kind == identity.ViewerMember {
+		visible, err := a.tickets.CanSee(r.Context(), viewer, full)
+		if err != nil {
+			panic(err)
+		}
+		if !visible {
+			if err := a.accessRecords.RecordDenied(r.Context(), full.Seq, viewer); err != nil {
+				panic(err)
+			}
+			WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
+				"用工单编号（YYYYMMDD-NNN）或全局序号引用；编号按北京时间分配")
+			return tickets.Full{}, false
+		}
+	}
 	return full, true
 }
 

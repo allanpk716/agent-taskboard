@@ -27,7 +27,7 @@ func (a *API) handleInbox(w http.ResponseWriter, r *http.Request) {
 			"访客没有收件箱；用 GET /api/v1/session 找到链接指向的工单，再读它的 waiting_on")
 		return
 	}
-	items, err := a.tickets.Inbox(r.Context(), viewer.Member.ID)
+	items, err := a.tickets.Inbox(r.Context(), viewer)
 	if err != nil {
 		panic(err)
 	}

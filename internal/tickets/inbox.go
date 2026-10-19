@@ -8,6 +8,8 @@ import (
 	"database/sql"
 	"strconv"
 	"time"
+
+	"github.com/allanpk716/agent-taskboard/internal/identity"
 )
 
 // InboxItem 是收件箱的一项：轮到我的工单 + 原因 + 增量读取地址。
@@ -36,26 +38,14 @@ type InboxItem struct {
 // Inbox 列出 memberID 当前轮到的全部开启工单（按工单序号）。
 // read_new 的 after 是我在该单最后一条任意事件（不只回复）的 seq——
 // 收件箱项要读的是「上次我看过之后别人做了什么」。
-func (m *Manager) Inbox(ctx context.Context, memberID int64) ([]InboxItem, error) {
+func (m *Manager) Inbox(ctx context.Context, viewer identity.Viewer) ([]InboxItem, error) {
+	memberID := viewer.Member.ID
 	triager, err := m.isTriager(ctx, memberID)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := m.db.QueryContext(ctx,
-		`SELECT seq FROM tickets WHERE status = 'open' ORDER BY seq`)
+	seqs, err := m.VisibleSeqs(ctx, viewer)
 	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var seqs []int64
-	for rows.Next() {
-		var seq int64
-		if err := rows.Scan(&seq); err != nil {
-			return nil, err
-		}
-		seqs = append(seqs, seq)
-	}
-	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	items := []InboxItem{}

@@ -61,7 +61,7 @@ test('指派人只看到让我的Agent处理', async ({ page, request }) => {
 
 test('没有Agent token时顶部两步引导但不阻止复制', async ({ page, request }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
-  const number = await createTicket(request, { title: '还没签发token的成员工单' })
+  const number = await createTicket(request, { title: '还没签发token的成员工单', assignee: '王工' })
   const worker = await wang()
   await login(page, worker)
   await page.goto(`/t/${number}`)

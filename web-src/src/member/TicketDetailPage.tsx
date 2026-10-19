@@ -977,7 +977,13 @@ export function TicketDetailPage({
         void markTicketNotificationsRead(got.number).catch(() => {})
       }
     } catch (e) {
-      setError(e instanceof ApiError ? `${e.message}（${e.code}）` : '读取工单失败')
+      setError(
+        e instanceof ApiError && e.code === 'ticket_not_found'
+          ? '找不到这张工单，或你没有权限查看'
+          : e instanceof ApiError
+            ? `${e.message}（${e.code}）`
+            : '读取工单失败',
+      )
     }
   }, [ticketRef])
   useEffect(() => {

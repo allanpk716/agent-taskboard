@@ -230,8 +230,10 @@ func newQueryWorld(t testing.TB) *queryWorld {
 	t.Helper()
 	s := tbtest.Start(t)
 	s.CreateAdmin("王工", "secret-pass")
-	s.CreateMember("李工", "secret-pass")
-	s.CreateMember("赵工", "secret-pass")
+	// 查询场景断言的是全局列表/计数语义；把查询者设为管理员，避免旧
+	// “成员可见全部”假设影响可见范围测试。
+	s.CreateAdmin("李工", "secret-pass")
+	s.CreateAdmin("赵工", "secret-pass")
 	webWang := s.Login("王工", "secret-pass")
 	webLi := s.Login("李工", "secret-pass")
 	webZhao := s.Login("赵工", "secret-pass")
