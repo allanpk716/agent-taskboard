@@ -158,17 +158,18 @@ func (m *Manager) createGuestLinkTx(ctx context.Context, tx *sql.Tx, ticketSeq i
 
 // GuestLinkInfo 是访客链接的列表项：不含密钥（明文只在创建响应里出现一次）。
 type GuestLinkInfo struct {
-	ID           int64
-	Note         string
-	ExpiresAt    time.Time
-	RevokedAt    *time.Time
-	ClaimedAt    *time.Time
-	ClaimName    string
-	CanEditBrief bool
-	CreatedBy    Author
-	CreatedAt    time.Time
-	UseCount     int
-	DeviceCount  int
+	ID                 int64
+	Note               string
+	ExpiresAt          time.Time
+	RevokedAt          *time.Time
+	ClaimedAt          *time.Time
+	AccessCodeLockedAt *time.Time
+	ClaimName          string
+	CanEditBrief       bool
+	CreatedBy          Author
+	CreatedAt          time.Time
+	UseCount           int
+	DeviceCount        int
 }
 
 // GuestLinks 列出 ref 指向的工单的全部访客链接（成员视角；访客 403 members_only
@@ -186,6 +187,7 @@ func (m *Manager) GuestLinks(ctx context.Context, ref string) ([]GuestLinkInfo, 
 func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]GuestLinkInfo, error) {
 	rows, err := q.QueryContext(ctx, `
 		SELECT g.id, g.note, g.expires_at, g.revoked_at, g.claimed_at, g.claim_name,
+		       g.access_code_locked_at,
 		       g.can_edit_brief, g.created_at,
 		       m.id, m.name, a.id, a.name, a.revoked_at,
 		       (SELECT COUNT(*) FROM timeline_events e
@@ -214,9 +216,10 @@ func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]Gue
 			agentRevoked sql.NullString
 			claimedAt    sql.NullString
 			claimName    sql.NullString
+			lockedAt     sql.NullString
 		)
 		if err := rows.Scan(&info.ID, &info.Note, &expiresAt, &revokedAt, &claimedAt, &claimName,
-			&canEdit, &createdAt, &memberID, &memberName, &agentID, &agentName, &agentRevoked,
+			&lockedAt, &canEdit, &createdAt, &memberID, &memberName, &agentID, &agentName, &agentRevoked,
 			&info.UseCount, &info.DeviceCount); err != nil {
 			return nil, err
 		}
@@ -233,6 +236,13 @@ func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]Gue
 				return nil, err
 			}
 			info.ClaimedAt = &t
+		}
+		if lockedAt.Valid {
+			t, err := parseTime(lockedAt.String)
+			if err != nil {
+				return nil, err
+			}
+			info.AccessCodeLockedAt = &t
 		}
 		if revokedAt.Valid {
 			t, err := parseTime(revokedAt.String)

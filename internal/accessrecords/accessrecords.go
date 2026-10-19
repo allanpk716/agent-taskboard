@@ -61,7 +61,11 @@ func actorOf(v identity.Viewer) (kind, name string, memberID, agentID, linkID in
 		if v.GuestLink.ClaimName != "" {
 			name += " · " + v.GuestLink.ClaimName
 		}
-		return "guest", name, 0, 0, v.GuestLink.ID, v.GuestLink.Note, "device"
+		entry := v.GuestLink.EntryMethod
+		if entry == "" {
+			entry = "device"
+		}
+		return "guest", name, 0, 0, v.GuestLink.ID, v.GuestLink.Note, entry
 	}
 	kind = "member"
 	name = v.Member.Name

@@ -22,6 +22,7 @@ import {
   reopenTicket,
   replyTicket,
   removeCollaborator,
+  resetGuestAccessCode,
   revokeGuestLink,
   uploadMemberAttachment,
   type GuestLink,
@@ -410,6 +411,7 @@ function LinksDialog({
   const [date, setDate] = useState('') // 「指定日期」写法的到期日（YYYY-MM-DD，管满该日全天）
   const [canEdit, setCanEdit] = useState(false)
   const [created, setCreated] = useState<{ url: string } | null>(null)
+  const [resetCode, setResetCode] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [extendDates, setExtendDates] = useState<Record<number, string>>({}) // 每条链接「延期到该日」的日期
 
@@ -432,6 +434,7 @@ function LinksDialog({
               can_edit_brief: canEdit,
             })
       setCreated({ url: link.url })
+      setResetCode(null)
       setErr(null)
       setNote('')
       onCreated(link)
@@ -470,6 +473,8 @@ function LinksDialog({
                     <div className="mini">
                       {g.status === 'claimed'
                         ? `已认领 · ${g.claim_name ?? ''} · ${g.claimed_at ? fmtShort(g.claimed_at) : ''} · ${g.device_count ?? 0} 台设备`
+                        : g.status === 'access_code_locked'
+                          ? `已认领 · ${g.claim_name ?? ''} · 输码已锁定`
                         : g.status === 'revoked' || g.revoked_at
                           ? '已认领状态不可用'
                           : '未认领'}
@@ -517,6 +522,23 @@ function LinksDialog({
                         >
                           延期到该日
                         </button>{' '}
+                        {g.status !== 'unclaimed' && (
+                          <button
+                            className="btn sm ghost"
+                            onClick={() => {
+                              void resetGuestAccessCode(ticket.number, g.id)
+                                .then((result) => {
+                                  setResetCode(result.access_code)
+                                  toast('✓ 已重置访问码，旧设备已退出')
+                                  void reload()
+                                  onChanged()
+                                })
+                                .catch((e) => toast(e instanceof ApiError ? e.message : '重置访问码失败'))
+                            }}
+                          >
+                            重置访问码
+                          </button>
+                        )}{' '}
                         <button
                           className="btn sm ghost"
                           onClick={() => {
@@ -579,6 +601,14 @@ function LinksDialog({
           >
             复制链接
           </button>
+        </div>
+      )}
+      {resetCode && (
+        <div className="okbox">
+          ✓ 新访问码只显示这一次，请私下转给访客本人。
+          <div className="linkbox" data-reset-code>
+            {resetCode}
+          </div>
         </div>
       )}
       <div className="mrow">

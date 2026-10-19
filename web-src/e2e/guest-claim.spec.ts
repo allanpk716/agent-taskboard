@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext } from '@playwright/test'
-import { loginAdmin } from './helpers'
+import { ADMIN, login, loginAdmin } from './helpers'
 
 async function createGuestLink(request: APIRequestContext, title: string) {
   await loginAdmin(request)
@@ -31,13 +31,44 @@ test('guest claims a link before any ticket content is shown', async ({ page, re
 
   await page.locator('#guest-claim-name').fill('检验科 张三')
   await page.getByRole('button', { name: '是我，打开工单' }).click()
+  const code = page.locator('[data-access-code]')
+  await expect(code).toHaveText(/^\d{6}$/)
+  await expect(page.locator('.claim-card')).toContainText('请截图保存访问码')
+  const accessCode = await code.textContent()
+  await expect(page.locator('.agent-handoff')).toContainText('让我的 Agent 处理')
+  await expect(page.locator('.agent-handoff')).toContainText(`/g/${seed.linkKey}`)
+  await expect(page.locator('[data-agent-access-code]')).toHaveText(accessCode ?? '')
+  await expect(page.locator('.agent-handoff')).toContainText('不要转发给其他人')
+  await page.getByRole('button', { name: '我已保存，打开工单' }).click()
   await expect(page.getByRole('heading', { name: '认领后才可见的工单标题' })).toBeVisible()
   await expect(page.locator('.privacy-note.persistent')).toContainText(
     '🔒 只有你和处理人（管理员）能看到这张工单。',
   )
+  await page.reload()
+  await expect(page.getByRole('heading', { name: '认领后才可见的工单标题' })).toBeVisible()
+  await expect(page.locator('[data-access-code]')).toHaveCount(0)
 
   const other = await browser.newPage()
   await other.goto(`/g/${seed.linkKey}`)
-  await expect(other.getByRole('heading', { name: '这条链接已被认领' })).toBeVisible()
+  await expect(other.getByRole('heading', { name: '输入访问码' })).toBeVisible()
+  await other.locator('#guest-access-code').fill(accessCode ?? '')
+  await other.getByRole('button', { name: '凭访问码进入' }).click()
+  await expect(other.getByRole('heading', { name: '认领后才可见的工单标题' })).toBeVisible()
   await other.close()
+
+  for (let i = 0; i < 5; i++) {
+    const wrong = await request.post('/api/v1/guest-links/enter', {
+      data: { access_code: '000000' },
+      headers: { Authorization: `Bearer ${seed.linkKey}` },
+    })
+    expect(wrong.status(), await wrong.text()).toBe(i === 4 ? 403 : 401)
+  }
+  await login(page, ADMIN)
+  await page.goto(`/t/${seed.number}`)
+  await page.getByRole('button', { name: '访客链接' }).click()
+  const row = page.locator('tr', { hasText: '检验科-张三' })
+  await expect(row.locator('.mini')).toContainText('输码已锁定')
+  await row.getByRole('button', { name: '重置访问码' }).click()
+  await expect(page.locator('[data-reset-code]')).toHaveText(/^\d{6}$/)
+  await expect(page.locator('.okbox')).toContainText('新访问码只显示这一次')
 })

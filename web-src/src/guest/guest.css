@@ -80,6 +80,62 @@
   text-align: center;
 }
 
+.access-code-card {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid #bfd8f4;
+  border-radius: 6px;
+  background: #f6fbff;
+  text-align: center;
+}
+
+.access-code-card > div {
+  color: #23527c;
+  font-size: 13px;
+}
+
+.access-code-card strong {
+  display: block;
+  font-size: 34px;
+  letter-spacing: 8px;
+  line-height: 1.4;
+  margin: 6px 0;
+}
+
+.access-code-card p {
+  color: #5b6673;
+  font-size: 13px;
+  margin: 0;
+}
+
+.agent-handoff {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid #d8e2ea;
+  border-radius: 6px;
+  background: #f7f9fb;
+  text-align: left;
+}
+
+.agent-handoff > div:first-child {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.agent-handoff code {
+  display: block;
+  margin-top: 6px;
+  color: #334155;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.agent-handoff p {
+  color: #5b6673;
+  font-size: 12px;
+  margin: 8px 0 0;
+}
+
 .composer-hints {
   margin: 6px 0 8px;
   color: #77828e;

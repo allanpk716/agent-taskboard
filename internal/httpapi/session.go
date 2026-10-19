@@ -51,6 +51,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/session", a.handleSession)
 	mux.HandleFunc("/api/v1/guest-link", a.handleGuestLinkClaim)
 	mux.HandleFunc("/api/v1/guest-links/claim", a.handleGuestLinkClaim)
+	mux.HandleFunc("/api/v1/guest-links/enter", a.handleGuestLinkClaim)
 	mux.HandleFunc("/api/v1/me/agent-tokens", a.handleAgentTokens)
 	mux.HandleFunc("/api/v1/me/agent-tokens/", a.handleAgentToken)
 	mux.HandleFunc("/api/v1/me/password", a.handleOwnPassword)
