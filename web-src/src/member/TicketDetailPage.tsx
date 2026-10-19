@@ -21,17 +21,19 @@ import {
   revokeGuestLink,
   uploadMemberAttachment,
   type GuestLink,
+  type CreatedGuestLink,
   type Me,
   type MemberRef,
 } from './memberApi'
 import { BriefBubble, EventLine, ReplyBubble } from '../shared/conversation'
 import { DimensionSelect } from '../guest/DimensionSelect'
-import { Lightbox } from '../shared/widgets'
+import { DeactivatedBadge, Lightbox } from '../shared/widgets'
 import { absoluteUrl, authorName, closeReasonText, fmtLinkExpiry, linkExpired } from '../shared/format'
-import { DeactivatedBadge } from '../shared/widgets'
-import { Confirm, Modal, copyText, invalidate, nav, toast } from './ui'
+import { Confirm, Modal, copyText, invalidate, nav, toast, useLocationSearch } from './ui'
 import { HandoffDialog } from './HandoffDialog'
 import { LabelChips, chipClass } from './TicketsPage'
+import { detailListSource, filtersFromSearch, toQuery, toggleLabelCondition } from './listFilters'
+import { useLayoutTier } from './useLayoutTier'
 
 /* ---------------- 弹窗：打标签 ---------------- */
 
@@ -245,14 +247,19 @@ function AssignDialog({
 
 function LinksDialog({
   ticket,
+  links,
+  reload,
+  onCreated,
   onChanged,
   onClose,
 }: {
   ticket: MemberTicket
+  links: GuestLink[] | null
+  reload: () => Promise<void>
+  onCreated: (link: CreatedGuestLink) => void
   onChanged: () => void
   onClose: () => void
 }) {
-  const [links, setLinks] = useState<GuestLink[] | null>(null)
   const [note, setNote] = useState('')
   const [days, setDays] = useState('30')
   const [date, setDate] = useState('') // 「指定日期」写法的到期日（YYYY-MM-DD，管满该日全天）
@@ -260,17 +267,6 @@ function LinksDialog({
   const [created, setCreated] = useState<{ url: string } | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [extendDates, setExtendDates] = useState<Record<number, string>>({}) // 每条链接「延期到该日」的日期
-
-  const reload = useCallback(async () => {
-    try {
-      setLinks(await fetchGuestLinks(ticket.number))
-    } catch {
-      setLinks([])
-    }
-  }, [ticket.number])
-  useEffect(() => {
-    void reload()
-  }, [reload])
 
   async function create() {
     if (!note.trim()) {
@@ -293,6 +289,7 @@ function LinksDialog({
       setCreated({ url: link.url })
       setErr(null)
       setNote('')
+      onCreated(link)
       onChanged()
       void reload()
     } catch (e) {
@@ -522,6 +519,95 @@ function CloseDialog({
   )
 }
 
+function remainingDays(iso: string): number {
+  return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000))
+}
+
+function TicketInfoColumn({
+  ticket,
+  links,
+  knownUrls,
+  onAssign,
+  onLabels,
+  onLinks,
+  onLabelToggle,
+}: {
+  ticket: MemberTicket
+  links: GuestLink[] | null
+  knownUrls: Record<number, string>
+  onAssign: () => void
+  onLabels: () => void
+  onLinks: () => void
+  onLabelToggle: (label: string) => void
+}) {
+  const open = ticket.status === 'open'
+  return (
+    <aside className="dinfo" role="region" aria-label="工单信息">
+      <section>
+        <div className="sec-t">状态</div>
+        <div className="ival">
+          <span className="badge kind">{ticket.kind === 'task' ? '任务' : '反馈'}</span>
+          <span>{open ? `等待 ${ticket.waiting_on.text}` : '已关闭'}</span>
+        </div>
+      </section>
+      <section>
+        <div className="sec-t">指派人</div>
+        <div className="ival">
+          <b>{ticket.assignee?.member?.name ?? '未指派'}</b>
+          {ticket.assignee?.member?.deactivated && <DeactivatedBadge />}
+          <button className="btn sm ghost" onClick={onAssign}>
+            {ticket.assignee?.member ? '改派' : '指派'}
+          </button>
+        </div>
+      </section>
+      <section>
+        <div className="sec-t">发起人</div>
+        <div className="ival">
+          {authorName(ticket.creator)}
+          {ticket.creator.member?.deactivated && <DeactivatedBadge />}
+          {ticket.template ? ` · 模板 ${ticket.template}` : ''}
+        </div>
+      </section>
+      <section>
+        <div className="sec-t">标签</div>
+        <div className="ival">
+          <LabelChips labels={ticket.labels ?? []} onToggle={onLabelToggle} />
+          <button className="btn sm ghost" onClick={onLabels}>
+            编辑
+          </button>
+        </div>
+      </section>
+      <section>
+        <div className="sec-t">访客链接</div>
+        {links === null ? (
+          <div className="hint">加载中…</div>
+        ) : links.length === 0 ? (
+          <div className="hint">还没有访客链接</div>
+        ) : (
+          links.map((link) => {
+            const dead = !!link.revoked_at || linkExpired(link.expires_at)
+            return (
+              <article className="link-card" key={link.id}>
+                <b>{link.note}</b>
+                <div>{link.can_edit_brief ? '可填写说明' : '不能填写说明'}</div>
+                <div className="short-link">{knownUrls[link.id] ?? '/g/••••••'}</div>
+                <div>
+                  {dead ? '已失效' : `剩余 ${remainingDays(link.expires_at)} 天`}
+                  {' · '}
+                  {`已使用 ${link.use_count ?? 0} 次`}
+                </div>
+                <button className="btn sm ghost" onClick={onLinks}>
+                  管理
+                </button>
+              </article>
+            )
+          })
+        )}
+      </section>
+    </aside>
+  )
+}
+
 /* ---------------- 详情页 ---------------- */
 
 type ActorFilter = 'all' | 'member' | 'agent'
@@ -655,10 +741,14 @@ function BriefEditDialog({
 export function TicketDetailPage({
   ticketRef,
   me,
+  returnTo = '/tickets',
 }: {
   ticketRef: string
   me?: Me
+  returnTo?: string
 }) {
+  const tier = useLayoutTier()
+  const search = useLocationSearch()
   const [ticket, setTicket] = useState<MemberTicket | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [lightbox, setLightbox] = useState<string | null>(null)
@@ -666,6 +756,9 @@ export function TicketDetailPage({
   const [dialog, setDialog] = useState<'label' | 'brief' | 'assign' | 'links' | 'close' | 'reopen' | 'handoff' | null>(null)
   const [mobileMenu, setMobileMenu] = useState(false)
   const [members, setMembers] = useState<MemberRef[]>([])
+  const [guestLinks, setGuestLinks] = useState<GuestLink[] | null>(null)
+  const [knownLinkUrls, setKnownLinkUrls] = useState<Record<number, string>>({})
+  const [allInfoOpen, setAllInfoOpen] = useState(false)
   const markedRef = useRef<string | null>(null)
 
   const load = useCallback(async () => {
@@ -691,9 +784,21 @@ export function TicketDetailPage({
       .catch(() => {})
   }, [])
 
+  const reloadGuestLinks = useCallback(async () => {
+    try {
+      setGuestLinks(await fetchGuestLinks(ticketRef))
+    } catch {
+      setGuestLinks([])
+    }
+  }, [ticketRef])
+  useEffect(() => {
+    void reloadGuestLinks()
+  }, [reloadGuestLinks, tier])
+
   function changed() {
     void load()
     invalidate()
+    if (ticket) window.dispatchEvent(new CustomEvent('tb:ticket-changed', { detail: ticket.number }))
   }
 
   if (error) {
@@ -717,6 +822,19 @@ export function TicketDetailPage({
   const deliveredToMe =
     open && ticket.viewer.your_turn && ticket.waiting_on.reason.includes('交付') && ticket.waiting_on.reason.includes('验收')
 
+  function toggleDetailLabel(label: string) {
+    const { fromInbox, query: sourceQuery } = detailListSource(search)
+    const filters = fromInbox
+      ? filtersFromSearch('status=open')
+      : filtersFromSearch(sourceQuery)
+    const query = toQuery({ ...filters, ...toggleLabelCondition(filters, label) })
+    if (tier === 'narrow' || tier === 'mobile') {
+      nav(`/tickets?${query}`)
+      return
+    }
+    nav(`/t/${ticket!.number}?${query}`)
+  }
+
   function StatusBadge() {
     if (closed) return <span className="badge closed">已关闭 · {closeReasonText(ticket!.close_reason)}</span>
     if (ticket!.viewer.your_turn)
@@ -728,132 +846,8 @@ export function TicketDetailPage({
     return <span className="badge waiting">等待 {ticket!.waiting_on.text}</span>
   }
 
-  return (
-    <div className="bpage detail">
-      <div className="dhead">
-        <a
-          className="back"
-          href="/tickets"
-          onClick={(e) => {
-            e.preventDefault()
-            nav('/tickets')
-          }}
-        >
-          ‹ 列表
-        </a>
-        <div className="dmeta">
-          {ticket.number} · #{ticket.seq} · {ticket.kind === 'task' ? '任务' : '反馈'}
-          {ticket.template ? ` · 模板 ${ticket.template}` : ''}
-        </div>
-        <h1>{ticket.title}</h1>
-        <div className="tc-top">
-          <StatusBadge />
-        </div>
-        <button
-          type="button"
-          className="dmore"
-          aria-label="更多操作"
-          aria-expanded={mobileMenu}
-          onClick={() => setMobileMenu((v) => !v)}
-        >
-          ⋯
-        </button>
-        {mobileMenu && (
-          <div className="dmenu" role="menu" aria-label="工单操作">
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setMobileMenu(false)
-                setDialog('handoff')
-              }}
-            >
-              🤖 交给 Agent
-            </button>
-          </div>
-        )}
-        <details className="mmeta">
-          <summary>标签 · 指派 · 访客链接</summary>
-          <div className="kv">
-            <span>标签</span>
-            <span>
-              <LabelChips labels={ticket.labels ?? []} />{' '}
-              <button className="btn sm ghost" onClick={() => setDialog('label')}>
-                ＋
-              </button>
-            </span>
-          </div>
-          <div className="kv">
-            <span>发起人</span>
-            <span>
-              <b>{authorName(ticket.creator)}</b>
-              {ticket.creator.member?.deactivated && <DeactivatedBadge />}
-            </span>
-          </div>
-          <div className="kv">
-            <span>指派人</span>
-            <span>
-              <span>
-                <b>{ticket.assignee?.member?.name ?? '未指派'}</b>
-                {ticket.assignee?.member?.deactivated && <DeactivatedBadge />}{' '}
-              </span>
-              <button className="btn sm ghost" onClick={() => setDialog('assign')}>
-                {ticket.assignee?.member ? '改派' : '指派'}
-              </button>
-            </span>
-          </div>
-          <div className="kv">
-            <span>等待方</span>
-            <b>{closed ? '无（已关闭）' : ticket.waiting_on.text}</b>
-          </div>
-          <div className="kv">
-            <span>访客链接</span>
-            <span>
-              <button className="btn sm ghost" onClick={() => setDialog('links')}>
-                管理
-              </button>
-            </span>
-          </div>
-          <div className="kv">
-            <span>更多</span>
-            <span>
-              {open ? (
-                <button className="btn sm ghost" onClick={() => setDialog('close')}>
-                  关闭工单
-                </button>
-              ) : (
-                <button className="btn sm ghost" onClick={() => setDialog('reopen')}>
-                  重新开启
-                </button>
-              )}
-            </span>
-          </div>
-        </details>
-        <div className="actrow">
-          <button className="btn sm ghost" onClick={() => setDialog('label')}>
-            🏷 标签
-          </button>
-          <button className="btn sm ghost" onClick={() => setDialog('assign')}>
-            👤 {ticket.assignee?.member ? '改派' : '指派'}
-          </button>
-          <button className="btn sm ghost handoff-btn" onClick={() => setDialog('handoff')}>
-            🤖 交给 Agent
-          </button>
-          <button className="btn sm ghost" onClick={() => setDialog('links')}>
-            🔗 访客链接
-          </button>
-          {open ? (
-            <button className="btn sm ghost" onClick={() => setDialog('close')}>
-              ✔ 关闭
-            </button>
-          ) : (
-            <button className="btn sm ghost" onClick={() => setDialog('reopen')}>
-              ↺ 重开
-            </button>
-          )}
-        </div>
-      </div>
-
+  const detailMain = (
+    <>
       {deliveredToMe && (
         <div className="accept">
           <div>📦 指派人已交付，等待你的验收</div>
@@ -925,6 +919,173 @@ export function TicketDetailPage({
           </button>
         </div>
       )}
+    </>
+  )
+
+  return (
+    <div className="bpage detail">
+      <div className="dhead">
+        <a
+          className="back"
+          href={returnTo}
+          onClick={(e) => {
+            e.preventDefault()
+            nav(returnTo)
+          }}
+        >
+          ‹ 列表
+        </a>
+        <div className="dmeta">
+          {ticket.number} · #{ticket.seq} · {ticket.kind === 'task' ? '任务' : '反馈'}
+          {ticket.template ? ` · 模板 ${ticket.template}` : ''}
+        </div>
+        <h1>{ticket.title}</h1>
+        <div className="tc-top">
+          <StatusBadge />
+        </div>
+        <button
+          type="button"
+          className="dmore"
+          aria-label="更多操作"
+          aria-expanded={mobileMenu}
+          onClick={() => setMobileMenu((v) => !v)}
+        >
+          ⋯
+        </button>
+        {mobileMenu && (
+          <div className="dmenu" role="menu" aria-label="工单操作">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setMobileMenu(false)
+                setDialog('handoff')
+              }}
+            >
+              🤖 交给 Agent
+            </button>
+          </div>
+        )}
+        {(tier === 'mobile' || tier === 'narrow') && (
+          <details className="mmeta">
+            <summary>标签 · 指派 · 访客链接</summary>
+            <div className="kv">
+              <span>标签</span>
+              <span>
+                <LabelChips labels={ticket.labels ?? []} onToggle={toggleDetailLabel} />{' '}
+                <button className="btn sm ghost" onClick={() => setDialog('label')}>
+                  ＋
+                </button>
+              </span>
+            </div>
+            <div className="kv">
+              <span>发起人</span>
+              <b>{authorName(ticket.creator)}</b>
+              {ticket.creator.member?.deactivated && <DeactivatedBadge />}
+            </div>
+            <div className="kv">
+              <span>指派人</span>
+              <span>
+                <b>{ticket.assignee?.member?.name ?? '未指派'}</b>{' '}
+                {ticket.assignee?.member?.deactivated && <DeactivatedBadge />}{' '}
+                <button className="btn sm ghost" onClick={() => setDialog('assign')}>
+                  {ticket.assignee?.member ? '改派' : '指派'}
+                </button>
+              </span>
+            </div>
+            <div className="kv">
+              <span>等待方</span>
+              <b>{closed ? '无（已关闭）' : ticket.waiting_on.text}</b>
+            </div>
+            <div className="kv">
+              <span>访客链接</span>
+              <span>
+                <button className="btn sm ghost" onClick={() => setDialog('links')}>
+                  管理
+                </button>
+              </span>
+            </div>
+            <div className="kv">
+              <span>更多</span>
+              <span>
+                {open ? (
+                  <button className="btn sm ghost" onClick={() => setDialog('close')}>
+                    关闭工单
+                  </button>
+                ) : (
+                  <button className="btn sm ghost" onClick={() => setDialog('reopen')}>
+                    重新开启
+                  </button>
+                )}
+              </span>
+            </div>
+          </details>
+        )}
+        <div className="actrow" role="region" aria-label="工单操作">
+          <button className="btn sm ghost" onClick={() => setDialog('label')}>
+            🏷 标签
+          </button>
+          <button className="btn sm ghost" onClick={() => setDialog('assign')}>
+            👤 {ticket.assignee?.member ? '改派' : '指派'}
+          </button>
+          <button className="btn sm ghost handoff-btn" onClick={() => setDialog('handoff')}>
+            🤖 交给 Agent
+          </button>
+          <button className="btn sm ghost" onClick={() => setDialog('links')}>
+            🔗 访客链接
+          </button>
+          {open ? (
+            <button className="btn sm ghost" onClick={() => setDialog('close')}>
+              ✔ 关闭
+            </button>
+          ) : (
+            <button className="btn sm ghost" onClick={() => setDialog('reopen')}>
+              ↺ 重开
+            </button>
+          )}
+        </div>
+        {tier === 'medium' && (
+          <div className="dsummary" role="region" aria-label="工单信息摘要">
+            <span>{ticket.kind === 'task' ? '任务' : '反馈'}</span>
+            <span>{open ? `等待 ${ticket.waiting_on.text}` : '已关闭'}</span>
+            <span>指派 {ticket.assignee?.member?.name ?? '未指派'}</span>
+            <span>{(ticket.labels ?? []).join('、') || '无标签'}</span>
+            <span>{`访客链接 ${guestLinks?.length ?? 0} 条`}</span>
+            <button type="button" className="btn sm ghost" onClick={() => setAllInfoOpen((v) => !v)}>
+              {allInfoOpen ? '收起 ▴' : '全部信息 ▾'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {tier === 'medium' && allInfoOpen && (
+        <TicketInfoColumn
+          ticket={ticket}
+          links={guestLinks}
+          knownUrls={knownLinkUrls}
+          onAssign={() => setDialog('assign')}
+          onLabels={() => setDialog('label')}
+          onLinks={() => setDialog('links')}
+          onLabelToggle={toggleDetailLabel}
+        />
+      )}
+
+      {tier === 'wide' ? (
+        <div className="detail-body">
+          <div className="detail-main">{detailMain}</div>
+          <TicketInfoColumn
+            ticket={ticket}
+            links={guestLinks}
+            knownUrls={knownLinkUrls}
+            onAssign={() => setDialog('assign')}
+            onLabels={() => setDialog('label')}
+            onLinks={() => setDialog('links')}
+            onLabelToggle={toggleDetailLabel}
+          />
+        </div>
+      ) : (
+        detailMain
+      )}
 
       {dialog === 'label' && <LabelDialog ticket={ticket} onChanged={changed} onClose={() => setDialog(null)} />}
       {dialog === 'brief' && <BriefEditDialog ticket={ticket} onChanged={changed} onClose={() => setDialog(null)} />}
@@ -937,7 +1098,18 @@ export function TicketDetailPage({
           onClose={() => setDialog(null)}
         />
       )}
-      {dialog === 'links' && <LinksDialog ticket={ticket} onChanged={changed} onClose={() => setDialog(null)} />}
+      {dialog === 'links' && (
+        <LinksDialog
+          ticket={ticket}
+          links={guestLinks}
+          reload={reloadGuestLinks}
+          onCreated={(link) => {
+            setKnownLinkUrls((m) => ({ ...m, [link.id]: absoluteUrl(link.url) }))
+          }}
+          onChanged={changed}
+          onClose={() => setDialog(null)}
+        />
+      )}
       {dialog === 'handoff' && (
         <HandoffDialog
           handoffText={ticket.handoff_text ?? ''}

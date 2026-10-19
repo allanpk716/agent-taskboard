@@ -28,7 +28,7 @@ import (
 
 // 列表接受的查询参数（写错 → 422 unknown_parameter）。
 var queryAllowedParams = []string{
-	"status", "kind", "template", "label", "no_label", "assignee", "creator", "waiting_on", "q",
+	"status", "kind", "template", "label", "label_any", "no_label", "assignee", "creator", "waiting_on", "q",
 	"actor_kind",
 	"created_after", "created_before", "updated_after", "updated_before", "closed_after", "closed_before",
 	"changed_after", "sort", "limit", "page_token", "include", "format",
@@ -38,7 +38,7 @@ var queryAllowedParams = []string{
 var countsRejectedParams = []string{"sort", "limit", "page_token", "include", "format"}
 
 // 计数分组的内建维度（group_by 还可以是一个标签维度）。
-var countsBuiltinGroups = []string{"status", "kind", "assignee", "close_reason", "waiting_on"}
+var countsBuiltinGroups = []string{"status", "kind", "assignee", "close_reason", "waiting_on", "undimensioned"}
 
 // 支持的排序键（同键时一律按工单序号倒序）。
 var querySorts = []string{"-updated", "updated", "-created", "created", "-closed", "change"}
@@ -193,6 +193,8 @@ func (a *API) handleTicketCounts(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, apiErr)
 		return
 	}
+	echoed := fq
+	ignoreGroupFilters(&fq, groupBy)
 	rows, err := a.tickets.QueryList(r.Context(), fq)
 	if err != nil {
 		panic(err)
@@ -228,6 +230,13 @@ func (a *API) handleTicketCounts(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			continue
+		} else if groupBy == "undimensioned" {
+			for _, l := range row.Full.Labels {
+				if _, _, hasDim := labels.SplitLabel(l); !hasDim {
+					bump(l)
+				}
+			}
+			continue
 		}
 		switch groupBy {
 		case "assignee":
@@ -260,7 +269,7 @@ func (a *API) handleTicketCounts(w http.ResponseWriter, r *http.Request) {
 		"group_by": groupBy,
 		"total":    len(rows),
 		"groups":   groups,
-		"filters":  queryFiltersEcho(fq, ""),
+		"filters":  queryFiltersEcho(echoed, ""),
 		"cursor":   cursor,
 	}
 	if len(resolved) > 0 {
@@ -270,6 +279,44 @@ func (a *API) handleTicketCounts(w http.ResponseWriter, r *http.Request) {
 		body["note"] = "同一工单在该维度有多个值时每个值各算一次，各组之和可能大于 total"
 	}
 	writeJSON(w, http.StatusOK, body)
+}
+
+// ignoreGroupFilters 让分面计数忽略本维度的条件，其他条件照常生效。
+func ignoreGroupFilters(fq *tickets.ListQuery, groupBy string) {
+	if groupBy == "undimensioned" {
+		fq.Labels = filterDimensionedLabels(fq.Labels, true)
+		fq.NoLabels = filterDimensionedLabels(fq.NoLabels, true)
+		fq.LabelAny = filterDimensionedLabels(fq.LabelAny, true)
+		return
+	}
+	fq.LabelAny = filterLabelsByDimension(fq.LabelAny, groupBy)
+	fq.NoLabels = filterLabelsByDimension(fq.NoLabels, groupBy)
+}
+
+func filterLabelsByDimension(list []string, dimension string) []string {
+	out := make([]string, 0, len(list))
+	for _, l := range list {
+		if dim, _, hasDim := labels.SplitLabel(l); !hasDim || dim != dimension {
+			out = append(out, l)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func filterDimensionedLabels(list []string, dimensioned bool) []string {
+	out := make([]string, 0, len(list))
+	for _, l := range list {
+		if _, _, hasDim := labels.SplitLabel(l); hasDim == dimensioned {
+			out = append(out, l)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // groupView 是计数响应里的一个组。
@@ -343,17 +390,30 @@ func (a *API) parseQueryFilters(ctx context.Context, viewer identity.Viewer, q u
 		fq.Template = tpl
 	}
 	var resolved []string
-	resolveLabels := func(key string, dst *[]string) *Error {
+	resolveLabels := func(key string, dst *[]string, status int) *Error {
 		for _, raw := range q[key] {
 			if strings.TrimSpace(raw) == "" {
+				if key == "label_any" {
+					return NewError(status, CodeInvalidLabelAny,
+						"label_any 必须写成 维度:值", "不带维度的标签用 label；带维度的值写成 机型:UD-2300")
+				}
 				continue
+			}
+			if key == "label_any" {
+				if _, val, hasDim := labels.SplitLabel(raw); !hasDim {
+					return NewError(status, CodeInvalidLabelAny,
+						"label_any 必须写成 维度:值", "不带维度的标签用 label；带维度的值写成 机型:UD-2300")
+				} else if val == "*" {
+					return NewError(status, CodeWildcardNotAllowed,
+						"label_any 不接受通配 "+raw, "通配用 label=维度:*；label_any 写字典中的标准值")
+				}
 			}
 			res, err := a.tickets.Labels().ResolveFilter(ctx, raw)
 			if err != nil {
 				var unknown *labels.UnknownValueError
 				switch {
 				case errors.As(err, &unknown):
-					return NewErrorExtra(http.StatusUnprocessableEntity, CodeUnknownLabelValue,
+					return NewErrorExtra(status, CodeUnknownLabelValue,
 						unknown.Error(), "改用字典中的标准值；完整字典见 GET /api/v1/labels",
 						map[string]any{"suggestions": unknown.Suggestions})
 				case errors.Is(err, labels.ErrUnknownDimension):
@@ -361,7 +421,7 @@ func (a *API) parseQueryFilters(ctx context.Context, viewer identity.Viewer, q u
 					if i := strings.Index(raw, ":"); i >= 0 {
 						dim = raw[:i]
 					}
-					return NewError(http.StatusUnprocessableEntity, CodeUnknownDimension,
+					return NewError(status, CodeUnknownDimension,
 						"没有标签维度「"+dim+"」", "新维度只能由管理员添加")
 				default:
 					panic(err)
@@ -374,10 +434,13 @@ func (a *API) parseQueryFilters(ctx context.Context, viewer identity.Viewer, q u
 		}
 		return nil
 	}
-	if err := resolveLabels("label", &fq.Labels); err != nil {
+	if err := resolveLabels("label", &fq.Labels, http.StatusUnprocessableEntity); err != nil {
 		return fq, nil, err
 	}
-	if err := resolveLabels("no_label", &fq.NoLabels); err != nil {
+	if err := resolveLabels("label_any", &fq.LabelAny, http.StatusBadRequest); err != nil {
+		return fq, nil, err
+	}
+	if err := resolveLabels("no_label", &fq.NoLabels, http.StatusUnprocessableEntity); err != nil {
 		return fq, nil, err
 	}
 
@@ -513,10 +576,15 @@ func queryFiltersEcho(fq tickets.ListQuery, sortKey string) map[string]any {
 	if noLabels == nil {
 		noLabels = []string{}
 	}
+	labelAny := fq.LabelAny
+	if labelAny == nil {
+		labelAny = []string{}
+	}
 	echo := map[string]any{
-		"status":   fq.Status,
-		"label":    labels,
-		"no_label": noLabels,
+		"status":    fq.Status,
+		"label":     labels,
+		"label_any": labelAny,
+		"no_label":  noLabels,
 	}
 	if fq.Kind != "" {
 		echo["kind"] = fq.Kind

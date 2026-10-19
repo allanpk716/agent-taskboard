@@ -173,9 +173,9 @@ test('打开访客链接看到徽标与说明气泡，回复并附带粘贴的�
   // 成员 Agent 回复过 → 轮到访客
   await expect(page.locator('.turn-badge')).toHaveText('● 现在轮到你回复')
 
-  // 头部：类型、编号、标题、链接备注
+  // 头部：顶栏（编号）、标题卡片（类型）、链接备注
+  await expect(page.locator('header')).toContainText(seed.number)
   await expect(page.locator('.head > .meta')).toContainText('反馈')
-  await expect(page.locator('.head > .meta')).toContainText(seed.number)
   await expect(page.getByRole('heading', { name: 'UD-2300 质控时报警 E-203，无法开始测试' })).toBeVisible()
   await expect(page.locator('.link-meta')).toContainText('检验科-张三')
 

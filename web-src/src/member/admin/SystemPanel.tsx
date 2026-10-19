@@ -7,12 +7,12 @@ import { fmtBeijing } from '../../shared/format'
 import {
   applyUpdate,
   fetchBackupsStatus,
-  fetchHealth,
   fetchUpdateStatus,
   type BackupsStatus,
   type UpdateResult,
   type UpdateStatus,
 } from './systemApi'
+import { fetchHealth } from '../../shared/health'
 
 // 平台时区固定为北京时间：展示不随浏览器所在时区变（评审 P2-14）。
 function fmtTime(iso: string | null): string {

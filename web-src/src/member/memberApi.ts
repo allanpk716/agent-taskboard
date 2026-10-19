@@ -1,6 +1,7 @@
 // 成员网页调用的 API（网页会话 cookie；错误结构见 api.ts）。
 import { api, ApiError } from '../api'
 import { compressImage } from '../shared/compress'
+import { fetchServerVersion } from '../shared/health'
 import type { Author, TicketView } from '../shared/types'
 
 export interface Me {
@@ -13,12 +14,19 @@ export interface Me {
 export interface InboxItem {
   number: string
   title: string
-  role: 'assignee' | 'creator'
+  role: 'assignee' | 'creator' | 'triager'
   reason: string
+  reason_code: string
   since_seq: number | null
   read_new: string
   read_full: string
+  kind: string
+  creator: string
   assignee?: Author | null
+  labels: string[]
+  waiting_on: string
+  who: string
+  updated_at: string
 }
 
 export interface InboxResponse {
@@ -55,6 +63,8 @@ export async function fetchSession(): Promise<{ viewer: { kind: string; member: 
 export async function fetchInbox(): Promise<InboxResponse> {
   return api('/api/v1/inbox')
 }
+
+export { fetchServerVersion }
 
 export async function fetchMembers(): Promise<MemberRef[]> {
   const body = await api('/api/v1/members')
@@ -438,6 +448,7 @@ export interface GuestLink {
   can_edit_brief: boolean
   created_by: { member?: { name: string }; agent?: { name: string } | null }
   created_at: string
+  use_count?: number
 }
 
 export interface CreatedGuestLink {

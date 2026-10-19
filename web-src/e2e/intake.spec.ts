@@ -177,6 +177,7 @@ test('维度下拉框输入别名能选中对应的标准值', async ({ page, re
 //    对话，时间线出现修订事件，插图挂在说明里。必填项在建单时已填齐，提交
 //    不会被拦。
 test('修改说明提交后回到对话，时间线出现修订事件', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
   const seed = await seedEditableTicket(request)
   await page.goto(`/g/${seed.linkKey}`)
 
@@ -244,7 +245,7 @@ test('入口提交的截图与附件在建单后写进说明，不确定不打�
   await expect(brief.locator('.atts')).toHaveCount(0)
 
   // 「不确定」不打机型标签；创建者是访客（带入口备注）
-  const number = (await page.locator('.head .meta').first().textContent())!.match(/\d{8}-\d+/)![0]
+  const number = (await page.locator('header').first().textContent())!.match(/\d{8}-\d+/)![0]
   await loginAdmin(request)
   const res = await request.get(`/api/v1/tickets/${number}`)
   expect(res.ok()).toBeTruthy()

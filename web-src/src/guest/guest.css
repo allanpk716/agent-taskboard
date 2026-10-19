@@ -18,6 +18,14 @@
 }
 
 /* 头部 */
+.guest-top {
+  background: #fff;
+  border-bottom: 1px solid #ddd;
+  color: #555;
+  font-size: 13px;
+  padding: 10px 16px;
+  text-align: center;
+}
 .head {
   background: #fff;
   padding: 14px 16px 10px;
@@ -59,6 +67,21 @@
 }
 .link-meta {
   margin-left: 4px;
+}
+.guest-title-card {
+  border: 1px solid #e2e6ec;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
+  margin: 16px auto 12px;
+  max-width: 688px;
+}
+.guest-version {
+  color: #8a9099;
+  font-size: 12px;
+  margin: 0 auto;
+  max-width: 720px;
+  padding: 12px 16px;
+  text-align: center;
 }
 
 /* 气泡 */

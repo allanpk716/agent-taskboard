@@ -25,7 +25,7 @@ test('登录后进入成员网页，收件箱按原因显示卡片', async ({ pa
   await expect(card.locator('.badge.reason')).toHaveText('新指派给你')
   await expect(card).toContainText('收件箱原因卡片的工单')
   await card.click()
-  await expect(page).toHaveURL(new RegExp(`/t/${number}$`))
+  await expect(page).toHaveURL(new RegExp(`/t/${number}(\\?|$)`))
 })
 
 // 2. 工单列表：按状态、指派、操作方（本人/Agent）筛选，按关键词搜索。
@@ -69,6 +69,7 @@ test('工单列表按状态、指派与本人/Agent筛选，支持关键词', as
 
   // 指派 = 指派给我：只剩 B
   await grp('指派').getByRole('button', { name: '指派给我' }).click()
+  await expect(page).toHaveURL(/assignee=me/)
   await expect(page.locator('.tcard', { hasText: b })).toBeVisible()
   await expect(page.locator('.tcard', { hasText: a })).toHaveCount(0)
   await grp('指派').getByRole('button', { name: '全部' }).click()
@@ -77,6 +78,7 @@ test('工单列表按状态、指派与本人/Agent筛选，支持关键词', as
   await grp('状态').getByRole('button', { name: '全部' }).click()
   await page.getByPlaceholder(/搜索/).fill('随后被关闭')
   await page.getByPlaceholder(/搜索/).press('Enter')
+  await expect(page).toHaveURL(/q=/)
   await expect(page.locator('.tcard', { hasText: c })).toBeVisible()
   await expect(page.locator('.tcard', { hasText: a })).toHaveCount(0)
 })

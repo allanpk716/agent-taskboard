@@ -807,6 +807,7 @@ const (
 	WhyGuestCompleted    = "guest_completed"     // 访客补全了说明
 	WhyGuestRevised      = "guest_revised"       // 访客修订了说明
 	WhyGuestNotCompleted = "guest_not_completed" // 访客未补全说明
+	WhyPendingTriage     = "pending_triage"      // 待初筛
 	WhyDelivered         = "delivered"           // 已交付，待你验收
 	WhyAssigneeReply     = "assignee_replied"    // 指派人回复了，待你答复
 	WhySentBack          = "sent_back"           // 发起人退回修改
@@ -827,6 +828,8 @@ func WhyText(why string) string {
 		return "访客修订了说明"
 	case WhyGuestNotCompleted:
 		return "访客未补全说明"
+	case WhyPendingTriage:
+		return "待初筛"
 	case WhyDelivered:
 		return "已交付，待你验收"
 	case WhyAssigneeReply:

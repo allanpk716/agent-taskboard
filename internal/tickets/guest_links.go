@@ -165,6 +165,7 @@ type GuestLinkInfo struct {
 	CanEditBrief bool
 	CreatedBy    Author
 	CreatedAt    time.Time
+	UseCount     int
 }
 
 // GuestLinks 列出 ref 指向的工单的全部访客链接（成员视角；访客 403 members_only
@@ -182,7 +183,8 @@ func (m *Manager) GuestLinks(ctx context.Context, ref string) ([]GuestLinkInfo, 
 func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]GuestLinkInfo, error) {
 	rows, err := q.QueryContext(ctx, `
 		SELECT g.id, g.note, g.expires_at, g.revoked_at, g.can_edit_brief, g.created_at,
-		       m.id, m.name, a.id, a.name, a.revoked_at
+		       m.id, m.name, a.id, a.name, a.revoked_at,
+		       (SELECT COUNT(*) FROM timeline_events e WHERE e.actor_link_id = g.id)
 		FROM guest_links g
 		LEFT JOIN members m ON m.id = g.created_by_member_id
 		LEFT JOIN agent_tokens a ON a.id = g.created_by_agent_id
@@ -206,7 +208,7 @@ func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]Gue
 			agentRevoked sql.NullString
 		)
 		if err := rows.Scan(&info.ID, &info.Note, &expiresAt, &revokedAt, &canEdit, &createdAt,
-			&memberID, &memberName, &agentID, &agentName, &agentRevoked); err != nil {
+			&memberID, &memberName, &agentID, &agentName, &agentRevoked, &info.UseCount); err != nil {
 			return nil, err
 		}
 		if info.ExpiresAt, err = parseTime(expiresAt); err != nil {

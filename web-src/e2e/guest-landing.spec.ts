@@ -224,8 +224,11 @@ async function runFullUseCase(
   await login(page, ADMIN)
 
   // 成员向导：收件箱卡片进入，两项必填（默认 Bug 反馈），生成链接
-  await page.getByRole('button', { name: '＋ 请人反馈' }).click()
-  await expect(page.getByRole('heading', { name: '请人反馈' })).toBeVisible()
+  const feedbackEntry = mobile
+    ? page.getByRole('button', { name: '＋ 请人反馈' })
+    : page.getByRole('navigation', { name: '侧栏' }).getByRole('link', { name: '＋ 请人反馈' })
+  await feedbackEntry.click()
+  await expect(page.getByLabel('请谁反馈')).toBeVisible()
   await page.getByLabel('请谁反馈').fill('检验科-张三')
   await page.getByLabel('什么事').fill('完整用例：UD-2300 质控报 E-203')
   await page.getByRole('button', { name: '生成链接' }).click()
@@ -241,7 +244,11 @@ async function runFullUseCase(
 
   // #127：访客还没补全说明时，这张单不占跟进人的收件箱。
   await page.goto('/')
-  await expect(page.getByText('现在轮到你处理的工单。')).toBeVisible()
+  if (mobile) {
+    await expect(page.getByText('现在轮到你处理的工单。')).toBeVisible()
+  } else {
+    await expect(page.getByTestId('inbox-list-pane')).toBeVisible()
+  }
   await expect(page.locator('.tcard', { hasText: number })).toHaveCount(0)
 
   const ctx = await browser.newContext({ viewport, baseURL: new URL(page.url()).origin })
@@ -264,7 +271,9 @@ async function runFullUseCase(
 
   // #127：访客补全说明后，工单以固定原因进入跟进人收件箱。
   await page.goto('/')
-  await expect(page.locator('.tcard', { hasText: number })).toContainText('访客补全了说明')
+  const completedCard = page.locator('.tcard', { hasText: number })
+  await expect(completedCard).toHaveCount(1)
+  if (mobile) await expect(completedCard).toContainText('访客补全了说明')
 
   // 访客对话页：说明卡片有内容，时间线有「修订了说明」事件
   await expect(guest.locator('[data-bubble="brief"]')).toContainText('UD-2300')

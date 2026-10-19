@@ -32,13 +32,27 @@ export function parseRoute(pathname: string): Route {
 
 /** SPA 内部导航：pushState + 自定义事件，让 useRoute 重新解析。 */
 export function nav(to: string) {
-  if (window.location.pathname === to) {
+  if (window.location.pathname + window.location.search === to) {
     window.dispatchEvent(new Event('tb:nav'))
     return
   }
   window.history.pushState(null, '', to)
   window.dispatchEvent(new Event('tb:nav'))
   window.scrollTo(0, 0)
+}
+
+export function useLocationSearch(): string {
+  const [search, setSearch] = useState(() => window.location.search)
+  useEffect(() => {
+    const update = () => setSearch(window.location.search)
+    window.addEventListener('popstate', update)
+    window.addEventListener('tb:nav', update)
+    return () => {
+      window.removeEventListener('popstate', update)
+      window.removeEventListener('tb:nav', update)
+    }
+  }, [])
+  return search
 }
 
 export function useRoute(): Route {

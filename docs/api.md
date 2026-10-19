@@ -447,14 +447,17 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 - 列出「现在轮到我」的**开启**工单，按工单序号；同一成员名下所有 Agent 共用一份
   （Agent 定时轮询它即可，不靠人口头转告）；未指派、轮到本部门的工单进入有效
   初筛人的收件箱。响应：`{member, count, items}`，每项：
-  - `{number, title, role(assignee|creator), reason, since_seq, read_new, read_full, assignee}`；
-    `assignee` 为作者结构，指派给已停用成员时其 `member.deactivated` 为 `true`（#115）。
+  - `{number, title, role(assignee|creator|triager), reason, reason_code, since_seq,
+    read_new, read_full, kind, creator, assignee, labels, waiting_on, who, updated_at}`。
+    `kind` 到 `updated_at` 是列表摘要字段，供网页收件箱栏使用；`assignee` 为作者结构，
+    指派给已停用成员时其 `member.deactivated` 为 `true`（#115）。
   - `reason` 文案：新指派给你 / 已交付，待你验收 / 指派人回复了，待你答复 /
     发起人退回修改 / 发起人回复了 / 你的 Agent 回复了 / 访客回复了 /
     访客补全了说明 / 访客修订了说明 / 访客未补全说明。
-  - 通知里的对应原因码是固定值：`assigned`、`delivered`、`assignee_replied`、
-    `returned`、`creator_replied`、`agent_replied`、`guest_replied`、
-    `guest_completed`、`guest_revised`。
+  - `reason_code` 是 `reason` 对应的稳定原因码，程序判断用它，不要匹配文案：
+    `new` / `delivered` / `assignee_replied` / `sent_back` / `creator_replied` /
+    `agent_replied` / `guest_replied` / `guest_completed` / `guest_revised` /
+    `guest_not_completed` / `pending_triage`。
   - `since_seq` 是推导所依据的那条回复的事件 seq（无相关回复时为 null，即新指派）。
   - `read_new` = `/api/v1/tickets/<编号>/timeline?after=<我在该单最后一条任意事件的 seq>`
     （不只回复——要读的是「上次我看过之后别人做了什么」）；`read_full` =
@@ -475,6 +478,11 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
     （自动换成标准值，解析结果在 `resolved_aliases` 里回显，如 `"7600 → 机型:UD-2300"`；
     解析不到 422 `unknown_label_value` + `suggestions`，未知维度 422 `unknown_dimension`；
     筛选解析含已停用值，便于统计历史工单）。
+  - `label_any`（可重复）：表达「同一维度取或」。每个值必须写成 `维度:值`，可写
+    别名并自动换成标准值；同一维度多个值之间取「或」，不同维度之间、以及它和
+    `label`、`no_label` 及其他条件之间都取「且」。不带维度、`维度:*`、未知维度或
+    未知值返回 400；错误码沿用 `invalid_label_any` / `wildcard_not_allowed` /
+    `unknown_dimension` / `unknown_label_value`，不带维度时的 `hint` 指向改用 `label`。
   - `assignee=<名|id>|me|none`、`creator=<名|id>|me|guest`（经反馈入口提交）、
     `waiting_on=assignee|creator|guest|department|me`（不存在的成员 422 `unknown_member`）。
   - `actor_kind=member|agent`（orchestrator 决议 5，「本人 / Agent」筛选）：按**创建者**
@@ -494,7 +502,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   翻页用偏移量 `page_token=p<offset>`（已接受的取舍：翻页可能漏项/重复，
   需要完整拉取时用 `sort=created` 或 `changed_after`），跟着响应里的 `next` 走。
 - 响应：`{total, count, items, next(下一页完整地址，没有时为 null), cursor,
-  filters(解析后的标准条件 + 实际 sort), resolved_aliases?}`。每项是**摘要**：
+  filters(解析后的标准条件，含 `label_any` + 实际 sort), resolved_aliases?}`。每项是**摘要**：
   `number, seq, url, kind, title, status, close_reason, template, creator, assignee,
   labels, waiting_on, created_at, updated_at, closed_at, reply_count, last_change,
   read_full`（时间线不在列表里给）；`include=brief` 附带 `brief`（拼好的 Markdown、
@@ -517,10 +525,16 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 
 ### GET /api/v1/tickets/counts?group_by=…
 
-- `group_by` = 一个标签维度 | `status|kind|assignee|close_reason|waiting_on`
+- `group_by` = 一个标签维度 | `status|kind|assignee|close_reason|waiting_on|undimensioned`
   （缺 `group_by` 422 `group_by_required`；非法 422 `invalid_group_by`）。
 - 筛选条件与列表相同；不接受 `sort/limit/page_token/include/format`
   （422 `unknown_parameter`）。
+- **分面计数**：`group_by` 是某个标签维度时，筛选里属于该维度的 `label_any` 和
+  `no_label` 在这次计数中忽略，其余条件照常生效。注意这是行为变化：原来按维度分组时，
+  同维度的 `no_label` 会参与筛选，现在改成忽略，用于回答「其他条件不变时，这个维度的
+  各个值各有几张」。
+- `group_by=undimensioned` 统计不带维度的标签各有几张；这时不带维度的 `label` 和
+  `no_label` 忽略，维度条件和其他条件照常生效。
 - 一张工单在该维度有多个值时每个值各算一次（附 `note` 说明各组之和可大于
   `total`）；没有该维度计入 `(无)`；`assignee` 无 → `(未指派)`、`close_reason`
   无 → `(未关闭)`、`waiting_on` 用中文描述分组。
@@ -734,10 +748,11 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   都不填时默认 30 天，**没有永久有效的选项**（显式 `valid_days: 0`、非法天数、
   `expires_at` 不晚于现在或格式错误分别返回 422 `invalid_valid_days` /
   `invalid_expires_at`）。`can_edit_brief` 授予「可填写说明」权限（默认 false）。
-- 创建成功 `201`：`{id, url: "/g/<密钥>", note, expires_at, can_edit_brief}`。配置了
+- 创建成功 `201`：`{id, url: "/g/<密钥>", note, expires_at, can_edit_brief, use_count}`。配置了
   `[server] public_url` 时 `url` 是绝对地址（`https://…/g/<密钥>`，评审 P2-7）。
   完整密钥只在创建响应里出现一次（库中只存 SHA-256 哈希）；列表项是
-  `{id, note, expires_at, revoked_at?, can_edit_brief, created_by, created_at}`。
+  `{id, note, expires_at, revoked_at?, can_edit_brief, use_count, created_by, created_at}`；
+  `use_count` 是经这条链接写入的回复 / 说明修订数量（从时间线溯源，不记录单纯打开页面）。
 - 创建、撤销、延期各记一条时间线事件（`guest_link_created` / `guest_link_revoked` /
   `guest_link_extended`，都带 `note`；延期另带新 `expires_at`），并推进全局变更序号。
   这些事件对访客也可见（访客看不到的只有标签事件）。

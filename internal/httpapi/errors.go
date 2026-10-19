@@ -62,6 +62,7 @@ const (
 	CodeDimensionMismatch  = "dimension_mismatch"   // 改名/合并两端维度不一致
 	CodeQRequired          = "q_required"           // resolve 缺少 q
 	CodeLabelRequired      = "label_required"       // 请求里的标签为空
+	CodeInvalidLabelAny    = "invalid_label_any"    // label_any 没有写成 维度:值
 
 	// #34：模板（维护、读取与按模板建单）。
 	CodeTemplateFormatError   = "template_format_error"   // 模板格式错误（message 带行号）

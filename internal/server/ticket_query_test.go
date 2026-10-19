@@ -541,6 +541,100 @@ func Test筛选标签与别名(t *testing.T) {
 	}
 }
 
+// label_any：同一维度多个值取「或」，不同维度取「且」。
+func Test筛选labelAny同维度或跨维度且(t *testing.T) {
+	w := newQueryWorld(t)
+
+	got := w.list(t, w.zhaoA, "?status=all&label_any="+urlEncode("产品线:血液")+"&label_any="+urlEncode("产品线:尿液"))
+	if !equalStrings(numbers(got), []string{w.wont, w.fb, w.old, w.doc}) {
+		t.Errorf("label_any 同维度 = %v, 想 [%s %s %s %s]", numbers(got), w.wont, w.fb, w.old, w.doc)
+	}
+	got = w.list(t, w.zhaoA, "?status=all&label_any="+urlEncode("产品线:血液")+"&label_any="+urlEncode("产品线:尿液")+"&label_any="+urlEncode("机型:UD-2300"))
+	if !equalStrings(numbers(got), []string{w.fb, w.old}) {
+		t.Errorf("label_any 跨维度 = %v, 想 [%s %s]", numbers(got), w.fb, w.old)
+	}
+}
+
+// label_any 的校验、别名与既有标签条件组合；错误为 400。
+func Test筛选labelAny校验与组合(t *testing.T) {
+	w := newQueryWorld(t)
+
+	got := w.list(t, w.zhaoA, "?status=closed&label_any="+urlEncode("机型:2300"))
+	if !equalStrings(numbers(got), []string{w.old}) {
+		t.Errorf("label_any=别名 2300 = %v, 想 [%s]", numbers(got), w.old)
+	}
+	if labels, _ := got.Filters["label_any"].([]any); len(labels) != 1 || fmt.Sprint(labels[0]) != "机型:UD-2300" {
+		t.Errorf("filters.label_any = %v, 想标准值", got.Filters["label_any"])
+	}
+	if len(got.ResolvedAliases) != 1 || got.ResolvedAliases[0] != "2300 → 机型:UD-2300" {
+		t.Errorf("label_any resolved_aliases = %v", got.ResolvedAliases)
+	}
+
+	got = w.list(t, w.zhaoA, "?status=all&label_any="+urlEncode("产品线:血液")+"&label="+urlEncode("部门:检验科")+"&no_label="+urlEncode("待初筛"))
+	if !equalStrings(numbers(got), []string{w.old}) {
+		t.Errorf("label_any+label+no_label = %v, 想 [%s]", numbers(got), w.old)
+	}
+
+	for _, tc := range []struct {
+		query, code, hint string
+	}{
+		{"?label_any=" + urlEncode("待初筛"), "invalid_label_any", "label"},
+		{"?label_any=", "invalid_label_any", "label"},
+		{"?label_any=" + urlEncode("机型:*"), "wildcard_not_allowed", "标准值"},
+		{"?label_any=" + urlEncode("不存在:值"), "unknown_dimension", "管理员"},
+		{"?label_any=" + urlEncode("机型:D-2300"), "unknown_label_value", "完整字典"},
+	} {
+		res := w.listRaw(t, w.zhaoA, tc.query)
+		if res.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s 状态码 = %d, 想 400", tc.query, res.StatusCode)
+		}
+		var e errorBodyWithExtra
+		tbtest.DecodeJSON(t, res, &e)
+		if e.Error.Code != tc.code {
+			t.Errorf("%s 错误码 = %q, 想 %q", tc.query, e.Error.Code, tc.code)
+		}
+		if !strings.Contains(e.Error.Hint, tc.hint) {
+			t.Errorf("%s hint = %q, 想包含 %q", tc.query, e.Error.Hint, tc.hint)
+		}
+	}
+}
+
+// 分面计数：按某维度分组时忽略该维度的 label_any / no_label；undimensioned
+// 统计不带维度的标签，并忽略不带维度的 label / no_label。
+func Test计数分面忽略本维度条件(t *testing.T) {
+	w := newQueryWorld(t)
+
+	got := w.counts(t, w.zhaoA, "?group_by="+urlEncode("产品线")+"&status=all&label_any="+urlEncode("产品线:尿液"))
+	if got.Total != 7 || !equalGroups(got.Groups, []countGroup{
+		{Value: "血液", Count: 3}, {Value: "(无)", Count: 3}, {Value: "尿液", Count: 1},
+	}) {
+		t.Errorf("同维度 label_any 分面 = total %d, %v", got.Total, got.Groups)
+	}
+	got = w.counts(t, w.zhaoA, "?group_by="+urlEncode("产品线")+"&status=all&no_label="+urlEncode("产品线:尿液"))
+	if got.Total != 7 || !equalGroups(got.Groups, []countGroup{
+		{Value: "血液", Count: 3}, {Value: "(无)", Count: 3}, {Value: "尿液", Count: 1},
+	}) {
+		t.Errorf("同维度 no_label 分面 = total %d, %v", got.Total, got.Groups)
+	}
+	got = w.counts(t, w.zhaoA, "?group_by="+urlEncode("产品线")+"&status=all&label_any="+urlEncode("机型:UD-2300"))
+	if got.Total != 2 || !equalGroups(got.Groups, []countGroup{{Value: "血液", Count: 2}}) {
+		t.Errorf("其他维度 label_any 分面 = total %d, %v", got.Total, got.Groups)
+	}
+
+	got = w.counts(t, w.zhaoA, "?group_by=undimensioned&status=all&label="+urlEncode("待初筛"))
+	if got.Total != 7 || !equalGroups(got.Groups, []countGroup{{Value: "待初筛", Count: 2}}) {
+		t.Errorf("undimensioned 忽略 label = total %d, %v", got.Total, got.Groups)
+	}
+	got = w.counts(t, w.zhaoA, "?group_by=undimensioned&status=all&no_label="+urlEncode("待初筛"))
+	if got.Total != 7 || !equalGroups(got.Groups, []countGroup{{Value: "待初筛", Count: 2}}) {
+		t.Errorf("undimensioned 忽略 no_label = total %d, %v", got.Total, got.Groups)
+	}
+	got = w.counts(t, w.zhaoA, "?group_by=undimensioned&status=all&label_any="+urlEncode("产品线:血液"))
+	if got.Total != 3 || len(got.Groups) != 0 {
+		t.Errorf("undimensioned 其他条件照常 = total %d, %v", got.Total, got.Groups)
+	}
+}
+
 // 成员与等待方筛选：assignee=名|me|none、creator=名|me|guest、
 // waiting_on=assignee|creator|guest|department|me；不存在的成员 422。
 func Test筛选指派人创建者与等待方(t *testing.T) {
