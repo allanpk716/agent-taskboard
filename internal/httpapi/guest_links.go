@@ -37,9 +37,13 @@ type guestLinkBase struct {
 // guestLinkView 是访客链接的对外结构（列表项不含密钥）。
 type guestLinkView struct {
 	guestLinkBase
-	RevokedAt *string    `json:"revoked_at,omitempty"`
-	CreatedBy authorView `json:"created_by"`
-	CreatedAt string     `json:"created_at"`
+	RevokedAt   *string    `json:"revoked_at,omitempty"`
+	Status      string     `json:"status"`
+	ClaimName   *string    `json:"claim_name,omitempty"`
+	ClaimedAt   *string    `json:"claimed_at,omitempty"`
+	DeviceCount int        `json:"device_count"`
+	CreatedBy   authorView `json:"created_by"`
+	CreatedAt   string     `json:"created_at"`
 }
 
 // handleGuestLinks 处理 …/guest-links 与 …/guest-links/{id}[/extend]：
@@ -182,6 +186,21 @@ func newGuestLinkView(l tickets.GuestLinkInfo) guestLinkView {
 	if l.RevokedAt != nil {
 		t := l.RevokedAt.Format(time.RFC3339Nano)
 		v.RevokedAt = &t
+	}
+	switch {
+	case l.RevokedAt != nil:
+		v.Status = "revoked"
+	case l.ClaimedAt != nil:
+		v.Status = "claimed"
+	default:
+		v.Status = "unclaimed"
+	}
+	if l.ClaimedAt != nil {
+		t := l.ClaimedAt.Format(time.RFC3339Nano)
+		v.ClaimedAt = &t
+		name := l.ClaimName
+		v.ClaimName = &name
+		v.DeviceCount = l.DeviceCount
 	}
 	return v
 }

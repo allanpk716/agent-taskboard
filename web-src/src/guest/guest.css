@@ -8,6 +8,84 @@
   padding-bottom: 170px; /* 给固定底部的输入区留位 */
 }
 
+.claim-page {
+  min-height: 100vh;
+}
+
+.claim-card {
+  margin: 72px 16px;
+  padding: 24px 20px;
+}
+
+.claim-card h1 {
+  margin: 8px 0 12px;
+  font-size: 24px;
+}
+
+.claim-meta {
+  color: #5b6673;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.privacy-note {
+  margin: 14px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid #bfd8f4;
+  border-radius: 6px;
+  background: #eef6ff;
+  color: #23527c;
+  font-size: 14px;
+}
+
+.privacy-note.persistent {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  margin: 0;
+  border-radius: 0;
+  text-align: center;
+}
+
+.claim-label {
+  display: block;
+  margin: 14px 0 6px;
+  color: #5b6673;
+  font-size: 13px;
+}
+
+.claim-card input {
+  width: 100%;
+  border: 1px solid #c8d0d9;
+  border-radius: 6px;
+  padding: 10px;
+  font: inherit;
+}
+
+.claim-button {
+  width: 100%;
+  margin-top: 16px;
+}
+
+.claim-error {
+  margin-top: 8px;
+  color: #b42318;
+  font-size: 13px;
+}
+
+.claim-footnote {
+  margin-top: 10px;
+  color: #77828e;
+  font-size: 12px;
+  text-align: center;
+}
+
+.composer-hints {
+  margin: 6px 0 8px;
+  color: #77828e;
+  font-size: 12px;
+}
+
 .guest-root.readonly {
   padding-bottom: 90px;
 }

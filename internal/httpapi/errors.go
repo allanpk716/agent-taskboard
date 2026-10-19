@@ -80,6 +80,9 @@ const (
 	// #32：访客链接与访客视角。
 	CodeLinkRevoked         = "link_revoked"           // 访客链接已被撤销（401，即时生效）
 	CodeLinkExpired         = "link_expired"           // 访客链接已过期（401，即时生效）
+	CodeLinkUnclaimed       = "link_unclaimed"         // 访客链接尚未认领（401）
+	CodeLinkClaimed         = "link_claimed"           // 访客链接已被认领，链接密钥不再可用
+	CodeClaimNameRequired   = "claim_name_required"    // 认领访客链接时称呼为空
 	CodeNoteRequired        = "note_required"          // 创建访客链接缺备注
 	CodeInvalidValidDays    = "invalid_valid_days"     // 有效期不是 7/30/90 或与 expires_at 并存
 	CodeInvalidExpiresAt    = "invalid_expires_at"     // expires_at 不是合法的将来时刻

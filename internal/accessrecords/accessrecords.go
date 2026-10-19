@@ -57,7 +57,11 @@ func NewManager(db *sql.DB, c clock.Clock) *Manager {
 
 func actorOf(v identity.Viewer) (kind, name string, memberID, agentID, linkID int64, note, entry string) {
 	if v.Kind == identity.ViewerGuest {
-		return "guest", v.GuestLink.Note, 0, 0, v.GuestLink.ID, v.GuestLink.Note, "link"
+		name := v.GuestLink.Note
+		if v.GuestLink.ClaimName != "" {
+			name += " · " + v.GuestLink.ClaimName
+		}
+		return "guest", name, 0, 0, v.GuestLink.ID, v.GuestLink.Note, "device"
 	}
 	kind = "member"
 	name = v.Member.Name

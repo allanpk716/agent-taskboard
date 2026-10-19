@@ -24,6 +24,8 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 		var err error
 		if identity.IsClientToken(token) {
 			viewer, err = a.ident.ViewerFromClientToken(r.Context(), token, r.UserAgent())
+		} else if identity.IsGuestDeviceKey(token) {
+			viewer, err = a.ident.ViewerFromGuestDevice(r.Context(), token)
 		} else {
 			viewer, err = a.ident.ViewerFromAgentToken(r.Context(), token)
 		}
@@ -53,6 +55,24 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 				}
 				WriteError(w, http.StatusUnauthorized, CodeLinkExpired, "访客链接已过期",
 					"请联系发链接的成员延期，或重新获取一条新链接")
+			case errors.Is(err, identity.ErrLinkUnclaimed):
+				var status *identity.LinkStatusError
+				if errors.As(err, &status) {
+					if recErr := a.accessRecords.RecordGuestLinkDenied(r.Context(), status.Link.TicketSeq, status.Link.ID, status.Status); recErr != nil {
+						panic(recErr)
+					}
+				}
+				WriteError(w, http.StatusUnauthorized, CodeLinkUnclaimed, "访客链接尚未认领",
+					"第一次打开时在认领页输入你的称呼，并点「是我，打开工单」")
+			case errors.Is(err, identity.ErrLinkClaimed):
+				var status *identity.LinkStatusError
+				if errors.As(err, &status) {
+					if recErr := a.accessRecords.RecordGuestLinkDenied(r.Context(), status.Link.TicketSeq, status.Link.ID, status.Status); recErr != nil {
+						panic(recErr)
+					}
+				}
+				WriteError(w, http.StatusUnauthorized, CodeLinkClaimed, "这条链接已被认领",
+					"如果不是你认领的，请联系邀请人重新处理；请勿把链接转发给别人")
 			default:
 				panic(err)
 			}
@@ -63,6 +83,9 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 
 	cookie, err := r.Cookie(SessionCookieName)
 	if err != nil || cookie.Value == "" {
+		if viewer, ok := a.guestDeviceFromCookie(r); ok {
+			return viewer, true
+		}
 		WriteError(w, http.StatusUnauthorized, CodeUnauthenticated, "未登录", a.authHint(r))
 		return identity.Viewer{}, false
 	}
@@ -70,6 +93,23 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 	if err != nil {
 		if errors.Is(err, identity.ErrInvalidCredentials) {
 			WriteError(w, http.StatusUnauthorized, CodeUnauthenticated, "会话不存在或已过期", a.authHint(r))
+			return identity.Viewer{}, false
+		}
+		panic(err)
+	}
+	return viewer, true
+}
+
+// guestDeviceFromCookie lets same-origin <img> and attachment links use the
+// remembered device credential without exposing it to JavaScript.
+func (a *API) guestDeviceFromCookie(r *http.Request) (identity.Viewer, bool) {
+	cookie, err := r.Cookie(GuestDeviceCookieName)
+	if err != nil || cookie.Value == "" {
+		return identity.Viewer{}, false
+	}
+	viewer, err := a.ident.ViewerFromGuestDevice(r.Context(), cookie.Value)
+	if err != nil {
+		if errors.Is(err, identity.ErrInvalidCredentials) {
 			return identity.Viewer{}, false
 		}
 		panic(err)

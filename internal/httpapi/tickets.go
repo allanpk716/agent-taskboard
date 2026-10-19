@@ -302,7 +302,8 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 func (a *API) guestShareText(note, title, url string, expiresAt time.Time) string {
 	return note + "：想请你帮忙反馈「" + title + "」的详细情况。打开这个链接，按提示把情况写具体一些" +
 		"（什么时候、做了什么、看到什么），可以上传日志和照片：" + url +
-		"。不用登录，有效期至 " + expiresAt.In(clock.Beijing).Format("2006-01-02")
+		"。不用登录，有效期至 " + expiresAt.In(clock.Beijing).Format("2006-01-02") +
+		"。链接只归第一位打开并确认的人，请不要转发"
 }
 
 // readTicket 处理 GET /api/v1/tickets/{id}[?format=markdown]。访客链接只能

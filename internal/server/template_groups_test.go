@@ -190,8 +190,8 @@ func Test工单读取带上模板分组(t *testing.T) {
 	// 模板接口同样没有 groups 键。
 	res = createFromTemplate(t, s, web, map[string]any{
 		"template": "question", "title": "固件推送时间",
-		"fields":  map[string]string{"想问什么？": "V3.3 什么时候推？"},
-		"labels":  []string{"机型:UD-2300"},
+		"fields": map[string]string{"想问什么？": "V3.3 什么时候推？"},
+		"labels": []string{"机型:UD-2300"},
 	})
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("建单状态码 = %d", res.StatusCode)

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { ADMIN, createTicket, login } from './helpers'
+import { ADMIN, claimGuestLink, createTicket, login } from './helpers'
 
 test('wide detail keeps actions in the header and shows ordered ticket information', async ({
   page,
@@ -50,9 +50,10 @@ test('wide detail keeps actions in the header and shows ordered ticket informati
   await expect(info).not.toContainText('让我的 Agent 处理')
 
   const token = new URL(url).pathname.slice(3)
+  const deviceToken = await claimGuestLink(request, token)
   const reply = await request.post(`/api/v1/tickets/${number}/replies`, {
     data: { body_md: '使用这条链接回复一次。' },
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { Authorization: `Bearer ${deviceToken}` },
   })
   expect(reply.status(), `访客回复失败：${await reply.text()}`).toBe(201)
   await page.reload()

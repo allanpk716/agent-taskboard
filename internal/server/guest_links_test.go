@@ -305,7 +305,7 @@ func Test访客读工单看不到标签与标签事件(t *testing.T) {
 			t.Errorf("访客时间线里出现了标签事件：%+v", ev)
 		}
 	}
-	wantSeqs := []int64{1, 2, 5} // created、guest_link_created、再一条 guest_link_created；3、4 是标签事件
+	wantSeqs := []int64{1, 2, 5, 6} // 两条 guest_link_created、认领；3、4 是标签事件
 	if len(got.Timeline) != len(wantSeqs) {
 		t.Fatalf("访客时间线有 %d 条, 想 %d（跳号）", len(got.Timeline), len(wantSeqs))
 	}
@@ -337,11 +337,11 @@ func Test访客读工单看不到标签与标签事件(t *testing.T) {
 	// 时间线增量接口：同样过滤，cursor 是访客可见的最后一条。
 	var tl timelineBody
 	s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+number+"/timeline?after=1", nil, &tl)
-	if len(tl.Events) != 2 || tl.Events[0].Seq != 2 || tl.Events[1].Seq != 5 {
+	if len(tl.Events) != 3 || tl.Events[0].Seq != 2 || tl.Events[1].Seq != 5 || tl.Events[2].Seq != 6 {
 		t.Errorf("访客增量时间线不对：%+v", tl.Events)
 	}
-	if tl.Cursor != 5 {
-		t.Errorf("访客 cursor = %d, 想 5（可见的最后一条，不是全量最后一条）", tl.Cursor)
+	if tl.Cursor != 6 {
+		t.Errorf("访客 cursor = %d, 想 6（可见的最后一条，不是全量最后一条）", tl.Cursor)
 	}
 
 	// Markdown 视图：没有标签行、没有标签事件。
@@ -500,10 +500,10 @@ func Test访客回复记录链接备注与自报信息(t *testing.T) {
 	// 成员看时间线：访客回复的 actor 结构与成员、成员 Agent 都不同。
 	var view ticketResponseBody
 	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number, nil, &view)
-	if len(view.Timeline) != 5 { // created + guest_link_created + 三条访客回复
-		t.Fatalf("时间线有 %d 条, 想 5", len(view.Timeline))
+	if len(view.Timeline) != 6 { // created + guest_link_created + claim + 三条访客回复
+		t.Fatalf("时间线有 %d 条, 想 6", len(view.Timeline))
 	}
-	g := view.Timeline[2]
+	g := view.Timeline[3]
 	if g.Type != "reply" || g.Actor.Member != nil || g.Actor.Agent != nil {
 		t.Errorf("访客回复的 actor 不应带成员或 Agent：%+v", g.Actor)
 	}
@@ -516,15 +516,15 @@ func Test访客回复记录链接备注与自报信息(t *testing.T) {
 	if g.Actor.ViaAgent == nil || *g.Actor.ViaAgent {
 		t.Errorf("actor.via_agent 应为 false（本人回复）：%+v", g.Actor.ViaAgent)
 	}
-	if view.Timeline[3].Actor.ViaAgent == nil || !*view.Timeline[3].Actor.ViaAgent {
-		t.Errorf("自报 via_agent 的回复应记 true：%+v", view.Timeline[3].Actor.ViaAgent)
+	if view.Timeline[4].Actor.ViaAgent == nil || !*view.Timeline[4].Actor.ViaAgent {
+		t.Errorf("自报 via_agent 的回复应记 true：%+v", view.Timeline[4].Actor.ViaAgent)
 	}
 
 	// 成员的 Agent 回复一条作对照：actor.agent 是平台认证的具名 Agent。
 	_, token := s.IssueAgentToken(t, web, "笔记本")
 	reply(t, s, s.AgentClient(token), number, "收到，正在处理。")
 	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number, nil, &view)
-	agentReply := view.Timeline[5]
+	agentReply := view.Timeline[6]
 	if agentReply.Actor.Agent == nil || agentReply.Actor.Agent.Name != "笔记本" ||
 		agentReply.Actor.Member == nil || agentReply.Actor.Member.Name != "陈工" {
 		t.Errorf("成员 Agent 回复的 actor 应带平台认证的成员与 Agent：%+v", agentReply.Actor)

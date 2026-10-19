@@ -16,10 +16,10 @@ import (
 )
 
 type backupsStatusBody struct {
-	LocalOnly     bool             `json:"local_only"`
-	LastSuccessAt *string          `json:"last_success_at"`
-	Overdue       bool             `json:"overdue"`
-	LastFailure   *backupRecordVue `json:"last_failure"`
+	LocalOnly     bool              `json:"local_only"`
+	LastSuccessAt *string           `json:"last_success_at"`
+	Overdue       bool              `json:"overdue"`
+	LastFailure   *backupRecordVue  `json:"last_failure"`
 	Records       []backupRecordVue `json:"records"`
 }
 

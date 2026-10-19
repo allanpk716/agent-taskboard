@@ -1,4 +1,5 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
+import { openGuestPage } from './helpers'
 
 // 访客网页（#38）：工单对话页。对真实服务 + 构建好的前端跑用例，
 // 造数据（工单、回复、访客链接）全部通过 HTTP API 完成。
@@ -168,7 +169,7 @@ function jpegSize(buf: Uint8Array): { w: number; h: number } {
 test.use({ viewport: { width: 390, height: 844 } })
 test('打开访客链接看到徽标与说明气泡，回复并附带粘贴的图片', async ({ page, request }) => {
   const seed = await seedGuestTicket(request, { agentReply: true })
-  await page.goto(`/g/${seed.linkKey}`)
+  await openGuestPage(page, request, seed.linkKey)
 
   // 成员 Agent 回复过 → 轮到访客
   await expect(page.locator('.turn-badge')).toHaveText('● 现在轮到你回复')
@@ -223,7 +224,7 @@ test('打开访客链接看到徽标与说明气泡，回复并附带粘贴的�
 // 2. 工单关闭后只读；链接撤销/过期后整页提示。
 test('工单关闭后只读；链接撤销或过期后显示整页提示', async ({ page, request }) => {
   const seed = await seedGuestTicket(request, { close: true })
-  await page.goto(`/g/${seed.linkKey}`)
+  await openGuestPage(page, request, seed.linkKey)
 
   await expect(page.locator('.turn-badge')).toHaveText('已关闭 · 完成')
   await expect(page.getByText(/工单已关闭，只能查看/)).toBeVisible()
@@ -251,7 +252,7 @@ test('工单关闭后只读；链接撤销或过期后显示整页提示', async
 // 3. 服务中断时发送：草稿保存在本机；恢复后自动重试成功且只产生一条回复。
 test('停掉服务后发送草稿仍在，恢复后自动重试成功且只产生一条回复', async ({ page, request }) => {
   const seed = await seedGuestTicket(request, {})
-  await page.goto(`/g/${seed.linkKey}`)
+  await openGuestPage(page, request, seed.linkKey)
 
   const body = '照片放在共享盘，请查收。'
   const unc = '\\\\nas01\\检验科\\报警截图.jpg'
@@ -276,8 +277,9 @@ test('停掉服务后发送草稿仍在，恢复后自动重试成功且只产�
   await expect(myReply.getByRole('button', { name: '复制路径' })).toBeVisible()
 
   // 自动重试期间可能发了多次（同一个 Idempotency-Key），但只能有一条回复
+  const token = await page.evaluate((key) => localStorage.getItem(`tb:guest-device:${key}`), seed.linkKey)
   const res = await request.get(`/api/v1/tickets/${seed.number}`, {
-    headers: { Authorization: `Bearer ${seed.linkKey}` },
+    headers: { Authorization: `Bearer ${token}` },
   })
   expect(res.ok()).toBeTruthy()
   const ticket = await res.json()
@@ -288,7 +290,7 @@ test('停掉服务后发送草稿仍在，恢复后自动重试成功且只产�
 // 4. 上传前压缩：长边 ≤2048、JPEG、无 EXIF；不到 1MB 的 PNG 原样保留。
 test('粘贴的图片已压缩且不含 EXIF，小 PNG 保持原样', async ({ page, request }) => {
   const seed = await seedGuestTicket(request, {})
-  await page.goto(`/g/${seed.linkKey}`)
+  await openGuestPage(page, request, seed.linkKey)
 
   // 3000×2000、带 EXIF 的 JPEG → 压缩后 ≤2048、无 EXIF
   const jpeg = await jpegWithExif(page)
@@ -298,9 +300,19 @@ test('粘贴的图片已压缩且不含 EXIF，小 PNG 保持原样', async ({ p
   await page.getByRole('button', { name: '发送' }).click()
   await expect(page.locator('[data-bubble="reply"]').last().getByText('报警照片如下')).toBeVisible({ timeout: 15000 })
 
+  const imageBytes = async (src: string | null) => {
+    const b64 = await page.evaluate(async (url) => {
+      const blob = await (await fetch(url)).blob()
+      return new Promise<string>((resolve) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result).split(',')[1])
+        reader.readAsDataURL(blob)
+      })
+    }, src!)
+    return new Uint8Array(Buffer.from(b64, 'base64'))
+  }
   const src1 = await page.locator('[data-bubble="reply"]').last().locator('img.inline-img').getAttribute('src')
-  const res1 = await request.get(src1!)
-  const buf1 = new Uint8Array(await (await res1.body()).buffer)
+  const buf1 = await imageBytes(src1)
   expect(buf1[0]).toBe(0xff)
   expect(buf1[1]).toBe(0xd8) // JPEG
   expect(indexOfBytes(buf1.subarray(0, 8192), EXIF_MAGIC)).toBe(-1) // 无 EXIF
@@ -317,8 +329,7 @@ test('粘贴的图片已压缩且不含 EXIF，小 PNG 保持原样', async ({ p
   await expect(page.locator('[data-bubble="reply"]').last().getByText('示意图如下')).toBeVisible({ timeout: 15000 })
 
   const src2 = await page.locator('[data-bubble="reply"]').last().locator('img.inline-img').getAttribute('src')
-  const res2 = await request.get(src2!)
-  const buf2 = new Uint8Array(await (await res2.body()).buffer)
+  const buf2 = await imageBytes(src2)
   expect(buf2[1]).toBe(0x50) // P（PNG 魔数 89 50 4E 47）
   expect(bytesEqual(buf2, png)).toBe(true) // 字节原样
 })
@@ -326,7 +337,7 @@ test('粘贴的图片已压缩且不含 EXIF，小 PNG 保持原样', async ({ p
 // 5. 附件超限（413）：提示改用 NAS 路径，不产生回复。
 test('附件超过单个文件上限时提示改用 NAS 路径', async ({ page, request }) => {
   const seed = await seedGuestTicket(request, {})
-  await page.goto(`/g/${seed.linkKey}`)
+  await openGuestPage(page, request, seed.linkKey)
 
   await page.getByPlaceholder(/写回复/).fill('录像放在 NAS 上')
   await page.setInputFiles('#guest-file-input', {

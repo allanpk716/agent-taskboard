@@ -81,13 +81,23 @@ test('请人反馈：向导生成链接，完成页可复制，访客能打开',
   const body = await res.json()
   expect(body.creator.member.name).toBe('管理员')
   const types = (body.timeline as { type: string }[]).map((e) => e.type)
-  expect(types).toEqual(['created', 'assigned', 'guest_link_created']) // 跟进人默认本人
+  expect(types).toEqual(['created', 'assigned', 'guest_link_created', 'guest_link_claimed']) // 跟进人默认本人
 })
 
 /** 不带成员会话的访客页（模拟对方点开链接）。 */
 async function newGuestPage(browser: Browser, path: string) {
   const ctx = await browser.newContext({ baseURL: `http://127.0.0.1:${port()}` })
   const page = await ctx.newPage()
+  const key = new URL(path, `http://127.0.0.1:${port()}`).pathname.slice(3)
+  const claim = await page.request.post('/api/v1/guest-links/claim', {
+    data: { author_name: '检验科-张三' },
+    headers: { Authorization: `Bearer ${key}` },
+  })
+  expect(claim.status()).toBe(201)
+  const token = ((await claim.json()) as { device_token: string }).device_token
+  await page.addInitScript(({ key, token }) => {
+    localStorage.setItem(`tb:guest-device:${key}`, token)
+  }, { key, token })
   await page.goto(path)
   return page
 }

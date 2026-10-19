@@ -30,7 +30,7 @@ import {
 import { BriefBubble, EventLine, ReplyBubble } from '../shared/conversation'
 import { DimensionSelect } from '../guest/DimensionSelect'
 import { DeactivatedBadge, Lightbox } from '../shared/widgets'
-import { absoluteUrl, authorName, closeReasonText, fmtBeijing, fmtLinkExpiry, linkExpired } from '../shared/format'
+import { absoluteUrl, authorName, closeReasonText, fmtBeijing, fmtLinkExpiry, fmtShort, linkExpired } from '../shared/format'
 import { Confirm, Modal, copyText, invalidate, nav, toast, useLocationSearch } from './ui'
 import { HandoffDialog } from './HandoffDialog'
 import { LabelChips, chipClass } from './TicketsPage'
@@ -323,6 +323,13 @@ function LinksDialog({
                     {fmtLinkExpiry(g.expires_at)}
                     {g.revoked_at ? ' · 已撤销' : ''}
                     {!g.revoked_at && linkExpired(g.expires_at) ? ' · 已过期' : ''}
+                    <div className="mini">
+                      {g.status === 'claimed'
+                        ? `已认领 · ${g.claim_name ?? ''} · ${g.claimed_at ? fmtShort(g.claimed_at) : ''} · ${g.device_count ?? 0} 台设备`
+                        : g.status === 'revoked' || g.revoked_at
+                          ? '已认领状态不可用'
+                          : '未认领'}
+                    </div>
                   </td>
                   <td>
                     {dead ? (

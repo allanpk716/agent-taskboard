@@ -189,6 +189,9 @@ export function Composer(props: ComposerProps) {
           await handleFiles(files)
         }}
       />
+      <div className="composer-hints">
+        请不要填写账号密码、病人姓名、病历号和无关的内部资料。附件只有处理人能下载。
+      </div>
       <div className="row">
         <button type="button" className="btn ghost" onClick={() => document.getElementById('guest-file-input')?.click()}>
           📎 附件

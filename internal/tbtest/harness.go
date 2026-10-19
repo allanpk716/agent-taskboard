@@ -248,11 +248,27 @@ func (s *Server) AgentClient(token string) *http.Client {
 	return &http.Client{Transport: bearerTransport{token: token}}
 }
 
-// GuestClient 返回带 Bearer 访客链接密钥的 HTTP 客户端（模拟访客及其 Agent；
-// 访客链接 /g/<密钥> 的密钥直接作 Bearer token，#32）。
+// GuestClient 返回已认领设备的 Bearer 客户端（模拟访客浏览器）。首次拿到
+// 链接密钥时先走认领接口，之后复用返回的 tbgd_ 设备凭证。
 func (s *Server) GuestClient(key string) *http.Client {
-	return &http.Client{Transport: bearerTransport{token: key}}
+	if token, ok := guestDeviceTokens[key]; ok {
+		return &http.Client{Transport: bearerTransport{token}}
+	}
+	raw := &http.Client{Transport: bearerTransport{token: key}}
+	var claimed struct {
+		DeviceToken string `json:"device_token"`
+	}
+	res := s.Do(s.TB, raw, http.MethodPost, "/api/v1/guest-links/claim",
+		map[string]string{"author_name": "检验科 张三"}, &claimed)
+	if res.StatusCode != http.StatusCreated {
+		// 撤销、过期等链接本来就不能认领；保留原始密钥，让后续请求验证其状态。
+		return raw
+	}
+	guestDeviceTokens[key] = claimed.DeviceToken
+	return &http.Client{Transport: bearerTransport{token: claimed.DeviceToken}}
 }
+
+var guestDeviceTokens = map[string]string{}
 
 // CreateGuestLink 用成员凭证为 ref 指向的工单创建一条访客链接，返回响应结构
 // （含只出现一次的完整地址 /g/<密钥>）。造数据辅助，等价于走 HTTP 接口。

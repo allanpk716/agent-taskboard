@@ -5,10 +5,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api'
 import { Conversation } from './Conversation'
+import { ClaimPage, type ClaimInfo } from './ClaimPage'
 import { Composer } from './Composer'
 import { GroupedBriefForm } from './GroupedBriefForm'
 import { LandingPage } from './LandingPage'
 import { guestApi } from './guestApi'
+import { guestDeviceToken, guestRawApi, saveGuestDeviceToken } from './guestApi'
 import { fmtDateCN } from '../shared/format'
 import { fetchServerVersion } from '../shared/health'
 import type { GuestSession, TicketView } from '../shared/types'
@@ -18,10 +20,21 @@ type Mode = 'land' | 'talk' | 'fill'
 type Phase =
   | { kind: 'loading' }
   | { kind: 'invalid'; code: string }
+  | { kind: 'claim'; info: ClaimInfo }
   | { kind: 'ready'; ticket: TicketView }
 
 /** 链接失效整页提示（prototype a.html 的 expired 状态）。 */
 function LinkInvalidPage({ code, expiresAt }: { code: string; expiresAt?: string }) {
+  if (code === 'link_claimed') {
+    return (
+      <div className="full">
+        <div style={{ fontSize: 42 }}>🔒</div>
+        <h2>这条链接已被认领</h2>
+        <p className="muted">链接只归第一位打开并确认的人。</p>
+        <p className="muted">如果不是你认领的，请马上联系给你发链接的同事处理。</p>
+      </div>
+    )
+  }
   const reason =
     code === 'link_expired'
       ? `链接已于 ${expiresAt ? fmtDateCN(expiresAt) : '到期时间'} 到期`
@@ -54,6 +67,11 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
 
   const load = useCallback(async () => {
     try {
+      if (!guestDeviceToken(linkKey)) {
+        const info = await guestRawApi(linkKey, '/api/v1/guest-link')
+        setPhase({ kind: 'claim', info })
+        return
+      }
       const sess: GuestSession = await guestApi(linkKey, '/api/v1/session')
       setExpiresAt(sess.viewer.link_expires_at)
       const ticket: TicketView = await guestApi(linkKey, sess.ticket.api)
@@ -93,6 +111,19 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
       <main className="guest-root">
         <LinkInvalidPage code={phase.code} expiresAt={expiresAt} />
       </main>
+    )
+  }
+  if (phase.kind === 'claim') {
+    return (
+      <ClaimPage
+        info={phase.info}
+        linkKey={linkKey}
+        onClaimed={(token) => {
+          saveGuestDeviceToken(linkKey, token)
+          setPhase({ kind: 'loading' })
+          void load()
+        }}
+      />
     )
   }
   if (phase.kind !== 'ready') {

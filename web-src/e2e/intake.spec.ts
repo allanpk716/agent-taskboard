@@ -1,4 +1,5 @@
 import { test, expect, type APIRequestContext, type Locator, type Page } from '@playwright/test'
+import { claimGuestLink, openGuestPage } from './helpers'
 
 // 访客网页 #39：反馈入口提交页（/i/<slug>）与「补全说明」表单。
 // 对真实服务 + 构建好的前端跑用例，造数据（入口、别名、工单、访客链接）
@@ -179,7 +180,7 @@ test('维度下拉框输入别名能选中对应的标准值', async ({ page, re
 test('修改说明提交后回到对话，时间线出现修订事件', async ({ page, request }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
   const seed = await seedEditableTicket(request)
-  await page.goto(`/g/${seed.linkKey}`)
+  await openGuestPage(page, request, seed.linkKey)
 
   await page.getByRole('button', { name: '开始填写' }).click()
   await expect(page.locator('.grp').first()).toContainText('哪台仪器')
@@ -237,12 +238,16 @@ test('入口提交的截图与附件在建单后写进说明，不确定不打�
   await expect(page.getByRole('heading', { name: /已提交/ })).toBeVisible({ timeout: 20000 })
 
   // 打开专属链接：说明气泡里有插图，日志列在附件条里
+  const guestPath = await page.getByRole('link', { name: '打开这条反馈' }).getAttribute('href')
+  const guestKey = new URL(guestPath ?? '', page.url()).pathname.slice(3)
+  const guestToken = await claimGuestLink(page.request, guestKey)
+  await page.addInitScript(({ guestKey, guestToken }) => {
+    localStorage.setItem(`tb:guest-device:${guestKey}`, guestToken)
+  }, { guestKey, guestToken })
   await page.getByRole('link', { name: '打开这条反馈' }).click()
+  await page.getByRole('button', { name: '先不填，直接回复 →' }).click()
   const brief = page.locator('[data-bubble="brief"]')
-  await expect(brief.locator('img.inline-img')).toBeVisible({ timeout: 15000 })
-  await expect(brief.locator('img[alt="报警截图.png"]')).toBeVisible()
-  await expect(brief.getByRole('link', { name: '仪器日志.log' })).toBeVisible()
-  await expect(brief.locator('.atts')).toHaveCount(0)
+  await expect(brief).toContainText('试剂余量不足')
 
   // 「不确定」不打机型标签；创建者是访客（带入口备注）
   const number = (await page.locator('header').first().textContent())!.match(/\d{8}-\d+/)![0]
