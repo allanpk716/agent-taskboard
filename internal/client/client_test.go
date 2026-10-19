@@ -59,6 +59,17 @@ func Test首次连接后凭证存入桌面凭据存储(t *testing.T) {
 	}
 }
 
+func Test单实例锁已被持有时Run返回已在运行错误(t *testing.T) {
+	fake := newFakeDesktop(t)
+	fake.lock.acquireErr = client.ErrAlreadyRunning
+	app := client.New(client.Config{ServerURL: "http://localhost"}, fake.dependencies())
+
+	err := app.Run(context.Background())
+	if !errors.Is(err, client.ErrAlreadyRunning) {
+		t.Fatalf("Run 错误 = %v，想 ErrAlreadyRunning", err)
+	}
+}
+
 func Test新通知弹出Toast点击后标已读并打开工单(t *testing.T) {
 	fake := newFakeDesktop(t)
 	s := fake.startService(t)
@@ -291,7 +302,7 @@ func TestSSE空闲超过六十秒时断开重连(t *testing.T) {
 	waitClient(t, done)
 }
 
-func Test凭证撤销后需要重新登录点击托盘后重新连接(t *testing.T) {
+func Test凭证撤销后需要登录点击托盘后重新连接(t *testing.T) {
 	fake := newFakeDesktop(t)
 	s := fake.startService(t)
 	webLi := s.Login("李工", "secret-pass")
@@ -310,6 +321,10 @@ func Test凭证撤销后需要重新登录点击托盘后重新连接(t *testing
 	defer cancel2()
 	done2 := fake.startClient(t, ctx2, s.URL())
 	fake.waitState(t, client.TrayNeedLogin)
+	toasts := fake.toaster.shown(t)
+	if len(toasts) != 1 || toasts[0].Reason != "relogin" || toasts[0].Text != "需要登录 Taskboard" {
+		t.Fatalf("需要登录 Toast = %+v", toasts)
+	}
 	if fake.store.current(t) != "" {
 		t.Fatal("凭证失效后仍留在本机存储")
 	}
@@ -903,9 +918,10 @@ func (p *silentStreamProxy) streams() int {
 }
 
 type fakeInstanceLock struct {
-	mu       sync.Mutex
-	held     bool
-	acquired int
+	mu         sync.Mutex
+	held       bool
+	acquired   int
+	acquireErr error
 }
 
 func newFakeInstanceLock() *fakeInstanceLock { return &fakeInstanceLock{} }
@@ -913,6 +929,9 @@ func newFakeInstanceLock() *fakeInstanceLock { return &fakeInstanceLock{} }
 func (l *fakeInstanceLock) Acquire() (func(), error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.acquireErr != nil {
+		return nil, l.acquireErr
+	}
 	if l.held {
 		return nil, errors.New("already running")
 	}

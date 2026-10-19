@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -15,7 +16,14 @@ import (
 )
 
 func main() {
+	reporter := desktop.NewFatalReporter()
+	defer func() {
+		if err := recover(); err != nil {
+			reporter.Fatalf(1, "桌面客户端发生内部错误：%v", err)
+		}
+	}()
 	server := flag.String("server", "", "Taskboard 平台地址")
+	autostart := flag.Bool("autostart", false, "开机自启启动参数")
 	afterUpdate := flag.Bool("after-update", false, "自动更新后的新进程启动参数")
 	afterInstall := flag.Bool("after-install", false, "覆盖安装后的新进程启动参数")
 	showVersion := flag.Bool("version", false, "显示客户端版本后退出")
@@ -24,34 +32,31 @@ func main() {
 		fmt.Println(version.Client)
 		return
 	}
+	reporter.Infof("启动 Taskboard 桌面客户端 version=%s args=%q", version.Client, os.Args[1:])
 	exe, err := os.Executable()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "读取客户端路径失败：%v\n", err)
-		os.Exit(2)
+		reporter.Fatalf(2, "读取客户端路径失败：%v", err)
 	}
 	lifecycle := desktop.NewLifecycle()
 	serverURL, err := client.ResolveServerURL(*server, os.Getenv("TASKBOARD_SERVER_URL"), lifecycle.Config, exe)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
+		reporter.Fatalf(2, "%v", err)
 	}
+	reporter.Infof("解析后的 Taskboard 平台地址：%s", serverURL)
 	installed, err := client.InstallIfNeeded(*lifecycle, serverURL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "安装 Taskboard 桌面客户端失败：%v\n", err)
-		os.Exit(1)
+		reporter.Fatalf(1, "安装 Taskboard 桌面客户端失败：%v", err)
 	}
 	if installed {
 		return
 	}
 	system, err := desktop.NewSystem()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		reporter.Fatalf(1, "%v", err)
 	}
 	hostname, err := os.Hostname()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "读取主机名失败：%v\n", err)
-		os.Exit(1)
+		reporter.Fatalf(1, "读取主机名失败：%v", err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -60,7 +65,13 @@ func main() {
 		AfterInstall: *afterInstall,
 	}, system.Dependencies())
 	if err := app.Run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "桌面客户端退出：%v\n", err)
-		os.Exit(1)
+		if errors.Is(err, client.ErrAlreadyRunning) {
+			reporter.Infof("%v，请在右下角托盘查看。", err)
+			if !*autostart && !*afterUpdate && !*afterInstall {
+				desktop.ShowAlreadyRunning()
+			}
+			return
+		}
+		reporter.Fatalf(1, "桌面客户端退出：%v", err)
 	}
 }
