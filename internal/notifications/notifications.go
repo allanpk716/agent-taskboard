@@ -284,6 +284,15 @@ func (m *Manager) NotifyTx(ctx context.Context, tx *sql.Tx, in tickets.Notificat
 	decisions := m.rule.Decide(in)
 	memberIDs := make([]int64, 0, len(decisions))
 	for _, d := range decisions {
+		if d.Reason != ReasonUnassigned && d.Reason != ReasonCollaboratorRemoved {
+			visible, err := tickets.CanSeeMember(ctx, tx, d.MemberID, in.After)
+			if err != nil {
+				return nil, err
+			}
+			if !visible {
+				continue
+			}
+		}
 		actorKind := "member"
 		if in.Actor.MemberID == 0 {
 			actorKind = "guest"

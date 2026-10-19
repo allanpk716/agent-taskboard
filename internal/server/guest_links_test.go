@@ -667,6 +667,9 @@ func Test可填写说明的访客链接能修订标题和说明(t *testing.T) {
 	owner := s.Login("陈工", "secret-pass")
 	other := s.Login("李工", "secret-pass")
 	number := mustCreateTicket(t, s, owner, "质控结果偏高，请补充信息")
+	if res := addCollaborator(t, s, owner, number, "李工"); res.StatusCode != http.StatusCreated {
+		t.Fatalf("加入协作者状态码 = %d", res.StatusCode)
+	}
 
 	noEdit := s.GuestClient(guestKeyOf(t, mustCreateGuestLink(t, s, owner, number,
 		map[string]any{"note": "检验科-张三"})))
@@ -756,6 +759,9 @@ func Test访客链接的撤销延期与列表(t *testing.T) {
 	other := s.Login("李工", "secret-pass") // 任何成员都能撤销/延期
 	number := mustCreateTicket(t, s, web, "整理 Q3 质控规则说明")
 	otherTicket := mustCreateTicket(t, s, web, "另一张工单")
+	if res := addCollaborator(t, s, web, number, "李工"); res.StatusCode != http.StatusCreated {
+		t.Fatalf("加入协作者状态码 = %d", res.StatusCode)
+	}
 
 	link := mustCreateGuestLink(t, s, web, number, map[string]any{"note": "检验科-张三", "valid_days": 7})
 	guest := s.GuestClient(guestKeyOf(t, link))

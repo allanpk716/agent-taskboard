@@ -35,6 +35,10 @@ test('guest claims a link before any ticket content is shown', async ({ page, re
   await expect(code).toHaveText(/^\d{6}$/)
   await expect(page.locator('.claim-card')).toContainText('请截图保存访问码')
   const accessCode = await code.textContent()
+  await expect(page.locator('.agent-handoff')).toContainText('让我的 Agent 处理')
+  await expect(page.locator('.agent-handoff')).toContainText(`/g/${seed.linkKey}`)
+  await expect(page.locator('[data-agent-access-code]')).toHaveText(accessCode ?? '')
+  await expect(page.locator('.agent-handoff')).toContainText('不要转发给其他人')
   await page.getByRole('button', { name: '我已保存，打开工单' }).click()
   await expect(page.getByRole('heading', { name: '认领后才可见的工单标题' })).toBeVisible()
   await expect(page.locator('.privacy-note.persistent')).toContainText(

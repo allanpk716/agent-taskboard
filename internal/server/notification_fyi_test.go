@@ -9,10 +9,20 @@ import (
 func Test知会通知覆盖关闭重开改派和取消指派(t *testing.T) {
 	w := newHandoffWorld(t)
 	number := w.createHandoffTicket(t, w.webWang, "整理对照表", "李工").Number
+	if res := addCollaborator(t, w.s, w.webWang, number, "赵工"); res.StatusCode != http.StatusCreated {
+		t.Fatalf("加入协作者状态码 = %d", res.StatusCode)
+	}
 
 	assertReasons := func(note string, c *http.Client, want ...string) {
 		t.Helper()
 		got := notificationsOf(t, w, c, "")
+		items := make([]notificationBody, 0, len(got.Items))
+		for _, item := range got.Items {
+			if item.Reason != "collaborator_added" {
+				items = append(items, item)
+			}
+		}
+		got.Items = items
 		if len(got.Items) != len(want) {
 			t.Fatalf("%s：通知 = %+v，想原因 %v", note, got.Items, want)
 		}
@@ -29,7 +39,7 @@ func Test知会通知覆盖关闭重开改派和取消指派(t *testing.T) {
 		map[string]string{"reason": "done"}, nil)
 	assertReasons("第三方关闭：创建者", w.webWang, "fyi/closed")
 	assertReasons("第三方关闭：指派人", w.webLi, "fyi/closed", "turn/assigned")
-	assertReasons("操作者本人", w.webZhao)
+	assertReasons("操作者的主人", w.webZhao, "fyi/closed")
 
 	w.s.Do(t, w.webLi, http.MethodPost, "/api/v1/tickets/"+number+"/reopen", nil, nil)
 	assertReasons("指派人重开：创建者", w.webWang, "fyi/reopened", "fyi/closed")
@@ -38,7 +48,7 @@ func Test知会通知覆盖关闭重开改派和取消指派(t *testing.T) {
 	w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets/"+number+"/assign",
 		map[string]string{"assignee": "赵工"}, nil)
 	assertReasons("改派：原指派人", w.webLi, "fyi/unassigned", "fyi/closed", "turn/assigned")
-	assertReasons("改派：新指派人", w.webZhao, "turn/assigned")
+	assertReasons("改派：新指派人", w.webZhao, "turn/assigned", "fyi/reopened", "fyi/closed")
 	assertReasons("改派操作者", w.webWang, "fyi/reopened", "fyi/closed")
 
 	res := w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets/"+number+"/assign",
@@ -47,12 +57,15 @@ func Test知会通知覆盖关闭重开改派和取消指派(t *testing.T) {
 		t.Fatalf("取消指派状态码 = %d, 想 200", res.StatusCode)
 	}
 	assertReasons("取消指派", w.webLi, "fyi/unassigned", "fyi/closed", "turn/assigned")
-	assertReasons("取消指派", w.webZhao, "fyi/unassigned", "turn/assigned")
+	assertReasons("取消指派", w.webZhao, "fyi/unassigned", "turn/assigned", "fyi/reopened", "fyi/closed")
 }
 
 func Test知会通知覆盖说明修订和第三方回复(t *testing.T) {
 	w := newHandoffWorld(t)
 	number := w.createHandoffTicket(t, w.webWang, "整理对照表", "李工").Number
+	if res := addCollaborator(t, w.s, w.webWang, number, "赵工"); res.StatusCode != http.StatusCreated {
+		t.Fatalf("加入协作者状态码 = %d", res.StatusCode)
+	}
 
 	link := w.s.CreateGuestLink(t, w.webWang, number, map[string]any{
 		"note": "检验科-张三", "can_edit_brief": true,
@@ -81,8 +94,15 @@ func Test知会通知覆盖说明修订和第三方回复(t *testing.T) {
 		}
 	}
 	got := notificationsOf(t, w, w.webZhao, "")
-	if len(got.Items) != 0 {
-		t.Fatalf("第三方回复者本人通知 = %+v", got.Items)
+	items := make([]notificationBody, 0, len(got.Items))
+	for _, item := range got.Items {
+		if item.Reason != "collaborator_added" {
+			items = append(items, item)
+		}
+	}
+	got.Items = items
+	if len(got.Items) != 1 || got.Items[0].Reason != "third_party_reply" {
+		t.Fatalf("第三方回复者的主人通知 = %+v", got.Items)
 	}
 }
 

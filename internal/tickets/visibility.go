@@ -13,10 +13,19 @@ func (m *Manager) CanSee(ctx context.Context, viewer identity.Viewer, full Full)
 	if viewer.Kind != identity.ViewerMember {
 		return false, fmt.Errorf("可见范围只判断成员凭证")
 	}
-	if viewer.Member.IsAdmin {
+	return CanSeeMember(ctx, m.db, viewer.Member.ID, full)
+}
+
+// CanSeeMember 是通知等没有 Viewer 对象的调用方复用的同一可见范围判断。
+func CanSeeMember(ctx context.Context, q Queryer, id int64, full Full) (bool, error) {
+	var isAdmin bool
+	if err := q.QueryRowContext(ctx, `SELECT is_admin FROM members WHERE id = ?`, id).
+		Scan(&isAdmin); err != nil {
+		return false, err
+	}
+	if isAdmin {
 		return true, nil
 	}
-	id := viewer.Member.ID
 	if id == full.Creator.MemberID || (full.AssigneeID != 0 && id == full.AssigneeID) {
 		return true, nil
 	}
@@ -28,7 +37,7 @@ func (m *Manager) CanSee(ctx context.Context, viewer identity.Viewer, full Full)
 	if full.AssigneeID != 0 {
 		return false, nil
 	}
-	triagers, err := EffectiveTriagers(ctx, m.db)
+	triagers, err := EffectiveTriagers(ctx, q)
 	if err != nil {
 		return false, err
 	}

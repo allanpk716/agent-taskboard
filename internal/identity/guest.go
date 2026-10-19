@@ -81,6 +81,26 @@ func NewAccessCode() (string, error) {
 // IsGuestDeviceKey 用于凭证解析前的分派。
 func IsGuestDeviceKey(token string) bool { return strings.HasPrefix(token, "tbgd_") }
 
+// GuestAgentCredential is the bearer form used by a guest's agent: the link
+// key and access code joined by a colon.
+type GuestAgentCredential struct {
+	Key        string
+	AccessCode string
+}
+
+// ParseGuestAgentCredential recognizes tbg_<key>:<access-code>. Link keys and
+// access codes themselves never contain colons.
+func ParseGuestAgentCredential(token string) (GuestAgentCredential, bool) {
+	if !strings.HasPrefix(token, guestKeyPrefix) {
+		return GuestAgentCredential{}, false
+	}
+	key, code, ok := strings.Cut(token, ":")
+	if !ok || key == "" || code == "" {
+		return GuestAgentCredential{}, false
+	}
+	return GuestAgentCredential{Key: key, AccessCode: code}, true
+}
+
 // CredentialHash 返回凭证（Agent token 或访客链接密钥）的存储哈希。
 // 两类 Bearer 凭证用同一方案，查库按哈希比对。
 func CredentialHash(credential string) string { return hashToken(credential) }

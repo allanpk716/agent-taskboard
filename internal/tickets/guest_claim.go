@@ -95,18 +95,45 @@ func (m *Manager) ClaimGuestLink(ctx context.Context, link identity.GuestLink, a
 // EnterGuestLink verifies the one-time access code, issues another device
 // credential, and resets the shared consecutive-failure counter.
 func (m *Manager) EnterGuestLink(ctx context.Context, link identity.GuestLink, code string) (GuestClaimResult, error) {
-	code = strings.TrimSpace(code)
-	if code == "" {
-		return GuestClaimResult{}, ErrAccessCodeRequired
-	}
 	token, err := identity.NewGuestDeviceKey()
 	if err != nil {
 		return GuestClaimResult{}, err
 	}
+	if err := m.verifyGuestAccessCode(ctx, link, code); err != nil {
+		return GuestClaimResult{}, err
+	}
+	now := m.clk.Now()
+	if _, err := m.db.ExecContext(ctx, `
+		INSERT INTO guest_devices (guest_link_id, token_hash, entry_method, created_at)
+		VALUES (?, ?, 'access_code', ?)`,
+		link.ID, identity.CredentialHash(token), now.Format(time.RFC3339Nano)); err != nil {
+		return GuestClaimResult{}, fmt.Errorf("写入访客设备凭证失败：%w", err)
+	}
+	return GuestClaimResult{DeviceToken: token, ClaimedAt: now}, nil
+}
+
+// ViewerFromGuestAgentCredential verifies an access-code bearer credential
+// without issuing a device credential. Every request reuses the browser's
+// consecutive-failure counter and is attributed as access_code.
+func (m *Manager) ViewerFromGuestAgentCredential(ctx context.Context, link identity.GuestLink, code string) (identity.Viewer, error) {
+	if err := m.verifyGuestAccessCode(ctx, link, code); err != nil {
+		return identity.Viewer{}, err
+	}
+	link.EntryMethod = "access_code"
+	return identity.Viewer{Kind: identity.ViewerGuest, GuestLink: &link}, nil
+}
+
+// verifyGuestAccessCode runs the shared browser/agent verification and updates
+// the common failure counter in one transaction.
+func (m *Manager) verifyGuestAccessCode(ctx context.Context, link identity.GuestLink, code string) error {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		return ErrAccessCodeRequired
+	}
 	now := m.clk.Now()
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
-		return GuestClaimResult{}, err
+		return err
 	}
 	defer tx.Rollback()
 
@@ -120,10 +147,10 @@ func (m *Manager) EnterGuestLink(ctx context.Context, link identity.GuestLink, c
 		SELECT access_code_hash, access_code_failures, access_code_locked_at, claim_name
 		FROM guest_links WHERE id = ?`, link.ID).
 		Scan(&hash, &failures, &lockedNull, &claimName); err != nil {
-		return GuestClaimResult{}, err
+		return err
 	}
 	if lockedNull.Valid {
-		return GuestClaimResult{}, ErrAccessCodeLocked
+		return ErrAccessCodeLocked
 	}
 	if hash == nil || identity.CredentialHash(code) != *hash {
 		failures++
@@ -131,42 +158,36 @@ func (m *Manager) EnterGuestLink(ctx context.Context, link identity.GuestLink, c
 			if _, err := tx.ExecContext(ctx, `
 				UPDATE guest_links SET access_code_failures = ?, access_code_locked_at = ? WHERE id = ?`,
 				failures, now.Format(time.RFC3339Nano), link.ID); err != nil {
-				return GuestClaimResult{}, err
+				return err
 			}
 			actor := Author{LinkID: link.ID, LinkNote: link.Note, AuthorName: claimName}
 			if err := m.insertLinkEvent(ctx, tx, link.TicketSeq, actor, "guest_access_locked",
 				link.Note, "", now); err != nil {
-				return GuestClaimResult{}, err
+				return err
 			}
 			if err := tx.Commit(); err != nil {
-				return GuestClaimResult{}, err
+				return err
 			}
-			return GuestClaimResult{}, ErrAccessCodeLocked
+			return ErrAccessCodeLocked
 		}
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE guest_links SET access_code_failures = ? WHERE id = ?`, failures, link.ID); err != nil {
-			return GuestClaimResult{}, err
+			return err
 		}
 		if err := tx.Commit(); err != nil {
-			return GuestClaimResult{}, err
+			return err
 		}
-		return GuestClaimResult{}, ErrAccessCodeInvalid
+		return ErrAccessCodeInvalid
 	}
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO guest_devices (guest_link_id, token_hash, entry_method, created_at)
-		VALUES (?, ?, 'access_code', ?)`,
-		link.ID, identity.CredentialHash(token), now.Format(time.RFC3339Nano)); err != nil {
-		return GuestClaimResult{}, fmt.Errorf("写入访客设备凭证失败：%w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `
 		UPDATE guest_links SET access_code_failures = 0 WHERE id = ?`, link.ID); err != nil {
-		return GuestClaimResult{}, err
+		return err
 	}
 	if err := tx.Commit(); err != nil {
-		return GuestClaimResult{}, err
+		return err
 	}
-	return GuestClaimResult{DeviceToken: token, ClaimedAt: now}, nil
+	return nil
 }
 
 // ResetGuestAccessCode invalidates every remembered device and issues a new

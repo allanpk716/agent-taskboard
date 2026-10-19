@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { ADMIN, createTicket, login, wang } from './helpers'
 
 test('详情页管理协作者并支持本人退出', async ({ page, request }) => {
-  const number = await createTicket(request, { title: '协作者界面流程' })
+  const number = await createTicket(request, { title: '协作者界面流程', assignee: ADMIN.username })
   await login(page, ADMIN)
   await page.goto(`/t/${number}`)
 
