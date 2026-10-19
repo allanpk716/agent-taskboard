@@ -187,24 +187,24 @@ test.describe('自由格式', () => {
     await expect(groups.nth(0).locator('.nudge')).toHaveCount(0)
     await expect(page.locator('.fill-prog')).toHaveText(/必填都写好了/)
 
-    // 附件区在组末：上传图片显示在那里，引用写进说明
+    // 附件区在组末：上传图片显示在那里，不写进大文本框
     const png = await smallPng(page)
     await groups.nth(0).locator('.cf.area input[type=file]').setInputFiles({
       name: '报警照片.png',
       mimeType: 'image/png',
       buffer: Buffer.from(png),
     })
-    await expect(groups.nth(0).locator('.cf.area .staged-file')).toContainText('报警照片.png', { timeout: 15000 })
-    await expect(box).toHaveValue(/att:/, { timeout: 15000 })
+    await expect(groups.nth(0).locator('.cf.area .staged-file.ready')).toContainText('报警照片.png', { timeout: 15000 })
+    await expect(box).not.toHaveValue(/att:/)
 
     await submit.click()
     await expect(page.locator('.fill-done')).toContainText('已提交给管理员')
     await page.getByRole('button', { name: '查看对话' }).click()
 
-    // 对话页：说明里能看到内容和图，时间线有访客的修订事件（署名门诊-李四）
+    // 对话页：说明里能看到内容，附件在说明底部；时间线有访客的修订事件
     const brief = page.locator('[data-bubble="brief"]')
     await expect(brief).toContainText('E-203')
-    await expect(brief.locator('img.inline-img')).toBeVisible({ timeout: 15000 })
+    await expect(brief.locator('.atts .att')).toContainText('报警照片.png', { timeout: 15000 })
     const event = page.locator('.event', { hasText: '修订了说明' })
     await expect(event).toBeVisible({ timeout: 15000 })
     await expect(event).toContainText('门诊-李四')
@@ -237,10 +237,19 @@ async function runFullUseCase(
   const number = ((await done.locator('b').textContent()) ?? '').trim()
   expect(number).toMatch(/^\d{8}-\d{3,}$/)
 
-  // 只复制链接；访客在独立上下文打开（同一视口）
+  // 只复制链接，供访客在独立上下文打开（同一视口）
   await page.getByRole('button', { name: '只复制链接' }).click()
   const linkUrl = await page.evaluate(() => navigator.clipboard.readText())
   expect(linkUrl).toMatch(/\/g\/tbg_/)
+
+  // #127：访客还没补全说明时，这张单不占跟进人的收件箱。
+  await page.goto('/')
+  if (mobile) {
+    await expect(page.getByText('现在轮到你处理的工单。')).toBeVisible()
+  } else {
+    await expect(page.getByTestId('inbox-list-pane')).toBeVisible()
+  }
+  await expect(page.locator('.tcard', { hasText: number })).toHaveCount(0)
 
   const ctx = await browser.newContext({ viewport, baseURL: new URL(page.url()).origin })
   const guest = await ctx.newPage()
@@ -260,12 +269,18 @@ async function runFullUseCase(
   await expect(guest.locator('.fill-done')).toContainText('已提交给管理员')
   await guest.getByRole('button', { name: '查看对话' }).click()
 
+  // #127：访客补全说明后，工单以固定原因进入跟进人收件箱。
+  await page.goto('/')
+  const completedCard = page.locator('.tcard', { hasText: number })
+  await expect(completedCard).toHaveCount(1)
+  if (mobile) await expect(completedCard).toContainText('访客补全了说明')
+
   // 访客对话页：说明卡片有内容，时间线有「修订了说明」事件
   await expect(guest.locator('[data-bubble="brief"]')).toContainText('UD-2300')
   await expect(guest.locator('.event', { hasText: '修订了说明' })).toContainText('检验科 张三', { timeout: 15000 })
 
   // 成员在工单上看到说明和事件
-  await page.getByRole('button', { name: '打开工单' }).click()
+  await page.goto(`/t/${number}`)
   await expect(page.locator('[data-bubble="brief"]')).toContainText('UD-2300')
   await expect(page.locator('.event', { hasText: '修订了说明' })).toContainText('检验科 张三', { timeout: 15000 })
   await ctx.close()

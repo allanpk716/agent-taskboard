@@ -48,30 +48,38 @@ func (a *API) handleMembersRoot(w http.ResponseWriter, r *http.Request) {
 // handleMembersRef 处理单个成员：
 //
 //	POST /api/v1/members/{id}/deactivate  停用（管理员网页会话，幂等）
+//	POST /api/v1/members/{id}/reactivate  恢复（管理员网页会话，幂等）
 //	POST /api/v1/members/{id}/triager     设置初筛人（管理员网页会话，幂等）
 //	POST /api/v1/members/{id}/reset-password 重置密码（管理员网页会话）
 func (a *API) handleMembersRef(w http.ResponseWriter, r *http.Request) {
 	ref := strings.TrimPrefix(r.URL.Path, "/api/v1/members/")
 	id, sub, hasSub := strings.Cut(ref, "/")
-	if !hasSub || (sub != "deactivate" && sub != "triager" && sub != "reset-password") {
+	if !hasSub {
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
-			"成员账号接口：GET|POST /api/v1/members、POST /api/v1/members/{id}/deactivate|triager|reset-password")
+			"成员账号接口：GET|POST /api/v1/members、POST /api/v1/members/{id}/deactivate|reactivate|triager|reset-password")
 		return
 	}
 	if r.Method != http.MethodPost {
 		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法",
-			"停用账号、设置初筛人和重置密码都用 POST")
+			"停用/恢复账号、设置初筛人和重置密码都用 POST")
 		return
 	}
-	if sub == "triager" {
+	switch sub {
+	case "triager":
 		a.setTriager(w, r, id)
 		return
-	}
-	if sub == "reset-password" {
+	case "reset-password":
 		a.resetMemberPassword(w, r, id)
 		return
+	case "reactivate":
+		a.reactivateMember(w, r, id)
+		return
+	case "deactivate":
+		a.deactivateMember(w, r, id)
+	default:
+		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
+			"成员账号接口：GET|POST /api/v1/members、POST /api/v1/members/{id}/deactivate|reactivate|triager|reset-password")
 	}
-	a.deactivateMember(w, r, id)
 }
 
 func (a *API) resetMemberPassword(w http.ResponseWriter, r *http.Request, idStr string) {
@@ -91,6 +99,9 @@ func (a *API) resetMemberPassword(w http.ResponseWriter, r *http.Request, idStr 
 			"自助改密请使用「我的」页面")
 	case errors.Is(err, identity.ErrMemberNotFound):
 		WriteError(w, http.StatusNotFound, CodeMemberNotFound, "没有这位成员", "")
+	case errors.Is(err, identity.ErrMemberInactive):
+		WriteError(w, http.StatusUnprocessableEntity, CodeMemberInactive, "成员账号已停用",
+			"先恢复账号再重置密码")
 	case err != nil:
 		panic(err)
 	default:
@@ -249,4 +260,24 @@ func (a *API) deactivateMember(w http.ResponseWriter, r *http.Request, idStr str
 	}
 	a.wakeMemberStreams(id)
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "active": false, "deactivated": changed})
+}
+
+func (a *API) reactivateMember(w http.ResponseWriter, r *http.Request, idStr string) {
+	if _, ok := a.adminWebSessionFromRequest(w, r, "成员账号只能由管理员在网页上恢复"); !ok {
+		return
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		WriteError(w, http.StatusNotFound, CodeMemberNotFound, "没有这位成员", "")
+		return
+	}
+	changed, err := a.ident.ReactivateMember(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, identity.ErrMemberNotFound) {
+			WriteError(w, http.StatusNotFound, CodeMemberNotFound, "没有这位成员", "")
+			return
+		}
+		panic(err)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "active": true, "reactivated": changed})
 }

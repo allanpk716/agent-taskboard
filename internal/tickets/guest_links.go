@@ -120,8 +120,8 @@ func (m *Manager) CreateGuestLink(ctx context.Context, viewer identity.Viewer, r
 }
 
 // createGuestLinkTx 在已有事务里写入一条访客链接并记 guest_link_created 事件
-//（带备注）；链接与工单在同一个事务里创建（#64「请人反馈」）或独立创建
-//（#32）共用这里，备注的规范化与校验也统一在这里（validateCreate）完成。
+// （带备注）；链接与工单在同一个事务里创建（#64「请人反馈」）或独立创建
+// （#32）共用这里，备注的规范化与校验也统一在这里（validateCreate）完成。
 func (m *Manager) createGuestLinkTx(ctx context.Context, tx *sql.Tx, ticketSeq int64,
 	actor Author, spec GuestLinkSpec, now time.Time) (*GuestLinkCreated, error) {
 	expiresAt, err := spec.validateCreate(now)
@@ -175,14 +175,20 @@ func (m *Manager) GuestLinks(ctx context.Context, ref string) ([]GuestLinkInfo, 
 	if err != nil {
 		return nil, err
 	}
-	rows, err := m.db.QueryContext(ctx, `
+	return GuestLinksForTicket(ctx, m.db, full.Seq)
+}
+
+// GuestLinksForTicket 读取一张工单的全部访客链接状态；db 与写事务都可以传入，
+// 通知和等待方推导因此在同一事务快照上工作。
+func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]GuestLinkInfo, error) {
+	rows, err := q.QueryContext(ctx, `
 		SELECT g.id, g.note, g.expires_at, g.revoked_at, g.can_edit_brief, g.created_at,
 		       m.id, m.name, a.id, a.name, a.revoked_at,
 		       (SELECT COUNT(*) FROM timeline_events e WHERE e.actor_link_id = g.id)
 		FROM guest_links g
 		LEFT JOIN members m ON m.id = g.created_by_member_id
 		LEFT JOIN agent_tokens a ON a.id = g.created_by_agent_id
-		WHERE g.ticket_seq = ? ORDER BY g.id`, full.Seq)
+		WHERE g.ticket_seq = ? ORDER BY g.id`, ticketSeq)
 	if err != nil {
 		return nil, err
 	}

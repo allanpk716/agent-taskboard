@@ -226,12 +226,16 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		full := result.Full
+		waitingOn, err := a.tickets.WaitingOn(r.Context(), full)
+		if err != nil {
+			panic(err)
+		}
 		res := createTicketResponse{
 			Number:    full.Number,
 			Seq:       full.Seq,
 			URL:       "/t/" + full.Number,
 			Warnings:  result.Warnings,
-			WaitingOn: newWaitingOnView(tickets.WaitingOnOf(full)),
+			WaitingOn: newWaitingOnView(waitingOn),
 		}
 		if full.AssigneeID != 0 {
 			res.Assignee = &memberRef{ID: full.AssigneeID, Name: full.AssigneeName}
@@ -282,14 +286,18 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if err != nil {
 		panic(err)
 	}
+	waitingOn, err := a.tickets.WaitingOn(r.Context(), full)
+	if err != nil {
+		panic(err)
+	}
 	if r.URL.Query().Get("format") == "markdown" {
-		md := markdownview.Ticket(ticketMarkdownInput(full, viewer, atts, usage))
+		md := markdownview.Ticket(ticketMarkdownInput(full, viewer, atts, usage, waitingOn))
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(md))
 		return
 	}
-	v := a.newTicketView(full, viewer, r)
+	v := a.newTicketView(full, viewer, r, waitingOn)
 	// 维度字段补上字典候选值与别名（#39：补全说明表单的下拉框按别名搜索；
 	// 快照里不存候选值，读取时现取）。
 	for i := range v.Brief.TemplateFields {
@@ -505,12 +513,13 @@ func isLabelDeactivated(err error) bool {
 
 // memberRef 是 viewer/作者里成员的对外结构。
 type memberRef struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Deactivated *bool  `json:"deactivated,omitempty"` // 成员账号已停用（#115）
 }
 
 // agentRef 是具名 Agent 的对外结构。revoked 表示这个 Agent 已被撤销
-//（历史署名照实标注「已停用」，#28 评审修正；活动会话的 viewer 恒为 false）。
+// （历史署名照实标注「已停用」，#28 评审修正；活动会话的 viewer 恒为 false）。
 type agentRef struct {
 	ID      int64  `json:"id"`
 	Name    string `json:"name"`
@@ -528,10 +537,14 @@ type authorView struct {
 	ViaAgent   *bool      `json:"via_agent,omitempty"`
 }
 
-func newAuthorView(a tickets.Author) authorView {
+func newAuthorView(a tickets.Author, includeAccountState bool) authorView {
 	v := authorView{}
 	if a.MemberID != 0 {
 		v.Member = &memberRef{ID: a.MemberID, Name: a.MemberName}
+		if includeAccountState && a.MemberDeactivated {
+			deactivated := true
+			v.Member.Deactivated = &deactivated
+		}
 		if a.AgentID != 0 {
 			v.Agent = &agentRef{ID: a.AgentID, Name: a.AgentName, Revoked: a.AgentRevoked}
 		}
@@ -554,15 +567,49 @@ type waitingOnView struct {
 	Member *string `json:"member"`
 	Text   string  `json:"text"`
 	Reason string  `json:"reason"`
+	Why    string  `json:"why"`
 }
 
 type briefView struct {
 	Fields         *map[string]string  `json:"fields"`
 	Markdown       string              `json:"markdown"`
 	Revision       int64               `json:"revision"`
+	AttachmentIDs  []string            `json:"attachment_ids"`
+	LastRevised    lastRevisedView     `json:"last_revised"`
 	Template       *string             `json:"template"`
 	TemplateFields []templateFieldView `json:"template_fields,omitempty"` // 创建时版本的字段定义（访客网页按问句渲染说明气泡，#38）
 	TemplateGroups []templateGroupView `json:"template_groups,omitempty"` // 创建时版本的分组（#63）；不分组时省略
+}
+
+type lastRevisedView struct {
+	Type        string    `json:"type"`
+	DisplayName string    `json:"display_name"`
+	Revision    int64     `json:"revision"`
+	At          time.Time `json:"at"`
+}
+
+func newLastRevisedView(full tickets.Full, includeAccountState bool) lastRevisedView {
+	actor, at, revision := full.Creator, full.CreatedAt, full.BriefRevision
+	for i := len(full.Timeline) - 1; i >= 0; i-- {
+		if full.Timeline[i].Type == "brief_revised" {
+			e := full.Timeline[i]
+			actor, at, revision = e.Actor, e.At, e.Revision
+			break
+		}
+	}
+	v := lastRevisedView{Revision: revision, At: at}
+	if actor.MemberID != 0 {
+		v.Type = "member"
+		if includeAccountState {
+			v.DisplayName = actor.DisplayName()
+		} else {
+			v.DisplayName = actor.DisplayNamePlain()
+		}
+		return v
+	}
+	v.Type = "guest"
+	v.DisplayName = actor.LinkNote
+	return v
 }
 
 // fieldViewsOf 把工单保存的模板快照字段定义转成对外结构（与模板接口同形；
@@ -628,9 +675,9 @@ type eventView struct {
 }
 
 // newEventView 把时间线事件转成对外结构。
-func newEventView(e tickets.Event) eventView {
+func newEventView(e tickets.Event, includeAccountState bool) eventView {
 	return eventView{
-		Seq: e.Seq, Change: e.Change, At: e.At, Actor: newAuthorView(e.Actor), Type: e.Type,
+		Seq: e.Seq, Change: e.Change, At: e.At, Actor: newAuthorView(e.Actor, includeAccountState), Type: e.Type,
 		Label: e.Label, Note: e.Note, ReplyNo: e.ReplyNo, BodyMD: e.BodyMD, Deliver: e.Deliver,
 		Revision: e.Revision, Reason: e.Reason, DuplicateOf: e.DuplicateOf, ExpiresAt: e.LinkExpires,
 		AttachmentIDs: e.AttachmentIDs,
@@ -690,22 +737,28 @@ type attachmentUsage struct {
 
 // newTicketView 把工单投影 + 当前凭证组装成 GET 响应。访客可见性过滤（#32）：
 // 无 labels 字段、时间线跳过标签事件（事件序号会跳号，这是已接受的）。
-func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.Request) ticketView {
-	waitingOn := tickets.WaitingOnOf(full)
+func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.Request, waitingOn tickets.WaitingOn) ticketView {
 	isGuest := viewer.Kind == identity.ViewerGuest
 	v := ticketView{
-		Number:      full.Number,
-		Seq:         full.Seq,
-		URL:         "/t/" + full.Number,
-		Kind:        full.Kind,
-		Title:       full.Title,
-		Status:      full.Status,
-		Creator:     newAuthorView(full.Creator),
-		Brief:       briefView{Markdown: full.BriefMD, Revision: full.BriefRevision},
+		Number:  full.Number,
+		Seq:     full.Seq,
+		URL:     "/t/" + full.Number,
+		Kind:    full.Kind,
+		Title:   full.Title,
+		Status:  full.Status,
+		Creator: newAuthorView(full.Creator, !isGuest),
+		Brief: briefView{
+			Markdown: full.BriefMD, Revision: full.BriefRevision,
+			AttachmentIDs: full.BriefAttachmentIDs, LastRevised: newLastRevisedView(full, !isGuest),
+		},
 		Attachments: []attachmentView{},
 	}
 	if full.AssigneeID != 0 {
-		v.Assignee = &authorView{Member: &memberRef{ID: full.AssigneeID, Name: full.AssigneeName}}
+		assignee := newAuthorView(tickets.Author{
+			MemberID: full.AssigneeID, MemberName: full.AssigneeName,
+			MemberDeactivated: full.AssigneeDeactivated,
+		}, !isGuest)
+		v.Assignee = &assignee
 	}
 	if !isGuest {
 		text := newHandoffText(a.requestBaseURL(r))
@@ -757,7 +810,7 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 		if isGuest && !visibleToGuest(e) {
 			continue
 		}
-		v.Timeline = append(v.Timeline, newEventView(e))
+		v.Timeline = append(v.Timeline, newEventView(e, !isGuest))
 	}
 	return v
 }
@@ -765,8 +818,8 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 // ticketMarkdownInput 把投影 + 当前凭证组装成 Markdown 视图的输入。
 // 访客（#32）：无标签行、时间线跳过标签事件，署名按访客写法；附件小节与
 // 用量由 attachmentProjection 生成（#33），访客的下载链接是签名地址。
-func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer, atts []attachmentView, usage attachmentUsage) markdownview.Input {
-	waitingOn := tickets.WaitingOnOf(full)
+func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer, atts []attachmentView, usage attachmentUsage,
+	waitingOn tickets.WaitingOn) markdownview.Input {
 	isGuest := viewer.Kind == identity.ViewerGuest
 	viewerName := viewer.Member.Name
 	if isGuest {
@@ -779,7 +832,7 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer, atts []attac
 		Title:           full.Title,
 		Kind:            full.Kind,
 		Status:          full.Status,
-		CreatorName:     full.Creator.DisplayName(),
+		CreatorName:     full.Creator.DisplayNamePlain(),
 		AssigneeName:    full.AssigneeName,
 		WaitingOnText:   waitingOn.Text,
 		WaitingOnReason: waitingOn.Reason,
@@ -824,15 +877,27 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer, atts []attac
 		labels := full.Labels
 		in.Labels = &labels
 	}
+	if !isGuest {
+		in.CreatorName = full.Creator.DisplayName()
+	}
 	if full.CloseReason != "" {
 		in.CloseReasonText = markdownview.CloseReasonText(full.CloseReason)
 	}
+	assigneeName := full.AssigneeName
+	if full.AssigneeDeactivated && !isGuest {
+		assigneeName += "（已停用）"
+	}
+	in.AssigneeName = assigneeName
 	for _, e := range full.Timeline {
 		if isGuest && !visibleToGuest(e) {
 			continue
 		}
+		authorName := e.Actor.DisplayName()
+		if isGuest {
+			authorName = e.Actor.DisplayNamePlain()
+		}
 		in.Timeline = append(in.Timeline, markdownview.Event{
-			Seq: e.Seq, At: e.At, AuthorName: e.Actor.DisplayName(), Type: e.Type,
+			Seq: e.Seq, At: e.At, AuthorName: authorName, Type: e.Type,
 			Label: e.Label, BodyMD: e.BodyMD, Deliver: e.Deliver, Revision: e.Revision,
 			Reason: e.Reason, DuplicateOf: e.DuplicateOf, Note: e.Note, LinkExpiresAt: e.LinkExpires,
 			AttachmentIDs: e.AttachmentIDs,

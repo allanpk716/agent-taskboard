@@ -70,7 +70,7 @@ func (m *Manager) resolveAssignee(ctx context.Context, ref string) (int64, strin
 		return m.rejectAgentRef(ctx, ref)
 	case err != nil:
 		return 0, "", err
-	case deactivated.Valid && deactivated.String != "":
+	case nullStringSet(deactivated):
 		return 0, "", &AssigneeDeactivatedError{Name: name}
 	}
 	return id, name, nil
@@ -148,7 +148,11 @@ func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assig
 		}
 	}
 	if full.AssigneeID == 0 && toID == 0 {
-		return AssignResult{Ticket: full.Ticket, WaitingOn: WaitingOnOf(full)}, nil
+		turn, err := m.WaitingOn(ctx, full)
+		if err != nil {
+			return AssignResult{}, err
+		}
+		return AssignResult{Ticket: full.Ticket, WaitingOn: turn}, nil
 	}
 	if toID == full.AssigneeID {
 		return AssignResult{}, &AlreadyAssignedError{Name: toName}
@@ -195,5 +199,9 @@ func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assig
 	if err != nil {
 		return AssignResult{}, err
 	}
-	return AssignResult{Ticket: after.Ticket, WaitingOn: WaitingOnOf(after)}, nil
+	turn, err := m.WaitingOn(ctx, after)
+	if err != nil {
+		return AssignResult{}, err
+	}
+	return AssignResult{Ticket: after.Ticket, WaitingOn: turn}, nil
 }

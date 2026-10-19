@@ -44,21 +44,21 @@ func (a *API) handleInbox(w http.ResponseWriter, r *http.Request) {
 
 // inboxItemView 是收件箱项的对外结构。
 type inboxItemView struct {
-	Number     string    `json:"number"`
-	Title      string    `json:"title"`
-	Role       string    `json:"role"` // assignee | creator
-	Reason     string    `json:"reason"`
-	ReasonCode string    `json:"reason_code"`
-	SinceSeq   *int64    `json:"since_seq"` // 推导依据的回复事件 seq；无相关回复时为 null
-	ReadNew    string    `json:"read_new"`  // 增量读取地址（after = 我在该单最后一条事件）
-	ReadFull   string    `json:"read_full"` // 全文 Markdown 地址
-	Kind       string    `json:"kind"`
-	Creator    string    `json:"creator"`
-	Assignee   string    `json:"assignee"`
-	Labels     []string  `json:"labels"`
-	WaitingOn  string    `json:"waiting_on"`
-	Who        string    `json:"who"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	Number     string      `json:"number"`
+	Title      string      `json:"title"`
+	Role       string      `json:"role"` // assignee | creator | triager
+	Reason     string      `json:"reason"`
+	ReasonCode string      `json:"reason_code"`
+	SinceSeq   *int64      `json:"since_seq"` // 推导依据的回复事件 seq；无相关回复时为 null
+	ReadNew    string      `json:"read_new"`  // 增量读取地址（after = 我在该单最后一条事件）
+	ReadFull   string      `json:"read_full"` // 全文 Markdown 地址
+	Kind       string      `json:"kind"`
+	Creator    string      `json:"creator"`
+	Assignee   *authorView `json:"assignee"`
+	Labels     []string    `json:"labels"`
+	WaitingOn  string      `json:"waiting_on"`
+	Who        string      `json:"who"`
+	UpdatedAt  time.Time   `json:"updated_at"`
 }
 
 func newInboxItemView(it tickets.InboxItem) inboxItemView {
@@ -66,12 +66,18 @@ func newInboxItemView(it tickets.InboxItem) inboxItemView {
 		Number: it.Number, Title: it.Title, Role: it.Role, Reason: it.Reason,
 		ReasonCode: it.ReasonCode,
 		ReadNew:    it.ReadNew, ReadFull: it.ReadFull,
-		Kind: it.Kind, Creator: it.Creator, Assignee: it.Assignee,
+		Kind: it.Kind, Creator: it.Creator,
 		Labels: it.Labels, WaitingOn: it.Waiting, Who: it.Who, UpdatedAt: it.UpdatedAt,
 	}
 	if it.SinceSeq != 0 {
 		s := it.SinceSeq
 		v.SinceSeq = &s
+	}
+	if it.AssigneeID != 0 {
+		assignee := newAuthorView(tickets.Author{
+			MemberID: it.AssigneeID, MemberName: it.AssigneeName, MemberDeactivated: it.AssigneeDeactivated,
+		}, true)
+		v.Assignee = &assignee
 	}
 	return v
 }

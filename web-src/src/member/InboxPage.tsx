@@ -1,8 +1,8 @@
 // 收件箱（#41）：「现在轮到我」的开启工单，卡片顶部是醒目的原因色条与文案，
-// 一眼知道轮到我做什么。名下所有成员 Agent 共用这一份；未指派的工单不会
-// 出现在收件箱里（要用查询接口找）。
+// 一眼知道轮到我做什么；轮到本部门的未指派工单只进入有效初筛人的收件箱。
 import { useCallback, useEffect, useState } from 'react'
 import { fetchInbox, reasonClass, type InboxItem, type InboxResponse } from './memberApi'
+import { DeactivatedBadge } from '../shared/widgets'
 import { nav, useInvalidate, useLocationSearch } from './ui'
 import { TicketCard, ticketLabelFilterPath } from './TicketsPage'
 
@@ -59,6 +59,8 @@ export function InboxPage({
       ...it,
       seq: 0,
       status: 'open',
+      creator: it.creator,
+      assignee: it.assignee?.member?.name ?? null,
       waiting_on: { party: '', member: it.who || null, text: it.waiting_on, reason: it.reason },
     })
     return (
@@ -146,9 +148,7 @@ export function InboxPage({
           ＋ 请人反馈
         </button>
       </div>
-      <div className="b-note">
-        「现在轮到我」的开启工单，注明原因；名下所有成员 Agent 共用这一份。
-      </div>
+      <div className="b-note">现在轮到你处理的工单。</div>
       {data.items.length === 0 ? (
         <div className="ecard">收件箱是空的。</div>
       ) : (
@@ -165,10 +165,15 @@ export function InboxPage({
             <span className={`strip ${reasonClass(it.reason)}`} aria-hidden="true" />
             <div className="tc-top">
               <span className="badge reason">{it.reason}</span>
-              <span className="hint">{it.role === 'assignee' ? '我是指派人' : '我是发起人'}</span>
+              <span className="hint">
+                {it.role === 'assignee' ? '我是指派人' : it.role === 'triager' ? '我是初筛人' : '我是发起人'}
+              </span>
             </div>
             <div className="tc-title">{it.title}</div>
-            <div className="tc-meta">{it.number}</div>
+            <div className="tc-meta">
+              {it.number}
+              {it.assignee?.member?.deactivated && <DeactivatedBadge />}
+            </div>
           </a>
         ))
       )}

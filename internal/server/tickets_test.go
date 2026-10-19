@@ -298,8 +298,9 @@ func Test建单请求体不是JSON时返回400(t *testing.T) {
 // authorBody 是作者结构 {member, agent}，本人操作时 agent 为 null（data-model）。
 type authorBody struct {
 	Member *struct {
-		ID   int64  `json:"id"`
-		Name string `json:"name"`
+		ID          int64  `json:"id"`
+		Name        string `json:"name"`
+		Deactivated *bool  `json:"deactivated"`
 	} `json:"member"`
 	Agent *struct {
 		ID   int64  `json:"id"`
@@ -327,12 +328,14 @@ type ticketResponseBody struct {
 		Member *string `json:"member"`
 		Text   string  `json:"text"`
 		Reason string  `json:"reason"`
+		Why    string  `json:"why"`
 	} `json:"waiting_on"`
 	Labels []string `json:"labels"` // 访客视角没有这个字段（解码为 nil；另用原始 JSON 断言字段不存在）
 	Brief  struct {
 		Fields         *map[string]string  `json:"fields"`
 		Markdown       string              `json:"markdown"`
 		Revision       int64               `json:"revision"`
+		LastRevised    lastRevisedBody     `json:"last_revised"`
 		Template       *string             `json:"template"`
 		TemplateFields []templateFieldBody `json:"template_fields"` // #39：补全说明表单用
 		TemplateGroups []groupBody         `json:"template_groups"` // #63：创建时版本的分组
@@ -366,6 +369,13 @@ type ticketResponseBody struct {
 	HandoffText      string              `json:"handoff_text"`
 	HandoffShareText *string             `json:"handoff_share_text"`
 	Timeline         []timelineEventBody `json:"timeline"`
+}
+
+type lastRevisedBody struct {
+	Type        string `json:"type"`
+	DisplayName string `json:"display_name"`
+	Revision    int64  `json:"revision"`
+	At          string `json:"at"`
 }
 
 // 用工单编号和用序号读到的是同一张工单；响应里标题、类型、状态、创建者、标签、

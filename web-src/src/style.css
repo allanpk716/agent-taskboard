@@ -78,3 +78,15 @@ form button:disabled {
   color: #6b7280;
   text-align: center;
 }
+.deactivated-badge,
+.deactivated-inline {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 9px;
+  background: #eceef1;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 500;
+  vertical-align: middle;
+}

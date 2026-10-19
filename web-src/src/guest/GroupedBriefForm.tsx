@@ -3,20 +3,20 @@
 // 顶部吸顶必填进度；宽屏（≥768）双栏：左边全部分组，右边吸顶必填进度、
 // 逐字段清单（点一下滚到该字段）、整张工单的附件区、署名与提交。保存沿用
 // 旧逻辑：草稿实时写本机、一次 PATCH（带 base_revision）+ 幂等键重试、版本
-// 冲突时重读重试；文件立即上传拿 att: 引用写进字段值（统一附件区挂到最后
-// 一个文本字段）。必填校验只在前端拦提交，服务端规则不变。无模板的工单
-// （#66 自由格式）合成一组「情况说明」，修订时提交 brief_md。
+// 冲突时重读重试。字段内文件上传后把 att: 引用写进字段值；整张工单附件区
+// 只维护 attachment_ids。必填校验只在前端拦提交，服务端规则不变。无模板的
+// 工单（#66 自由格式）合成一组「情况说明」，修订时提交 brief_md。
 // 视觉参考 prototype/guest-fill 的 c.html（原型代码不合并）。
 import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api'
 import { compressImage } from '../shared/compress'
 import { DimensionSelect } from './DimensionSelect'
-import { briefDraftKey, clearFormDraft, loadAuthor, loadFormDraft, saveAuthor, saveFormDraft } from './draft'
+import { briefDraftKey, clearFormDraft, loadAuthor, loadFormDraft, saveAuthor, saveFormDraft, type FormDraft } from './draft'
 import { guestApi } from './guestApi'
 import { uploadAttachment } from './upload'
 import type { TemplateField, TicketView } from '../shared/types'
 import { fmtSize } from '../shared/format'
-import { appendRef, lastTextFieldKey, type StagedFile } from './FieldForm'
+import { appendRef, type StagedFile } from './FieldForm'
 
 const RETRY_FIRST_MS = 1500
 const RETRY_MS = 4000
@@ -37,7 +37,7 @@ export interface FillField extends TemplateField {
   nudgeExample?: string
 }
 
-/** 自由格式字段的键（草稿与统一附件区都用它；不与模板字段键冲突）。
+/** 自由格式字段的键（草稿用它；不与模板字段键冲突）。
  *  值 __brief__ 是写进本机草稿的持久键，改了会让旧草稿读不回来，保持不变。 */
 export const NO_TEMPLATE_FIELD_KEY = '__brief__'
 
@@ -88,6 +88,12 @@ export function groupsOf(ticket: TicketView): FieldGroup[] {
     return gs.map((g, i) => ({ title: g.title, subtitle: g.subtitle, fields: fields.filter((f) => f.group === i) }))
   }
   return [{ title: '填写说明', fields }]
+}
+
+function draftAttachments(files: StagedFile[]): NonNullable<FormDraft['attachments']> {
+  return files
+    .filter((f) => f.area && f.status === 'ready' && f.attachmentId)
+    .map((f) => ({ attachmentId: f.attachmentId!, name: f.name, size: f.size }))
 }
 
 /** ≥768 算宽屏（双栏布局），窗口缩放时实时切换。 */
@@ -306,20 +312,18 @@ function FileChips({ files, onRemove }: { files: StagedFile[]; onRemove?: (id: s
 /** 整张工单的附件区：手机在「发生了什么」组末（没有时最后一组组末，
  *  三入口），宽屏在右栏（拖放区）。 */
 function AttachArea({
-  fieldKey,
   onPickFiles,
   files,
   onRemoveFile,
   desktop,
 }: {
-  fieldKey?: string
   onPickFiles: (fieldKey: string, files: File[], viaArea: boolean) => void
   files: StagedFile[]
   onRemoveFile: (id: string) => void
   desktop: boolean
 }) {
   const fileRef = useRef<HTMLInputElement | null>(null)
-  const areaFiles = fieldKey ? files.filter((f) => f.fieldKey === fieldKey && f.area) : []
+  const areaFiles = files.filter((f) => f.area)
   function openPicker(mode: 'photo' | 'album' | 'file') {
     const input = fileRef.current
     if (!input) return
@@ -342,7 +346,7 @@ function AttachArea({
       onDrop={(e) => {
         e.preventDefault()
         const dropped = Array.from(e.dataTransfer?.files ?? [])
-        if (dropped.length > 0 && fieldKey) onPickFiles(fieldKey, dropped, true)
+        if (dropped.length > 0) onPickFiles('', dropped, true)
       }}
     >
       把日志、照片拖到这里，或点击选择文件
@@ -353,7 +357,7 @@ function AttachArea({
         onChange={(e) => {
           const picked = Array.from(e.target.files ?? [])
           e.target.value = ''
-          if (picked.length > 0 && fieldKey) onPickFiles(fieldKey, picked, true)
+          if (picked.length > 0) onPickFiles('', picked, true)
         }}
       />
     </label>
@@ -376,7 +380,7 @@ function AttachArea({
         onChange={(e) => {
           const picked = Array.from(e.target.files ?? [])
           e.target.value = ''
-          if (picked.length > 0 && fieldKey) onPickFiles(fieldKey, picked, true)
+          if (picked.length > 0) onPickFiles('', picked, true)
         }}
       />
     </div>
@@ -408,14 +412,26 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
       : { ...(ticket.brief.fields ?? {}), ...(initialDraft.current?.fields ?? {}) },
   )
   const [author, setAuthor] = useState(initialDraft.current?.author ?? initialAuthor ?? loadAuthor())
-  const [files, setFiles] = useState<StagedFile[]>([])
+  const [files, setFiles] = useState<StagedFile[]>(() =>
+    (initialDraft.current?.attachments ?? []).map((a) => ({
+      id: a.attachmentId,
+      attachmentId: a.attachmentId,
+      name: a.name,
+      size: a.size,
+      fieldKey: '',
+      area: true,
+      status: 'ready',
+    })),
+  )
+  const [attachmentIds, setAttachmentIds] = useState<string[]>(
+    () => initialDraft.current?.attachmentIds ?? ticket.brief.attachment_ids,
+  )
   const [notice, setNotice] = useState<{ kind: 'down' | 'err'; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [openGroup, setOpenGroup] = useState(0)
   const desktop = useDesktop()
   const member = memberNameOf(ticket)
-  const areaField = free ? NO_TEMPLATE_FIELD_KEY : lastTextFieldKey(templateFields)
   const baseRevisionRef = useRef(ticket.brief.revision)
   const idemKeyRef = useRef<string | undefined>(initialDraft.current?.idemKey)
   const pendingRef = useRef(!!initialDraft.current?.pending)
@@ -423,17 +439,43 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
   valuesRef.current = values
   const authorRef = useRef(author)
   authorRef.current = author
+  const attachmentIdsRef = useRef(attachmentIds)
+  attachmentIdsRef.current = attachmentIds
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const areaFiles = [
+    ...files.filter((f) => f.area),
+    ...attachmentIds
+      .filter((id) => !files.some((f) => f.area && f.attachmentId === id))
+      .map((id) => ticket.attachments.find((a) => a.id === id))
+      .filter((a): a is NonNullable<typeof a> => !!a)
+      .map((a) => ({
+        id: a.id,
+        attachmentId: a.id,
+        name: a.filename,
+        size: a.size,
+        fieldKey: '',
+        area: true,
+        status: 'ready' as const,
+      })),
+  ]
 
   const [reqDone, reqTotal] = reqProgress(fields, values)
   const uploading = files.some((f) => f.status === 'uploading')
   const canSubmit = reqDone === reqTotal && !uploading && !saving
 
-  // 实时保存草稿；字段值里的 att: 引用随字段值一并保存。
+  // 实时保存草稿；字段值里的 att: 引用随字段值一并保存。整张工单附件区
+  // 另存有序 id 与元数据（待用附件不在工单附件列表里，刷新后靠草稿恢复）。
   useEffect(() => {
     if (submitted) return
-    saveFormDraft(key, { fields: values, author, idemKey: idemKeyRef.current, pending: pendingRef.current })
-  }, [key, values, author, submitted])
+    saveFormDraft(key, {
+      fields: values,
+      author,
+      idemKey: idemKeyRef.current,
+      pending: pendingRef.current,
+      attachments: draftAttachments(files),
+      attachmentIds: attachmentIdsRef.current,
+    })
+  }, [key, values, author, submitted, files, attachmentIds])
 
   // 刷新后若有一次没保存成功的修订，立即自动重试。
   useEffect(() => {
@@ -453,7 +495,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
     setValues((prev) => ({ ...prev, [k]: v }))
   }
 
-  /** 立即上传，把 att: 引用写进对应字段的值（统一附件区挂最后一个文本字段）。 */
+  /** 立即上传：字段文件把 att: 引用写进字段值，附件区文件进 attachment_ids。 */
   async function pickFiles(fieldKey: string, picked: File[], viaArea: boolean) {
     for (const file of picked) {
       const id = crypto.randomUUID()
@@ -470,8 +512,11 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
       try {
         const prepared = file.type.startsWith('image/') ? await compressImage(file) : file
         const att = await uploadAttachment(linkKey, ticket.number, prepared)
-        setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, status: 'ready', markdown: att.markdown, size: att.size } : f)))
-        setValues((prev) => ({ ...prev, [fieldKey]: appendRef(prev[fieldKey] ?? '', att.markdown) }))
+        setFiles((prev) =>
+          prev.map((f) => (f.id === id ? { ...f, status: 'ready', markdown: att.markdown, attachmentId: att.id, size: att.size } : f)),
+        )
+        if (viaArea) setAttachmentIds((prev) => [...prev, att.id])
+        else setValues((prev) => ({ ...prev, [fieldKey]: appendRef(prev[fieldKey] ?? '', att.markdown) }))
       } catch (err) {
         if (err instanceof ApiError && err.status === 401 && (err.code === 'link_revoked' || err.code === 'link_expired')) {
           onLinkDead(err.code)
@@ -490,6 +535,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
 
   function removeFile(id: string) {
     setFiles((prev) => prev.filter((f) => f.id !== id))
+    setAttachmentIds((prev) => prev.filter((attachmentId) => attachmentId !== id))
   }
 
   async function save() {
@@ -502,15 +548,32 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
     try {
       if (!idemKeyRef.current) idemKeyRef.current = crypto.randomUUID()
       pendingRef.current = true
-      saveFormDraft(key, { fields: valuesRef.current, author: authorRef.current, idemKey: idemKeyRef.current, pending: true })
+      saveFormDraft(key, {
+        fields: valuesRef.current,
+        author: authorRef.current,
+        idemKey: idemKeyRef.current,
+        pending: true,
+        attachments: draftAttachments(files),
+        attachmentIds: attachmentIdsRef.current,
+      })
       const name = authorRef.current.trim()
       // 自由格式提交整块 brief_md（非模板工单）；模板工单逐字段提交。
       const body = free
-        ? { brief_md: valuesRef.current[NO_TEMPLATE_FIELD_KEY] ?? '', base_revision: baseRevisionRef.current, ...(name ? { author_name: name } : {}) }
+        ? {
+            brief_md: valuesRef.current[NO_TEMPLATE_FIELD_KEY] ?? '',
+            attachment_ids: attachmentIdsRef.current,
+            base_revision: baseRevisionRef.current,
+            ...(name ? { author_name: name } : {}),
+          }
         : (() => {
             const out: Record<string, string> = {}
             for (const f of templateFields) out[f.key] = valuesRef.current[f.key] ?? ''
-            return { fields: out, base_revision: baseRevisionRef.current, ...(name ? { author_name: name } : {}) }
+            return {
+              fields: out,
+              attachment_ids: attachmentIdsRef.current,
+              base_revision: baseRevisionRef.current,
+              ...(name ? { author_name: name } : {}),
+            }
           })()
       await guestApi(linkKey, `/api/v1/tickets/${encodeURIComponent(ticket.number)}`, {
         method: 'PATCH',
@@ -605,8 +668,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
   }
 
   // 整张工单的附件区（手机）的组：有「发生了什么」组时在它组末，否则退回
-  // 最后一组组末（不分组模板与自由格式都只有一组）。附件引用仍挂最后一个
-  // 文本字段（areaField 不变）。
+  // 最后一组组末（不分组模板与自由格式都只有一组）。
   const areaGroup = groups.findIndex((g) => g.title === ATTACH_AREA_GROUP_TITLE)
   const areaGroupIndex = areaGroup >= 0 ? areaGroup : groups.length - 1
 
@@ -634,7 +696,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
                   <FieldBlock key={f.key} field={f} value={values[f.key] ?? ''} {...fieldProps} />
                 ))}
                 {i === areaGroupIndex && !desktop && (
-                  <AttachArea fieldKey={areaField} onPickFiles={fieldProps.onPickFiles} files={files} onRemoveFile={removeFile} desktop={desktop} />
+                  <AttachArea onPickFiles={fieldProps.onPickFiles} files={areaFiles} onRemoveFile={removeFile} desktop={desktop} />
                 )}
                 {!openAll && !last && (
                   <button
@@ -696,7 +758,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
                 </div>
               </div>
               <div className="fill-card">
-                <AttachArea fieldKey={areaField} onPickFiles={fieldProps.onPickFiles} files={files} onRemoveFile={removeFile} desktop={desktop} />
+                <AttachArea onPickFiles={fieldProps.onPickFiles} files={areaFiles} onRemoveFile={removeFile} desktop={desktop} />
               </div>
               <div className="fill-card">{submitArea}</div>
             </aside>

@@ -240,8 +240,9 @@ test('入口提交的截图与附件在建单后写进说明，不确定不打�
   await page.getByRole('link', { name: '打开这条反馈' }).click()
   const brief = page.locator('[data-bubble="brief"]')
   await expect(brief.locator('img.inline-img')).toBeVisible({ timeout: 15000 })
-  await expect(brief.getByText('报警截图.png')).toBeVisible()
-  await expect(page.locator('.atts').getByText('仪器日志.log')).toBeVisible()
+  await expect(brief.locator('img[alt="报警截图.png"]')).toBeVisible()
+  await expect(brief.getByRole('link', { name: '仪器日志.log' })).toBeVisible()
+  await expect(brief.locator('.atts')).toHaveCount(0)
 
   // 「不确定」不打机型标签；创建者是访客（带入口备注）
   const number = (await page.locator('header').first().textContent())!.match(/\d{8}-\d+/)![0]

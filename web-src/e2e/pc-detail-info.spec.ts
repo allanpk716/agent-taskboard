@@ -37,7 +37,7 @@ test('wide detail keeps actions in the header and shows ordered ticket informati
   expect(await info.evaluate((el) => el.getBoundingClientRect().width)).toBe(290)
   await expect(info.locator('.sec-t')).toHaveText(['状态', '指派人', '发起人', '标签', '访客链接'])
   await expect(info).toContainText('任务')
-  await expect(info).toContainText('等待 王工')
+  await expect(info).toContainText('等待 访客补全说明')
   await expect(info).toContainText('王工')
   await expect(info).toContainText('管理员')
   await expect(info).toContainText('机型:UD-2300')

@@ -164,7 +164,7 @@ func parseHeader(lines []string) (Definition, error) {
 }
 
 // parseBody 解析正文：`# 组名` 开一组（可选，#63），每个 ## 小节是一个字段
-//（或「给 Agent 的说明」）。bodyStart 是正文第一行的行号（1 起），用于报行号。
+// （或「给 Agent 的说明」）。bodyStart 是正文第一行的行号（1 起），用于报行号。
 // 分组规则：要么完全不分组，要么所有字段都在分组里（字段写在第一个 # 之前
 // 报带行号的错）；空组报错；「给 Agent 的说明」不属于任何组，写在哪里都行；
 // 除 # 与 ## 外，其他级别的标题仍然报错。
@@ -451,7 +451,8 @@ func Guide(key string, def Definition, version int64, candidates map[string][]st
 		"",
 		`{"template": "`+key+`", "title": "…", "fields": {"`+firstQuestion(def)+`": "…"}, "labels": []}`,
 		"```", "",
-		"缺必填项不会拦下建单，响应的 `warnings` 会逐项列出；维度字段选中的值会自动成为工单的标签。", "")
+		"缺必填项不会拦下建单，响应的 `warnings` 会逐项列出；维度字段选中的值会自动成为工单的标签。",
+		"日志这类不属于某个字段的文件，上传后放进说明修订的 `attachment_ids`，不要拼进任何字段。", "")
 	for _, f := range def.Fields {
 		L = append(L, "## "+f.Title+markerText(f))
 		if f.Guide != "" {

@@ -4,6 +4,8 @@
 export interface MemberRef {
   id: number
   name: string
+  /** 成员账号已停用（#115）；正常账号没有这个字段。 */
+  deactivated?: boolean
 }
 
 export interface AgentRef {
@@ -69,10 +71,15 @@ export interface TimelineEvent {
   label?: string
 }
 
+export type MemberSummary = string
+
 export interface Brief {
   fields?: Record<string, string> | null
   markdown: string
   revision: number
+  /** 整张工单的附件（#130）；字段/正文内引用不在这里。 */
+  attachment_ids: string[]
+  last_revised: { type: 'member' | 'guest'; display_name: string; revision: number; at: string }
   template?: string | null
   template_fields?: TemplateField[]
   /** 创建时模板版本的分组（#63）；不分组时省略，由前端合成一组「填写说明」 */

@@ -100,7 +100,11 @@ func (m *Manager) QueryList(ctx context.Context, q ListQuery) ([]ListRow, error)
 		if err != nil {
 			return nil, err
 		}
-		if !q.matches(&full) {
+		turn, err := m.WaitingOn(ctx, full)
+		if err != nil {
+			return nil, err
+		}
+		if !q.matches(&full, turn) {
 			continue
 		}
 		var hit *SearchHit
@@ -112,7 +116,7 @@ func (m *Manager) QueryList(ctx context.Context, q ListQuery) ([]ListRow, error)
 		out = append(out, ListRow{
 			Full:      full,
 			Meta:      MetaOf(full),
-			WaitingOn: WaitingOnOf(full),
+			WaitingOn: turn,
 			Hit:       hit,
 		})
 	}
@@ -139,7 +143,7 @@ func MetaOf(full Full) TicketMeta {
 }
 
 // matches 报告工单是否通过全部筛选条件（照 prototype/ticket-query 的 select）。
-func (q *ListQuery) matches(t *Full) bool {
+func (q *ListQuery) matches(t *Full, turn WaitingOn) bool {
 	if q.Status != "all" && t.Status != q.Status {
 		return false
 	}
@@ -188,7 +192,6 @@ func (q *ListQuery) matches(t *Full) bool {
 		}
 	}
 	if q.WaitingOn != "" {
-		turn := WaitingOnOf(*t)
 		if q.WaitingOn == "me" {
 			if turn.MemberID != q.ViewerMemberID {
 				return false

@@ -5,6 +5,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError } from '../api'
 import { closeReasonText, fmtShort } from '../shared/format'
+import type { MemberSummary } from '../shared/types'
+import { DeactivatedBadge } from '../shared/widgets'
 import { api } from '../api'
 import { nav, useInvalidate, useLocationSearch } from './ui'
 import { LabelFacetPanel, LabelFilterSummary } from './LabelFacets'
@@ -27,8 +29,10 @@ export interface TicketListItem {
   title: string
   status: string
   close_reason?: string | null
-  creator: string
-  assignee?: string | null
+  creator: MemberSummary
+  creator_deactivated?: boolean
+  assignee?: MemberSummary | null
+  assignee_deactivated?: boolean
   labels: string[]
   waiting_on: { party: string; member?: string | null; text: string; reason: string }
   updated_at: string
@@ -114,6 +118,8 @@ export function TicketCard({
   onLabelClick?: (label: string) => void
 }) {
   const target = href ?? `/t/${item.number}`
+  const creator = memberSummaryText(item.creator)
+  const assignee = item.assignee == null ? '未指派' : memberSummaryText(item.assignee)
   return (
     <a
       className={`tcard${desktop ? ' pc-row' : ''}${selected ? ' selected' : ''}`}
@@ -136,7 +142,8 @@ export function TicketCard({
           </div>
           <div className={`pc-row-turn${item.waiting_on.member === me?.name ? ' mine' : ''}`}>
             {item.status === 'closed' ? '已关闭' : `等待 ${item.waiting_on.text}`} · 指派{' '}
-            {item.assignee ?? '未指派'}
+            {assignee}
+            {item.assignee_deactivated && <DeactivatedBadge />}
           </div>
           <div className="pc-row-labels">
             <LabelChips labels={item.labels} onToggle={onLabelClick} />
@@ -157,7 +164,10 @@ export function TicketCard({
           </div>
           <div className="tc-title">{item.title}</div>
           <div className="tc-meta">
-            {item.number} · 发起人 {item.creator} · 指派 {item.assignee ?? '未指派'}
+            {item.number} · 发起人 {creator}
+            {item.creator_deactivated && <DeactivatedBadge />}
+            {' '}· 指派 {assignee}
+            {item.assignee_deactivated && <DeactivatedBadge />}
           </div>
           <div className="tc-foot">
             <LabelChips labels={item.labels} onToggle={onLabelClick} />
@@ -166,6 +176,10 @@ export function TicketCard({
       )}
     </a>
   )
+}
+
+function memberSummaryText(member: MemberSummary): string {
+  return member
 }
 
 function FilterGroup({

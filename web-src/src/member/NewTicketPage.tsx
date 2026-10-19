@@ -1,6 +1,6 @@
 // 建单（#41）：第一步选「用模板」或「自由格式」；第二步填表单——模板工单
 // 复用 #39 的 FieldForm（按字段分区、维度字段可按别名搜索、统一附件区，
-// 附件先暂存本机，建单后立即上传并把引用写进说明）；自由格式一整块
+// 附件先暂存本机，建单后立即上传并挂到整张工单的附件）；自由格式一整块
 // Markdown 说明。维度标签先经 resolve 换成标准值（建单接口只收标准值）；
 // 缺必填只弹确认、不拦截（spec 用户故事 6）；创建指派给同事后嵌入
 // 「交给 Agent」面板。
@@ -198,67 +198,59 @@ export function NewTicketPage() {
 /* ---------------- 第二步：表单 ---------------- */
 
 /** 暂存选中的文件（本机预览；建单成功后才上传，照 #39 入口页的模式）。 */
-function stageFilesOf(fieldKey: string, picked: File[]): StagedFile[] {
+function stageFilesOf(fieldKey: string, picked: File[], area: boolean): StagedFile[] {
   return picked.map((file, i) => ({
     id: `${fieldKey}-${Date.now()}-${i}-${file.name}`,
     name: file.name,
     size: file.size,
     fieldKey,
-    area: true,
+    area,
     status: 'ready' as const,
     previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
     blob: file,
   }))
 }
 
-/** 建单后补传暂存附件：上传拿 att: 引用，再 PATCH 说明把引用挂上
- *（模板工单按字段挂到对应字段；自由格式追加到整块说明末尾）。 */
+/** 建单后补传暂存附件：字段内的引用写回字段，附件区的文件挂整张工单的附件。 */
 async function attachStagedFiles(
   number: string,
-  template: TemplateDetail | null,
-  brief: string,
   stagedFiles: StagedFile[],
 ): Promise<{ field: string; message: string }[]> {
   const staged = stagedFiles.filter((f) => f.blob)
   if (staged.length === 0) return []
   const warnings: { field: string; message: string }[] = []
   const refsByField: Record<string, string[]> = {}
+  const attachmentIds: string[] = []
   for (const f of staged) {
     try {
       const att = await uploadMemberAttachment(number, f.blob!)
-      ;(refsByField[f.fieldKey] ??= []).push(att.markdown)
+      if (f.area) attachmentIds.push(att.id)
+      else (refsByField[f.fieldKey] ??= []).push(att.markdown)
     } catch (err) {
       const why = err instanceof ApiError ? `${err.message}${err.hint ? `（${err.hint}）` : ''}` : '上传失败'
       warnings.push({ field: f.name, message: `未能附上（${why}），请打开工单后用回复补充。` })
     }
   }
-  if (Object.keys(refsByField).length === 0) return warnings
+  if (attachmentIds.length === 0 && Object.keys(refsByField).length === 0) return warnings
   try {
     const fresh = await api(`/api/v1/tickets/${encodeURIComponent(number)}`)
-    if (template) {
+    const body: Record<string, unknown> = { base_revision: fresh.brief.revision }
+    if (Object.keys(refsByField).length > 0) {
       const merged: Record<string, string> = { ...(fresh.brief.fields ?? {}) }
-      const byTitle = new Map(template.fields.map((f) => [f.key, f.title]))
       for (const [fieldKey, refs] of Object.entries(refsByField)) {
-        const title = byTitle.get(fieldKey) ?? fieldKey
-        merged[title] = appendRef(merged[title] ?? '', refs.join('\n'))
+        merged[fieldKey] = appendRef(merged[fieldKey] ?? '', refs.join('\n'))
       }
-      await api(`/api/v1/tickets/${encodeURIComponent(number)}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ fields: merged, base_revision: fresh.brief.revision }),
-        idempotencyKey: crypto.randomUUID(),
-      })
-    } else {
-      let merged = brief
-      for (const refs of Object.values(refsByField)) merged = appendRef(merged, refs.join('\n'))
-      await api(`/api/v1/tickets/${encodeURIComponent(number)}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ brief_md: merged, base_revision: fresh.brief.revision }),
-        idempotencyKey: crypto.randomUUID(),
-      })
+      body.fields = merged
     }
+    if (attachmentIds.length > 0) body.attachment_ids = attachmentIds
+    await api(`/api/v1/tickets/${encodeURIComponent(number)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+      idempotencyKey: crypto.randomUUID(),
+    })
   } catch (err) {
     const why = err instanceof ApiError ? err.message : '网络问题'
-    warnings.push({ field: '附件', message: `已上传，但没能写进说明（${why}），请打开工单后补充。` })
+    warnings.push({ field: '附件', message: `已上传，但没能挂到整张工单的附件（${why}），请打开工单后补充。` })
   }
   return warnings
 }
@@ -308,8 +300,8 @@ function NewTicketForm({
     setLabels(next)
   }
 
-  function stageFiles(fieldKey: string, picked: File[]) {
-    setFiles((fs) => [...fs, ...stageFilesOf(fieldKey, picked)])
+  function stageFiles(fieldKey: string, picked: File[], area: boolean) {
+    setFiles((fs) => [...fs, ...stageFilesOf(fieldKey, picked, area)])
   }
 
   async function addLabel() {
@@ -408,8 +400,8 @@ function NewTicketForm({
         idempotencyKey: idemKeyRef.current,
       })
       idemKeyRef.current = undefined // 成功：下一次建单是新动作
-      // 暂存的附件此刻上传（建单本身不认领 att: 引用），再把引用写进说明。
-      const warnings = await attachStagedFiles(created.number, template, brief, files)
+      // 暂存的附件此刻上传并挂到整张工单的附件（建单本身不带附件）。
+      const warnings = await attachStagedFiles(created.number, files)
       created.warnings = [...created.warnings, ...warnings]
       if (created.share_text) {
         try {
@@ -473,7 +465,7 @@ function NewTicketForm({
             fields={template.fields}
             values={values}
             onChange={(k, v) => setValues({ ...values, [k]: v })}
-            onPickFiles={(fieldKey, picked) => stageFiles(fieldKey, picked)}
+            onPickFiles={(fieldKey, picked, area) => stageFiles(fieldKey, picked, area)}
             files={files}
             onRemoveFile={(id) => setFiles((fs) => fs.filter((f) => f.id !== id))}
           />

@@ -11,16 +11,11 @@ import (
 
 // replyBody 是 POST …/replies 的响应结构。
 type replyBody struct {
-	ReplyNo     int64  `json:"reply_no"`
-	TimelineSeq int64  `json:"timeline_seq"`
-	Deliver     bool   `json:"deliver"`
-	Author      string `json:"author"`
-	WaitingOn   struct {
-		Party  string  `json:"party"`
-		Member *string `json:"member"`
-		Text   string  `json:"text"`
-		Reason string  `json:"reason"`
-	} `json:"waiting_on"`
+	ReplyNo     int64         `json:"reply_no"`
+	TimelineSeq int64         `json:"timeline_seq"`
+	Deliver     bool          `json:"deliver"`
+	Author      string        `json:"author"`
+	WaitingOn   waitingOnBody `json:"waiting_on"`
 }
 
 // reply 发一条回复，返回原始响应。

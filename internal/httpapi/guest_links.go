@@ -176,7 +176,7 @@ func newGuestLinkView(l tickets.GuestLinkInfo) guestLinkView {
 			CanEditBrief: l.CanEditBrief,
 			UseCount:     l.UseCount,
 		},
-		CreatedBy: newAuthorView(l.CreatedBy),
+		CreatedBy: newAuthorView(l.CreatedBy, false),
 		CreatedAt: l.CreatedAt.Format(time.RFC3339Nano),
 	}
 	if l.RevokedAt != nil {

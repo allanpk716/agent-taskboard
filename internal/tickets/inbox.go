@@ -16,7 +16,7 @@ type InboxItem struct {
 	Title      string
 	Role       string // assignee | creator | triager（我在这张工单里的角色）
 	Reason     string // WHY 文案：新指派给你 / 已交付，待你验收 / …
-	ReasonCode string // 原因码；部门轮次统一 pending_triage
+	ReasonCode string // 稳定原因码；部门轮次统一 pending_triage
 	SinceSeq   int64  // 推导所依据的回复事件 seq；0 = 无相关回复（新指派）
 	ReadNew    string // /api/v1/tickets/<编号>/timeline?after=<我在该单最后一条事件的 seq>
 	ReadFull   string // /api/v1/tickets/<编号>?format=markdown
@@ -27,6 +27,10 @@ type InboxItem struct {
 	Waiting    string
 	Who        string
 	UpdatedAt  time.Time
+	// Assignee：当前指派人摘要。账号停用时保留指派并带标记（#115）。
+	AssigneeID          int64
+	AssigneeName        string
+	AssigneeDeactivated bool
 }
 
 // Inbox 列出 memberID 当前轮到的全部开启工单（按工单序号）。
@@ -60,7 +64,10 @@ func (m *Manager) Inbox(ctx context.Context, memberID int64) ([]InboxItem, error
 		if err != nil {
 			return nil, err
 		}
-		turn := WaitingOnOf(full)
+		turn, err := m.WaitingOn(ctx, full)
+		if err != nil {
+			return nil, err
+		}
 		isTurn := turn.MemberID == memberID
 		isDepartmentTurn := triager && turn.Party == "department"
 		if !isTurn && !isDepartmentTurn {
@@ -80,7 +87,7 @@ func (m *Manager) Inbox(ctx context.Context, memberID int64) ([]InboxItem, error
 		}
 		reason := WhyText(turn.Why)
 		reasonCode := turn.Why
-		if isDepartmentTurn {
+		if isDepartmentTurn && (turn.Why == WhyNew || turn.Why == WhyGuestReplied) {
 			reason = WhyText(WhyPendingTriage)
 			reasonCode = WhyPendingTriage
 		}
@@ -91,21 +98,24 @@ func (m *Manager) Inbox(ctx context.Context, memberID int64) ([]InboxItem, error
 			}
 		}
 		items = append(items, InboxItem{
-			Number:     full.Number,
-			Title:      full.Title,
-			Role:       role,
-			Reason:     reason,
-			ReasonCode: reasonCode,
-			SinceSeq:   turn.SinceSeq,
-			ReadNew:    "/api/v1/tickets/" + full.Number + "/timeline?after=" + strconv.FormatInt(after, 10),
-			ReadFull:   "/api/v1/tickets/" + full.Number + "?format=markdown",
-			Kind:       full.Kind,
-			Creator:    full.Creator.DisplayName(),
-			Assignee:   full.AssigneeName,
-			Labels:     full.Labels,
-			Waiting:    turn.Text,
-			Who:        turn.Member,
-			UpdatedAt:  updated,
+			Number:              full.Number,
+			Title:               full.Title,
+			Role:                role,
+			Reason:              reason,
+			ReasonCode:          reasonCode,
+			SinceSeq:            turn.SinceSeq,
+			ReadNew:             "/api/v1/tickets/" + full.Number + "/timeline?after=" + strconv.FormatInt(after, 10),
+			ReadFull:            "/api/v1/tickets/" + full.Number + "?format=markdown",
+			Kind:                full.Kind,
+			Creator:             full.Creator.DisplayName(),
+			Assignee:            full.AssigneeName,
+			Labels:              full.Labels,
+			Waiting:             turn.Text,
+			Who:                 turn.Member,
+			UpdatedAt:           updated,
+			AssigneeID:          full.AssigneeID,
+			AssigneeName:        full.AssigneeName,
+			AssigneeDeactivated: full.AssigneeDeactivated,
 		})
 	}
 	return items, nil
