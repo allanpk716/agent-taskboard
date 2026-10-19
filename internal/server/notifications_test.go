@@ -170,7 +170,7 @@ func Test轮到我期间对方回复按原因生成通知(t *testing.T) {
 	w.s.Do(t, w.s.GuestClient(link.Key(t)), http.MethodPost, "/api/v1/tickets/"+number+"/replies",
 		map[string]string{"body_md": "今天又复现了一次。", "author_name": "张三"}, nil)
 	assertLatest("访客回复", w.liA, notificationBody{
-		Reason: "guest_replied", Summary: "今天又复现了一次。", Event: testNotificationEvent(8),
+		Reason: "guest_replied", Summary: "今天又复现了一次。", Event: testNotificationEvent(9),
 	})
 
 	// 本人操作不通知自己；上面的王工普通回复只通知李工。

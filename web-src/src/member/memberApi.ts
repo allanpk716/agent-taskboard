@@ -501,6 +501,10 @@ export interface GuestLink {
   created_by: { member?: { name: string }; agent?: { name: string } | null }
   created_at: string
   use_count?: number
+  status: 'unclaimed' | 'claimed' | 'revoked'
+  claim_name?: string
+  claimed_at?: string
+  device_count?: number
 }
 
 export interface CreatedGuestLink {

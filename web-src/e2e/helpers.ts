@@ -40,6 +40,33 @@ export async function loginAdmin(request: APIRequestContext) {
   expect(res.ok(), '管理员登录失败').toBeTruthy()
 }
 
+const guestTokens = new Map<string, string>()
+
+export async function claimGuestLink(request: APIRequestContext, linkKey: string): Promise<string> {
+  const cached = guestTokens.get(linkKey)
+  if (cached) return cached
+  const res = await request.post('/api/v1/guest-links/claim', {
+    data: { author_name: '检验科 张三' },
+    headers: { Authorization: `Bearer ${linkKey}` },
+  })
+  expect(res.status(), `访客链接认领失败：${await res.text()}`).toBe(201)
+  const token = ((await res.json()) as { device_token: string }).device_token
+  guestTokens.set(linkKey, token)
+  return token
+}
+
+export async function openGuestPage(
+  page: Page,
+  _request: APIRequestContext,
+  linkKey: string,
+): Promise<void> {
+  const token = await claimGuestLink(page.request, linkKey)
+  await page.addInitScript(({ key, token }) => {
+    localStorage.setItem(`tb:guest-device:${key}`, token)
+  }, { key: linkKey, token })
+  await page.goto(`/g/${linkKey}`)
+}
+
 /** 用管理员会话建一张自由格式工单（可指派），返回编号。 */
 export async function createTicket(
   request: APIRequestContext,

@@ -23,6 +23,7 @@ import (
 
 // SessionCookieName 是网页会话 cookie 的名字。
 const SessionCookieName = "tb_session"
+const GuestDeviceCookieName = "tb_guest_device"
 
 // API 挂载 /api/v1 下的接口。
 type API struct {
@@ -48,6 +49,8 @@ func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/session", a.handleSession)
+	mux.HandleFunc("/api/v1/guest-link", a.handleGuestLinkClaim)
+	mux.HandleFunc("/api/v1/guest-links/claim", a.handleGuestLinkClaim)
 	mux.HandleFunc("/api/v1/me/agent-tokens", a.handleAgentTokens)
 	mux.HandleFunc("/api/v1/me/agent-tokens/", a.handleAgentToken)
 	mux.HandleFunc("/api/v1/me/password", a.handleOwnPassword)

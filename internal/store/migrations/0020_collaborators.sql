@@ -10,24 +10,17 @@ ALTER TABLE timeline_events ADD COLUMN collaborator_member_id INTEGER REFERENCES
 ALTER TABLE timeline_events ADD COLUMN collaborator_name TEXT;
 ALTER TABLE timeline_events ADD COLUMN actor_system INTEGER NOT NULL DEFAULT 0;
 
--- 第 2 批迁移：历史回复者补为协作者。创建者、当前指派人和历史被指派过的人
--- 不补；每补一位记一条「系统」操作的 collaborator_added 事件，不发通知。
+-- 第 2 批迁移：历史回复者补为协作者。创建者和当前指派人不需要名单记录；
+-- 已改派走的前任指派人只要回复过也照常补入。每补一位记一条「系统」操作的
+-- collaborator_added 事件，不发通知。
 INSERT INTO ticket_collaborators (ticket_seq, member_id, added_at)
-SELECT DISTINCT e.ticket_seq, e.actor_member_id, datetime('now')
+SELECT DISTINCT e.ticket_seq, e.actor_member_id, strftime('%Y-%m-%dT%H:%M:%f+08:00', 'now')
 FROM timeline_events e
 JOIN tickets t ON t.seq = e.ticket_seq
 WHERE e.type = 'reply'
   AND e.actor_member_id IS NOT NULL
   AND e.actor_member_id != t.creator_member_id
-  AND e.actor_member_id != t.assignee_id
-  AND NOT EXISTS (
-      SELECT 1
-      FROM timeline_events a
-      JOIN members h ON h.name = a.assign_to
-      WHERE a.ticket_seq = e.ticket_seq
-        AND a.type = 'assigned'
-        AND h.id = e.actor_member_id
-  );
+  AND e.actor_member_id != t.assignee_id;
 
 WITH backfill AS (
   SELECT c.ticket_seq, c.member_id, m.name,
@@ -45,7 +38,7 @@ INSERT INTO timeline_events (
 SELECT b.ticket_seq,
        (SELECT MAX(e.seq) FROM timeline_events e WHERE e.ticket_seq = b.ticket_seq) + b.ticket_row,
        (SELECT MAX(e.change_seq) FROM timeline_events e) + b.global_row,
-       'collaborator_added', 1, datetime('now'),
+       'collaborator_added', 1, strftime('%Y-%m-%dT%H:%M:%f+08:00', 'now'),
        b.member_id, b.name
 FROM backfill b;
 

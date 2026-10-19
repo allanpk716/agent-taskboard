@@ -285,6 +285,8 @@ func eventText(e Event) string {
 		return "摘掉标签 " + e.Label
 	case "guest_link_created":
 		return "创建访客链接「" + e.Note + "」"
+	case "guest_link_claimed":
+		return "认领访客链接「" + e.Note + "」"
 	case "guest_link_revoked":
 		return "撤销访客链接「" + e.Note + "」"
 	case "guest_link_extended":

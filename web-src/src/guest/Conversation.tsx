@@ -27,6 +27,7 @@ export function TurnBadge({ ticket }: { ticket: TicketView }) {
 /** 头部。 */
 export function GuestHeader({ ticket }: { ticket: TicketView }) {
   const inviter = ticket.creator.member?.name ?? '同事'
+  const handler = ticket.assignee?.member?.name ?? inviter
   return (
     <>
       <header className="guest-top">
@@ -34,6 +35,7 @@ export function GuestHeader({ ticket }: { ticket: TicketView }) {
           工单板 · {ticket.number} · {inviter} 请你反馈
         </span>
       </header>
+      <div className="privacy-note persistent">🔒 只有你和处理人（{handler}）能看到这张工单。</div>
       <section className="head guest-title-card">
         <div className="meta">
           {ticket.kind === 'task' ? '任务' : '反馈'} · #{ticket.seq}

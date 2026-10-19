@@ -1216,23 +1216,23 @@ func Test时间线按本人Agent筛选(t *testing.T) {
 		return body
 	}
 	member := read("?actor_kind=member")
-	if len(member.Events) != 5 { // created、assigned、guest_link_created、张三、王工
-		t.Fatalf("member 事件 = %d 条（%+v）, 想 5", len(member.Events), member.Events)
+	if len(member.Events) != 6 { // created、assigned、guest_link_created、claim、张三、王工
+		t.Fatalf("member 事件 = %d 条（%+v）, 想 6", len(member.Events), member.Events)
 	}
-	if member.Cursor != 5 {
-		t.Errorf("member cursor = %d, 想 5（跳过被筛掉的 Agent 事件）", member.Cursor)
+	if member.Cursor != 6 {
+		t.Errorf("member cursor = %d, 想 6（跳过被筛掉的 Agent 事件）", member.Cursor)
 	}
 	agent := read("?actor_kind=agent")
 	if len(agent.Events) != 1 || agent.Events[0].BodyMD != "（Agent 顺带查了批号记录，暂无异常。）" {
 		t.Fatalf("agent 事件 = %+v, 想 1 条 Agent 回复", agent.Events)
 	}
-	if agent.Cursor != 6 {
-		t.Errorf("agent cursor = %d, 想 6", agent.Cursor)
+	if agent.Cursor != 7 {
+		t.Errorf("agent cursor = %d, 想 7", agent.Cursor)
 	}
 	// 增量：从 member cursor 之后继续拿 Agent 的事件。
-	inc := read("?actor_kind=agent&after=5")
-	if len(inc.Events) != 1 || inc.Cursor != 6 {
-		t.Errorf("after=5 的 agent 增量 = %+v", inc.Events)
+	inc := read("?actor_kind=agent&after=6")
+	if len(inc.Events) != 1 || inc.Cursor != 7 {
+		t.Errorf("after=6 的 agent 增量 = %+v", inc.Events)
 	}
 	// 非法取值 422。
 	res := w.s.Do(t, w.webWang, http.MethodGet, "/api/v1/tickets/"+w.fb+"/timeline?actor_kind=x", nil, nil)

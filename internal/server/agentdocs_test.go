@@ -75,7 +75,7 @@ func TestAPI自描述和未知路径提示(t *testing.T) {
 				Agent string `json:"agent"`
 				API   string `json:"api"`
 			} `json:"docs"`
-			Auth       string            `json:"auth"`
+			Auth        string            `json:"auth"`
 			EntryPoints map[string]string `json:"entry_points"`
 		}
 		tbtest.DecodeJSON(t, res, &got)

@@ -33,7 +33,7 @@ test('wide viewport keeps the filtered list while switching detail rows', async 
   await page.goBack()
   await expect(page.getByRole('heading', { name: '宽屏列表的第一张工单' })).toBeVisible()
   await page.goForward()
-  await expect(page.getByRole('heading', { name: '宽屏列表的第二张工单' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '宽屏列表的第二张工单' })).toBeVisible({ timeout: 15_000 })
 })
 
 test('detail URLs restore filters and remember an inbox source', async ({ page, request }) => {

@@ -123,6 +123,7 @@ test('成员修改模板说明时按字段键保存，其余字段保持不变',
   const dim = page.getByRole('combobox', { name: '哪台仪器？' })
   await dim.fill('US-1680')
   await dim.press('Enter')
+  await expect(dim).toHaveValue('US-1680')
   await page.getByLabel('什么时候发生的？').fill('昨天下午 3 点左右')
   await page.getByRole('button', { name: '保存修改' }).click()
   await page.reload()

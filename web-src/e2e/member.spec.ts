@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
-import { ADMIN, createTicket, login, loginAdmin, wang } from './helpers'
+import { ADMIN, claimGuestLink, createTicket, login, loginAdmin, wang } from './helpers'
 
 // 成员网页（#41）：收件箱、列表、详情、建单。对真实服务 + 构建好的前端跑用例，
 // 造数据（成员、工单、回复、访客链接）全部通过 HTTP API 完成；成员由
@@ -222,6 +222,11 @@ test('详情页创建访客链接并复制', async ({ page, request }) => {
   // 创建事件记入时间线；复制出的链接真的能打开（访客页显示工单标题）
   await page.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(page.locator('.conv .event').last()).toContainText('创建了访客链接「检验科-张三」')
+  const key = new URL(clip, page.url()).pathname.slice(3)
+  const token = await claimGuestLink(page.request, key)
+  await page.addInitScript(({ key, token }) => {
+    localStorage.setItem(`tb:guest-device:${key}`, token)
+  }, { key, token })
   await page.goto(clip)
   await expect(page.getByRole('heading', { name: '要发访客链接的工单' })).toBeVisible()
 })

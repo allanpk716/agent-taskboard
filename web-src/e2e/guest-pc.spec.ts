@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext } from '@playwright/test'
+import { openGuestPage } from './helpers'
 
 const ADMIN = { username: 'admin', password: 'admin-pass-123' }
 
@@ -26,7 +27,7 @@ test.describe('PC 布局', () => {
     test(`访客页在 ${width} 宽下居中显示并带版本号`, async ({ page, request }) => {
       const seed = await seedGuestTicket(request)
       await page.setViewportSize({ width, height: 900 })
-      await page.goto(`/g/${seed.linkKey}`)
+      await openGuestPage(page, request, seed.linkKey)
 
       await expect(page.locator('header')).toContainText(`工单板 · ${seed.number} · 管理员 请你反馈`)
       const title = page.getByRole('heading', { name: 'UD-2300 质控时报警 E-203' })
@@ -58,7 +59,7 @@ test.describe('PC 布局', () => {
   test('健康接口失败时访客页不显示版本号', async ({ page, request }) => {
     const seed = await seedGuestTicket(request)
     await page.route('**/api/v1/health', (route) => route.abort('connectionfailed'))
-    await page.goto(`/g/${seed.linkKey}`)
+    await openGuestPage(page, request, seed.linkKey)
 
     await expect(page.locator('header')).toContainText(`工单板 · ${seed.number}`)
     await expect(page.locator('footer')).toHaveCount(0)

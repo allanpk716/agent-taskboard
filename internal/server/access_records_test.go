@@ -112,12 +112,12 @@ func Test附件下载每次单独记录并写明附件与访问者(t *testing.T)
 	if len(view.Attachments) != 2 {
 		t.Fatalf("附件列表 = %+v", view.Attachments)
 	}
-	signed := view.Attachments[1].URL
-	if res := downloadAttachment(t, s, nil, signed); res.StatusCode != http.StatusOK {
-		t.Fatalf("签名下载状态码 = %d", res.StatusCode)
+	path := view.Attachments[1].URL
+	if res := downloadAttachment(t, s, guest, path); res.StatusCode != http.StatusOK {
+		t.Fatalf("设备凭证下载状态码 = %d", res.StatusCode)
 	}
-	if res := downloadAttachment(t, s, nil, signed); res.StatusCode != http.StatusOK {
-		t.Fatalf("第二次签名下载状态码 = %d", res.StatusCode)
+	if res := downloadAttachment(t, s, guest, path); res.StatusCode != http.StatusOK {
+		t.Fatalf("第二次设备凭证下载状态码 = %d", res.StatusCode)
 	}
 
 	download(admin, first.ID, "现场.png")
@@ -132,7 +132,7 @@ func Test附件下载每次单独记录并写明附件与访问者(t *testing.T)
 		t.Fatalf("下载记录有 %d 条, 想 5： %+v", len(downloads), downloads)
 	}
 	wantActors := []string{"member", "agent", "guest", "guest", "admin"}
-	wantNames := []string{"王工", "王工 的 Agent · 笔记本", "检验科-张三", "检验科-张三", "陈工"}
+	wantNames := []string{"王工", "王工 的 Agent · 笔记本", "检验科-张三 · 检验科 张三", "检验科-张三 · 检验科 张三", "陈工"}
 	for i, r := range downloads {
 		if r.Actor.Kind != wantActors[i] || r.Actor.Name != wantNames[i] {
 			t.Errorf("第 %d 条署名 = %+v, 想 %s/%s", i, r.Actor, wantActors[i], wantNames[i])
@@ -245,6 +245,7 @@ func Test访客链接已撤销或过期时记录尝试访问被拒(t *testing.T)
 }
 
 func Test撤销后的访客附件签名地址记录尝试访问被拒(t *testing.T) {
+	t.Skip("签名地址已在 #162 取消；撤销后的设备凭证拒绝由 guest 链接测试覆盖")
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")
 	admin := s.Login("陈工", "secret-pass")
