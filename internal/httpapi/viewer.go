@@ -66,7 +66,7 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 }
 
 func (a *API) authHint(r *http.Request) string {
-	return "Agent 用主人在网页「我的 → Agent」签发的 token：Authorization: Bearer <token>；说明见 " +
+	return "Agent 用主人在网页「我的 → Agent」签发的 token：Authorization: Bearer $TASKBOARD_TOKEN；说明见 " +
 		a.docsURL(r) + "。网页用户请先登录。"
 }
 
@@ -165,7 +165,7 @@ func (a *API) absURL(path string) string {
 	return base + path
 }
 
-// bearerToken 取出 Authorization: Bearer <token> 里的 token。
+// bearerToken 取出 Authorization: Bearer 请求头里的凭证。
 func bearerToken(r *http.Request) (string, bool) {
 	h := r.Header.Get("Authorization")
 	const prefix = "Bearer "

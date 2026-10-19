@@ -55,10 +55,11 @@ func Test网页会话签发具名AgentToken后session区分本人与Agent(t *tes
 
 	// 签发一个具名 Agent token。
 	var issued struct {
-		ID        int64  `json:"id"`
-		Name      string `json:"name"`
-		Token     string `json:"token"`
-		CreatedAt string `json:"created_at"`
+		ID             int64  `json:"id"`
+		Name           string `json:"name"`
+		Token          string `json:"token"`
+		CreatedAt      string `json:"created_at"`
+		OnboardingText string `json:"onboarding_text"`
 	}
 	res = s.Do(t, web, http.MethodPost, "/api/v1/me/agent-tokens",
 		map[string]string{"name": "笔记本"}, &issued)
@@ -73,6 +74,13 @@ func Test网页会话签发具名AgentToken后session区分本人与Agent(t *tes
 	}
 	if issued.CreatedAt == "" {
 		t.Error("签发响应缺少 created_at")
+	}
+	wantOnboard := "你是我（chen）在 agent-taskboard 上的成员 Agent「笔记本」。请完成一次性接入："
+	if !strings.HasPrefix(issued.OnboardingText, wantOnboard) ||
+		!strings.Contains(issued.OnboardingText, `setx TASKBOARD_URL "`+s.URL()+`"`) ||
+		!strings.Contains(issued.OnboardingText, `setx TASKBOARD_TOKEN "`+issued.Token+`"`) ||
+		!strings.Contains(issued.OnboardingText, `curl -H "Authorization: Bearer `+issued.Token+`"`) {
+		t.Fatalf("签发响应 onboarding_text 不对：\n%q", issued.OnboardingText)
 	}
 
 	// 用 Agent token 查 session：识别为该成员的具名 Agent，不是本人。
@@ -170,6 +178,64 @@ func Test用AgentToken签发或撤销token被拒绝(t *testing.T) {
 
 	// 被拒的请求没有真的签出 token：网页会话用同一个名字能签发成功。
 	s.IssueAgentToken(t, web, "克隆")
+}
+
+// 换新只接受网页会话：一个事务里撤销旧 token、签发同名新 token，并返回
+// 新 token 的一次性接入文案。已撤销、不存在或别人的 token 都是 404。
+func Test换新AgentToken撤销旧token并签发同名新token(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("chen", "secret-pass")
+	s.CreateMember("li", "secret-pass")
+	web := s.Login("chen", "secret-pass")
+	webLi := s.Login("li", "secret-pass")
+	id, oldToken := s.IssueAgentToken(t, web, "笔记本")
+	s.IssueAgentToken(t, webLi, "李工的")
+	agent := s.AgentClient(oldToken)
+
+	var rotated struct {
+		ID             int64  `json:"id"`
+		Name           string `json:"name"`
+		Token          string `json:"token"`
+		OnboardingText string `json:"onboarding_text"`
+	}
+	res := s.Do(t, web, http.MethodPost, "/api/v1/me/agent-tokens/"+strconv.FormatInt(id, 10)+"/rotate", nil, &rotated)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("换新状态码 = %d, 想 201", res.StatusCode)
+	}
+	if rotated.ID == id || rotated.Name != "笔记本" || rotated.Token == "" || rotated.Token == oldToken {
+		t.Fatalf("换新响应不对：%+v", rotated)
+	}
+	if !strings.Contains(rotated.OnboardingText, `setx TASKBOARD_TOKEN "`+rotated.Token+`"`) {
+		t.Fatalf("换新 onboarding_text 应带新 token：\n%q", rotated.OnboardingText)
+	}
+	if res := s.Do(t, agent, http.MethodGet, "/api/v1/session", nil, nil); res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("旧 token 换新后状态码 = %d, 想 401", res.StatusCode)
+	}
+	var me sessionBody
+	s.Do(t, s.AgentClient(rotated.Token), http.MethodGet, "/api/v1/session", nil, &me)
+	if me.Viewer.Agent == nil || me.Viewer.Agent.Name != "笔记本" {
+		t.Fatalf("新 token 的署名不对：%+v", me.Viewer.Agent)
+	}
+
+	// 已撤销的旧 id 不能再换新；别人的 token 不可见。
+	res = s.Do(t, web, http.MethodPost, "/api/v1/me/agent-tokens/"+strconv.FormatInt(id, 10)+"/rotate", nil, nil)
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("撤销后再换新状态码 = %d, 想 404", res.StatusCode)
+	}
+	var liID int64
+	for _, row := range s.AgentTokens(t, webLi) {
+		if row.Name == "李工的" {
+			liID = row.ID
+		}
+	}
+	if res := s.Do(t, web, http.MethodPost, "/api/v1/me/agent-tokens/"+strconv.FormatInt(liID, 10)+"/rotate", nil, nil); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("换别人的 token 状态码 = %d, 想 404", res.StatusCode)
+	}
+	// Agent 凭证自己换新也被拒绝。
+	if res := s.Do(t, s.AgentClient(rotated.Token), http.MethodPost,
+		"/api/v1/me/agent-tokens/"+strconv.FormatInt(rotated.ID, 10)+"/rotate", nil, nil); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("Agent 换新状态码 = %d, 想 403", res.StatusCode)
+	}
 }
 
 // 带无效 Agent token 的请求返回 401 invalid_token，不会回退到 cookie。

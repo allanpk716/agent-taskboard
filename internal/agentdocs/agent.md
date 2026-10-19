@@ -4,13 +4,14 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
 
 ## 凭证
 
-- 成员 Agent 用主人在网页「我的 → Agent」签发的 token，请求头写 `Authorization: Bearer <token>`。Agent 不能给自己签发 token；没有 token 就停下来请主人签发，不要用密码登录，也绝不使用别人的 token。
+- 成员 Agent 的 token 由主人通过「我的 → Agent」生成的接入文案交给 Agent，不在工单指令和交接文案中出现。Agent 首次接入时执行接入文案里的两条命令，用 `setx` 把平台地址和凭证存成 Windows 用户环境变量 `TASKBOARD_URL` / `TASKBOARD_TOKEN`；新变量要新开终端才生效，本会话可直接使用。
+- 后续请求头写 `Authorization: Bearer $TASKBOARD_TOKEN`。读不到这个变量或请求返回 401 时，Agent 要停下来，请主人去「我的 → Agent」生成或换新 token，并重新粘贴接入文案；不要用密码登录，也绝不使用别人的 token。
 - 访客链接本身就是访客凭证：把 `/g/<密钥>` 里的密钥作为 Bearer token 使用。
 - 所有数据接口仍需凭证；本说明书不含任何数据。
 
 ## 起手流程
 
-1. 先看工单的 Markdown 视图：`{{BASE}}/api/v1/tickets/<工单编号>?format=markdown`。
+1. 先看工单的 Markdown 视图：`{{BASE}}/api/v1/tickets/<工单编号>?format=markdown`，请求头 `Authorization: Bearer $TASKBOARD_TOKEN`。
 2. 照工单末尾「下一步（给 Agent 的操作指引）」执行。
 3. 之后的待办看收件箱：`{{BASE}}/api/v1/inbox`。
 4. 用变更序号增量轮询：列表接口的 `changed_after=<上次拿到的最大 change>`，只处理之后变化的工单。

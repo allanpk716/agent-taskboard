@@ -96,13 +96,13 @@ func Test建单时指派成员(t *testing.T) {
 	if created.Assignee == nil || created.Assignee.Name != "李工" {
 		t.Fatalf("assignee = %+v, 想 李工", created.Assignee)
 	}
-	wantHuman := fmt.Sprintf("李工：给你派了一张工单 %s「整理 Q3 质控规则对照表」，网页 %s/t/%s（也在你的收件箱里）。下面这段交给你的 Agent：\n\n",
+	wantHuman := fmt.Sprintf("李工：给你派了一张工单 %s「整理 Q3 质控规则对照表」，网页 %s/t/%s（也在你的收件箱里）。\n下面这段交给你的 Agent（第一次用，先在「我的 → Agent」生成 token，把接入文案贴给它）：\n\n",
 		created.Number, w.s.URL(), created.Number)
 	if created.ShareText == nil || !strings.HasPrefix(*created.ShareText, wantHuman) {
 		t.Errorf("share_text 的人话行 = %v, 想 %q", created.ShareText, wantHuman)
 	}
 	for _, want := range []string{
-		w.s.URL() + "/agent.md", "Authorization: Bearer <token>",
+		w.s.URL() + "/agent.md", "Authorization: Bearer $TASKBOARD_TOKEN", "TASKBOARD_TOKEN",
 		w.s.URL() + "/api/v1/tickets/" + created.Number + "?format=markdown",
 		w.s.URL() + "/api/v1/inbox",
 	} {
@@ -498,7 +498,7 @@ func Test改派接口的边界(t *testing.T) {
 	if view.Assignee.Name != "赵工" || view.WaitingOn.Member == nil || *view.WaitingOn.Member != "赵工" {
 		t.Errorf("改派响应 assignee/waiting_on 不对：%+v", view)
 	}
-	wantHuman := fmt.Sprintf("赵工：工单 %s「整理对照表」转给你了，网页 %s/t/%s（也在你的收件箱里）。下面这段交给你的 Agent：\n\n",
+	wantHuman := fmt.Sprintf("赵工：工单 %s「整理对照表」转给你了，网页 %s/t/%s（也在你的收件箱里）。\n下面这段交给你的 Agent（第一次用，先在「我的 → Agent」生成 token，把接入文案贴给它）：\n\n",
 		task, w.s.URL(), task)
 	if view.ShareText == nil || !strings.HasPrefix(*view.ShareText, wantHuman) {
 		t.Errorf("改派 share_text 的人话行 = %v, 想 %q", view.ShareText, wantHuman)

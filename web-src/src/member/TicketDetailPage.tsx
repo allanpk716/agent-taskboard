@@ -201,8 +201,7 @@ function AssignDialog({
         handoffText={handoff.text}
         handoffShareText={handoff.shareText}
         assigneeName={handoff.assignee}
-        isAssignee={false}
-        defaultMode="share"
+        mode="share"
         onClose={onClose}
       />
     )
@@ -755,7 +754,7 @@ export function TicketDetailPage({
   const [error, setError] = useState<string | null>(null)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const [actor, setActor] = useState<ActorFilter>('all')
-  const [dialog, setDialog] = useState<'label' | 'brief' | 'assign' | 'links' | 'close' | 'reopen' | 'handoff' | null>(null)
+  const [dialog, setDialog] = useState<'label' | 'brief' | 'assign' | 'links' | 'close' | 'reopen' | 'agent' | 'share' | null>(null)
   const [mobileMenu, setMobileMenu] = useState(false)
   const [members, setMembers] = useState<MemberRef[]>([])
   const [guestLinks, setGuestLinks] = useState<GuestLink[] | null>(null)
@@ -968,11 +967,23 @@ export function TicketDetailPage({
               role="menuitem"
               onClick={() => {
                 setMobileMenu(false)
-                setDialog('handoff')
+                setDialog('agent')
               }}
             >
-              🤖 交给 Agent
+              🤖 让我的 Agent 处理
             </button>
+            {ticket.assignee?.member && ticket.assignee.member.id !== me?.id && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMobileMenu(false)
+                  setDialog('share')
+                }}
+              >
+                📨 发给 {ticket.assignee.member.name}
+              </button>
+            )}
           </div>
         )}
         {(tier === 'mobile' || tier === 'narrow') && (
@@ -1037,9 +1048,14 @@ export function TicketDetailPage({
           <button className="btn sm ghost" onClick={() => setDialog('assign')}>
             👤 {ticket.assignee?.member ? '改派' : '指派'}
           </button>
-          <button className="btn sm ghost handoff-btn" onClick={() => setDialog('handoff')}>
-            🤖 交给 Agent
+          <button className="btn sm ghost handoff-btn" onClick={() => setDialog('agent')}>
+            🤖 让我的 Agent 处理
           </button>
+          {ticket.assignee?.member && ticket.assignee.member.id !== me?.id && (
+            <button className="btn sm ghost handoff-btn" onClick={() => setDialog('share')}>
+              📨 发给 {ticket.assignee.member.name}
+            </button>
+          )}
           <button className="btn sm ghost" onClick={() => setDialog('links')}>
             🔗 访客链接
           </button>
@@ -1119,12 +1135,12 @@ export function TicketDetailPage({
           onClose={() => setDialog(null)}
         />
       )}
-      {dialog === 'handoff' && (
+      {(dialog === 'agent' || dialog === 'share') && (
         <HandoffDialog
           handoffText={ticket.handoff_text ?? ''}
           handoffShareText={ticket.handoff_share_text}
           assigneeName={ticket.assignee?.member?.name ?? null}
-          isAssignee={!!ticket.assignee?.member && ticket.assignee.member.id === me?.id}
+          mode={dialog}
           onClose={() => setDialog(null)}
         />
       )}

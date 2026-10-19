@@ -109,14 +109,14 @@ test('个人设置：签发 Agent token，署名正确，撤销后失效', async
   await login(page, ADMIN)
   await page.locator('.b-tabs').getByRole('link', { name: '我的' }).click()
 
-  // 生成 token：只显示一次，形如 tbag_…
+  // 生成 token：只显示一次，token 在接入文案里。
   const agentName = `巡检${RUN}`
   await page.getByRole('button', { name: '＋ 生成新 token' }).click()
   await page.locator('#tk-name').fill(agentName)
   await page.getByRole('button', { name: '生成', exact: true }).click()
-  const tokenBox = page.locator('[data-token-value]')
-  await expect(tokenBox).toBeVisible()
-  const token = ((await tokenBox.textContent()) ?? '').trim()
+  const onboardingBox = page.locator('[data-onboarding-preview]')
+  await expect(onboardingBox).toContainText('setx TASKBOARD_TOKEN')
+  const token = (((await onboardingBox.textContent()) ?? '').match(/tbag_[A-Za-z0-9_-]+/) ?? [])[0]
   expect(token).toMatch(/^tbag_/)
   await page.locator('.modal').getByRole('button', { name: '关闭', exact: true }).click()
 

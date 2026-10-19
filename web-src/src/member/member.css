@@ -1323,17 +1323,17 @@
 }
 
 /* #110：交接文案预览与复制 */
-.handoff-modes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 16px;
-  margin-bottom: 8px;
+.handoff-who {
+  color: #4b5563;
+  font-size: 12.5px;
+  margin: -2px 0 8px;
 }
-.handoff-modes label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13.5px;
+.handoff-onboarding {
+  margin-top: 0;
+}
+.handoff-onboarding ol {
+  margin: 4px 0 0;
+  padding-left: 20px;
 }
 .handoff-pre {
   margin: 0;
