@@ -104,10 +104,13 @@ func (a *API) writeLinkStatusError(w http.ResponseWriter, r *http.Request, err e
 		panic(err)
 	}
 	switch status.Status {
-	case "revoked":
+	case identity.GuestLinkRevoked:
 		WriteError(w, http.StatusUnauthorized, CodeLinkRevoked, "访客链接已被撤销", "请联系发链接的成员重新获取一条新链接")
-	case "expired":
+	case identity.GuestLinkExpired:
 		WriteError(w, http.StatusUnauthorized, CodeLinkExpired, "访客链接已过期", "请联系发链接的成员延期，或重新获取一条新链接")
+	case identity.GuestLinkUnclaimed:
+		WriteError(w, http.StatusUnauthorized, CodeLinkUnclaimed, "访客链接尚未认领",
+			"第一次打开时在认领页输入你的称呼，并点「是我，打开工单」")
 	default:
 		WriteError(w, http.StatusUnauthorized, CodeLinkClaimed, "这条链接已被认领",
 			"如果不是你认领的，请联系邀请人重新处理；请勿把链接转发给别人")

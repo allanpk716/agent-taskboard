@@ -31,8 +31,38 @@ var (
 // LinkStatusError 携带被拒访客链接的身份信息，访问记录需要在返回 401 前取它。
 type LinkStatusError struct {
 	Link   GuestLink
-	Status string // revoked | expired
+	Status GuestLinkStatus
 	Err    error
+}
+
+// GuestLinkStatus 是访客链接对外暴露的稳定状态值。
+type GuestLinkStatus string
+
+const (
+	// GuestLinkUnclaimed 表示链接尚未被第一位访客认领。
+	GuestLinkUnclaimed GuestLinkStatus = "unclaimed"
+	// GuestLinkClaimed 表示链接已有唯一访客。
+	GuestLinkClaimed GuestLinkStatus = "claimed"
+	// GuestLinkAccessLocked 表示访问码连续输错后已锁定。
+	GuestLinkAccessLocked GuestLinkStatus = "access_code_locked"
+	// GuestLinkRevoked 表示链接已被成员撤销。
+	GuestLinkRevoked GuestLinkStatus = "revoked"
+	// GuestLinkExpired 表示链接已过期。
+	GuestLinkExpired GuestLinkStatus = "expired"
+)
+
+// GuestLinkStatusOf 统一推导链接状态；撤销与锁定分别优先于已认领。
+func GuestLinkStatusOf(revokedAt, lockedAt, claimedAt *time.Time) GuestLinkStatus {
+	switch {
+	case revokedAt != nil:
+		return GuestLinkRevoked
+	case lockedAt != nil:
+		return GuestLinkAccessLocked
+	case claimedAt != nil:
+		return GuestLinkClaimed
+	default:
+		return GuestLinkUnclaimed
+	}
 }
 
 func (e *LinkStatusError) Error() string { return e.Err.Error() }
@@ -69,7 +99,7 @@ func NewGuestDeviceKey() (string, error) {
 	return "tbgd_" + base64URLEncode(buf), nil
 }
 
-// NewAccessCode generates the one-time six-digit code shown to a guest.
+// NewAccessCode 生成只显示一次的 6 位访客访问码。
 func NewAccessCode() (string, error) {
 	n, err := cryptoRandInt(1000000)
 	if err != nil {
@@ -81,15 +111,13 @@ func NewAccessCode() (string, error) {
 // IsGuestDeviceKey 用于凭证解析前的分派。
 func IsGuestDeviceKey(token string) bool { return strings.HasPrefix(token, "tbgd_") }
 
-// GuestAgentCredential is the bearer form used by a guest's agent: the link
-// key and access code joined by a colon.
+// GuestAgentCredential 是访客 Agent 的 Bearer 凭证写法：链接密钥与访问码用冒号相连。
 type GuestAgentCredential struct {
 	Key        string
 	AccessCode string
 }
 
-// ParseGuestAgentCredential recognizes tbg_<key>:<access-code>. Link keys and
-// access codes themselves never contain colons.
+// ParseGuestAgentCredential 识别 tbg_<密钥>:<访问码>；两者本身都不含冒号。
 func ParseGuestAgentCredential(token string) (GuestAgentCredential, bool) {
 	if !strings.HasPrefix(token, guestKeyPrefix) {
 		return GuestAgentCredential{}, false
@@ -129,26 +157,25 @@ func (m *Manager) ViewerFromGuestKey(ctx context.Context, key string) (Viewer, e
 		return Viewer{}, err
 	}
 	if revokedAt.Valid {
-		return Viewer{}, &LinkStatusError{Link: GuestLink{ID: id, TicketSeq: ticketSeq, Note: note}, Status: "revoked", Err: ErrLinkRevoked}
+		return Viewer{}, &LinkStatusError{Link: GuestLink{ID: id, TicketSeq: ticketSeq, Note: note}, Status: GuestLinkRevoked, Err: ErrLinkRevoked}
 	}
 	expiry, err := time.ParseInLocation(time.RFC3339Nano, expiresAt, clock.Beijing)
 	if err != nil {
 		return Viewer{}, err
 	}
 	if !m.clock.Now().Before(expiry) {
-		return Viewer{}, &LinkStatusError{Link: GuestLink{ID: id, TicketSeq: ticketSeq, Note: note}, Status: "expired", Err: ErrLinkExpired}
+		return Viewer{}, &LinkStatusError{Link: GuestLink{ID: id, TicketSeq: ticketSeq, Note: note}, Status: GuestLinkExpired, Err: ErrLinkExpired}
 	}
 	if !claimedAt.Valid {
-		return Viewer{}, &LinkStatusError{Link: GuestLink{ID: id, TicketSeq: ticketSeq, Note: note}, Status: "unclaimed", Err: ErrLinkUnclaimed}
+		return Viewer{}, &LinkStatusError{Link: GuestLink{ID: id, TicketSeq: ticketSeq, Note: note}, Status: GuestLinkUnclaimed, Err: ErrLinkUnclaimed}
 	}
 	return Viewer{}, &LinkStatusError{
 		Link:   GuestLink{ID: id, TicketSeq: ticketSeq, Note: note, ExpiresAt: expiry, CanEditBrief: canEdit == 1},
-		Status: "claimed", Err: ErrLinkClaimed,
+		Status: GuestLinkClaimed, Err: ErrLinkClaimed,
 	}
 }
 
-// GuestLinkForKey serves the claim interface, which can inspect an unclaimed
-// link without turning it into a normal viewer.
+// GuestLinkForKey 服务认领接口：它能查看未认领链接，但不会转成普通 Viewer。
 func (m *Manager) GuestLinkForKey(ctx context.Context, key string) (GuestLink, error) {
 	var (
 		id        int64
@@ -177,18 +204,18 @@ func (m *Manager) GuestLinkForKey(ctx context.Context, key string) (GuestLink, e
 	link := GuestLink{ID: id, TicketSeq: ticketSeq, Note: note, ExpiresAt: expiry,
 		CanEditBrief: canEdit == 1, ClaimName: claimName.String}
 	if revokedAt.Valid {
-		return link, &LinkStatusError{Link: link, Status: "revoked", Err: ErrLinkRevoked}
+		return link, &LinkStatusError{Link: link, Status: GuestLinkRevoked, Err: ErrLinkRevoked}
 	}
 	if !m.clock.Now().Before(expiry) {
-		return link, &LinkStatusError{Link: link, Status: "expired", Err: ErrLinkExpired}
+		return link, &LinkStatusError{Link: link, Status: GuestLinkExpired, Err: ErrLinkExpired}
 	}
 	if claimedAt.Valid {
-		return link, &LinkStatusError{Link: link, Status: "claimed", Err: ErrLinkClaimed}
+		return link, &LinkStatusError{Link: link, Status: GuestLinkClaimed, Err: ErrLinkClaimed}
 	}
 	return link, nil
 }
 
-// ViewerFromGuestDevice parses a remembered device credential.
+// ViewerFromGuestDevice 解析浏览器记住的设备凭证。
 func (m *Manager) ViewerFromGuestDevice(ctx context.Context, token string) (Viewer, error) {
 	var (
 		id        int64
@@ -214,7 +241,7 @@ func (m *Manager) ViewerFromGuestDevice(ctx context.Context, token string) (View
 	}
 	link := GuestLink{ID: id, TicketSeq: ticketSeq, Note: note, ClaimName: claimName, EntryMethod: entry}
 	if revokedAt.Valid {
-		return Viewer{}, &LinkStatusError{Link: link, Status: "revoked", Err: ErrLinkRevoked}
+		return Viewer{}, &LinkStatusError{Link: link, Status: GuestLinkRevoked, Err: ErrLinkRevoked}
 	}
 	expiry, err := time.ParseInLocation(time.RFC3339Nano, expiresAt, clock.Beijing)
 	if err != nil {
@@ -222,7 +249,7 @@ func (m *Manager) ViewerFromGuestDevice(ctx context.Context, token string) (View
 	}
 	link.ExpiresAt = expiry
 	if !m.clock.Now().Before(expiry) {
-		return Viewer{}, &LinkStatusError{Link: link, Status: "expired", Err: ErrLinkExpired}
+		return Viewer{}, &LinkStatusError{Link: link, Status: GuestLinkExpired, Err: ErrLinkExpired}
 	}
 	link.CanEditBrief = canEdit == 1
 	return Viewer{Kind: ViewerGuest, GuestLink: &link}, nil

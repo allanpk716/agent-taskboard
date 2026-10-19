@@ -40,42 +40,11 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 			case errors.Is(err, identity.ErrInvalidCredentials):
 				WriteError(w, http.StatusUnauthorized, CodeInvalidToken, "凭证无效或已撤销",
 					a.authHint(r))
-			case errors.Is(err, identity.ErrLinkRevoked):
-				var status *identity.LinkStatusError
-				if errors.As(err, &status) {
-					if recErr := a.accessRecords.RecordGuestLinkDenied(r.Context(), status.Link.TicketSeq, status.Link.ID, status.Status); recErr != nil {
-						panic(recErr)
-					}
-				}
-				WriteError(w, http.StatusUnauthorized, CodeLinkRevoked, "访客链接已被撤销",
-					"请联系发链接的成员重新获取一条新链接")
-			case errors.Is(err, identity.ErrLinkExpired):
-				var status *identity.LinkStatusError
-				if errors.As(err, &status) {
-					if recErr := a.accessRecords.RecordGuestLinkDenied(r.Context(), status.Link.TicketSeq, status.Link.ID, status.Status); recErr != nil {
-						panic(recErr)
-					}
-				}
-				WriteError(w, http.StatusUnauthorized, CodeLinkExpired, "访客链接已过期",
-					"请联系发链接的成员延期，或重新获取一条新链接")
-			case errors.Is(err, identity.ErrLinkUnclaimed):
-				var status *identity.LinkStatusError
-				if errors.As(err, &status) {
-					if recErr := a.accessRecords.RecordGuestLinkDenied(r.Context(), status.Link.TicketSeq, status.Link.ID, status.Status); recErr != nil {
-						panic(recErr)
-					}
-				}
-				WriteError(w, http.StatusUnauthorized, CodeLinkUnclaimed, "访客链接尚未认领",
-					"第一次打开时在认领页输入你的称呼，并点「是我，打开工单」")
-			case errors.Is(err, identity.ErrLinkClaimed):
-				var status *identity.LinkStatusError
-				if errors.As(err, &status) {
-					if recErr := a.accessRecords.RecordGuestLinkDenied(r.Context(), status.Link.TicketSeq, status.Link.ID, status.Status); recErr != nil {
-						panic(recErr)
-					}
-				}
-				WriteError(w, http.StatusUnauthorized, CodeLinkClaimed, "这条链接已被认领",
-					"如果不是你认领的，请联系邀请人重新处理；请勿把链接转发给别人")
+			case errors.Is(err, identity.ErrLinkRevoked),
+				errors.Is(err, identity.ErrLinkExpired),
+				errors.Is(err, identity.ErrLinkUnclaimed),
+				errors.Is(err, identity.ErrLinkClaimed):
+				a.writeGuestLinkError(w, r, err)
 			case errors.Is(err, tickets.ErrAccessCodeInvalid):
 				WriteError(w, http.StatusUnauthorized, CodeAccessCodeInvalid, err.Error(),
 					"访客 Agent 凭证是 tbg_<链接密钥>:<访问码>；连续输错 5 次会锁定")
@@ -124,7 +93,7 @@ func (a *API) guestAgentViewer(r *http.Request, credential identity.GuestAgentCr
 		return identity.Viewer{}, err
 	}
 	if errors.Is(err, identity.ErrLinkUnclaimed) {
-		// ViewerFromGuestKey carries the link identity needed for the denied access record.
+		// ViewerFromGuestKey 会带回被拒访问记录所需的链接身份。
 		_, statusErr := a.ident.ViewerFromGuestKey(r.Context(), credential.Key)
 		if statusErr != nil {
 			return identity.Viewer{}, statusErr
@@ -137,8 +106,8 @@ func (a *API) guestAgentViewer(r *http.Request, credential identity.GuestAgentCr
 	return a.tickets.ViewerFromGuestAgentCredential(r.Context(), link, credential.AccessCode)
 }
 
-// guestDeviceFromCookie lets same-origin <img> and attachment links use the
-// remembered device credential without exposing it to JavaScript.
+// guestDeviceFromCookie 让同源插图与附件链接复用记住的设备凭证，
+// 且不把凭证暴露给 JavaScript。
 func (a *API) guestDeviceFromCookie(r *http.Request) (identity.Viewer, error, bool) {
 	cookie, err := r.Cookie(GuestDeviceCookieName)
 	if err != nil || cookie.Value == "" {
@@ -154,13 +123,13 @@ func (a *API) guestDeviceFromCookie(r *http.Request) (identity.Viewer, error, bo
 	return viewer, nil, true
 }
 
-// writeGuestLinkError 统一处理已认领访客链接失效后的拒绝响应与访问记录。
+// writeGuestLinkError 统一处理访客链接状态拒绝的响应与访问记录。
 func (a *API) writeGuestLinkError(w http.ResponseWriter, r *http.Request, err error) {
 	var status *identity.LinkStatusError
 	if !errors.As(err, &status) {
 		panic(err)
 	}
-	if recErr := a.accessRecords.RecordGuestLinkDenied(r.Context(), status.Link.TicketSeq, status.Link.ID, status.Status); recErr != nil {
+	if recErr := a.accessRecords.RecordGuestLinkDenied(r.Context(), status.Link.TicketSeq, status.Link.ID, string(status.Status)); recErr != nil {
 		panic(recErr)
 	}
 	a.writeLinkStatusError(w, r, err)

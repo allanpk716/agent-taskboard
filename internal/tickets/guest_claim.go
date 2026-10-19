@@ -33,8 +33,8 @@ type GuestClaimResult struct {
 	ClaimedAt   time.Time
 }
 
-// ClaimGuestLink atomically records the first guest's self-reported name,
-// issues one device credential, and appends a timeline event.
+// ClaimGuestLink 原子记录第一位访客的自报称呼，签发一台设备凭证，
+// 并追加时间线事件。
 func (m *Manager) ClaimGuestLink(ctx context.Context, link identity.GuestLink, authorName string) (GuestClaimResult, error) {
 	authorName = strings.TrimSpace(authorName)
 	if authorName == "" {
@@ -94,8 +94,7 @@ func (m *Manager) ClaimGuestLink(ctx context.Context, link identity.GuestLink, a
 	return GuestClaimResult{DeviceToken: token, AccessCode: code, ClaimedAt: now}, nil
 }
 
-// EnterGuestLink verifies the one-time access code, issues another device
-// credential, and resets the shared consecutive-failure counter.
+// EnterGuestLink 校验访问码，签发另一台设备凭证，并清零共享的连续失败计数。
 func (m *Manager) EnterGuestLink(ctx context.Context, link identity.GuestLink, code string) (GuestClaimResult, error) {
 	token, err := identity.NewGuestDeviceKey()
 	if err != nil {
@@ -114,9 +113,8 @@ func (m *Manager) EnterGuestLink(ctx context.Context, link identity.GuestLink, c
 	return GuestClaimResult{DeviceToken: token, ClaimedAt: now}, nil
 }
 
-// ViewerFromGuestAgentCredential verifies an access-code bearer credential
-// without issuing a device credential. Every request reuses the browser's
-// consecutive-failure counter and is attributed as access_code.
+// ViewerFromGuestAgentCredential 校验访问码 Bearer 凭证，不签发设备凭证。
+// 每次请求复用浏览器的连续失败计数，并按 access_code 记录进入方式。
 func (m *Manager) ViewerFromGuestAgentCredential(ctx context.Context, link identity.GuestLink, code string) (identity.Viewer, error) {
 	if err := m.verifyGuestAccessCode(ctx, link, code); err != nil {
 		return identity.Viewer{}, err
@@ -125,8 +123,8 @@ func (m *Manager) ViewerFromGuestAgentCredential(ctx context.Context, link ident
 	return identity.Viewer{Kind: identity.ViewerGuest, GuestLink: &link}, nil
 }
 
-// verifyGuestAccessCode runs the shared browser/agent verification and updates
-// the common failure counter in one transaction.
+// verifyGuestAccessCode 在同一事务里完成浏览器与 Agent 共用的访问码校验，
+// 并更新共同的失败计数。
 func (m *Manager) verifyGuestAccessCode(ctx context.Context, link identity.GuestLink, code string) error {
 	code = strings.TrimSpace(code)
 	if code == "" {
@@ -192,8 +190,8 @@ func (m *Manager) verifyGuestAccessCode(ctx context.Context, link identity.Guest
 	return nil
 }
 
-// ResetGuestAccessCode invalidates every remembered device and issues a new
-// one-time code without reopening the link for another claim.
+// ResetGuestAccessCode 让所有已记住设备失效并签发新的访问码；
+// 不重新开放链接给别人认领。
 func (m *Manager) ResetGuestAccessCode(ctx context.Context, viewer identity.Viewer, ref string, id int64) (string, error) {
 	full, err := m.ByRef(ctx, ref)
 	if err != nil {
@@ -245,8 +243,8 @@ func (m *Manager) ResetGuestAccessCode(ctx context.Context, viewer identity.View
 	return code, nil
 }
 
-// GuestLinkStatus reads only the fields needed by the claim interface.
-func (m *Manager) GuestLinkStatus(ctx context.Context, link identity.GuestLink) (state, claimName string, claimedAt *time.Time, err error) {
+// GuestLinkStatus 只读取认领界面需要的状态字段。
+func (m *Manager) GuestLinkStatus(ctx context.Context, link identity.GuestLink) (state identity.GuestLinkStatus, claimName string, claimedAt *time.Time, err error) {
 	var claimedNull sql.NullString
 	var nameNull sql.NullString
 	var lockedNull sql.NullString
@@ -256,15 +254,24 @@ func (m *Manager) GuestLinkStatus(ctx context.Context, link identity.GuestLink) 
 	if err != nil {
 		return "", "", nil, err
 	}
-	if !claimedNull.Valid {
-		return "unclaimed", "", nil, nil
+	var claimed *time.Time
+	if claimedNull.Valid {
+		at, parseErr := time.ParseInLocation(time.RFC3339Nano, claimedNull.String, m.clk.Now().Location())
+		if parseErr != nil {
+			return "", "", nil, parseErr
+		}
+		claimed = &at
 	}
-	at, err := time.ParseInLocation(time.RFC3339Nano, claimedNull.String, m.clk.Now().Location())
+	return identity.GuestLinkStatusOf(nil, nullTime(lockedNull), claimed), nameNull.String, claimed, nil
+}
+
+func nullTime(null sql.NullString) *time.Time {
+	if !null.Valid {
+		return nil
+	}
+	at, err := time.ParseInLocation(time.RFC3339Nano, null.String, time.Local)
 	if err != nil {
-		return "", "", nil, err
+		return nil
 	}
-	if lockedNull.Valid {
-		return "access_code_locked", nameNull.String, &at, nil
-	}
-	return "claimed", nameNull.String, &at, nil
+	return &at
 }

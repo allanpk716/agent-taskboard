@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
 
@@ -233,16 +234,7 @@ func newGuestLinkView(l tickets.GuestLinkInfo) guestLinkView {
 		t := l.RevokedAt.Format(time.RFC3339Nano)
 		v.RevokedAt = &t
 	}
-	switch {
-	case l.RevokedAt != nil:
-		v.Status = "revoked"
-	case l.AccessCodeLockedAt != nil:
-		v.Status = "access_code_locked"
-	case l.ClaimedAt != nil:
-		v.Status = "claimed"
-	default:
-		v.Status = "unclaimed"
-	}
+	v.Status = string(identity.GuestLinkStatusOf(l.RevokedAt, l.AccessCodeLockedAt, l.ClaimedAt))
 	if l.ClaimedAt != nil {
 		t := l.ClaimedAt.Format(time.RFC3339Nano)
 		v.ClaimedAt = &t
