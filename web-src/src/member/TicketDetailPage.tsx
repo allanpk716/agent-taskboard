@@ -28,6 +28,7 @@ import { BriefBubble, EventLine, ReplyBubble } from '../shared/conversation'
 import { DimensionSelect } from '../guest/DimensionSelect'
 import { Lightbox } from '../shared/widgets'
 import { absoluteUrl, authorName, closeReasonText, fmtLinkExpiry, linkExpired } from '../shared/format'
+import { DeactivatedBadge } from '../shared/widgets'
 import { Confirm, Modal, copyText, invalidate, nav, toast } from './ui'
 import { HandoffDialog } from './HandoffDialog'
 import { LabelChips, chipClass } from './TicketsPage'
@@ -784,12 +785,18 @@ export function TicketDetailPage({
           </div>
           <div className="kv">
             <span>发起人</span>
-            <b>{authorName(ticket.creator)}</b>
+            <span>
+              <b>{authorName(ticket.creator)}</b>
+              {ticket.creator.member?.deactivated && <DeactivatedBadge />}
+            </span>
           </div>
           <div className="kv">
             <span>指派人</span>
             <span>
-              <b>{ticket.assignee?.member?.name ?? '未指派'}</b>{' '}
+              <span>
+                <b>{ticket.assignee?.member?.name ?? '未指派'}</b>
+                {ticket.assignee?.member?.deactivated && <DeactivatedBadge />}{' '}
+              </span>
               <button className="btn sm ghost" onClick={() => setDialog('assign')}>
                 {ticket.assignee?.member ? '改派' : '指派'}
               </button>

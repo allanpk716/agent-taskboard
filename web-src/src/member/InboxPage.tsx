@@ -2,6 +2,7 @@
 // 一眼知道轮到我做什么；未指派的工单不会出现在收件箱里（要用查询接口找）。
 import { useCallback, useEffect, useState } from 'react'
 import { fetchInbox, reasonClass, type InboxResponse } from './memberApi'
+import { DeactivatedBadge } from '../shared/widgets'
 import { nav, useInvalidate } from './ui'
 
 export function InboxPage() {
@@ -71,7 +72,10 @@ export function InboxPage() {
               <span className="hint">{it.role === 'assignee' ? '我是指派人' : '我是发起人'}</span>
             </div>
             <div className="tc-title">{it.title}</div>
-            <div className="tc-meta">{it.number}</div>
+            <div className="tc-meta">
+              {it.number}
+              {it.assignee?.member?.deactivated && <DeactivatedBadge />}
+            </div>
           </a>
         ))
       )}

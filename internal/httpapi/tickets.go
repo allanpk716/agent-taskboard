@@ -513,8 +513,9 @@ func isLabelDeactivated(err error) bool {
 
 // memberRef 是 viewer/作者里成员的对外结构。
 type memberRef struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Deactivated *bool  `json:"deactivated,omitempty"` // 成员账号已停用（#115）
 }
 
 // agentRef 是具名 Agent 的对外结构。revoked 表示这个 Agent 已被撤销
@@ -536,10 +537,14 @@ type authorView struct {
 	ViaAgent   *bool      `json:"via_agent,omitempty"`
 }
 
-func newAuthorView(a tickets.Author) authorView {
+func newAuthorView(a tickets.Author, includeAccountState bool) authorView {
 	v := authorView{}
 	if a.MemberID != 0 {
 		v.Member = &memberRef{ID: a.MemberID, Name: a.MemberName}
+		if includeAccountState && a.MemberDeactivated {
+			deactivated := true
+			v.Member.Deactivated = &deactivated
+		}
 		if a.AgentID != 0 {
 			v.Agent = &agentRef{ID: a.AgentID, Name: a.AgentName, Revoked: a.AgentRevoked}
 		}
@@ -583,7 +588,7 @@ type lastRevisedView struct {
 	At          time.Time `json:"at"`
 }
 
-func newLastRevisedView(full tickets.Full) lastRevisedView {
+func newLastRevisedView(full tickets.Full, includeAccountState bool) lastRevisedView {
 	actor, at, revision := full.Creator, full.CreatedAt, full.BriefRevision
 	for i := len(full.Timeline) - 1; i >= 0; i-- {
 		if full.Timeline[i].Type == "brief_revised" {
@@ -595,7 +600,11 @@ func newLastRevisedView(full tickets.Full) lastRevisedView {
 	v := lastRevisedView{Revision: revision, At: at}
 	if actor.MemberID != 0 {
 		v.Type = "member"
-		v.DisplayName = actor.DisplayName()
+		if includeAccountState {
+			v.DisplayName = actor.DisplayName()
+		} else {
+			v.DisplayName = actor.DisplayNamePlain()
+		}
 		return v
 	}
 	v.Type = "guest"
@@ -666,9 +675,9 @@ type eventView struct {
 }
 
 // newEventView 把时间线事件转成对外结构。
-func newEventView(e tickets.Event) eventView {
+func newEventView(e tickets.Event, includeAccountState bool) eventView {
 	return eventView{
-		Seq: e.Seq, Change: e.Change, At: e.At, Actor: newAuthorView(e.Actor), Type: e.Type,
+		Seq: e.Seq, Change: e.Change, At: e.At, Actor: newAuthorView(e.Actor, includeAccountState), Type: e.Type,
 		Label: e.Label, Note: e.Note, ReplyNo: e.ReplyNo, BodyMD: e.BodyMD, Deliver: e.Deliver,
 		Revision: e.Revision, Reason: e.Reason, DuplicateOf: e.DuplicateOf, ExpiresAt: e.LinkExpires,
 		AttachmentIDs: e.AttachmentIDs,
@@ -737,15 +746,19 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 		Kind:    full.Kind,
 		Title:   full.Title,
 		Status:  full.Status,
-		Creator: newAuthorView(full.Creator),
+		Creator: newAuthorView(full.Creator, !isGuest),
 		Brief: briefView{
 			Markdown: full.BriefMD, Revision: full.BriefRevision,
-			AttachmentIDs: full.BriefAttachmentIDs, LastRevised: newLastRevisedView(full),
+			AttachmentIDs: full.BriefAttachmentIDs, LastRevised: newLastRevisedView(full, !isGuest),
 		},
 		Attachments: []attachmentView{},
 	}
 	if full.AssigneeID != 0 {
-		v.Assignee = &authorView{Member: &memberRef{ID: full.AssigneeID, Name: full.AssigneeName}}
+		assignee := newAuthorView(tickets.Author{
+			MemberID: full.AssigneeID, MemberName: full.AssigneeName,
+			MemberDeactivated: full.AssigneeDeactivated,
+		}, !isGuest)
+		v.Assignee = &assignee
 	}
 	if !isGuest {
 		text := newHandoffText(a.requestBaseURL(r))
@@ -797,7 +810,7 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 		if isGuest && !visibleToGuest(e) {
 			continue
 		}
-		v.Timeline = append(v.Timeline, newEventView(e))
+		v.Timeline = append(v.Timeline, newEventView(e, !isGuest))
 	}
 	return v
 }
@@ -819,7 +832,7 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer, atts []attac
 		Title:           full.Title,
 		Kind:            full.Kind,
 		Status:          full.Status,
-		CreatorName:     full.Creator.DisplayName(),
+		CreatorName:     full.Creator.DisplayNamePlain(),
 		AssigneeName:    full.AssigneeName,
 		WaitingOnText:   waitingOn.Text,
 		WaitingOnReason: waitingOn.Reason,
@@ -864,15 +877,27 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer, atts []attac
 		labels := full.Labels
 		in.Labels = &labels
 	}
+	if !isGuest {
+		in.CreatorName = full.Creator.DisplayName()
+	}
 	if full.CloseReason != "" {
 		in.CloseReasonText = markdownview.CloseReasonText(full.CloseReason)
 	}
+	assigneeName := full.AssigneeName
+	if full.AssigneeDeactivated && !isGuest {
+		assigneeName += "（已停用）"
+	}
+	in.AssigneeName = assigneeName
 	for _, e := range full.Timeline {
 		if isGuest && !visibleToGuest(e) {
 			continue
 		}
+		authorName := e.Actor.DisplayName()
+		if isGuest {
+			authorName = e.Actor.DisplayNamePlain()
+		}
 		in.Timeline = append(in.Timeline, markdownview.Event{
-			Seq: e.Seq, At: e.At, AuthorName: e.Actor.DisplayName(), Type: e.Type,
+			Seq: e.Seq, At: e.At, AuthorName: authorName, Type: e.Type,
 			Label: e.Label, BodyMD: e.BodyMD, Deliver: e.Deliver, Revision: e.Revision,
 			Reason: e.Reason, DuplicateOf: e.DuplicateOf, Note: e.Note, LinkExpiresAt: e.LinkExpires,
 			AttachmentIDs: e.AttachmentIDs,

@@ -5,6 +5,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api'
 import { closeReasonText, fmtShort } from '../shared/format'
+import type { MemberSummary } from '../shared/types'
+import { DeactivatedBadge } from '../shared/widgets'
 import { api } from '../api'
 import { nav } from './ui'
 
@@ -48,8 +50,10 @@ interface TicketListItem {
   title: string
   status: string
   close_reason?: string | null
-  creator: string
-  assignee?: string | null
+  creator: MemberSummary
+  creator_deactivated?: boolean
+  assignee?: MemberSummary | null
+  assignee_deactivated?: boolean
   labels: string[]
   waiting_on: { party: string; member?: string | null; text: string; reason: string }
   updated_at: string
@@ -112,6 +116,8 @@ export function LabelChips({ labels }: { labels: string[] }) {
 }
 
 export function TicketCard({ item }: { item: TicketListItem }) {
+  const creator = memberSummaryText(item.creator)
+  const assignee = item.assignee == null ? '未指派' : memberSummaryText(item.assignee)
   return (
     <a
       className="tcard"
@@ -134,13 +140,20 @@ export function TicketCard({ item }: { item: TicketListItem }) {
       </div>
       <div className="tc-title">{item.title}</div>
       <div className="tc-meta">
-        {item.number} · 发起人 {item.creator} · 指派 {item.assignee ?? '未指派'}
+        {item.number} · 发起人 {creator}
+        {item.creator_deactivated && <DeactivatedBadge />}
+        {' '}· 指派 {assignee}
+        {item.assignee_deactivated && <DeactivatedBadge />}
       </div>
       <div className="tc-foot">
         <LabelChips labels={item.labels} />
       </div>
     </a>
   )
+}
+
+function memberSummaryText(member: MemberSummary): string {
+  return member
 }
 
 function FilterGroup({

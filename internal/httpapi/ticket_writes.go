@@ -254,7 +254,7 @@ func (a *API) ticketTimeline(w http.ResponseWriter, r *http.Request, ref string)
 		if e.Seq <= after || !visible(e) {
 			continue
 		}
-		view.Events = append(view.Events, newEventView(e))
+		view.Events = append(view.Events, newEventView(e, viewer.Kind != identity.ViewerGuest))
 	}
 	writeJSON(w, http.StatusOK, view)
 }

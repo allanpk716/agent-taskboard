@@ -606,27 +606,29 @@ func cmpInt64(a, b int64) int {
 // ticketListItemView 是列表项的摘要（spec「查询」：每项只返回摘要，时间线
 // 不在列表里给，要看就读单张工单）。
 type ticketListItemView struct {
-	Number      string        `json:"number"`
-	Seq         int64         `json:"seq"`
-	URL         string        `json:"url"`
-	Kind        string        `json:"kind"`
-	Title       string        `json:"title"`
-	Status      string        `json:"status"`
-	CloseReason *string       `json:"close_reason"`
-	Template    *string       `json:"template"`
-	Creator     string        `json:"creator"`
-	Assignee    *string       `json:"assignee"`
-	Labels      []string      `json:"labels"`
-	WaitingOn   waitingOnView `json:"waiting_on"`
-	CreatedAt   time.Time     `json:"created_at"`
-	UpdatedAt   time.Time     `json:"updated_at"`
-	ClosedAt    *time.Time    `json:"closed_at"`
-	ReplyCount  int           `json:"reply_count"`
-	LastChange  int64         `json:"last_change"`
-	ReadFull    string        `json:"read_full"`
-	MatchedIn   []string      `json:"matched_in,omitempty"`
-	Snippet     string        `json:"snippet,omitempty"`
-	Brief       *briefView    `json:"brief,omitempty"` // include=brief 时附带说明
+	Number              string        `json:"number"`
+	Seq                 int64         `json:"seq"`
+	URL                 string        `json:"url"`
+	Kind                string        `json:"kind"`
+	Title               string        `json:"title"`
+	Status              string        `json:"status"`
+	CloseReason         *string       `json:"close_reason"`
+	Template            *string       `json:"template"`
+	Creator             any           `json:"creator"`
+	Assignee            any           `json:"assignee"`
+	CreatorDeactivated  *bool         `json:"creator_deactivated,omitempty"`
+	AssigneeDeactivated *bool         `json:"assignee_deactivated,omitempty"`
+	Labels              []string      `json:"labels"`
+	WaitingOn           waitingOnView `json:"waiting_on"`
+	CreatedAt           time.Time     `json:"created_at"`
+	UpdatedAt           time.Time     `json:"updated_at"`
+	ClosedAt            *time.Time    `json:"closed_at"`
+	ReplyCount          int           `json:"reply_count"`
+	LastChange          int64         `json:"last_change"`
+	ReadFull            string        `json:"read_full"`
+	MatchedIn           []string      `json:"matched_in,omitempty"`
+	Snippet             string        `json:"snippet,omitempty"`
+	Brief               *briefView    `json:"brief,omitempty"` // include=brief 时附带说明
 }
 
 // newTicketListItem 把一行投影组装成摘要；q 命中时带 matched_in/snippet。
@@ -648,11 +650,13 @@ func newTicketListItem(row *tickets.ListRow, include string) ticketListItemView 
 	}
 	if t.Creator.MemberID != 0 {
 		v.Creator = t.Creator.MemberName
+		v.CreatorDeactivated = deactivatedFlag(t.Creator.MemberDeactivated)
 	} else {
 		v.Creator = "访客"
 	}
 	if t.AssigneeID != 0 {
-		v.Assignee = &t.AssigneeName
+		v.Assignee = t.AssigneeName
+		v.AssigneeDeactivated = deactivatedFlag(t.AssigneeDeactivated)
 	}
 	if t.CloseReason != "" {
 		v.CloseReason = &t.CloseReason
@@ -674,7 +678,7 @@ func newTicketListItem(row *tickets.ListRow, include string) ticketListItemView 
 		v.Snippet = row.Hit.Snippet
 	}
 	if include == "brief" {
-		b := briefView{Markdown: t.BriefMD, Revision: t.BriefRevision, LastRevised: newLastRevisedView(*t)}
+		b := briefView{Markdown: t.BriefMD, Revision: t.BriefRevision, LastRevised: newLastRevisedView(*t, true)}
 		if t.TemplateKey != "" {
 			key := t.TemplateKey
 			b.Template = &key
@@ -684,6 +688,14 @@ func newTicketListItem(row *tickets.ListRow, include string) ticketListItemView 
 		v.Brief = &b
 	}
 	return v
+}
+
+func deactivatedFlag(deactivated bool) *bool {
+	if !deactivated {
+		return nil
+	}
+	value := true
+	return &value
 }
 
 // listMarkdownRows 把本页行转成 Markdown 表格的行输入。
@@ -696,7 +708,7 @@ func listMarkdownRows(page []tickets.ListRow) []markdownview.ListRow {
 			Title:         row.Full.Title,
 			Status:        row.Full.Status,
 			CloseReason:   row.Full.CloseReason,
-			Assignee:      row.Full.AssigneeName,
+			Assignee:      row.Full.AssigneeName + markdownDeactivated(row.Full.AssigneeDeactivated),
 			WaitingOnText: row.WaitingOn.Text,
 			Labels:        row.Full.Labels,
 			UpdatedAt:     row.Meta.UpdatedAt,
@@ -708,6 +720,13 @@ func listMarkdownRows(page []tickets.ListRow) []markdownview.ListRow {
 		out = append(out, item)
 	}
 	return out
+}
+
+func markdownDeactivated(deactivated bool) string {
+	if deactivated {
+		return "（已停用）"
+	}
+	return ""
 }
 
 func containsStringIn(list []string, s string) bool {

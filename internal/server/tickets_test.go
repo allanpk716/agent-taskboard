@@ -298,8 +298,9 @@ func Test建单请求体不是JSON时返回400(t *testing.T) {
 // authorBody 是作者结构 {member, agent}，本人操作时 agent 为 null（data-model）。
 type authorBody struct {
 	Member *struct {
-		ID   int64  `json:"id"`
-		Name string `json:"name"`
+		ID          int64  `json:"id"`
+		Name        string `json:"name"`
+		Deactivated *bool  `json:"deactivated"`
 	} `json:"member"`
 	Agent *struct {
 		ID   int64  `json:"id"`

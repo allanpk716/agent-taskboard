@@ -202,6 +202,15 @@ func (a *API) handleOwnPassword(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Viewer 只带身份；ChangeOwnPassword 还需要当前会话 id 来保留这次登录。
+	sess, ok := a.sessionFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if sess.Member.ID != viewer.Member.ID {
+		WriteError(w, http.StatusUnauthorized, CodeUnauthenticated, "会话不存在或已过期", a.authHint(r))
+		return
+	}
 	var req struct {
 		OldPassword string `json:"old_password"`
 		NewPassword string `json:"new_password"`
@@ -209,12 +218,14 @@ func (a *API) handleOwnPassword(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req, `{"old_password": "…", "new_password": "…"}`) {
 		return
 	}
-	err := a.ident.ChangeOwnPassword(r.Context(), viewer.Member.ID, req.OldPassword, req.NewPassword)
+	err := a.ident.ChangeOwnPassword(r.Context(), sess.Member.ID, sess.ID, req.OldPassword, req.NewPassword)
 	switch {
 	case errors.Is(err, identity.ErrInvalidOldPassword):
 		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidOldPassword, "原密码不正确", "")
 	case errors.Is(err, identity.ErrPasswordTooShort):
 		WriteError(w, http.StatusUnprocessableEntity, CodePasswordTooShort, "新密码至少 8 位", "")
+	case errors.Is(err, identity.ErrPasswordUnchanged):
+		WriteError(w, http.StatusUnprocessableEntity, CodePasswordUnchanged, "新密码与旧密码相同", "")
 	case err != nil:
 		panic(err)
 	default:

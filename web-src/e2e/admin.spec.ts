@@ -46,6 +46,89 @@ test('管理员在管理页切换成员的初筛人身份', async ({ page }) => 
   await expect(toggle).toBeChecked({ checked: initial })
 })
 
+test('管理员停用后可显示并恢复已停用成员', async ({ page, request }) => {
+  const loginRes = await request.post('/api/v1/session', { data: ADMIN })
+  expect(loginRes.ok()).toBeTruthy()
+  const cookie = (loginRes.headers()['set-cookie'] ?? '').split(';')[0]
+  const username = `inactive-${Date.now() % 1_000_000}`
+  const created = await request.post('/api/v1/members', {
+    data: { username, name: '待恢复工' },
+    headers: { Cookie: cookie },
+  })
+  expect(created.ok(), `创建成员失败：${await created.text()}`).toBeTruthy()
+
+  await login(page, ADMIN)
+  await page.goto('/admin')
+  const row = page.locator(`tr[data-member="${username}"]`)
+  await expect(row).toBeVisible()
+  const toggle = page.getByRole('checkbox', { name: /显示已停用/ })
+  await expect(toggle).not.toBeChecked()
+  await expect(toggle).toHaveAccessibleName(/显示已停用（0）/)
+
+  await row.getByRole('button', { name: '停用' }).click()
+  const deactivateDialog = page.locator('.modal')
+  await expect(deactivateDialog).toContainText(
+    '停用后 TA 将不能登录，名下全部 Agent token 会被撤销（恢复后也不会复活），所有登录会被注销；已有的指派保留',
+  )
+  await deactivateDialog.getByRole('button', { name: '停用', exact: true }).click()
+
+  await expect(row).toHaveCount(0)
+  await expect(toggle).toHaveAccessibleName(/显示已停用（1）/)
+  await toggle.click()
+  await expect(row).toBeVisible()
+  await expect(row).toHaveClass(/inactive/)
+  await expect(row.locator('.badge.closed')).toHaveText('已停用')
+  await expect(row.getByRole('button', { name: '停用' })).toHaveCount(0)
+  await expect(row.getByRole('button', { name: '恢复' })).toHaveCount(1)
+
+  await row.getByRole('button', { name: '恢复' }).click()
+  const reactivateDialog = page.locator('.modal')
+  await expect(reactivateDialog).toContainText(
+    '恢复后 TA 可以用原来的密码登录；Agent token 不会恢复，需要 TA 重新签发',
+  )
+  await reactivateDialog.getByRole('button', { name: '恢复', exact: true }).click()
+  await expect(row.locator('.badge.open')).toBeVisible()
+  await expect(row.getByRole('button', { name: '恢复' })).toHaveCount(0)
+  await expect(page.locator('tr[data-member="admin"]').getByRole('button', { name: '停用' })).toHaveCount(0)
+})
+
+test('管理员重置成员密码后可用新密码登录', async ({ page, request }) => {
+  const loginRes = await request.post('/api/v1/session', { data: ADMIN })
+  expect(loginRes.ok()).toBeTruthy()
+  const cookie = (loginRes.headers()['set-cookie'] ?? '').split(';')[0]
+  const username = `reset-${Date.now() % 1_000_000}`
+  const created = await request.post('/api/v1/members', {
+    data: { username, name: '待重置工' },
+    headers: { Cookie: cookie },
+  })
+  expect(created.ok(), `创建成员失败：${await created.text()}`).toBeTruthy()
+
+  await login(page, ADMIN)
+  await page.goto('/admin')
+  const row = page.locator(`tr[data-member="${username}"]`)
+  await expect(row).toBeVisible()
+  const adminRow = page.locator('tr[data-member="admin"]')
+  await expect(adminRow).toBeVisible()
+  await expect(adminRow.getByRole('button', { name: '重置密码' })).toHaveCount(0)
+  await expect(adminRow.getByRole('button', { name: '停用' })).toHaveCount(0)
+  await expect(adminRow).toContainText('改自己的密码请去『我的』')
+  await row.getByRole('button', { name: '重置密码' }).click()
+  const confirmDialog = page.locator('.modal')
+  await expect(confirmDialog).toContainText('将生成新的初始密码，并让 TA 在所有浏览器上退出登录')
+  await confirmDialog.getByRole('button', { name: '重置密码', exact: true }).click()
+
+  const passwordDialog = page.locator('.modal')
+  await expect(passwordDialog).toContainText('初始密码只显示这一次')
+  await expect(passwordDialog).toContainText('请登录后在『我的』里改密码')
+  const password = (await passwordDialog.locator('[data-initial-password]').textContent()) ?? ''
+  expect(password).not.toBe('')
+  await passwordDialog.getByRole('button', { name: '复制' }).click()
+  await passwordDialog.getByRole('button', { name: '关闭' }).click()
+
+  await login(page, { username, password })
+  await expect(page.getByText('待重置工')).toBeVisible()
+})
+
 // 普通成员看不到面板：e2e 环境里 wang 是普通成员但管理页入口对非管理员隐藏、
 // 后端 403 admin_required，这个场景由 internal/server 的黑盒测试覆盖
 // （Test管理员可检查更新）与 AdminPage 的 is_admin 判断保证。

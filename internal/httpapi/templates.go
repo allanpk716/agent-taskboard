@@ -211,7 +211,7 @@ func (a *API) readTemplate(w http.ResponseWriter, r *http.Request, key string) {
 		UpdatedAt: t.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 	if u := t.UpdatedBy; u.MemberID != 0 {
-		av := newAuthorView(authorOfUpdater(u))
+		av := newAuthorView(authorOfUpdater(u), false)
 		view.UpdatedBy = &av
 	}
 	view.Fields = a.templateFieldsView(r, t)
@@ -277,7 +277,7 @@ func (a *API) listTemplateVersions(w http.ResponseWriter, r *http.Request, key s
 			UpdatedAt: v.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		}
 		if v.UpdatedBy.MemberID != 0 {
-			av := newAuthorView(authorOfUpdater(v.UpdatedBy))
+			av := newAuthorView(authorOfUpdater(v.UpdatedBy), false)
 			vv.UpdatedBy = &av
 		}
 		out.Versions = append(out.Versions, vv)

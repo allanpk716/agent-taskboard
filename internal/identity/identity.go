@@ -31,9 +31,13 @@ var ErrMemberNotFound = errors.New("没有这位成员")
 
 // ErrCannotDeactivateSelf 表示不能停用自己的账号（#42：防止管理员把自己锁在门外）。
 var ErrCannotDeactivateSelf = errors.New("不能停用自己的账号")
+
+// ErrMemberInactive 表示目标账号已停用，不能执行当前管理操作。
+var ErrMemberInactive = errors.New("成员账号已停用")
 var ErrCannotResetSelf = errors.New("不能重置自己的密码")
 var ErrInvalidOldPassword = errors.New("原密码不正确")
 var ErrPasswordTooShort = errors.New("新密码至少 8 位")
+var ErrPasswordUnchanged = errors.New("新密码与旧密码相同")
 
 // Member 是一位成员。
 type Member struct {
@@ -202,9 +206,10 @@ func (m *Manager) DeactivateMember(ctx context.Context, id int64) (bool, error) 
 		return false, err
 	}
 	defer tx.Rollback()
+	now := m.clock.Now().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE members SET deactivated_at = ? WHERE id = ?`,
-		m.clock.Now().Format(time.RFC3339Nano), id); err != nil {
+		now, id); err != nil {
 		return false, err
 	}
 	// 已登录的会话一并清掉：停用即时生效。
@@ -214,31 +219,84 @@ func (m *Manager) DeactivateMember(ctx context.Context, id int64) (bool, error) 
 	if err := m.revokeAllClientCredentialsTx(ctx, tx, id); err != nil {
 		return false, err
 	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE agent_tokens SET revoked_at = ? WHERE member_id = ? AND revoked_at IS NULL`,
+		now, id); err != nil {
+		return false, err
+	}
 	if err := tx.Commit(); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-// ChangeOwnPassword 自助改密：只换密码，不撤销客户端凭证，也不清空当前会话。
-func (m *Manager) ChangeOwnPassword(ctx context.Context, memberID int64, oldPassword, newPassword string) error {
+// ReactivateMember 恢复成员账号（#112）：只清停用标记。密码、历史会话、
+// Agent token 与客户端凭证都不变，因此停用时撤销的 token 不会复活。
+// 已启用账号的再恢复是幂等成功。返回是否发生了变化。
+func (m *Manager) ReactivateMember(ctx context.Context, id int64) (bool, error) {
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var deactivated sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT deactivated_at FROM members WHERE id = ?`, id).Scan(&deactivated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrMemberNotFound
+	}
+	if err != nil {
+		return false, err
+	}
+	if !nullStringSet(deactivated) {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE members SET deactivated_at = NULL WHERE id = ?`, id); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ChangeOwnPassword 自助改密：保留当前网页会话，注销其他网页会话；
+// 客户端凭证与 Agent token 不动（ADR 0004）。
+func (m *Manager) ChangeOwnPassword(ctx context.Context, memberID int64, currentSessionID, oldPassword, newPassword string) error {
 	if len(newPassword) < 8 {
 		return ErrPasswordTooShort
 	}
+
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
 	var hash string
-	if err := m.db.QueryRowContext(ctx,
-		`SELECT password_hash FROM members WHERE id = ?`, memberID).Scan(&hash); err != nil {
+	err = tx.QueryRowContext(ctx,
+		`SELECT password_hash FROM members WHERE id = ?`, memberID).Scan(&hash)
+	if err != nil {
 		return err
 	}
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(oldPassword)) != nil {
 		return ErrInvalidOldPassword
 	}
+	if oldPassword == newPassword {
+		return ErrPasswordUnchanged
+	}
 	newHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
-	_, err = m.db.ExecContext(ctx, `UPDATE members SET password_hash = ? WHERE id = ?`, string(newHash), memberID)
-	return err
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE members SET password_hash = ? WHERE id = ?`, string(newHash), memberID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM sessions WHERE member_id = ? AND id <> ?`, memberID, currentSessionID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // AdminResetMemberPassword 管理员重置密码：生成一次性初始密码，并撤销会话
@@ -260,7 +318,10 @@ func (m *Manager) AdminResetMemberPassword(ctx context.Context, adminID, memberI
 		return "", err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `UPDATE members SET password_hash = ? WHERE id = ?`, string(hash), memberID)
+	// 停用检查放进 UPDATE 条件：与并发停用串行化，不会给已停用账号发密码（#113）。
+	res, err := tx.ExecContext(ctx,
+		`UPDATE members SET password_hash = ? WHERE id = ? AND deactivated_at IS NULL`,
+		string(hash), memberID)
 	if err != nil {
 		return "", err
 	}
@@ -269,6 +330,18 @@ func (m *Manager) AdminResetMemberPassword(ctx context.Context, adminID, memberI
 		return "", err
 	}
 	if n == 0 {
+		var deactivated sql.NullString
+		err := tx.QueryRowContext(ctx,
+			`SELECT deactivated_at FROM members WHERE id = ?`, memberID).Scan(&deactivated)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrMemberNotFound
+		}
+		if err != nil {
+			return "", err
+		}
+		if nullStringSet(deactivated) {
+			return "", ErrMemberInactive
+		}
 		return "", ErrMemberNotFound
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE member_id = ?`, memberID); err != nil {
@@ -374,4 +447,8 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+func nullStringSet(v sql.NullString) bool {
+	return v.Valid && v.String != ""
 }

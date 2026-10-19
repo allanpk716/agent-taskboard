@@ -43,13 +43,14 @@ func (a *API) handleInbox(w http.ResponseWriter, r *http.Request) {
 
 // inboxItemView 是收件箱项的对外结构。
 type inboxItemView struct {
-	Number   string `json:"number"`
-	Title    string `json:"title"`
-	Role     string `json:"role"` // assignee | creator
-	Reason   string `json:"reason"`
-	SinceSeq *int64 `json:"since_seq"` // 推导依据的回复事件 seq；无相关回复时为 null
-	ReadNew  string `json:"read_new"`  // 增量读取地址（after = 我在该单最后一条事件）
-	ReadFull string `json:"read_full"` // 全文 Markdown 地址
+	Number   string      `json:"number"`
+	Title    string      `json:"title"`
+	Role     string      `json:"role"` // assignee | creator
+	Reason   string      `json:"reason"`
+	SinceSeq *int64      `json:"since_seq"` // 推导依据的回复事件 seq；无相关回复时为 null
+	ReadNew  string      `json:"read_new"`  // 增量读取地址（after = 我在该单最后一条事件）
+	ReadFull string      `json:"read_full"` // 全文 Markdown 地址
+	Assignee *authorView `json:"assignee"`
 }
 
 func newInboxItemView(it tickets.InboxItem) inboxItemView {
@@ -60,6 +61,12 @@ func newInboxItemView(it tickets.InboxItem) inboxItemView {
 	if it.SinceSeq != 0 {
 		s := it.SinceSeq
 		v.SinceSeq = &s
+	}
+	if it.AssigneeID != 0 {
+		assignee := newAuthorView(tickets.Author{
+			MemberID: it.AssigneeID, MemberName: it.AssigneeName, MemberDeactivated: it.AssigneeDeactivated,
+		}, true)
+		v.Assignee = &assignee
 	}
 	return v
 }
