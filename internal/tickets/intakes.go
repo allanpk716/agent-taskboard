@@ -56,21 +56,23 @@ func (e *MissingFieldsError) Error() string {
 
 // IntakeSpec 是创建反馈入口的输入。
 type IntakeSpec struct {
-	Slug        string
-	Name        string
-	TemplateKey string
+	Slug              string
+	Name              string
+	TemplateKey       string
+	DepartmentContact string
 }
 
 // Intake 是一个反馈入口的投影（模板始终读当前版本，不缓存）。
 type Intake struct {
-	ID            int64
-	Slug          string
-	Name          string
-	TemplateKey   string
-	Active        bool
-	CreatedBy     Author
-	CreatedAt     time.Time
-	DeactivatedAt *time.Time
+	ID                int64
+	Slug              string
+	Name              string
+	TemplateKey       string
+	DepartmentContact string
+	Active            bool
+	CreatedBy         Author
+	CreatedAt         time.Time
+	DeactivatedAt     *time.Time
 }
 
 // CreateIntake 以 viewer 的身份创建一个反馈入口。绑定的模板必须存在、在用且
@@ -104,22 +106,23 @@ func (m *Manager) CreateIntake(ctx context.Context, viewer identity.Viewer, spec
 	}
 	var id int64
 	if err := m.db.QueryRowContext(ctx, `
-		INSERT INTO intakes (slug, name, template_key, active,
+		INSERT INTO intakes (slug, name, template_key, department_contact, active,
 		                     created_by_member_id, created_by_agent_id, created_at)
-		VALUES (?, ?, ?, 1, ?, ?, ?)
+		VALUES (?, ?, ?, ?, 1, ?, ?, ?)
 		RETURNING id`,
-		spec.Slug, spec.Name, spec.TemplateKey, viewer.Member.ID, agentID,
+		spec.Slug, spec.Name, spec.TemplateKey, strings.TrimSpace(spec.DepartmentContact), viewer.Member.ID, agentID,
 		now.Format(time.RFC3339Nano)).Scan(&id); err != nil {
 		return Intake{}, ErrSlugTaken // UNIQUE 冲突只有 slug
 	}
 	return Intake{ID: id, Slug: spec.Slug, Name: spec.Name, TemplateKey: spec.TemplateKey,
-		Active: true, CreatedBy: authorOf(viewer), CreatedAt: now}, nil
+		DepartmentContact: strings.TrimSpace(spec.DepartmentContact),
+		Active:            true, CreatedBy: authorOf(viewer), CreatedAt: now}, nil
 }
 
 // Intakes 列出全部反馈入口（含已停用，带 active 标记），按 slug 排序。
 func (m *Manager) Intakes(ctx context.Context) ([]Intake, error) {
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT i.id, i.slug, i.name, i.template_key, i.active, i.created_at, i.deactivated_at,
+		SELECT i.id, i.slug, i.name, i.template_key, i.department_contact, i.active, i.created_at, i.deactivated_at,
 		       m.id, m.name, a.id, a.name, a.revoked_at
 		FROM intakes i
 		LEFT JOIN members m ON m.id = i.created_by_member_id
@@ -211,7 +214,7 @@ func (m *Manager) RotateIntakeSlug(ctx context.Context, slug, newSlug string) (I
 // intakeRow 按 slug 取入口（无论活跃与否）。
 func (m *Manager) intakeRow(ctx context.Context, slug string) (Intake, error) {
 	row := m.db.QueryRowContext(ctx, `
-		SELECT i.id, i.slug, i.name, i.template_key, i.active, i.created_at, i.deactivated_at,
+		SELECT i.id, i.slug, i.name, i.template_key, i.department_contact, i.active, i.created_at, i.deactivated_at,
 		       m.id, m.name, a.id, a.name, a.revoked_at
 		FROM intakes i
 		LEFT JOIN members m ON m.id = i.created_by_member_id
@@ -222,6 +225,25 @@ func (m *Manager) intakeRow(ctx context.Context, slug string) (Intake, error) {
 		return Intake{}, ErrIntakeNotFound
 	}
 	return in, err
+}
+
+// UpdateIntakeDepartmentContact lets an administrator change how intake submitters
+// should reach the department after losing their access code.
+func (m *Manager) UpdateIntakeDepartmentContact(ctx context.Context, slug, contact string) (Intake, error) {
+	res, err := m.db.ExecContext(ctx,
+		`UPDATE intakes SET department_contact = ? WHERE slug = ?`,
+		strings.TrimSpace(contact), slug)
+	if err != nil {
+		return Intake{}, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return Intake{}, err
+	}
+	if n == 0 {
+		return Intake{}, ErrIntakeNotFound
+	}
+	return m.intakeRow(ctx, slug)
 }
 
 type intakeScanner interface{ Scan(dest ...any) error }
@@ -238,7 +260,7 @@ func scanIntake(row intakeScanner) (Intake, error) {
 		agentName     sql.NullString
 		agentRevoked  sql.NullString
 	)
-	if err := row.Scan(&in.ID, &in.Slug, &in.Name, &in.TemplateKey, &active,
+	if err := row.Scan(&in.ID, &in.Slug, &in.Name, &in.TemplateKey, &in.DepartmentContact, &active,
 		&createdAt, &deactivatedAt, &memberID, &memberName, &agentID, &agentName, &agentRevoked); err != nil {
 		return Intake{}, err
 	}
@@ -287,11 +309,15 @@ type SubmissionInput struct {
 // SubmissionResult 是提交成功的结果：新工单 + 交给提交者的访客链接
 // （Key 是明文密钥，只在提交响应里出现一次）。
 type SubmissionResult struct {
-	Ticket    Ticket
-	LinkKey   string
-	LinkID    int64
-	LinkNote  string
-	ExpiresAt time.Time
+	Ticket            Ticket
+	LinkKey           string
+	LinkID            int64
+	LinkNote          string
+	ExpiresAt         time.Time
+	DeviceToken       string
+	AccessCode        string
+	ClaimedAt         time.Time
+	DepartmentContact string
 }
 
 // SubmitToIntake 匿名提交一张反馈：严格校验（缺必填 422 missing_fields，与成员
@@ -330,6 +356,10 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	if missing := template.MissingRequired(in.Fields, tmpl.Fields); len(missing) > 0 {
 		return SubmissionResult{}, &MissingFieldsError{Fields: missingFieldHints(missing, tmpl.Fields)}
 	}
+	authorName := strings.TrimSpace(in.AuthorName)
+	if authorName == "" {
+		return SubmissionResult{}, ErrClaimNameRequired
+	}
 	labels := append([]string{}, tmpl.PresetLabels...)
 	for _, f := range tmpl.Fields {
 		v := strings.TrimSpace(in.Fields[f.Key])
@@ -347,7 +377,6 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	if err != nil {
 		return SubmissionResult{}, err
 	}
-	authorName := strings.TrimSpace(in.AuthorName)
 	note := "反馈入口「" + intake.Name + "」提交人"
 	now := m.clk.Now()
 	date := now.Format("20060102")
@@ -453,11 +482,23 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 		return SubmissionResult{}, err
 	}
 	t.Number = number
-	return SubmissionResult{
+	result := SubmissionResult{
 		Ticket:  t,
 		LinkKey: key, LinkID: linkID, LinkNote: note,
 		ExpiresAt: now.Add(30 * 24 * time.Hour),
-	}, nil
+	}
+	claim, err := m.ClaimGuestLink(ctx, identity.GuestLink{
+		ID: linkID, TicketSeq: t.Seq, Note: note,
+		ExpiresAt: result.ExpiresAt, CanEditBrief: true,
+	}, authorName)
+	if err != nil {
+		return SubmissionResult{}, err
+	}
+	result.DeviceToken = claim.DeviceToken
+	result.AccessCode = claim.AccessCode
+	result.ClaimedAt = claim.ClaimedAt
+	result.DepartmentContact = intake.DepartmentContact
+	return result, nil
 }
 
 // missingFieldHints 把缺必填的逐项提示拼出来：引导说明、维度字段可「不确定」、

@@ -254,6 +254,9 @@ func (s *Server) GuestClient(key string) *http.Client {
 	if token, ok := guestDeviceTokens[key]; ok {
 		return &http.Client{Transport: bearerTransport{token}}
 	}
+	if strings.HasPrefix(key, "tbgd_") {
+		return &http.Client{Transport: bearerTransport{token: key}}
+	}
 	raw := &http.Client{Transport: bearerTransport{token: key}}
 	var claimed struct {
 		DeviceToken string `json:"device_token"`

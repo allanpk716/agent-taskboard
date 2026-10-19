@@ -19,13 +19,13 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
 )
 
-// keyFrom 取出提交响应里访客链接的密钥（/g/<密钥>，直接作 Bearer）。
+// keyFrom 取出提交时即认领的设备凭证（入口提交没有未认领阶段）。
 func keyFrom(t testing.TB, submitted intakeSubmitBody) string {
 	t.Helper()
-	if !strings.HasPrefix(submitted.GuestLink.URL, "/g/") {
-		t.Fatalf("提交响应里的访客链接 = %q, 想以 /g/ 开头", submitted.GuestLink.URL)
+	if !strings.HasPrefix(submitted.DeviceToken, "tbgd_") {
+		t.Fatalf("提交响应里的设备凭证 = %q, 想以 tbgd_ 开头", submitted.DeviceToken)
 	}
-	return strings.TrimPrefix(submitted.GuestLink.URL, "/g/")
+	return submitted.DeviceToken
 }
 
 // listItem 是列表项的摘要结构。

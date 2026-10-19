@@ -137,6 +137,7 @@ export interface IntakeView {
   name: string
   url: string
   kind: string
+  department_contact: string
   template: {
     key: string
     name: string
@@ -152,6 +153,9 @@ export interface IntakeView {
 export interface IntakeSubmitResult {
   ticket: { number: string; seq: number; title: string; url: string }
   guest_link: { url: string; note: string; expires_at: string; can_edit_brief: boolean }
+  device_token: string
+  access_code: string
+  department_contact: string
   next: string
 }
 

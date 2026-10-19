@@ -414,6 +414,29 @@ export async function setMemberTriager(id: number, triager: boolean): Promise<vo
   })
 }
 
+/* ---------------- 反馈入口（#165，联系方式仅管理员） ---------------- */
+
+export interface IntakeAccount {
+  slug: string
+  name: string
+  template: string
+  active: boolean
+  url: string
+  department_contact: string
+}
+
+export async function fetchIntakes(): Promise<IntakeAccount[]> {
+  const body = await api('/api/v1/intakes')
+  return (body.intakes ?? []) as IntakeAccount[]
+}
+
+export async function updateIntakeContact(slug: string, contact: string): Promise<IntakeAccount> {
+  return api(`/api/v1/intakes/${encodeURIComponent(slug)}/contact`, {
+    method: 'PATCH',
+    body: JSON.stringify({ department_contact: contact }),
+  })
+}
+
 /* ---------------- 工单写操作 ---------------- */
 
 export async function replyTicket(

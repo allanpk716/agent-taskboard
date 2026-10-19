@@ -46,6 +46,28 @@ test('管理员在管理页切换成员的初筛人身份', async ({ page }) => 
   await expect(toggle).toBeChecked({ checked: initial })
 })
 
+test('管理员编辑反馈入口的部门联系方式', async ({ page, request }) => {
+  const loginRes = await request.post('/api/v1/session', { data: ADMIN })
+  expect(loginRes.ok()).toBeTruthy()
+  const cookie = (loginRes.headers()['set-cookie'] ?? '').split(';')[0]
+  const slug = `contact-${Date.now() % 1_000_000}`
+  const created = await request.post('/api/v1/intakes', {
+    data: { slug, name: '部门 Bug 反馈', template: 'bug-report' },
+    headers: { Cookie: cookie },
+  })
+  expect(created.status(), `创建入口失败：${await created.text()}`).toBe(201)
+
+  await login(page, ADMIN)
+  await page.goto('/admin')
+  await page.getByRole('tab', { name: '反馈入口' }).click()
+  const row = page.locator(`tr[data-intake="${slug}"]`)
+  await expect(row).toBeVisible()
+  await row.getByRole('button', { name: '编辑联系方式' }).click()
+  await page.locator('#intake-contact').fill('IT 服务台 400-123-4567')
+  await page.getByRole('button', { name: '保存', exact: true }).click()
+  await expect(row).toContainText('IT 服务台 400-123-4567')
+})
+
 test('管理员停用后可显示并恢复已停用成员', async ({ page, request }) => {
   const loginRes = await request.post('/api/v1/session', { data: ADMIN })
   expect(loginRes.ok()).toBeTruthy()
