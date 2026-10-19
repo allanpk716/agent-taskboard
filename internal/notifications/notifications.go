@@ -23,7 +23,10 @@ const (
 	ReasonAssigneeReplied = "assignee_replied"
 	ReasonReturned        = "returned"
 	ReasonCreatorReplied  = "creator_replied"
+	ReasonAgentReplied    = "agent_replied"
 	ReasonGuestReplied    = "guest_replied"
+	ReasonGuestCompleted  = "guest_completed"
+	ReasonGuestRevised    = "guest_revised"
 	ReasonDepartment      = "department"
 	ReasonClosed          = "closed"
 	ReasonReopened        = "reopened"
@@ -40,10 +43,13 @@ type notificationStyle struct {
 var notificationStyles = map[string]notificationStyle{
 	tickets.WhyNew:            {ReasonAssigned, " 回复了"},
 	tickets.WhyGuestReplied:   {ReasonGuestReplied, " 回复了"},
+	tickets.WhyGuestCompleted: {ReasonGuestCompleted, " 补全了说明"},
+	tickets.WhyGuestRevised:   {ReasonGuestRevised, " 修订了说明"},
 	tickets.WhyDelivered:      {ReasonDelivered, " 交付了"},
 	tickets.WhyAssigneeReply:  {ReasonAssigneeReplied, " 回复了"},
 	tickets.WhySentBack:       {ReasonReturned, " 退回"},
 	tickets.WhyCreatorReplied: {ReasonCreatorReplied, " 回复了"},
+	tickets.WhyAgentReplied:   {ReasonAgentReplied, " 回复了"},
 }
 
 // Rules 是成员通知规则模块。它只依据事件前后的工单状态、操作者和有效
@@ -54,7 +60,7 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 	out := []Decision{}
 	switch in.Event.Type {
 	case "created":
-		turn := tickets.WaitingOnOf(in.After)
+		turn := tickets.WaitingOnOf(in.After, in.GuestLinks, in.Now)
 		if turn.Party != "department" {
 			break
 		}
@@ -66,7 +72,7 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 				Text: "新工单「" + in.After.Title + "」轮到本部门，待初筛"})
 		}
 	case ReasonAssigned:
-		turn := tickets.WaitingOnOf(in.After)
+		turn := tickets.WaitingOnOf(in.After, in.GuestLinks, in.Now)
 		if turn.Party == "assignee" && turn.MemberID != 0 && !selfAction(in.Actor, turn.MemberID) {
 			out = append(out, Decision{
 				MemberID: turn.MemberID, Kind: KindTurn, Reason: ReasonAssigned,
@@ -81,7 +87,7 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 			})
 		}
 	case "reply":
-		turn := tickets.WaitingOnOf(in.After)
+		turn := tickets.WaitingOnOf(in.After, in.GuestLinks, in.Now)
 		if turn.Party == "department" && in.Actor.MemberID == 0 {
 			for _, id := range in.Triagers {
 				if !selfAction(in.Actor, id) && !hasDecisionFor(out, id) {
@@ -109,12 +115,33 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 		if in.Actor.MemberID != 0 {
 			break
 		}
-		out = append(out, fyiForStakeholders(in, ReasonBriefRevised,
-			notificationTextActor(in.Actor)+" 修订了「"+in.After.Title+"」的说明")...)
-		for i := range out {
-			if out[i].Reason == ReasonBriefRevised {
-				out[i].Summary = "第 " + strconv.FormatInt(in.Event.Revision, 10) + " 版"
+		turn := tickets.WaitingOnOf(in.After, in.GuestLinks, in.Now)
+		if turn.Party == "department" {
+			for _, id := range in.Triagers {
+				if !hasDecisionFor(out, id) {
+					out = append(out, Decision{
+						MemberID: id,
+						Kind:     KindTurn,
+						Reason:   ReasonDepartment,
+						Text:     "工单「" + in.After.Title + "」轮到本部门，待初筛",
+					})
+				}
 			}
+		} else if turn.MemberID != 0 && !hasDecisionFor(out, turn.MemberID) {
+			out = append(out, Decision{
+				MemberID: turn.MemberID, Kind: KindTurn, Reason: notificationReason(turn.Why),
+				Text: notificationTextActor(in.Actor) + replySuffix(turn.Why) + "「" + in.After.Title + "」",
+			})
+		}
+		fyiText := notificationTextActor(in.Actor) + " 修订了「" + in.After.Title + "」的说明"
+		for _, id := range []int64{in.After.Creator.MemberID, in.After.AssigneeID} {
+			if id == 0 || hasDecisionFor(out, id) {
+				continue
+			}
+			out = append(out, Decision{MemberID: id, Kind: KindFYI, Reason: ReasonBriefRevised, Text: fyiText})
+		}
+		for i := range out {
+			out[i].Summary = "第 " + strconv.FormatInt(in.Event.Revision, 10) + " 版"
 		}
 	case ReasonClosed:
 		out = append(out, fyiForStakeholders(in, ReasonClosed,
@@ -207,8 +234,17 @@ func NewManager(db *sql.DB, c clock.Clock) *Manager {
 }
 
 func (m *Manager) NotifyTx(ctx context.Context, tx *sql.Tx, in tickets.NotificationInput) ([]int64, error) {
-	created := m.clk.Now()
-	if in.Event.Type == "created" || in.Event.Type == "assigned" || in.Event.Type == "reply" {
+	now := m.clk.Now()
+	in.Now = now
+	if in.After.Seq != 0 {
+		links, err := tickets.GuestLinksForTicket(ctx, tx, in.After.Seq)
+		if err != nil {
+			return nil, err
+		}
+		in.GuestLinks = links
+	}
+	if in.Event.Type == "created" || in.Event.Type == "assigned" || in.Event.Type == "reply" ||
+		in.Event.Type == ReasonBriefRevised {
 		triagers, err := tickets.EffectiveTriagers(ctx, tx)
 		if err != nil {
 			return nil, err
@@ -234,7 +270,7 @@ func (m *Manager) NotifyTx(ctx context.Context, tx *sql.Tx, in tickets.Notificat
 			d.MemberID, in.After.Seq, in.After.Number, in.After.Title, d.Kind, d.Reason, d.Text,
 			in.Event.Seq, in.Event.Type, actorKind, actorName,
 			nullInt(in.Actor.MemberID), nullInt(in.Actor.AgentID), d.Summary,
-			created.Format(time.RFC3339Nano)); err != nil {
+			now.Format(time.RFC3339Nano)); err != nil {
 			return nil, err
 		}
 		memberIDs = append(memberIDs, d.MemberID)

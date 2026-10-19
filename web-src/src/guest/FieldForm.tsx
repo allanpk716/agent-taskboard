@@ -26,6 +26,8 @@ export interface StagedFile {
   error?: string
   /** 上传成功后现成的 Markdown 片段（![](att:N) 或 [名字](att:N)） */
   markdown?: string
+  /** 上传成功后的附件 id（整张工单附件区用；字段内引用仍在 markdown 里）。 */
+  attachmentId?: string
   /** 图片的本地预览地址（objectURL，仅展示用） */
   previewUrl?: string
   /** 入口提交前拿不到凭证，先持有文件本体，建单后补传 */

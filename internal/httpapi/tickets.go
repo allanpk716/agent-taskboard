@@ -226,12 +226,16 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		full := result.Full
+		waitingOn, err := a.tickets.WaitingOn(r.Context(), full)
+		if err != nil {
+			panic(err)
+		}
 		res := createTicketResponse{
 			Number:    full.Number,
 			Seq:       full.Seq,
 			URL:       "/t/" + full.Number,
 			Warnings:  result.Warnings,
-			WaitingOn: newWaitingOnView(tickets.WaitingOnOf(full)),
+			WaitingOn: newWaitingOnView(waitingOn),
 		}
 		if full.AssigneeID != 0 {
 			res.Assignee = &memberRef{ID: full.AssigneeID, Name: full.AssigneeName}
@@ -282,14 +286,18 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if err != nil {
 		panic(err)
 	}
+	waitingOn, err := a.tickets.WaitingOn(r.Context(), full)
+	if err != nil {
+		panic(err)
+	}
 	if r.URL.Query().Get("format") == "markdown" {
-		md := markdownview.Ticket(ticketMarkdownInput(full, viewer, atts, usage))
+		md := markdownview.Ticket(ticketMarkdownInput(full, viewer, atts, usage, waitingOn))
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(md))
 		return
 	}
-	v := a.newTicketView(full, viewer, r)
+	v := a.newTicketView(full, viewer, r, waitingOn)
 	// 维度字段补上字典候选值与别名（#39：补全说明表单的下拉框按别名搜索；
 	// 快照里不存候选值，读取时现取）。
 	for i := range v.Brief.TemplateFields {
@@ -559,15 +567,49 @@ type waitingOnView struct {
 	Member *string `json:"member"`
 	Text   string  `json:"text"`
 	Reason string  `json:"reason"`
+	Why    string  `json:"why"`
 }
 
 type briefView struct {
 	Fields         *map[string]string  `json:"fields"`
 	Markdown       string              `json:"markdown"`
 	Revision       int64               `json:"revision"`
+	AttachmentIDs  []string            `json:"attachment_ids"`
+	LastRevised    lastRevisedView     `json:"last_revised"`
 	Template       *string             `json:"template"`
 	TemplateFields []templateFieldView `json:"template_fields,omitempty"` // 创建时版本的字段定义（访客网页按问句渲染说明气泡，#38）
 	TemplateGroups []templateGroupView `json:"template_groups,omitempty"` // 创建时版本的分组（#63）；不分组时省略
+}
+
+type lastRevisedView struct {
+	Type        string    `json:"type"`
+	DisplayName string    `json:"display_name"`
+	Revision    int64     `json:"revision"`
+	At          time.Time `json:"at"`
+}
+
+func newLastRevisedView(full tickets.Full, includeAccountState bool) lastRevisedView {
+	actor, at, revision := full.Creator, full.CreatedAt, full.BriefRevision
+	for i := len(full.Timeline) - 1; i >= 0; i-- {
+		if full.Timeline[i].Type == "brief_revised" {
+			e := full.Timeline[i]
+			actor, at, revision = e.Actor, e.At, e.Revision
+			break
+		}
+	}
+	v := lastRevisedView{Revision: revision, At: at}
+	if actor.MemberID != 0 {
+		v.Type = "member"
+		if includeAccountState {
+			v.DisplayName = actor.DisplayName()
+		} else {
+			v.DisplayName = actor.DisplayNamePlain()
+		}
+		return v
+	}
+	v.Type = "guest"
+	v.DisplayName = actor.LinkNote
+	return v
 }
 
 // fieldViewsOf 把工单保存的模板快照字段定义转成对外结构（与模板接口同形；
@@ -695,18 +737,20 @@ type attachmentUsage struct {
 
 // newTicketView 把工单投影 + 当前凭证组装成 GET 响应。访客可见性过滤（#32）：
 // 无 labels 字段、时间线跳过标签事件（事件序号会跳号，这是已接受的）。
-func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.Request) ticketView {
-	waitingOn := tickets.WaitingOnOf(full)
+func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.Request, waitingOn tickets.WaitingOn) ticketView {
 	isGuest := viewer.Kind == identity.ViewerGuest
 	v := ticketView{
-		Number:      full.Number,
-		Seq:         full.Seq,
-		URL:         "/t/" + full.Number,
-		Kind:        full.Kind,
-		Title:       full.Title,
-		Status:      full.Status,
-		Creator:     newAuthorView(full.Creator, !isGuest),
-		Brief:       briefView{Markdown: full.BriefMD, Revision: full.BriefRevision},
+		Number:  full.Number,
+		Seq:     full.Seq,
+		URL:     "/t/" + full.Number,
+		Kind:    full.Kind,
+		Title:   full.Title,
+		Status:  full.Status,
+		Creator: newAuthorView(full.Creator, !isGuest),
+		Brief: briefView{
+			Markdown: full.BriefMD, Revision: full.BriefRevision,
+			AttachmentIDs: full.BriefAttachmentIDs, LastRevised: newLastRevisedView(full, !isGuest),
+		},
 		Attachments: []attachmentView{},
 	}
 	if full.AssigneeID != 0 {
@@ -774,8 +818,8 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 // ticketMarkdownInput 把投影 + 当前凭证组装成 Markdown 视图的输入。
 // 访客（#32）：无标签行、时间线跳过标签事件，署名按访客写法；附件小节与
 // 用量由 attachmentProjection 生成（#33），访客的下载链接是签名地址。
-func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer, atts []attachmentView, usage attachmentUsage) markdownview.Input {
-	waitingOn := tickets.WaitingOnOf(full)
+func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer, atts []attachmentView, usage attachmentUsage,
+	waitingOn tickets.WaitingOn) markdownview.Input {
 	isGuest := viewer.Kind == identity.ViewerGuest
 	viewerName := viewer.Member.Name
 	if isGuest {

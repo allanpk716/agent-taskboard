@@ -1,7 +1,7 @@
 // 对话流的共用气泡与事件行（#38 访客网页 / #41 成员工单详情都用）：
 // 说明 = 第一条气泡（按字段显示问句和回答）、回复气泡（头像 + 署名 + Markdown
 // + 附件条）、居中灰色系统事件行。成员视角比访客多看到标签事件。
-import type { TicketView, TimelineEvent } from './types'
+import type { Author, TicketView, TimelineEvent } from './types'
 import { authorName, closeReasonText, fmtDateCN, fmtShort } from './format'
 import { Markdown, inlineImageIds } from './markdown'
 import { AttachmentChips, Avatar, DeactivatedBadge } from './widgets'
@@ -64,17 +64,27 @@ export function BriefBubble({
   const atts = attachmentsOf(ticket)
   const fields = ticket.brief.template_fields ?? []
   const values = ticket.brief.fields ?? {}
-  const briefAtts = ticket.attachments.filter((a) => a.attached_to === '说明')
-  const created = ticket.timeline.find((e) => e.type === 'created')
-  const creator = authorName(ticket.creator)
+  const briefAtts = ticket.brief.attachment_ids
+    .map((id) => ticket.attachments.find((a) => a.id === id))
+    .filter((a): a is Attachment => !!a)
+  const reviser = ticket.brief.last_revised
+  const revisedEvent = [...ticket.timeline].reverse().find((e) => e.type === 'brief_revised')
+  const reviserName =
+    reviser.type === 'guest' ? `${reviser.display_name}（访客）` : reviser.display_name
+  const reviserAvatar: Author =
+    reviser.type === 'guest'
+      ? { author_name: reviser.display_name }
+      : {
+          member:
+            revisedEvent?.actor.member ??
+            ticket.creator.member ?? { id: 0, name: reviser.display_name },
+        }
   return (
     <div className="bubble" data-bubble="brief">
-      <Avatar author={ticket.creator} />
+      <Avatar author={reviserAvatar} />
       <div className="card">
         <div className="who">
-          <b>{creator}</b>
-          {ticket.creator.member?.deactivated && <DeactivatedBadge />}
-          {created && <> · {fmtShort(created.at)}</>} · 说明
+          <b>{reviserName}</b>填写 · {fmtShort(reviser.at)} · 第 {reviser.revision} 版 · 说明
           {onEditBrief && (
             <button type="button" className="btn ghost sm edit-brief" onClick={onEditBrief}>
               ✏ 修改说明

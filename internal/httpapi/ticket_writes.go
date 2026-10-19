@@ -65,12 +65,13 @@ func (a *API) replyTicket(w http.ResponseWriter, r *http.Request, ref string) {
 // 只传改动的字段）；base_revision 必带（乐观锁）；author_name / via_agent
 // 是访客的自报署名（#32，仅访客凭证采纳）。
 type reviseTicketRequest struct {
-	Title        *string           `json:"title"`
-	BriefMD      *string           `json:"brief_md"`
-	Fields       map[string]string `json:"fields"`
-	BaseRevision int64             `json:"base_revision"`
-	AuthorName   string            `json:"author_name"`
-	ViaAgent     bool              `json:"via_agent"`
+	Title         *string           `json:"title"`
+	BriefMD       *string           `json:"brief_md"`
+	Fields        map[string]string `json:"fields"`
+	AttachmentIDs *[]string         `json:"attachment_ids"`
+	BaseRevision  int64             `json:"base_revision"`
+	AuthorName    string            `json:"author_name"`
+	ViaAgent      bool              `json:"via_agent"`
 }
 
 func (a *API) reviseTicket(w http.ResponseWriter, r *http.Request, ref string) {
@@ -83,13 +84,18 @@ func (a *API) reviseTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		return
 	}
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
+		var attachmentIDs []string
+		if req.AttachmentIDs != nil {
+			attachmentIDs = *req.AttachmentIDs
+		}
 		t, err := a.tickets.Revise(r.Context(), viewer, ref, tickets.ReviseInput{
-			Title:        req.Title,
-			BriefMD:      req.BriefMD,
-			Fields:       req.Fields,
-			BaseRevision: req.BaseRevision,
-			AuthorName:   req.AuthorName,
-			ViaAgent:     req.ViaAgent,
+			Title:         req.Title,
+			BriefMD:       req.BriefMD,
+			Fields:        req.Fields,
+			AttachmentIDs: attachmentIDs,
+			BaseRevision:  req.BaseRevision,
+			AuthorName:    req.AuthorName,
+			ViaAgent:      req.ViaAgent,
 		})
 		if err != nil {
 			a.writeTicketError(w, r, ref, err)
@@ -171,9 +177,13 @@ func (a *API) reopenTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		a.writeTicketError(w, r, ref, err)
 		return
 	}
+	waitingOn, err := a.tickets.WaitingOn(r.Context(), full)
+	if err != nil {
+		panic(err)
+	}
 	writeJSON(w, http.StatusOK, reopenTicketView{
 		Status:    full.Status,
-		WaitingOn: newWaitingOnView(tickets.WaitingOnOf(full)),
+		WaitingOn: newWaitingOnView(waitingOn),
 	})
 }
 
@@ -222,7 +232,10 @@ func (a *API) ticketTimeline(w http.ResponseWriter, r *http.Request, ref string)
 		}
 		return true
 	}
-	waitingOn := tickets.WaitingOnOf(full)
+	waitingOn, err := a.tickets.WaitingOn(r.Context(), full)
+	if err != nil {
+		panic(err)
+	}
 	cursor := int64(0)
 	for _, e := range full.Timeline {
 		if !visible(e) {
@@ -274,7 +287,7 @@ func duplicateRefOf(w http.ResponseWriter, v any) (string, bool) {
 
 // newWaitingOnView 把推导结果转成对外结构（member 为 null 时省略）。
 func newWaitingOnView(waitingOn tickets.WaitingOn) waitingOnView {
-	v := waitingOnView{Party: waitingOn.Party, Text: waitingOn.Text, Reason: waitingOn.Reason}
+	v := waitingOnView{Party: waitingOn.Party, Text: waitingOn.Text, Reason: waitingOn.Reason, Why: waitingOn.Why}
 	if waitingOn.Member != "" {
 		m := waitingOn.Member
 		v.Member = &m

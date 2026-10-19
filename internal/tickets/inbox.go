@@ -55,7 +55,10 @@ func (m *Manager) Inbox(ctx context.Context, memberID int64) ([]InboxItem, error
 		if err != nil {
 			return nil, err
 		}
-		turn := WaitingOnOf(full)
+		turn, err := m.WaitingOn(ctx, full)
+		if err != nil {
+			return nil, err
+		}
 		isTurn := turn.MemberID == memberID
 		isDepartmentTurn := triager && turn.Party == "department"
 		if !isTurn && !isDepartmentTurn {
@@ -74,7 +77,7 @@ func (m *Manager) Inbox(ctx context.Context, memberID int64) ([]InboxItem, error
 			role = "triager"
 		}
 		reason := WhyText(turn.Why)
-		if isDepartmentTurn {
+		if isDepartmentTurn && (turn.Why == WhyNew || turn.Why == WhyGuestReplied) {
 			reason = "待初筛"
 		}
 		items = append(items, InboxItem{

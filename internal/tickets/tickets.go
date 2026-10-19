@@ -126,18 +126,19 @@ func (a Author) displayName(markDeactivated bool) string {
 
 // Ticket 是一张工单的核心字段。
 type Ticket struct {
-	Seq            int64
-	Number         string
-	Kind           string // task | report
-	Title          string
-	Status         string // open | closed
-	CloseReason    string // "" | done | wontfix | duplicate
-	DuplicateOfSeq int64  // close_reason == duplicate 时另一张工单的序号（0 = 无）
-	BriefMD        string
-	BriefRevision  int64
-	Creator        Author
-	AssigneeID     int64  // 指派人的成员 id；0 = 未指派（#36）
-	AssigneeName   string // 指派人的姓名；空 = 未指派
+	Seq                int64
+	Number             string
+	Kind               string // task | report
+	Title              string
+	Status             string // open | closed
+	CloseReason        string // "" | done | wontfix | duplicate
+	DuplicateOfSeq     int64  // close_reason == duplicate 时另一张工单的序号（0 = 无）
+	BriefMD            string
+	BriefRevision      int64
+	BriefAttachmentIDs []string
+	Creator            Author
+	AssigneeID         int64  // 指派人的成员 id；0 = 未指派（#36）
+	AssigneeName       string // 指派人的姓名；空 = 未指派
 	// AssigneeDeactivated：指派人的账号已停用；指派保留，展示层标注（#115）。
 	AssigneeDeactivated bool
 	CreatedAt           time.Time
@@ -203,6 +204,11 @@ type NotificationInput struct {
 	Actor    Author
 	Event    Event
 	Triagers []int64
+
+	// GuestLinks 与 Now 是等待方推导的输入。NotifyTx 会在工单事务里补齐，
+	// 保证规则看到的链接状态与时钟和工单写入使用同一份真相。
+	GuestLinks []GuestLinkInfo
+	Now        time.Time
 }
 
 // Notifier 在工单事件同一事务里生成成员通知。
@@ -216,6 +222,16 @@ func NewManager(db *sql.DB, c clock.Clock, lm *labels.Manager, tm *templates.Man
 }
 
 func (m *Manager) SetNotifier(n Notifier) { m.notifier = n }
+
+// WaitingOn 用注入时钟和这张工单的访客链接状态推导等待方。HTTP 与查询
+// 入口都从这里取值，不各自读时间或链接表。
+func (m *Manager) WaitingOn(ctx context.Context, t Full) (WaitingOn, error) {
+	links, err := GuestLinksForTicket(ctx, m.db, t.Seq)
+	if err != nil {
+		return WaitingOn{}, err
+	}
+	return WaitingOnOf(t, links, m.clk.Now()), nil
+}
 
 func (m *Manager) commitAndWake(tx *sql.Tx, notified []int64) error {
 	if err := tx.Commit(); err != nil {
@@ -434,33 +450,13 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, err
 	if _, err := tx.ExecContext(ctx, `UPDATE tickets SET last_change = ? WHERE seq = ?`, change, t.Seq); err != nil {
 		return CreateResult{}, err
 	}
+	assignedSeq := int64(0)
 	if assigneeID != 0 {
 		eventSeq, _, err := m.insertAssignedEvent(ctx, tx, t.Seq, creator, "", assigneeName, now)
 		if err != nil {
 			return CreateResult{}, err
 		}
-		if m.notifier != nil {
-			after := Full{Ticket: t}
-			after.Timeline = []Event{
-				{Seq: 1, At: now, Actor: creator, Type: "created"},
-				{Seq: eventSeq, At: now, Actor: creator, Type: "assigned", AssignTo: assigneeName, Change: t.LastChange},
-			}
-			var err error
-			notified, err = m.notifier.NotifyTx(ctx, tx, NotificationInput{After: after, Actor: creator,
-				Event: after.Timeline[1]})
-			if err != nil {
-				return CreateResult{}, err
-			}
-		}
-	} else if m.notifier != nil {
-		after := Full{Ticket: t}
-		after.Timeline = []Event{{Seq: 1, At: now, Actor: creator, Type: "created", Change: t.LastChange}}
-		var err error
-		notified, err = m.notifier.NotifyTx(ctx, tx, NotificationInput{After: after, Actor: creator,
-			Event: after.Timeline[0]})
-		if err != nil {
-			return CreateResult{}, err
-		}
+		assignedSeq = eventSeq
 	}
 	for _, l := range in.Labels {
 		if _, err := tx.ExecContext(ctx,
@@ -478,6 +474,22 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, err
 			return CreateResult{}, err
 		}
 		linkCreated = link
+	}
+	if m.notifier != nil {
+		after := Full{Ticket: t}
+		after.Timeline = []Event{{Seq: 1, At: now, Actor: creator, Type: "created", Change: t.LastChange}}
+		event := after.Timeline[0]
+		if assignedSeq != 0 {
+			assigned := Event{Seq: assignedSeq, At: now, Actor: creator, Type: "assigned",
+				AssignTo: assigneeName, Change: t.LastChange}
+			after.Timeline = append(after.Timeline, assigned)
+			event = assigned
+		}
+		var err error
+		notified, err = m.notifier.NotifyTx(ctx, tx, NotificationInput{After: after, Actor: creator, Event: event})
+		if err != nil {
+			return CreateResult{}, err
+		}
 	}
 
 	if err := m.commitAndWake(tx, notified); err != nil {
@@ -554,6 +566,7 @@ func (m *Manager) ByRef(ctx context.Context, ref string) (Full, error) {
 		templateKey         sql.NullString
 		snapshotJSON        sql.NullString
 		fieldsJSON          sql.NullString
+		briefAttachmentIDs  sql.NullString
 		err                 error
 	)
 	scan := func(row *sql.Row) error {
@@ -561,14 +574,15 @@ func (m *Manager) ByRef(ctx context.Context, ref string) (Full, error) {
 			&t.BriefMD, &t.BriefRevision, &memberID, &memberName, &memberDeactivated, &agentID, &agentName, &agentRevoked,
 			&assigneeID, &assigneeName, &assigneeDeactivated,
 			&creatorLinkID, &creatorIntakeID, &creatorName,
-			&at, &t.LastChange, &templateKey, &snapshotJSON, &fieldsJSON)
+			&at, &t.LastChange, &templateKey, &snapshotJSON, &fieldsJSON, &briefAttachmentIDs)
 	}
 	const cols = `t.seq, t.number, t.kind, t.title, t.status, t.close_reason, t.duplicate_of_seq,
 		t.brief_md, t.brief_revision,
 		t.creator_member_id, cm.name, cm.deactivated_at, t.creator_agent_id, ca.name, ca.revoked_at,
 		t.assignee_id, am.name, am.deactivated_at,
 		t.creator_link_id, t.creator_intake_id, t.creator_author_name,
-		t.created_at, t.last_change, t.template_key, t.template_snapshot, t.fields_json`
+		t.created_at, t.last_change, t.template_key, t.template_snapshot, t.fields_json,
+		t.brief_attachment_ids`
 
 	from := ` FROM tickets t
 		LEFT JOIN members cm ON cm.id = t.creator_member_id
@@ -591,6 +605,12 @@ func (m *Manager) ByRef(ctx context.Context, ref string) (Full, error) {
 	}
 	if closeReason.Valid {
 		t.CloseReason = closeReason.String
+	}
+	t.BriefAttachmentIDs = []string{}
+	if briefAttachmentIDs.Valid && briefAttachmentIDs.String != "" {
+		if err := json.Unmarshal([]byte(briefAttachmentIDs.String), &t.BriefAttachmentIDs); err != nil {
+			return Full{}, fmt.Errorf("解析工单 %s 的说明附件失败：%w", t.Number, err)
+		}
 	}
 	t.DuplicateOfSeq = duplicateOfSeq.Int64
 	t.AssigneeID = assigneeID.Int64
@@ -782,12 +802,16 @@ type WaitingOn struct {
 
 // 等待方推导的原因码 → 收件箱文案（原型 WHY 表）。
 const (
-	WhyNew            = "new"              // 新指派给你
-	WhyGuestReplied   = "guest_replied"    // 访客回复了
-	WhyDelivered      = "delivered"        // 已交付，待你验收
-	WhyAssigneeReply  = "assignee_replied" // 指派人回复了，待你答复
-	WhySentBack       = "sent_back"        // 发起人退回修改
-	WhyCreatorReplied = "creator_replied"  // 发起人回复了
+	WhyNew               = "new"                 // 新指派给你
+	WhyGuestReplied      = "guest_replied"       // 访客回复了
+	WhyGuestCompleted    = "guest_completed"     // 访客补全了说明
+	WhyGuestRevised      = "guest_revised"       // 访客修订了说明
+	WhyGuestNotCompleted = "guest_not_completed" // 访客未补全说明
+	WhyDelivered         = "delivered"           // 已交付，待你验收
+	WhyAssigneeReply     = "assignee_replied"    // 指派人回复了，待你答复
+	WhySentBack          = "sent_back"           // 发起人退回修改
+	WhyCreatorReplied    = "creator_replied"     // 发起人回复了
+	WhyAgentReplied      = "agent_replied"       // 你的 Agent 回复了
 )
 
 // WhyText 把原因码翻成收件箱/等待方文案。
@@ -797,6 +821,12 @@ func WhyText(why string) string {
 		return "新指派给你"
 	case WhyGuestReplied:
 		return "访客回复了"
+	case WhyGuestCompleted:
+		return "访客补全了说明"
+	case WhyGuestRevised:
+		return "访客修订了说明"
+	case WhyGuestNotCompleted:
+		return "访客未补全说明"
 	case WhyDelivered:
 		return "已交付，待你验收"
 	case WhyAssigneeReply:
@@ -805,30 +835,32 @@ func WhyText(why string) string {
 		return "发起人退回修改"
 	case WhyCreatorReplied:
 		return "发起人回复了"
+	case WhyAgentReplied:
+		return "你的 Agent 回复了"
 	}
 	return ""
 }
 
-// WaitingOnOf 推导当前轮到谁。规则照抄 prototype/member-handoff 的 turnOf
-// （spec「等待方与收件箱」，#37 的查询也复用这一个函数）：
+// WaitingOnOf 按 GLOSSARY「等待方」推导当前轮到谁。guestLinks 与 now 是
+// 轮次规则的输入；访客的 brief_revised 与访客回复同属访客一方行动。
 //
-//	已关闭                     → 无等待方
-//	尚无回复 或 最后是访客回复    → 指派人（未指派 → department）
-//	任务 且 创建者是成员 且 创建者≠指派人（“有对手”）：
-//	    指派人一方回复            → 创建者（why = delivered 若该回复带 deliver，否则 assignee_replied）
-//	    创建者一方回复            → 指派人（why = sent_back 若此前存在指派人的 deliver，否则 creator_replied）
-//	    第三位成员回复            → 不改变轮次（不参与相关回复集）
-//	其余情况（反馈、自派自）成员回复 → 访客
-//	成员 Agent 的回复算其所属成员一方；改派后，原指派人的回复按当前指派人重新计算、不再参与推导
-//
-// 相关回复集 = type=reply 且（访客 或 无对手 或 actor∈{指派人, 对手}）。
-// 未指派轮到本部门时原因只写「尚未指派」或「访客回复了」（prototype/ticket-query
-// 的修正：不能写「新指派给你」）。
-func WaitingOnOf(t Full) WaitingOn {
+//	已关闭 → 无等待方
+//	仍有效的「可填写说明」链接、访客未填过且尚无回复 → 访客（待补全）
+//	可填写说明链接全部失效、访客仍未填且尚无回复 → 指派人/department（访客未补全说明）
+//	尚无其他回复 → 指派人/department（新指派或尚未指派）
+//	最后是访客一方行动 → 指派人/department
+//	有对手任务：指派人一方回复 → 创建者；创建者一方回复 → 指派人
+//	自派自：交付后 → 本人验收；有有效访客链接时普通回复 → 访客；
+//	  无链接时按 Agent/本人/退回规则留在本人
+//	反馈工单成员回复 → 访客
+//	第三位成员的回复不参与推导；成员 Agent 算所属成员一方；
+//	改派后原指派人的旧回复不再参与推导
+func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 	if t.Status == "closed" {
 		return WaitingOn{Party: "none", Text: "无（已关闭）"}
 	}
 	a := t.AssigneeID
+	selfAssigned := t.Kind == "task" && t.Creator.MemberID != 0 && t.Creator.MemberID == a
 	// 对手：任务、创建者是成员、且与指派人不是同一人时，创建者一方就是对手。
 	// 未指派时创建者≠指派人也成立，对手仍是创建者（照抄原型 counterpartMember）。
 	c := int64(0)
@@ -840,13 +872,24 @@ func WaitingOnOf(t Full) WaitingOn {
 		since          int64
 		deliveredPrior bool // last 之前有没有指派人的带交付标记的相关回复
 	)
+	guestRevisions := 0
 	for i := range t.Timeline {
 		e := &t.Timeline[i]
-		if e.Type != "reply" {
+		if e.Type == "brief_revised" {
+			if e.Actor.MemberID != 0 {
+				continue
+			}
+			guestRevisions++
+		}
+		if e.Type != "reply" && !(e.Type == "brief_revised" && e.Actor.MemberID == 0) {
 			continue
 		}
 		isGuest := e.Actor.MemberID == 0
-		if !(isGuest || c == 0 || e.Actor.MemberID == a || e.Actor.MemberID == c) {
+		memberRelevant := e.Actor.MemberID == a || e.Actor.MemberID == c
+		if selfAssigned {
+			memberRelevant = e.Actor.MemberID == a
+		}
+		if !(isGuest || (!selfAssigned && c == 0) || memberRelevant) {
 			continue // 第三位成员的回复不改变轮次
 		}
 		if last != nil && last.Deliver && last.Actor.MemberID == a && a != 0 {
@@ -859,19 +902,85 @@ func WaitingOnOf(t Full) WaitingOn {
 		if a == 0 {
 			// 未指派：原因只写 尚未指派（why=new/creator_replied）或 访客回复了。
 			reason := "尚未指派"
-			if why == WhyGuestReplied {
-				reason = "访客回复了"
+			switch why {
+			case WhyGuestReplied, WhyGuestCompleted, WhyGuestRevised, WhyGuestNotCompleted:
+				reason = WhyText(why)
 			}
 			return WaitingOn{Party: "department", Text: "本部门（未指派）", Reason: reason, Why: why, SinceSeq: since}
 		}
 		return WaitingOn{Party: "assignee", MemberID: a, Member: t.AssigneeName,
 			Text: t.AssigneeName + "（指派人）", Reason: WhyText(why), Why: why, SinceSeq: since}
 	}
+	if last == nil && guestRevisions == 0 && t.CreatorLinkID == 0 {
+		if hasActiveEditGuestLink(guestLinks, now) {
+			return WaitingOn{Party: "guest", Text: "访客补全说明"}
+		}
+		if hasEditGuestLink(guestLinks) {
+			return toAssignee(WhyGuestNotCompleted)
+		}
+	}
 	if last == nil {
 		return toAssignee(WhyNew)
 	}
+	if selfAssigned && last.Actor.MemberID == a {
+		if last.Deliver {
+			return toAssignee(WhyDelivered)
+		}
+		if hasActiveGuestLink(guestLinks, now) {
+			return WaitingOn{Party: "guest", Text: "访客", SinceSeq: since}
+		}
+		if last.Actor.AgentID != 0 {
+			return toAssignee(WhyAgentReplied)
+		}
+		why := WhyNew
+		deliveredBefore := false
+		guestRevisionsBefore := 0
+		for i := range t.Timeline {
+			e := &t.Timeline[i]
+			if e.Seq >= last.Seq {
+				continue
+			}
+			if e.Type == "brief_revised" {
+				if e.Actor.MemberID == 0 {
+					guestRevisionsBefore++
+					why = WhyGuestRevised
+					if guestRevisionsBefore == 1 {
+						why = WhyGuestCompleted
+					}
+				}
+				continue
+			}
+			if e.Type != "reply" {
+				continue
+			}
+			if e.Actor.MemberID == 0 {
+				why = WhyGuestReplied
+				continue
+			}
+			if e.Actor.MemberID != a {
+				continue
+			}
+			if e.Deliver {
+				deliveredBefore = true
+				why = WhyDelivered
+			} else if e.Actor.AgentID != 0 {
+				why = WhyAgentReplied
+			}
+		}
+		if deliveredBefore {
+			why = WhySentBack
+		}
+		return toAssignee(why)
+	}
 	if last.Actor.MemberID == 0 {
-		return toAssignee(WhyGuestReplied)
+		why := WhyGuestReplied
+		if last.Type == "brief_revised" {
+			why = WhyGuestRevised
+			if guestRevisions == 1 {
+				why = WhyGuestCompleted
+			}
+		}
+		return toAssignee(why)
 	}
 	if c == 0 {
 		return WaitingOn{Party: "guest", Text: "访客", SinceSeq: since}
@@ -890,6 +999,37 @@ func WaitingOnOf(t Full) WaitingOn {
 		why = WhySentBack
 	}
 	return toAssignee(why)
+}
+
+func hasActiveEditGuestLink(links []GuestLinkInfo, now time.Time) bool {
+	for _, l := range links {
+		if l.CanEditBrief && activeGuestLink(l, now) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasActiveGuestLink(links []GuestLinkInfo, now time.Time) bool {
+	for _, l := range links {
+		if activeGuestLink(l, now) {
+			return true
+		}
+	}
+	return false
+}
+
+func activeGuestLink(l GuestLinkInfo, now time.Time) bool {
+	return l.RevokedAt == nil && now.Before(l.ExpiresAt)
+}
+
+func hasEditGuestLink(links []GuestLinkInfo) bool {
+	for _, l := range links {
+		if l.CanEditBrief {
+			return true
+		}
+	}
+	return false
 }
 
 // dedupe 去重并保持顺序。

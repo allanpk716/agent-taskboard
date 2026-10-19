@@ -33,6 +33,7 @@ type waitingOnBody struct {
 	Member *string `json:"member"`
 	Text   string  `json:"text"`
 	Reason string  `json:"reason"`
+	Why    string  `json:"why"`
 }
 
 // handoffWorld 是成员交接场景的固定班底：王工建单派活，李工接活，
@@ -216,6 +217,7 @@ func (w *handoffWorld) waitOf(t testing.TB, c *http.Client, number string) waiti
 	return waitingOnBody{
 		Party: body.WaitingOn.Party, Member: body.WaitingOn.Member,
 		Text: body.WaitingOn.Text, Reason: body.WaitingOn.Reason,
+		Why: body.WaitingOn.Why,
 	}
 }
 
@@ -242,6 +244,9 @@ func assertWaitingOn(t testing.TB, got waitingOnBody, want waitingOnBody, note s
 	if want.Reason != "" && got.Reason != want.Reason {
 		t.Errorf("%s：reason = %q, 想 %q", note, got.Reason, want.Reason)
 	}
+	if want.Why != "" && got.Why != want.Why {
+		t.Errorf("%s：why = %q, 想 %q", note, got.Why, want.Why)
+	}
 }
 
 // 等待方推导表的每一行都有对应的一步（spec「等待方与收件箱」）。
@@ -250,7 +255,13 @@ func Test等待方推导表(t *testing.T) {
 	w := newHandoffWorld(t)
 	// 一个任务（王工→李工，王工的 Agent 建的）、一个自派自的反馈和一个未指派的反馈。
 	task := w.createHandoffTicket(t, w.wangA, "整理对照表", "李工").Number
-	selfReport := w.createHandoffTicket(t, w.webWang, "质控结果偏高", "王工").Number
+	selfReportRes := w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets", map[string]any{
+		"kind": "report", "title": "质控结果偏高", "brief_md": "……", "labels": []string{"机型:UD-2300"},
+		"assignee": "王工",
+	}, nil)
+	var selfReportBody createAssignedResponse
+	tbtest.DecodeJSON(t, selfReportRes, &selfReportBody)
+	selfReport := selfReportBody.Number
 	reportRes := w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets", map[string]any{
 		"kind": "report", "title": "耗材到货异常", "brief_md": "……", "labels": []string{"机型:UD-2300"},
 	}, nil)
