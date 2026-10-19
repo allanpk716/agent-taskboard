@@ -22,6 +22,7 @@ test('wide detail keeps actions in the header and shows ordered ticket informati
     '🤖 让我的 Agent 处理',
     '📨 发给 王工',
     '🔗 访客链接',
+    '🤝 协作者',
     '✔ 关闭',
   ])
 
@@ -36,7 +37,7 @@ test('wide detail keeps actions in the header and shows ordered ticket informati
   const info = page.getByRole('region', { name: '工单信息', exact: true })
   await expect(info).toBeVisible()
   expect(await info.evaluate((el) => el.getBoundingClientRect().width)).toBe(290)
-  await expect(info.locator('.sec-t')).toHaveText(['状态', '指派人', '发起人', '标签', '访客链接'])
+  await expect(info.locator('.sec-t')).toHaveText(['状态', '协作者', '指派人', '发起人', '标签', '访客链接'])
   await expect(info).toContainText('任务')
   await expect(info).toContainText('等待 访客补全说明')
   await expect(info).toContainText('王工')
@@ -58,7 +59,7 @@ test('wide detail keeps actions in the header and shows ordered ticket informati
   await page.reload()
   await expect(page.getByRole('region', { name: '工单信息', exact: true })).toContainText('已使用 1 次')
 
-  await info.getByRole('button', { name: '管理' }).first().click()
+  await page.getByRole('button', { name: '访客链接' }).click()
   await expect(page.locator('.modal')).toContainText(`访客链接 · ${number}`)
 })
 

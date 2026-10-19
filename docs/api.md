@@ -80,6 +80,9 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 - 轮到类通知的 `reason` 取固定值：`assigned`、`delivered`、`assignee_replied`、
   `returned`、`creator_replied`、`agent_replied`、`guest_replied`、`guest_completed`、
   `guest_revised`、`department`。
+- 协作者相关通知：被加入 `collaborator_added`、被移出 `collaborator_removed`（带标题、
+  不带摘要）、协作期间别人回复 `collaborator_replied`（带回复摘要）；关闭与重开沿用
+  `closed` / `reopened`。本人网页操作不通知自己；其名下成员 Agent 的操作照常通知本人。
 - 游标格式错误：400 `invalid_after` / `invalid_before`；SSE 重连头错误：400 `invalid_last_event_id`。
 
 ## 桌面客户端凭证与服务端代管（#74）
@@ -211,6 +214,9 @@ spec 用户故事 84），没有 `inbox`：
 | `POST /api/v1/tickets/{id}/close` | 关闭（任何成员；访客 403 `members_only`）。 |
 | `POST /api/v1/tickets/{id}/reopen` | 重新开启（任何成员；访客 403 `members_only`）。 |
 | `POST /api/v1/tickets/{id}/assign` | 改派（#36，仅成员；记 `assigned` 事件，附改派版 `share_text`；支持 `Idempotency-Key`）。 |
+| `POST /api/v1/tickets/{id}/collaborators` | 加入协作者（#158；请求 `{"member": 成员id或姓名}`，返回最新名单；支持 `Idempotency-Key`）。 |
+| `DELETE /api/v1/tickets/{id}/collaborators/{成员id}` | 移除协作者（#158；返回最新名单；支持 `Idempotency-Key`）。 |
+| `POST /api/v1/tickets/{id}/collaborators/leave` | 本人退出协作（#158；返回最新名单；支持 `Idempotency-Key`）。 |
 | `GET /api/v1/tickets/{id}/timeline?after=N` | 时间线增量读取。 |
 | `POST /api/v1/tickets/{id}/attachments` | 上传一个待用附件（multipart；见「附件（#33）」）。 |
 | `GET /api/v1/attachments/{att_N}/{filename}` | 附件下载（与工单相同的凭证，或访客链接的签名地址）。 |
@@ -263,7 +269,7 @@ spec 用户故事 84），没有 `inbox`：
 - 工单编号与全局序号在同一事务内分配；建单同时写入一条 `created` 时间线事件，
   并推进全局变更序号（事件里的 `change` 字段，与事件写入同事务）。
 - `GET` 响应（成员视角）：`number, seq, url, kind, title, status, close_reason,
-  template, creator, assignee, waiting_on, labels, brief, viewer, timeline,
+  template, creator, assignee, collaborators, waiting_on, labels, brief, viewer, timeline,
   handoff_text, handoff_share_text`；`handoff_text` 是与建单/改派 `share_text`
   共用的 Agent 段，总是有值；`handoff_share_text` 用建单版人话行，工单有指派人时
   才有值，否则为 null。访客视角没有这两个字段；`format=markdown` 也不加入这两项。
@@ -277,7 +283,7 @@ spec 用户故事 84），没有 `inbox`：
     访客修订时 `type` 为 `guest`，`display_name` 取访客链接备注（#129）。成员端与
     访客端读到同一份元数据；顶层 `creator` 与信息栏「发起人」仍表示创建者。
   - `viewer`：`{kind, member, agent, role(assignee|creator|member|guest), your_turn, can}`；
-    `can` 是完整能力表 `reply/upload/edit_brief/label/close/reopen/manage_guest_links/deliver/assign`。
+    `can` 是完整能力表 `reply/upload/edit_brief/label/close/reopen/manage_guest_links/deliver/assign/manage_collaborators/leave_collaborators`。
     `role`：本人是指派人 → `assignee`（自派自时优先算指派人），否则创建者一方 → `creator`，
     其他成员 → `member`，访客 → `guest`（#36）。`your_turn` = 等待方轮到的成员是不是本人
     （成员按成员 id，访客看等待方是不是访客）。
@@ -383,7 +389,8 @@ spec 用户故事 84），没有 `inbox`：
   （`reply` 带 `reply_no`/`body_md`/`deliver`，`brief_revised` 带 `revision`，
   `closed` 带 `reason`/`duplicate_of`，`assigned` 带 `from`/`to`（from 为 null 表示
   创建时指派，否则是改派），`guest_link_created`/`guest_link_revoked` 带
-  `note`，`guest_link_extended` 带 `note` 与 `expires_at`）。时间线只追加：每条都记录
+  `note`，`guest_link_extended` 带 `note` 与 `expires_at`，协作者事件带
+  `collaborator`）。时间线只追加：每条都记录
   作者与时间，旧事件永不改动。访客可见性过滤（跳过标签事件）在 #32 已生效；
   访客的 `cursor` 是它可见的最后一条事件 `seq`（跳过的序号不会当作增量重发）。
 - `waiting_on` 的推导见下「等待方与收件箱（#36）」。
@@ -401,6 +408,21 @@ spec 用户故事 84），没有 `inbox`：
 - 记一条 `assigned{from, to}` 事件（文案「指派给 X」/「改派：X → Y」）并推进变更序号。
   改派后，原指派人的回复不再参与等待方推导，工单随推导从原指派人的收件箱移到
   新指派人的收件箱。
+
+## 协作者（#158）
+
+- 权限：创建者、当前指派人、管理员可以加入和移除；工单未指派时，初筛人也可以加入。
+  协作者不能加人，只能通过 `leave` 自行退出。成员 Agent 按主人的权限操作，时间线署名为
+  「某成员 的 Agent · 名字」。已停用成员不能新加入；已在名单中的停用成员保留。关闭工单
+  仍可管理名单。
+- `POST …/collaborators` 请求 `{"member": 4|"4"|"陈工"}`；查无此人 `422 unknown_member`，
+  停用成员 `422 collaborator_deactivated`，已在名单 `409 already_collaborator`，
+  无权限 `403 collaborator_not_allowed`。成功 `201` / `DELETE` 与 `leave` 成功 `200`：
+  `{"collaborators":[{"id","name","deactivated?","added_at"}]}`。
+- 三种操作分别记 `collaborator_added`、`collaborator_removed`、`collaborator_left` 事件，
+  均带操作者、`collaborator` 对象和时间；访客看不到名单与这三类事件。
+- 协作者被指派为指派人时自动移出名单（只记 `assigned` 事件，不伪造手动移除事件）；
+  指派人被改派走不会自动成为协作者。
 
 ## 等待方与收件箱（#36）
 

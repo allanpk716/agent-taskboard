@@ -280,6 +280,7 @@ type timelineEventBody struct {
 	AttachmentIDs []string   `json:"attachment_ids"` // reply 引用的附件（#33）
 	From          string     `json:"from"`           // assigned 事件的改派前指派人（空 = 创建时指派，#36）
 	To            string     `json:"to"`             // assigned 事件的指派对象（#36）
+	Collaborator  string     `json:"collaborator"`   // 协作者事件的对象（#158）
 }
 
 // timelineBody 是 GET …/timeline?after=N 的响应结构。

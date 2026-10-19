@@ -18,21 +18,24 @@ const (
 	KindTurn = "turn"
 	KindFYI  = "fyi"
 
-	ReasonAssigned        = "assigned"
-	ReasonDelivered       = "delivered"
-	ReasonAssigneeReplied = "assignee_replied"
-	ReasonReturned        = "returned"
-	ReasonCreatorReplied  = "creator_replied"
-	ReasonAgentReplied    = "agent_replied"
-	ReasonGuestReplied    = "guest_replied"
-	ReasonGuestCompleted  = "guest_completed"
-	ReasonGuestRevised    = "guest_revised"
-	ReasonDepartment      = "department"
-	ReasonClosed          = "closed"
-	ReasonReopened        = "reopened"
-	ReasonUnassigned      = "unassigned"
-	ReasonBriefRevised    = "brief_revised"
-	ReasonThirdPartyReply = "third_party_reply"
+	ReasonAssigned            = "assigned"
+	ReasonDelivered           = "delivered"
+	ReasonAssigneeReplied     = "assignee_replied"
+	ReasonReturned            = "returned"
+	ReasonCreatorReplied      = "creator_replied"
+	ReasonAgentReplied        = "agent_replied"
+	ReasonGuestReplied        = "guest_replied"
+	ReasonGuestCompleted      = "guest_completed"
+	ReasonGuestRevised        = "guest_revised"
+	ReasonDepartment          = "department"
+	ReasonClosed              = "closed"
+	ReasonReopened            = "reopened"
+	ReasonUnassigned          = "unassigned"
+	ReasonBriefRevised        = "brief_revised"
+	ReasonThirdPartyReply     = "third_party_reply"
+	ReasonCollaboratorAdded   = "collaborator_added"
+	ReasonCollaboratorRemoved = "collaborator_removed"
+	ReasonCollaboratorReplied = "collaborator_replied"
 )
 
 type notificationStyle struct {
@@ -59,6 +62,20 @@ type Rules struct{}
 func (Rules) Decide(in tickets.NotificationInput) []Decision {
 	out := []Decision{}
 	switch in.Event.Type {
+	case "collaborator_added":
+		if in.Event.CollaboratorID != 0 && !selfAction(in.Actor, in.Event.CollaboratorID) {
+			out = append(out, Decision{
+				MemberID: in.Event.CollaboratorID, Kind: KindFYI, Reason: ReasonCollaboratorAdded,
+				Text: notificationTextActor(in.Actor) + " 把你加入了工单「" + in.After.Title + "」的协作",
+			})
+		}
+	case "collaborator_removed":
+		if in.Event.CollaboratorID != 0 && !selfAction(in.Actor, in.Event.CollaboratorID) {
+			out = append(out, Decision{
+				MemberID: in.Event.CollaboratorID, Kind: KindFYI, Reason: ReasonCollaboratorRemoved,
+				Text: notificationTextActor(in.Actor) + " 把你移出了工单「" + in.After.Title + "」的协作",
+			})
+		}
 	case "created":
 		turn := tickets.WaitingOnOf(in.After, in.GuestLinks, in.Now)
 		if turn.Party != "department" {
@@ -110,6 +127,16 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 			in.Actor.MemberID != in.After.AssigneeID {
 			out = append(out, fyiForStakeholders(in, ReasonThirdPartyReply,
 				notificationTextActor(in.Actor)+" 回复了「"+in.After.Title+"」")...)
+		}
+		for _, c := range in.After.Collaborators {
+			if selfAction(in.Actor, c.ID) || hasDecisionFor(out, c.ID) {
+				continue
+			}
+			out = append(out, Decision{
+				MemberID: c.ID, Kind: KindFYI, Reason: ReasonCollaboratorReplied,
+				Text:    notificationTextActor(in.Actor) + " 回复了「" + in.After.Title + "」",
+				Summary: replySummary(in.Event.BodyMD),
+			})
 		}
 	case ReasonBriefRevised:
 		if in.Actor.MemberID != 0 {
@@ -174,7 +201,10 @@ func unassignText(after tickets.Full, from string) string {
 
 func fyiForStakeholders(in tickets.NotificationInput, reason, text string) []Decision {
 	ids := []int64{in.After.Creator.MemberID, in.After.AssigneeID}
-	out := make([]Decision, 0, 2)
+	for _, c := range in.After.Collaborators {
+		ids = append(ids, c.ID)
+	}
+	out := make([]Decision, 0, len(ids))
 	for _, id := range ids {
 		if id == 0 || selfAction(in.Actor, id) || hasDecisionFor(out, id) {
 			continue
