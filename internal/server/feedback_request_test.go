@@ -196,6 +196,38 @@ func Test用请人反馈的链接能读工单并修订说明(t *testing.T) {
 	}
 }
 
+// 「请人反馈」可选任意模板：任务模板同样能带可填写说明链接建单，类型由
+// 模板决定，必填项留给访客补。
+func Test请人反馈能用任务模板建单(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+
+	res := createWithGuestLink(t, s, web, map[string]any{
+		"template": "assign-task",
+		"title":    "整理质控规则对照表",
+		"fields":   map[string]string{},
+		"labels":   []string{},
+		"guest_link": map[string]any{
+			"note":           "检验科-张三",
+			"can_edit_brief": true,
+		},
+	})
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("任务模板建单状态码 = %d, 想 201", res.StatusCode)
+	}
+	var created feedbackCreateResponse
+	tbtest.DecodeJSON(t, res, &created)
+	var got ticketResponseBody
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+created.Number, nil, &got)
+	if got.Kind != "task" || got.Template == nil || *got.Template != "assign-task" {
+		t.Errorf("任务模板建单应为 task/assign-task：kind=%q template=%v", got.Kind, got.Template)
+	}
+	if !got.Viewer.Can.EditBrief && got.Viewer.Kind != "member" {
+		t.Errorf("工单视图异常：%+v", got.Viewer)
+	}
+}
+
 // 说明署名取最后一次修订说明的人：未修订时是创建者；访客修订后显示链接备注；
 // 创建者再修订后回到成员。成员与访客读取同一份元数据（#129）。
 func Test说明的最后修订者随修订人变化(t *testing.T) {
@@ -362,7 +394,7 @@ func Test带链接建单校验失败返回422且不留下工单(t *testing.T) {
 }
 
 // 「请人反馈」建单沿用幂等中间件：同一个 Idempotency-Key 重放返回首次结果
-//（含只出现一次的链接地址），只有一张工单、一条链接。
+// （含只出现一次的链接地址），只有一张工单、一条链接。
 func Test请人反馈建单的幂等重放只有一张工单一条链接(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")
