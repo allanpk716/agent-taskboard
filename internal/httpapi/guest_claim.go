@@ -60,12 +60,12 @@ func (a *API) enterGuestLink(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"device_token": result.DeviceToken})
 	http.SetCookie(w, &http.Cookie{
 		Name: GuestDeviceCookieName, Value: result.DeviceToken, Path: "/",
 		HttpOnly: true, SameSite: http.SameSiteLaxMode,
 		Expires: result.ClaimedAt.Add(365 * 24 * time.Hour),
 	})
+	writeJSON(w, http.StatusCreated, map[string]any{"device_token": result.DeviceToken})
 }
 
 func (a *API) guestClaimLink(w http.ResponseWriter, r *http.Request, allowClaimed bool) (identity.GuestLink, bool) {
@@ -166,13 +166,13 @@ func (a *API) claimGuestLink(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"device_token": result.DeviceToken, "access_code": result.AccessCode,
-		"claimed_at": result.ClaimedAt,
-	})
 	http.SetCookie(w, &http.Cookie{
 		Name: GuestDeviceCookieName, Value: result.DeviceToken, Path: "/",
 		HttpOnly: true, SameSite: http.SameSiteLaxMode,
 		Expires: result.ClaimedAt.Add(365 * 24 * time.Hour),
+	})
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"device_token": result.DeviceToken, "access_code": result.AccessCode,
+		"claimed_at": result.ClaimedAt,
 	})
 }

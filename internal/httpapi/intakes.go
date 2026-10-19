@@ -314,12 +314,12 @@ func (a *API) submitToIntake(w http.ResponseWriter, r *http.Request, slug string
 		view.AccessCode = result.AccessCode
 		view.ClaimedAt = result.ClaimedAt
 		view.DepartmentContact = result.DepartmentContact
-		writeJSON(w, http.StatusCreated, view)
 		http.SetCookie(w, &http.Cookie{
 			Name: GuestDeviceCookieName, Value: result.DeviceToken, Path: "/",
 			HttpOnly: true, SameSite: http.SameSiteLaxMode,
 			Expires: result.ClaimedAt.Add(365 * 24 * time.Hour),
 		})
+		writeJSON(w, http.StatusCreated, view)
 	})
 }
 

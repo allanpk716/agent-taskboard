@@ -92,7 +92,12 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 
 	cookie, err := r.Cookie(SessionCookieName)
 	if err != nil || cookie.Value == "" {
-		if viewer, ok := a.guestDeviceFromCookie(r); ok {
+		viewer, guestErr, ok := a.guestDeviceFromCookie(r)
+		if ok {
+			if guestErr != nil {
+				a.writeGuestLinkError(w, r, guestErr)
+				return identity.Viewer{}, false
+			}
 			return viewer, true
 		}
 		WriteError(w, http.StatusUnauthorized, CodeUnauthenticated, "未登录", a.authHint(r))
@@ -134,19 +139,31 @@ func (a *API) guestAgentViewer(r *http.Request, credential identity.GuestAgentCr
 
 // guestDeviceFromCookie lets same-origin <img> and attachment links use the
 // remembered device credential without exposing it to JavaScript.
-func (a *API) guestDeviceFromCookie(r *http.Request) (identity.Viewer, bool) {
+func (a *API) guestDeviceFromCookie(r *http.Request) (identity.Viewer, error, bool) {
 	cookie, err := r.Cookie(GuestDeviceCookieName)
 	if err != nil || cookie.Value == "" {
-		return identity.Viewer{}, false
+		return identity.Viewer{}, nil, false
 	}
 	viewer, err := a.ident.ViewerFromGuestDevice(r.Context(), cookie.Value)
 	if err != nil {
 		if errors.Is(err, identity.ErrInvalidCredentials) {
-			return identity.Viewer{}, false
+			return identity.Viewer{}, nil, false
 		}
+		return identity.Viewer{}, err, true
+	}
+	return viewer, nil, true
+}
+
+// writeGuestLinkError 统一处理已认领访客链接失效后的拒绝响应与访问记录。
+func (a *API) writeGuestLinkError(w http.ResponseWriter, r *http.Request, err error) {
+	var status *identity.LinkStatusError
+	if !errors.As(err, &status) {
 		panic(err)
 	}
-	return viewer, true
+	if recErr := a.accessRecords.RecordGuestLinkDenied(r.Context(), status.Link.TicketSeq, status.Link.ID, status.Status); recErr != nil {
+		panic(recErr)
+	}
+	a.writeLinkStatusError(w, r, err)
 }
 
 func (a *API) authHint(r *http.Request) string {

@@ -72,13 +72,8 @@ function AuthorizedImage({
   useEffect(() => {
     let blobUrl: string | null = null
     let revoked = false
-    const guestToken = Object.keys(localStorage)
-      .filter((key) => key.startsWith('tb:guest-device:'))
-      .map((key) => localStorage.getItem(key))
-      .find((token): token is string => !!token)
-    void fetch(url, {
-      headers: guestToken ? { Authorization: `Bearer ${guestToken}` } : undefined,
-    })
+    // 图片与页面同源：成员会话或访客设备 cookie 由浏览器自动带上。
+    void fetch(url)
       .then((res) => (res.ok ? res.blob() : null))
       .then((blob) => {
         if (!blob || revoked) return
