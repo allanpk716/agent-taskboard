@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"image/png"
 	"testing"
+	"unsafe"
 
 	"github.com/allanpk716/agent-taskboard/internal/client"
 )
@@ -57,5 +58,21 @@ func Test托盘状态图标是合法ICO(t *testing.T) {
 				t.Fatalf("PNG 尺寸 = %dx%d，想 16x16", bounds.Dx(), bounds.Dy())
 			}
 		})
+	}
+}
+
+// 字段顺序错了 CredWriteW 会返回 ERROR_INVALID_PARAMETER（0.1.2 授权后崩溃）。
+func Test凭据结构体与CREDENTIALW布局一致(t *testing.T) {
+	var c windowsCredential
+	if unsafe.Sizeof(uintptr(0)) != 8 {
+		t.Skip("只校验 64 位布局")
+	}
+	got := []uintptr{unsafe.Offsetof(c.LastWritten), unsafe.Offsetof(c.CredentialBlobSize),
+		unsafe.Offsetof(c.CredentialBlob), unsafe.Offsetof(c.Persist), unsafe.Offsetof(c.UserName), unsafe.Sizeof(c)}
+	want := []uintptr{24, 32, 40, 48, 72, 80}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("偏移 = %v，想 %v", got, want)
+		}
 	}
 }

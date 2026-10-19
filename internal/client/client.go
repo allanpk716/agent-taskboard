@@ -473,7 +473,8 @@ func (a *App) connect(ctx context.Context) (string, error) {
 		}
 		select {
 		case callback <- code:
-			w.WriteHeader(http.StatusOK)
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = io.WriteString(w, "授权已完成，可以关闭此页面，回到右下角托盘查看 Taskboard 桌面客户端。")
 		default:
 			http.Error(w, "callback already used", http.StatusBadRequest)
 		}
