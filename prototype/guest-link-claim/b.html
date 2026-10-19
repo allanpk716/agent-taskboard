@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>访客链接认领 · 方案 B</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #eef1f5; font: 15px/1.6 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif; color: #222; }
+  .bar { position: sticky; top: 0; z-index: 5; background: #263445; color: #fff; padding: 8px 10px; }
+  .bar .t { font-size: 13px; opacity: .85; margin-bottom: 6px; }
+  .tabs { display: flex; gap: 6px; overflow-x: auto; }
+  .tabs button { flex: none; border: 0; border-radius: 14px; padding: 4px 11px; font-size: 13px; background: #3c4d63; color: #dfe6ef; cursor: pointer; }
+  .tabs button.on { background: #fff; color: #263445; font-weight: 600; }
+  .app { max-width: 720px; margin: 0 auto; padding-bottom: 40px; }
+  .scene-note { margin: 12px 16px 0; font-size: 12px; color: #6a7685; background: #e3e8ef; border-radius: 6px; padding: 6px 10px; }
+  .top { background: #fff; border-bottom: 1px solid #ddd; color: #555; font-size: 13px; padding: 10px 16px; text-align: center; }
+  .card { background: #fff; margin: 16px; border-radius: 10px; padding: 20px 18px; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+  .muted { color: #888; font-size: 13px; }
+  h1 { font-size: 19px; margin: 6px 0 10px; line-height: 1.4; }
+  h2 { font-size: 17px; margin: 0 0 8px; }
+  .info { background: #f6f8fa; border-radius: 8px; padding: 10px 12px; font-size: 14px; color: #444; margin: 12px 0; }
+  .lock { background: #eef6ff; border: 1px solid #cfe3fb; color: #1d4f86; border-radius: 8px; padding: 10px 12px; font-size: 14px; margin: 12px 0; }
+  .warn { background: #fff6e8; border: 1px solid #f4dcb0; color: #8a5300; border-radius: 8px; padding: 10px 12px; font-size: 14px; margin: 12px 0; }
+  .bad { background: #fdeeee; border: 1px solid #f3c7c7; color: #9b2c2c; border-radius: 8px; padding: 10px 12px; font-size: 14px; margin: 12px 0; }
+  label { display: block; font-size: 13px; color: #555; margin: 14px 0 4px; }
+  input, textarea { width: 100%; font: inherit; border: 1px solid #ccd3db; border-radius: 6px; padding: 9px 10px; }
+  textarea { min-height: 90px; }
+  .btn { display: block; width: 100%; margin-top: 16px; border: 0; border-radius: 8px; padding: 12px; font-size: 16px; background: #2f6fde; color: #fff; cursor: pointer; }
+  .btn.ghost { background: #fff; color: #2f6fde; border: 1px solid #2f6fde; }
+  .btn.small { display: inline-block; width: auto; padding: 6px 12px; font-size: 13px; margin: 0 0 0 6px; }
+  .code { font: 600 34px/1.2 ui-monospace, Consolas, monospace; letter-spacing: 8px; text-align: center; background: #f6f8fa; border: 1px dashed #b9c3cf; border-radius: 8px; padding: 14px 0; margin: 10px 0; }
+  .otp { display: flex; gap: 8px; justify-content: center; margin: 12px 0; }
+  .otp input { width: 42px; text-align: center; font: 600 22px ui-monospace, Consolas, monospace; padding: 8px 0; }
+  .hint { font-size: 12px; color: #8a96a3; margin-top: 3px; }
+  pre { white-space: pre-wrap; background: #f6f8fa; border-radius: 8px; padding: 10px 12px; font-size: 13px; margin: 10px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td, th { text-align: left; padding: 8px 6px; border-bottom: 1px solid #eee; vertical-align: top; }
+  .pill { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 10px; }
+  .pill.ok { background: #e5f5ea; color: #1f7a3c; }
+  .pill.wait { background: #fff1d6; color: #a35f00; }
+  .pill.lk { background: #fdeeee; color: #9b2c2c; }
+  .field { margin-top: 14px; }
+  .field .nm { font-size: 14px; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <div class="t">方案 B：访客自己设 6 位访问码 + 记住设备　（点下面切换场景）</div>
+  <div class="tabs" id="tabs"></div>
+</div>
+<div class="app" id="app"></div>
+<script>
+const V = 'B'
+const INVITER = '李四'
+const NOTE = '检验科-张三'
+
+const screens = []
+function S(name, note, html) { screens.push({ name, note, html }) }
+
+S('① 第一次打开', '访客第一次打开成员发来的链接。认领前看不到工单标题和内容。', `
+  <div class="top">工单板 · 访客页</div>
+  <div class="card">
+    <div class="muted">${INVITER}（设备部）邀请你处理一张工单</div>
+    <h1>请确认是你本人打开</h1>
+    <div class="info">链接备注：${NOTE}<br>有效期至：2026-11-18</div>
+    <div class="lock">🔒 这张工单只有你和${INVITER}等处理人能看到。<br>确认后，这条链接只在${V === 'C' ? '这台设备' : '你手上'}有效，别人拿到链接也打不开。</div>
+    <label>你的称呼（${INVITER}会看到）</label>
+    <input value="检验科 张三">
+    <button class="btn">是我，打开工单</button>
+    <div class="hint" style="text-align:center;margin-top:10px">不是你？请不要打开，告诉${INVITER}。</div>
+  </div>`)
+
+if (V === 'A') S('② 认领成功', '系统生成 6 位访问码，只显示这一次。这台设备已记住，下次直接打开。', `
+  <div class="top">工单板 · 访客页</div>
+  <div class="card">
+    <h2>✅ 这条链接现在只属于你</h2>
+    <p class="muted">这台设备已经记住你，下次直接打开即可。换手机、换电脑或清了浏览器记录时，需要输入下面的访问码：</p>
+    <div class="code">482 913</div>
+    <div class="warn">请截图或记下来。访问码只显示这一次；忘了可以请${INVITER}重新生成。<br>不要把访问码和链接一起转给别人。</div>
+    <button class="btn">我记下了，继续</button>
+  </div>`)
+if (V === 'B') S('② 认领成功', '访客自己设一个 6 位数字访问码。这台设备已记住。', `
+  <div class="top">工单板 · 访客页</div>
+  <div class="card">
+    <h2>✅ 这条链接现在只属于你</h2>
+    <p class="muted">这台设备已经记住你。再设一个 6 位数字访问码，换设备时用：</p>
+    <div class="otp">${'<input maxlength=1>'.repeat(6)}</div>
+    <label>再输一次</label>
+    <div class="otp">${'<input maxlength=1>'.repeat(6)}</div>
+    <div class="hint">不要用生日、手机号后 6 位、123456 这类数字。忘了可以请${INVITER}重置。</div>
+    <button class="btn">设好了，继续</button>
+  </div>`)
+if (V === 'C') S('② 认领成功', '不设访问码，链接只绑定这台设备。', `
+  <div class="top">工单板 · 访客页</div>
+  <div class="card">
+    <h2>✅ 这条链接现在只属于这台设备</h2>
+    <p class="muted">以后请在这台设备、这个浏览器里打开。</p>
+    <div class="warn">换手机、换电脑或清了浏览器记录后，需要${INVITER}在系统里放行新设备，可能要等他有空。</div>
+    <button class="btn">知道了，继续</button>
+  </div>`)
+
+S('③ 填写说明', '认领后进入填写页：顶部常驻可见范围提示，附件区提示不要上传的内容。', `
+  <div class="top">工单板 · 访客页</div>
+  <div class="card">
+    <div class="muted">${INVITER} 请你补充这张反馈的说明</div>
+    <h1>BH-7600CS 开机报 E203</h1>
+    <div class="lock">🔒 只有你和处理人（${INVITER}）能看到这张工单。</div>
+    <div class="warn">请不要填写：账号密码、病人姓名和病历号、与问题无关的内部资料。<br>文件太大或不方便上传时，写清存放位置即可（如“共享盘 \\\\fs01\\检验科\\2026-10 日志”）。</div>
+    <div class="field"><div class="nm">故障现象 *</div><textarea placeholder="开机后屏幕显示什么，什么时候开始的"></textarea></div>
+    <div class="field"><div class="nm">仪器序列号 *</div><input placeholder="机身背面铭牌上的 SN"></div>
+    <div class="field"><div class="nm">照片 / 日志</div><div class="hint">📎 上传照片、截图或日志文件；只有处理人能下载。</div></div>
+    <button class="btn">提交说明</button>
+  </div>`)
+
+S('④ 交给我的 Agent', '访客想让自己的 Agent 处理时复制这段文案。', `
+  <div class="top">工单板 · 访客页</div>
+  <div class="card">
+    <h2>让我的 Agent 处理</h2>
+    <p class="muted">把下面这段发给你自己的 Agent。它带着你的凭证，<b>不要转给别人</b>。</p>
+    <pre>请帮我处理这张工单：
+https://taskboard.lan/g/tbg_Qx7…（链接）
+${V === 'C' ? '凭证：tbgd_9fK2…（只给 Agent 用，这台设备放行时生成）' : '访问码：' + (V === 'A' ? '482913' : '（你设的访问码）')}
+接入说明见 https://taskboard.lan/agent.md</pre>
+    <button class="btn">复制</button>
+    ${V === 'B' ? '<div class="hint">访问码不会显示在这里，需要你自己补上。</div>' : ''}
+  </div>`)
+
+if (V === 'A' || V === 'B') S('⑤ 换设备打开', '同一位访客在另一台设备打开链接。输错 5 次后只锁住输码，已登录的设备不受影响。', `
+  <div class="top">工单板 · 访客页</div>
+  <div class="card">
+    <div class="muted">链接备注：${NOTE}</div>
+    <h2>请输入访问码</h2>
+    <p class="muted">这条链接已经被认领。是你本人的话，输入认领时${V === 'A' ? '看到' : '设置'}的 6 位访问码。</p>
+    <div class="otp">${'<input maxlength=1>'.repeat(6)}</div>
+    <div class="bad">访问码不对，还可以试 3 次。</div>
+    <button class="btn">打开工单</button>
+    <div class="hint" style="text-align:center;margin-top:10px">忘了访问码？请联系${INVITER}重新生成。</div>
+  </div>`)
+if (V === 'C') S('⑤ 换设备打开', '同一位访客在另一台设备打开链接，需要成员放行。', `
+  <div class="top">工单板 · 访客页</div>
+  <div class="card">
+    <div class="muted">链接备注：${NOTE}</div>
+    <h2>这台设备还没被放行</h2>
+    <p class="muted">这条链接已经在另一台设备上使用。是你本人的话，请${INVITER}放行这台设备。</p>
+    <div class="code" style="font-size:24px">设备码 7K3Q</div>
+    <div class="hint">把设备码告诉${INVITER}，他放行后这个页面会自动打开。</div>
+    <button class="btn ghost">已告诉他，等待放行…</button>
+  </div>`)
+
+S('⑥ 被别人抢先认领', '链接在认领前被转发，别人先点了确认。真正的访客打开后看到这一页。', `
+  <div class="top">工单板 · 访客页</div>
+  <div class="card">
+    <h2>这条链接已被认领</h2>
+    <p class="muted">认领时间 10-19 14:02。</p>
+    <div class="warn">如果不是你认领的，链接可能被转发过。请马上告诉${INVITER}，他可以${V === 'C' ? '收回链接并放行你的设备' : '重置访问码，把新访问码单独发给你'}；之前认领的人会被立即踢出。</div>
+    ${V !== 'C' ? `<button class="btn ghost">我有访问码</button>` : ''}
+  </div>`)
+
+S('⑦ 成员侧：访客链接', '成员在工单详情的「访客链接」里看到认领状态，处理遗忘和错认领。', `
+  <div class="top">工单 #218 · 访客链接</div>
+  <div class="card">
+    <table>
+      <tr><th>备注</th><th>状态</th><th></th></tr>
+      <tr><td>${NOTE}<div class="hint">有效期至 11-18</div></td>
+        <td><span class="pill ok">已认领</span><div class="hint">自报“检验科 张三”· 10-19 14:02 · ${V === 'C' ? '2 台设备' : '登录过 2 台设备'}</div></td>
+        <td><button class="btn small">${V === 'C' ? '放行新设备' : '重置访问码'}</button></td></tr>
+      <tr><td>护理部-王五<div class="hint">有效期至 11-02</div></td>
+        <td><span class="pill wait">未认领</span></td><td></td></tr>
+      <tr><td>器械科-赵六<div class="hint">有效期至 10-30</div></td>
+        <td><span class="pill lk">输码已锁定</span><div class="hint">连续输错 5 次 · 10-19 15:40</div></td>
+        <td><button class="btn small">${V === 'C' ? '收回重发' : '重置访问码'}</button></td></tr>
+    </table>
+    ${V === 'C'
+      ? `<div class="info">放行新设备：输入访客报给你的设备码 <input style="width:90px;display:inline-block" placeholder="7K3Q"> <button class="btn small">放行</button></div>`
+      : `<div class="info">重置后：已登录的设备全部失效（错认领的人被踢出），只显示一次新访问码 <b>${V === 'A' ? '730 285' : '（访客重新设置）'}</b>，请私下发给访客本人。重置记入时间线。</div>`}
+  </div>`)
+
+const tabs = document.getElementById('tabs'), app = document.getElementById('app')
+function show(i) {
+  app.innerHTML = '<div class="scene-note">' + screens[i].note + '</div>' + screens[i].html
+  ;[...tabs.children].forEach((b, j) => b.classList.toggle('on', i === j))
+  window.scrollTo(0, 0)
+}
+screens.forEach((s, i) => { const b = document.createElement('button'); b.textContent = s.name; b.onclick = () => show(i); tabs.appendChild(b) })
+show(0)
+</script>
+</body>
+</html>
