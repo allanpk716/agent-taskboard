@@ -1,6 +1,7 @@
 // 对话流的共用气泡与事件行（#38 访客网页 / #41 成员工单详情都用）：
 // 说明 = 第一条气泡（按字段显示问句和回答）、回复气泡（头像 + 署名 + Markdown
 // + 附件条）、居中灰色系统事件行。成员视角比访客多看到标签事件。
+import { useState } from 'react'
 import type { Author, TicketView, TimelineEvent } from './types'
 import { authorName, closeReasonText, fmtDateCN, fmtShort } from './format'
 import { Markdown, inlineImageIds } from './markdown'
@@ -56,17 +57,21 @@ export function BriefBubble({
   ticket,
   onImageClick,
   onEditBrief,
+  collapseEmpty = false,
 }: {
   ticket: TicketView
   onImageClick: (url: string) => void
   onEditBrief?: () => void
+  collapseEmpty?: boolean
 }) {
+  const [emptyFieldsOpen, setEmptyFieldsOpen] = useState(false)
   const atts = attachmentsOf(ticket)
   const fields = ticket.brief.template_fields ?? []
   const values = ticket.brief.fields ?? {}
   const briefAtts = ticket.brief.attachment_ids
     .map((id) => ticket.attachments.find((a) => a.id === id))
     .filter((a): a is Attachment => !!a)
+  const emptyCount = fields.filter((f) => !(values[f.key] ?? '').trim()).length
   const reviser = ticket.brief.last_revised
   const revisedEvent = [...ticket.timeline].reverse().find((e) => e.type === 'brief_revised')
   const reviserName =
@@ -92,21 +97,44 @@ export function BriefBubble({
           )}
         </div>
         {fields.length > 0 ? (
-          fields.map((f) => {
-            const v = (values[f.key] ?? '').trim()
-            return (
-              <div className="f" key={f.key}>
-                <div className="q">{f.title}</div>
-                {v ? (
-                  <div className="v">
-                    <Markdown body={v} attachments={atts} onImageClick={onImageClick} />
-                  </div>
-                ) : (
-                  <div className="v empty">（未填写）</div>
-                )}
-              </div>
-            )
-          })
+          <>
+            {(collapseEmpty && !emptyFieldsOpen
+              ? fields.filter((f) => (values[f.key] ?? '').trim())
+              : fields
+            ).map((f) => {
+              const v = (values[f.key] ?? '').trim()
+              return (
+                <div className="f" key={f.key}>
+                  <div className="q">{f.title}</div>
+                  {v ? (
+                    <div className="v">
+                      <Markdown body={v} attachments={atts} onImageClick={onImageClick} />
+                    </div>
+                  ) : (
+                    <div className="v empty">（未填写）</div>
+                  )}
+                </div>
+              )
+            })}
+            {collapseEmpty && !emptyFieldsOpen && emptyCount > 0 && (
+              <button
+                type="button"
+                className="empty-fields-toggle"
+                onClick={() => setEmptyFieldsOpen(true)}
+              >
+                另有 {emptyCount} 项未填写 ▸
+              </button>
+            )}
+            {collapseEmpty && emptyFieldsOpen && (
+              <button
+                type="button"
+                className="empty-fields-toggle"
+                onClick={() => setEmptyFieldsOpen(false)}
+              >
+                收起未填写项 ▾
+              </button>
+            )}
+          </>
         ) : (
           <Markdown body={ticket.brief.markdown} attachments={atts} onImageClick={onImageClick} />
         )}
