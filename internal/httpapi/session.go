@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	accessrecords "github.com/allanpk716/agent-taskboard/internal/accessrecords"
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
@@ -32,14 +33,15 @@ type API struct {
 	atts            *attachments.Manager
 	backups         *ops.Backups
 	notifications   *notifications.Manager
+	accessRecords   *accessrecords.Manager
 	cfg             config.Config
 	stampedClientMu sync.Mutex
 	stampedClients  map[string]*stampedClient
 }
 
-func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager, backups *ops.Backups, cfg config.Config) *API {
+func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager, backups *ops.Backups, accessRecs *accessrecords.Manager, cfg config.Config) *API {
 	return &API{ident: ident, tickets: tk, templates: tpl, idem: idem, atts: atts, backups: backups,
-		cfg: cfg, stampedClients: make(map[string]*stampedClient)}
+		accessRecords: accessRecs, cfg: cfg, stampedClients: make(map[string]*stampedClient)}
 }
 
 // Handler 返回 /api/v1 前缀的 http.Handler（带 panic 恢复，统一错误格式）。

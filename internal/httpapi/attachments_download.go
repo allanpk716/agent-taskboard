@@ -75,12 +75,21 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 		if err := a.atts.VerifyGuestURL(r.Context(), att, linkID, exp, q.Get("sig")); err != nil {
 			switch {
 			case errors.Is(err, attachments.ErrURLExpired):
+				if recErr := a.accessRecords.RecordGuestLinkDenied(r.Context(), att.TicketSeq, linkID, "expired", att); recErr != nil {
+					panic(recErr)
+				}
 				WriteError(w, http.StatusUnauthorized, CodeAttachmentURLExpired, err.Error(),
 					"重新读取工单，响应里会给出新的附件地址")
 			case errors.Is(err, attachments.ErrLinkRevoked):
+				if recErr := a.accessRecords.RecordGuestLinkDenied(r.Context(), att.TicketSeq, linkID, "revoked", att); recErr != nil {
+					panic(recErr)
+				}
 				WriteError(w, http.StatusUnauthorized, CodeLinkRevoked, "访客链接已被撤销",
 					"请联系发链接的成员重新获取一条新链接")
 			case errors.Is(err, attachments.ErrLinkExpired):
+				if recErr := a.accessRecords.RecordGuestLinkDenied(r.Context(), att.TicketSeq, linkID, "expired", att); recErr != nil {
+					panic(recErr)
+				}
 				WriteError(w, http.StatusUnauthorized, CodeLinkExpired, "访客链接已过期",
 					"请联系发链接的成员延期，或重新获取一条新链接")
 			case errors.Is(err, attachments.ErrBadSignature), errors.Is(err, attachments.ErrNotFound):
@@ -104,6 +113,36 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		panic(err)
+	}
+	if r.Method == http.MethodGet {
+		if _, ok := bearerToken(r); ok {
+			viewer, ok := viewerFromContext(r.Context())
+			if !ok {
+				viewer, ok = a.viewerFromRequest(w, r)
+				if !ok {
+					return
+				}
+			}
+			if err := a.accessRecords.RecordDownload(r.Context(), att, viewer); err != nil {
+				panic(err)
+			}
+		} else if q := r.URL.Query(); q.Has("sig") {
+			linkID, _, _ := parseGuestURLQuery(q)
+			if err := a.accessRecords.RecordGuestLinkDownload(r.Context(), att, linkID); err != nil {
+				panic(err)
+			}
+		} else {
+			viewer, ok := viewerFromContext(r.Context())
+			if !ok {
+				viewer, ok = a.viewerFromRequest(w, r)
+				if !ok {
+					return
+				}
+			}
+			if err := a.accessRecords.RecordDownload(r.Context(), att, viewer); err != nil {
+				panic(err)
+			}
+		}
 	}
 
 	disposition := "inline"

@@ -36,9 +36,21 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 				WriteError(w, http.StatusUnauthorized, CodeInvalidToken, "凭证无效或已撤销",
 					a.authHint(r))
 			case errors.Is(err, identity.ErrLinkRevoked):
+				var status *identity.LinkStatusError
+				if errors.As(err, &status) {
+					if recErr := a.accessRecords.RecordGuestLinkDenied(r.Context(), status.Link.TicketSeq, status.Link.ID, status.Status); recErr != nil {
+						panic(recErr)
+					}
+				}
 				WriteError(w, http.StatusUnauthorized, CodeLinkRevoked, "访客链接已被撤销",
 					"请联系发链接的成员重新获取一条新链接")
 			case errors.Is(err, identity.ErrLinkExpired):
+				var status *identity.LinkStatusError
+				if errors.As(err, &status) {
+					if recErr := a.accessRecords.RecordGuestLinkDenied(r.Context(), status.Link.TicketSeq, status.Link.ID, status.Status); recErr != nil {
+						panic(recErr)
+					}
+				}
 				WriteError(w, http.StatusUnauthorized, CodeLinkExpired, "访客链接已过期",
 					"请联系发链接的成员延期，或重新获取一条新链接")
 			default:

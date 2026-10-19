@@ -219,6 +219,9 @@ func (a *API) ticketTimeline(w http.ResponseWriter, r *http.Request, ref string)
 	if !ok {
 		return
 	}
+	if err := a.accessRecords.RecordView(r.Context(), full.Seq, viewer); err != nil {
+		panic(err)
+	}
 	isGuest := viewer.Kind == identity.ViewerGuest
 	visible := func(e tickets.Event) bool {
 		if isGuest && !visibleToGuest(e) {

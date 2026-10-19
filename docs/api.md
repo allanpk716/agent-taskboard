@@ -212,6 +212,7 @@ spec 用户故事 84），没有 `inbox`：
 | `POST /api/v1/tickets/{id}/reopen` | 重新开启（任何成员；访客 403 `members_only`）。 |
 | `POST /api/v1/tickets/{id}/assign` | 改派（#36，仅成员；记 `assigned` 事件，附改派版 `share_text`；支持 `Idempotency-Key`）。 |
 | `GET /api/v1/tickets/{id}/timeline?after=N` | 时间线增量读取。 |
+| `GET /api/v1/tickets/{id}/access-records` | 读取访问记录（仅成员与成员 Agent；只读，无删改接口）。 |
 | `POST /api/v1/tickets/{id}/attachments` | 上传一个待用附件（multipart；见「附件（#33）」）。 |
 | `GET /api/v1/attachments/{att_N}/{filename}` | 附件下载（与工单相同的凭证，或访客链接的签名地址）。 |
 | `GET /api/v1/inbox` | 收件箱（#36，仅成员）：轮到我的开启工单 + 原因 + `read_new`。 |
@@ -387,6 +388,22 @@ spec 用户故事 84），没有 `inbox`：
   作者与时间，旧事件永不改动。访客可见性过滤（跳过标签事件）在 #32 已生效；
   访客的 `cursor` 是它可见的最后一条事件 `seq`（跳过的序号不会当作增量重发）。
 - `waiting_on` 的推导见下「等待方与收件箱（#36）」。
+
+### 访问记录（#157）
+
+- `GET /api/v1/tickets/{id}/access-records` 仅成员与成员 Agent 可读；访客
+  `403 members_only`，匿名 `401`。成功返回 `{"records": […], "since": "2026-10-19"}`。
+- 服务端在读取工单详情或时间线时记录 `view`；同一访问者一小时内的查看合并成一条，
+  `first_at` 是首次时间、`last_at` 是末次时间、`count` 是次数。附件下载每次单独记录
+  一条 `download`，`attachment` 写明附件引用与文件名；访客签名地址被实际取用时按
+  链接备注署名。访客链接已撤销或已过期时记录 `denied`，`entry_method` 为
+  `revoked` 或 `expired`。
+- `actor.kind` 为 `member`、`agent`、`admin` 或 `guest`；`actor.name` 分别是成员姓名、
+  「某成员 的 Agent · 名字」、管理员姓名（`is_admin: true`）或访客链接备注。
+- 列表、搜索、计数、收件箱、通知带出标题、读取访问记录本身都不产生访问记录，
+  也不发通知。访问记录只随工单保留，平台不提供修改或删除接口。
+- `since` 是本功能第一批上线日期。上线前的旧工单没有历史记录可倒推，面板显示
+  「自 since 起记录」。
 
 ## 指派与改派（#36）
 

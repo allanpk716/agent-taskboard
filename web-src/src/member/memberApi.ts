@@ -56,6 +56,25 @@ export interface MarkNotificationsReadResult {
   unread_count: number
 }
 
+export interface AccessRecord {
+  actor: {
+    kind: 'member' | 'agent' | 'admin' | 'guest'
+    name: string
+    link_note?: string
+    entry_method?: string
+  }
+  action: 'view' | 'download' | 'denied'
+  attachment?: { id: string; filename: string }
+  first_at: string
+  last_at: string
+  count: number
+}
+
+export interface AccessRecordsResponse {
+  records: AccessRecord[]
+  since: string
+}
+
 export async function fetchSession(): Promise<{ viewer: { kind: string; member: Me } }> {
   return api('/api/v1/session')
 }
@@ -73,6 +92,10 @@ export async function fetchMembers(): Promise<MemberRef[]> {
 
 export async function fetchTicket(ref: string): Promise<MemberTicket> {
   return api(`/api/v1/tickets/${encodeURIComponent(ref)}`)
+}
+
+export async function fetchAccessRecords(ref: string): Promise<AccessRecordsResponse> {
+  return api(`/api/v1/tickets/${encodeURIComponent(ref)}/access-records`)
 }
 
 export function markTicketNotificationsRead(number: string): Promise<MarkNotificationsReadResult> {
