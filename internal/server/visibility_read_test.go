@@ -158,6 +158,8 @@ func Test列表搜索计数收件箱只包含可见工单(t *testing.T) {
 	collaborator := s.Login("协作者", "secret-pass")
 	triager := s.Login("初筛人", "secret-pass")
 	outsider := s.Login("旁观者", "secret-pass")
+	_, outsiderAgentToken := s.IssueAgentToken(t, outsider, "旁观的 Agent")
+	outsiderAgent := s.AgentClient(outsiderAgentToken)
 	mustSetTriager(t, s, admin, 5, true)
 
 	hidden := mustCreateTicket(t, s, creator, "旁观者不该搜到")
@@ -190,25 +192,39 @@ func Test列表搜索计数收件箱只包含可见工单(t *testing.T) {
 			t.Fatalf("%s = %+v, 只想包含 %s", name, body, own)
 		}
 	}
-	checkHidden("列表", outsider, "/api/v1/tickets?status=all")
-	checkHidden("搜索", outsider, "/api/v1/tickets?status=all&q="+url.QueryEscape("自己的工单"))
+	checkHidden("成员列表", outsider, "/api/v1/tickets?status=all")
+	checkHidden("Agent列表", outsiderAgent, "/api/v1/tickets?status=all")
+	checkHidden("成员搜索", outsider, "/api/v1/tickets?status=all&q="+url.QueryEscape("自己的工单"))
+	checkHidden("Agent搜索", outsiderAgent, "/api/v1/tickets?status=all&q="+url.QueryEscape("自己的工单"))
 
 	var counts struct {
 		Total int64 `json:"total"`
 	}
-	if res := s.Do(t, outsider, http.MethodGet, "/api/v1/tickets/counts?group_by=status&status=all", nil, &counts); res.StatusCode != http.StatusOK {
-		t.Fatalf("计数状态码 = %d", res.StatusCode)
+	for name, c := range map[string]*http.Client{"成员": outsider, "Agent": outsiderAgent} {
+		if res := s.Do(t, c, http.MethodGet, "/api/v1/tickets/counts?group_by=status&status=all", nil, &counts); res.StatusCode != http.StatusOK {
+			t.Fatalf("%s计数状态码 = %d", name, res.StatusCode)
+		}
+		if counts.Total != 1 {
+			t.Fatalf("%s计数 total = %d, 想 1", name, counts.Total)
+		}
 	}
-	if counts.Total != 1 {
-		t.Fatalf("计数 total = %d, 想 1", counts.Total)
-	}
-
-	var inbox inboxBody
-	if res := s.Do(t, outsider, http.MethodGet, "/api/v1/inbox", nil, &inbox); res.StatusCode != http.StatusOK {
-		t.Fatalf("收件箱状态码 = %d", res.StatusCode)
-	}
-	if inbox.Count != 1 || inbox.Items[0].Number != own {
-		t.Fatalf("旁观者收件箱 = %+v, 只想包含 %s", inbox.Items, own)
+	for name, c := range map[string]*http.Client{"成员": outsider, "Agent": outsiderAgent} {
+		var inbox inboxBody
+		if res := s.Do(t, c, http.MethodGet, "/api/v1/inbox", nil, &inbox); res.StatusCode != http.StatusOK {
+			t.Fatalf("%s收件箱状态码 = %d", name, res.StatusCode)
+		}
+		if inbox.Count != 1 || inbox.Items[0].Number != own {
+			t.Fatalf("旁观者%s收件箱 = %+v, 只想包含 %s", name, inbox.Items, own)
+		}
+		var notes notificationsBody
+		if res := s.Do(t, c, http.MethodGet, "/api/v1/notifications", nil, &notes); res.StatusCode != http.StatusOK {
+			t.Fatalf("%s通知状态码 = %d", name, res.StatusCode)
+		}
+		for _, note := range notes.Items {
+			if note.Ticket.Number == hidden {
+				t.Fatalf("旁观者%s通知泄露可见范围外工单：%+v", name, note)
+			}
+		}
 	}
 
 	for name, c := range map[string]*http.Client{"创建者": creator, "指派人": assignee, "协作者": collaborator, "管理员": admin} {
