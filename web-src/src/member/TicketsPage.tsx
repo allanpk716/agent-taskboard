@@ -45,6 +45,14 @@ interface ListResponse {
   next: string | null
 }
 
+export function turnLabel(
+  waitingOn: { text: string; reason: string },
+  isMine: boolean,
+): string {
+  if (!isMine) return `等待 ${waitingOn.text}`
+  return waitingOn.reason ? `轮到你 · ${waitingOn.reason}` : '轮到你'
+}
+
 /** 标签 chip 配色：按维度在种子维度表中的位置循环取色（只影响观感）。 */
 const DIMENSIONS = ['产品线', '系统', '机型', '部门', '算法', '立项', '子项目']
 export function chipClass(label: string): string {
@@ -120,6 +128,7 @@ export function TicketCard({
   const target = href ?? `/t/${item.number}`
   const creator = memberSummaryText(item.creator)
   const assignee = item.assignee == null ? '未指派' : memberSummaryText(item.assignee)
+  const mine = item.waiting_on.member === me?.name
   return (
     <a
       className={`tcard${desktop ? ' pc-row' : ''}${selected ? ' selected' : ''}`}
@@ -140,8 +149,8 @@ export function TicketCard({
           <div className="pc-row-title">
             {item.title}
           </div>
-          <div className={`pc-row-turn${item.waiting_on.member === me?.name ? ' mine' : ''}`}>
-            {item.status === 'closed' ? '已关闭' : `等待 ${item.waiting_on.text}`} · 指派{' '}
+          <div className={`pc-row-turn${mine ? ' mine' : ''}`}>
+            {item.status === 'closed' ? '已关闭' : turnLabel(item.waiting_on, mine)} · 指派{' '}
             {assignee}
             {item.assignee_deactivated && <DeactivatedBadge />}
           </div>
@@ -156,7 +165,7 @@ export function TicketCard({
             {item.status === 'closed' ? (
               <span className="badge closed">已关闭 · {closeReasonText(item.close_reason)}</span>
             ) : (
-              <span className="hint">等待 {item.waiting_on.text}</span>
+              <span className="hint">{turnLabel(item.waiting_on, mine)}</span>
             )}
             <span className="hint" style={{ marginLeft: 'auto' }}>
               {fmtShort(item.updated_at)}
@@ -780,6 +789,7 @@ export function TicketsPage({
         <TicketCard
           key={it.number}
           item={it}
+          me={me}
           href={detailHref(it.number)}
           onLabelClick={(label) => update(toggleLabelCondition(filters, label))}
         />

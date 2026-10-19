@@ -31,7 +31,7 @@ import { DeactivatedBadge, Lightbox } from '../shared/widgets'
 import { absoluteUrl, authorName, closeReasonText, fmtLinkExpiry, linkExpired } from '../shared/format'
 import { Confirm, Modal, copyText, invalidate, nav, toast, useLocationSearch } from './ui'
 import { HandoffDialog } from './HandoffDialog'
-import { LabelChips, chipClass } from './TicketsPage'
+import { LabelChips, chipClass, turnLabel } from './TicketsPage'
 import { detailListSource, filtersFromSearch, toQuery, toggleLabelCondition } from './listFilters'
 import { useLayoutTier } from './useLayoutTier'
 
@@ -168,6 +168,9 @@ function AssignDialog({
   const [handoff, setHandoff] = useState<{ text: string; shareText: string; assignee: string } | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const changing = !!ticket.assignee?.member
+  const assignable = members.filter(
+    (m) => m.active !== false && m.id !== ticket.assignee?.member?.id,
+  )
 
   async function confirm() {
     if (!choice) return
@@ -221,12 +224,15 @@ function AssignDialog({
         style={{ width: '100%' }}
       >
         <option value="">— 选择{changing ? '新' : ''}指派人 —</option>
-        {members.map((m) => (
+        {assignable.map((m) => (
           <option key={m.id} value={m.name}>
             {m.name}
           </option>
         ))}
       </select>
+      {assignable.length === 0 && (
+        <div className="errbox">{changing ? '没有其他可改派的成员' : '没有可指派的成员'}</div>
+      )}
       <div className="hint">改派后，原指派人和新指派人的收件箱都会变化。</div>
       {err && <div className="errbox">{err}</div>}
       <div className="mrow">
@@ -234,7 +240,7 @@ function AssignDialog({
           取消
         </button>
         <span className="sp" />
-        <button className="btn" disabled={!choice} onClick={() => void confirm()}>
+        <button className="btn" disabled={!choice || assignable.length === 0} onClick={() => void confirm()}>
           确认{changing ? '改派' : '指派'}
         </button>
       </div>
@@ -546,7 +552,7 @@ function TicketInfoColumn({
         <div className="sec-t">状态</div>
         <div className="ival">
           <span className="badge kind">{ticket.kind === 'task' ? '任务' : '反馈'}</span>
-          <span>{open ? `等待 ${ticket.waiting_on.text}` : '已关闭'}</span>
+          <span>{open ? turnLabel(ticket.waiting_on, ticket.viewer.your_turn) : '已关闭'}</span>
         </div>
       </section>
       <section>
@@ -1015,7 +1021,7 @@ export function TicketDetailPage({
             </div>
             <div className="kv">
               <span>等待方</span>
-              <b>{closed ? '无（已关闭）' : ticket.waiting_on.text}</b>
+              <b>{closed ? '无（已关闭）' : turnLabel(ticket.waiting_on, ticket.viewer.your_turn)}</b>
             </div>
             <div className="kv">
               <span>访客链接</span>
@@ -1072,7 +1078,7 @@ export function TicketDetailPage({
         {tier === 'medium' && (
           <div className="dsummary" role="region" aria-label="工单信息摘要">
             <span>{ticket.kind === 'task' ? '任务' : '反馈'}</span>
-            <span>{open ? `等待 ${ticket.waiting_on.text}` : '已关闭'}</span>
+            <span>{open ? turnLabel(ticket.waiting_on, ticket.viewer.your_turn) : '已关闭'}</span>
             <span>指派 {ticket.assignee?.member?.name ?? '未指派'}</span>
             <span>{(ticket.labels ?? []).join('、') || '无标签'}</span>
             <span>{`访客链接 ${guestLinks?.length ?? 0} 条`}</span>
