@@ -1653,6 +1653,17 @@ textarea.src {
   color: #2a5db0;
   font-weight: 600;
 }
+.fr-tpl-group {
+  width: 100%;
+}
+.fr-tpl-group .guide {
+  margin: 6px 0 4px;
+}
+.fr-tpl-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .fr-more {
   border-top: 1px dashed #e2e6ee;
   margin-top: 4px;
