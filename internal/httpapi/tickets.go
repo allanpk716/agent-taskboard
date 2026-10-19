@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	accessrecords "github.com/allanpk716/agent-taskboard/internal/accessrecords"
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
@@ -134,10 +135,44 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 		a.handleGuestLinks(w, r, ref, rest)
 	case "attachments":
 		a.handleTicketAttachments(w, r, ref)
+	case "access-records":
+		if len(rest) != 0 {
+			WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "读取访问记录用 GET /api/v1/tickets/{id}/access-records")
+			return
+		}
+		a.ticketAccessRecords(w, r, ref)
 	default:
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
 			"读工单用 /api/v1/tickets/{编号或序号}；回复、关闭、时间线等子资源见 docs/api.md")
 	}
+}
+
+// ticketAccessRecords 处理 GET /api/v1/tickets/{id}/access-records。
+// 访问记录只提供读取接口；读取本身不产生记录，也不发通知。
+func (a *API) ticketAccessRecords(w http.ResponseWriter, r *http.Request, ref string) {
+	if r.Method != http.MethodGet {
+		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "读取访问记录用 GET")
+		return
+	}
+	viewer, ok := a.memberFromRequestFor(w, r, "访客不能查看访问记录")
+	if !ok {
+		return
+	}
+	full, ok := a.loadTicketForViewer(w, r, viewer, ref)
+	if !ok {
+		return
+	}
+	records, err := a.accessRecords.List(r.Context(), full.Seq)
+	if err != nil {
+		panic(err)
+	}
+	if records == nil {
+		records = []accessrecords.Record{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"records": records,
+		"since":   accessrecords.Since,
+	})
 }
 
 // createTicketRequest 是 POST /api/v1/tickets 的请求体。
@@ -283,6 +318,9 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	full, ok := a.loadTicketForViewer(w, r, viewer, ref)
 	if !ok {
 		return
+	}
+	if err := a.accessRecords.RecordView(r.Context(), full.Seq, viewer); err != nil {
+		panic(err)
 	}
 	atts, usage, err := a.attachmentProjection(r.Context(), full, viewer)
 	if err != nil {

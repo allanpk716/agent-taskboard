@@ -13,6 +13,7 @@ import {
   closeTicket,
   createGuestLink,
   extendGuestLink,
+  fetchAccessRecords,
   fetchGuestLinks,
   fetchMembers,
   fetchTicket,
@@ -25,6 +26,7 @@ import {
   uploadMemberAttachment,
   type GuestLink,
   type CreatedGuestLink,
+  type AccessRecordsResponse,
   type Me,
   type MemberRef,
   type Collaborator,
@@ -32,7 +34,7 @@ import {
 import { BriefBubble, EventLine, ReplyBubble } from '../shared/conversation'
 import { DimensionSelect } from '../guest/DimensionSelect'
 import { DeactivatedBadge, Lightbox } from '../shared/widgets'
-import { absoluteUrl, authorName, closeReasonText, fmtLinkExpiry, linkExpired } from '../shared/format'
+import { absoluteUrl, authorName, closeReasonText, fmtBeijing, fmtLinkExpiry, linkExpired } from '../shared/format'
 import { Confirm, Modal, copyText, invalidate, nav, toast, useLocationSearch } from './ui'
 import { HandoffDialog } from './HandoffDialog'
 import { LabelChips, chipClass } from './TicketsPage'
@@ -666,10 +668,46 @@ function remainingDays(iso: string): number {
   return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000))
 }
 
+function AccessRecordsPanel({ data }: { data: AccessRecordsResponse | null }) {
+  return (
+    <section aria-label="访问记录">
+      <div className="sec-t">访问记录</div>
+      {data === null ? (
+        <div className="hint">加载中…</div>
+      ) : data.records.length === 0 ? (
+        <div className="hint">自 {data.since} 起记录</div>
+      ) : (
+        <ol className="access-list">
+          {data.records.map((r, i) => (
+            <li key={`${r.first_at}-${i}`}>
+              <div className="access-title">
+                <b>{r.actor.name}</b>
+                {r.actor.kind === 'admin' && <span className="badge mini-admin">管理员</span>}
+              </div>
+              <div className="access-meta">
+                {r.action === 'view' && `查看详情 · ${r.count} 次`}
+                {r.action === 'download' && `下载附件 ${r.attachment?.filename ?? ''}`}
+                {r.action === 'denied' &&
+                  `尝试访问被拒（${r.actor.entry_method === 'expired' ? '链接已过期' : '链接已撤销'}）`}
+              </div>
+              <div className="access-meta">
+                {r.action === 'view' && r.count > 1
+                  ? `${fmtBeijing(r.first_at)} 至 ${fmtBeijing(r.last_at)}`
+                  : fmtBeijing(r.first_at)}
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  )
+}
+
 function TicketInfoColumn({
   ticket,
   links,
   knownUrls,
+  accessRecords,
   onAssign,
   onCollaborators,
   onLabels,
@@ -679,6 +717,7 @@ function TicketInfoColumn({
   ticket: MemberTicket
   links: GuestLink[] | null
   knownUrls: Record<number, string>
+  accessRecords: AccessRecordsResponse | null
   onAssign: () => void
   onCollaborators: () => void
   onLabels: () => void
@@ -767,6 +806,7 @@ function TicketInfoColumn({
           })
         )}
       </section>
+      <AccessRecordsPanel data={accessRecords} />
     </aside>
   )
 }
@@ -923,6 +963,7 @@ export function TicketDetailPage({
   const [members, setMembers] = useState<MemberRef[]>([])
   const [guestLinks, setGuestLinks] = useState<GuestLink[] | null>(null)
   const [knownLinkUrls, setKnownLinkUrls] = useState<Record<number, string>>({})
+  const [accessRecords, setAccessRecords] = useState<AccessRecordsResponse | null>(null)
   const [allInfoOpen, setAllInfoOpen] = useState(false)
   const markedRef = useRef<string | null>(null)
 
@@ -959,6 +1000,12 @@ export function TicketDetailPage({
   useEffect(() => {
     void reloadGuestLinks()
   }, [reloadGuestLinks, tier])
+
+  useEffect(() => {
+    fetchAccessRecords(ticketRef)
+      .then(setAccessRecords)
+      .catch(() => setAccessRecords({ records: [], since: '' }))
+  }, [ticketRef])
 
   function changed() {
     void load()
@@ -1212,6 +1259,7 @@ export function TicketDetailPage({
                 )}
               </span>
             </div>
+            <AccessRecordsPanel data={accessRecords} />
           </details>
         )}
         <div className="actrow" role="region" aria-label="工单操作">
@@ -1267,6 +1315,7 @@ export function TicketDetailPage({
           ticket={ticket}
           links={guestLinks}
           knownUrls={knownLinkUrls}
+          accessRecords={accessRecords}
           onAssign={() => setDialog('assign')}
           onCollaborators={() => setDialog('collaborators')}
           onLabels={() => setDialog('label')}
@@ -1282,6 +1331,7 @@ export function TicketDetailPage({
             ticket={ticket}
             links={guestLinks}
             knownUrls={knownLinkUrls}
+            accessRecords={accessRecords}
             onAssign={() => setDialog('assign')}
             onCollaborators={() => setDialog('collaborators')}
             onLabels={() => setDialog('label')}

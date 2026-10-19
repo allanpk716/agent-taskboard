@@ -22,6 +22,16 @@ var (
 	ErrLinkExpired = errors.New("访客链接已过期")
 )
 
+// LinkStatusError 携带被拒访客链接的身份信息，访问记录需要在返回 401 前取它。
+type LinkStatusError struct {
+	Link   GuestLink
+	Status string // revoked | expired
+	Err    error
+}
+
+func (e *LinkStatusError) Error() string { return e.Err.Error() }
+func (e *LinkStatusError) Unwrap() error { return e.Err }
+
 // GuestLink 是凭证解析后的访客链接身份（Viewer.GuestLink）：
 // 备注链接创建者写；到期时刻与「可填写说明」权限决定访客能做什么。
 type GuestLink struct {
@@ -69,14 +79,14 @@ func (m *Manager) ViewerFromGuestKey(ctx context.Context, key string) (Viewer, e
 		return Viewer{}, err
 	}
 	if revokedAt.Valid {
-		return Viewer{}, ErrLinkRevoked
+		return Viewer{}, &LinkStatusError{Link: GuestLink{ID: id, TicketSeq: ticketSeq, Note: note}, Status: "revoked", Err: ErrLinkRevoked}
 	}
 	expiry, err := time.ParseInLocation(time.RFC3339Nano, expiresAt, clock.Beijing)
 	if err != nil {
 		return Viewer{}, err
 	}
 	if !m.clock.Now().Before(expiry) {
-		return Viewer{}, ErrLinkExpired
+		return Viewer{}, &LinkStatusError{Link: GuestLink{ID: id, TicketSeq: ticketSeq, Note: note}, Status: "expired", Err: ErrLinkExpired}
 	}
 	return Viewer{
 		Kind: ViewerGuest,

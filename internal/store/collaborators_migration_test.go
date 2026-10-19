@@ -26,7 +26,7 @@ func Test迁移把历史回复者补为协作者并记录系统事件(t *testing
 	}
 	names := []string{}
 	for _, e := range entries {
-		if !strings.HasPrefix(e.Name(), "0019_") {
+		if !strings.HasPrefix(e.Name(), "0020_") {
 			names = append(names, e.Name())
 		}
 	}
