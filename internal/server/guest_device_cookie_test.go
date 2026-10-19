@@ -9,14 +9,6 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
 )
 
-type guestCookieTransport struct{ token string }
-
-func (t guestCookieTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	clone := req.Clone(req.Context())
-	clone.Header.Set("Cookie", "tb_guest_device="+t.token)
-	return http.DefaultTransport.RoundTrip(clone)
-}
-
 func guestDeviceCookie(t testing.TB, res *http.Response) string {
 	t.Helper()
 	for _, c := range res.Cookies() {
@@ -43,7 +35,7 @@ func Test浏览器认领后仅凭访客设备cookie下载附件(t *testing.T) {
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("认领状态码 = %d", res.StatusCode)
 	}
-	cookieClient := &http.Client{Transport: guestCookieTransport{token: guestDeviceCookie(t, res)}}
+	cookieClient := s.GuestCookieClient(guestDeviceCookie(t, res))
 	attPath := "/api/v1/attachments/" + att.ID + "/" + url.PathEscape(att.Filename)
 	if got := downloadAttachment(t, s, cookieClient, attPath); got.StatusCode != http.StatusOK {
 		t.Fatalf("仅凭 cookie 下载附件状态码 = %d, 想 200", got.StatusCode)
@@ -60,7 +52,7 @@ func Test入口提交响应下发访客设备cookie(t *testing.T) {
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("入口提交状态码 = %d, 想 201", res.StatusCode)
 	}
-	cookieClient := &http.Client{Transport: guestCookieTransport{token: guestDeviceCookie(t, res)}}
+	cookieClient := s.GuestCookieClient(guestDeviceCookie(t, res))
 	var view ticketResponseBody
 	got := s.Do(t, cookieClient, http.MethodGet, "/api/v1/tickets/20261016-001", nil, &view)
 	if got.StatusCode != http.StatusOK {
@@ -83,7 +75,7 @@ func Test访客设备cookie在链接撤销后得到401并留下被拒记录(t *t
 		"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(link.ID, 10), nil, nil); got.StatusCode != http.StatusNoContent {
 		t.Fatalf("撤销链接状态码 = %d", got.StatusCode)
 	}
-	cookieClient := &http.Client{Transport: guestCookieTransport{token: guestDeviceCookie(t, res)}}
+	cookieClient := s.GuestCookieClient(guestDeviceCookie(t, res))
 	got := s.Do(t, cookieClient, http.MethodGet, "/api/v1/tickets/"+number, nil, nil)
 	var err errorBody
 	tbtest.DecodeJSON(t, got, &err)
