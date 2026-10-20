@@ -39,7 +39,7 @@ data_dir = 'D:\taskboard-data'
 ## API 约定（补充协议原型）
 
 - 前缀为 `/api/v1`，只做增量修改：可以加字段、加接口，不删除、不改名。破坏性变更开 `/api/v2`，两版并存一段时间。
-- 所有会产生新内容的请求（回复、建单、反馈提交、附件上传）都接受 `Idempotency-Key` 请求头。服务端按 key 去重，key 重复时返回首次请求的结果。
+- 所有会产生新内容的请求（回复、建单、反馈提交、附件上传）都接受 `Idempotency-Key` 请求头。服务端按 key 去重，key 重复时返回首次请求的结果；入口附件上传是唯一例外：key 必填，用来把同一份草稿的多个附件归属到之后的一次提交，不做单响应快照。
 - 管理员专用的更新接口：检查更新、执行更新，供管理页按钮和管理员的 Agent 调用。
 
 ## 附件上限与显示
@@ -59,6 +59,10 @@ max_file_mb         = 5
 max_files_per_post  = 5
 max_images_per_post = 10
 max_ticket_mb       = 50
+
+[intake]
+upload_rate_per_min = 20
+pending_quota_mb    = 200
 ```
 
 - 图片由网页在上传前压缩：长边缩到 2048px，转为 JPEG（质量 85%），去掉 EXIF。本来就不到 1MB 的 PNG 截图保持原样。平台不保存原图。服务端只检查上限，不压缩。Agent 通过 API 上传图片前需要自行压缩。

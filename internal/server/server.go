@@ -59,6 +59,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	atts.SetIntakeLimits(int64(cfg.Intake.PendingQuotaMB) << 20)
 	templateDict := templates.NewManager(st.DB, c)
 	if err := templateDict.SeedIfEmpty(context.Background()); err != nil {
 		return nil, fmt.Errorf("导入预置模板失败：%w", err)
@@ -80,7 +81,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	ticketStore := tickets.NewManager(st.DB, c, labelDict, templateDict, atts)
 	ticketStore.SetNotifier(notificationStore)
 	api := httpapi.NewAPI(ident, ticketStore,
-		templateDict, idem, atts, backups, accessRecords, cfg)
+		templateDict, idem, atts, backups, accessRecords, cfg, c)
 	api.SetNotifications(notificationStore)
 	web, err := webapp.New(cfg.WebDir)
 	if err != nil {

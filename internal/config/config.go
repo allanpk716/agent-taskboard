@@ -29,6 +29,8 @@ type Config struct {
 	Backup Backup `toml:"backup"`
 	// Update 是更新源配置（#45；sources 为空时不检查更新）。
 	Update Update `toml:"update"`
+	// Intake 是反馈入口匿名上传的防护配置。
+	Intake Intake `toml:"intake"`
 }
 
 // Server 是 [server] 小节：部署对外信息。
@@ -53,6 +55,12 @@ type Attachments struct {
 	MaxImagesPerPost int `toml:"max_images_per_post"`
 	// MaxTicketMB 是整张工单附件合计的上限（MB），待用附件也计入。
 	MaxTicketMB int `toml:"max_ticket_mb"`
+}
+
+// Intake 是 [intake] 小节：入口匿名附件上传的限流与临时配额。
+type Intake struct {
+	UploadRatePerMin int `toml:"upload_rate_per_min"`
+	PendingQuotaMB   int `toml:"pending_quota_mb"`
 }
 
 // Backup 是 [backup] 小节：备份目标与保留策略（#43，docs/deploy-and-release.md
@@ -168,5 +176,11 @@ func ApplyDefaults(cfg *Config) {
 	}
 	if cfg.Update.UpdateHub.Channel == "" {
 		cfg.Update.UpdateHub.Channel = "stable"
+	}
+	if cfg.Intake.UploadRatePerMin == 0 {
+		cfg.Intake.UploadRatePerMin = 20
+	}
+	if cfg.Intake.PendingQuotaMB == 0 {
+		cfg.Intake.PendingQuotaMB = 200
 	}
 }

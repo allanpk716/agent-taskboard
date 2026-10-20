@@ -925,6 +925,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 | `GET /api/v1/intakes` | 列表（任何成员，含已停用，各项带 `active`）。 |
 | `GET /api/v1/intakes/{slug}` | **匿名**读取：入口信息 + 绑定模板的当前版本（维度字段带字典候选值和「不确定」；分组 `groups` 与字段 `group` 同模板接口，#63）。 |
 | `GET /api/v1/intakes/{slug}?format=markdown` | **匿名**读取给 Agent 的填写指南（`text/markdown`，与 `GET /api/v1/templates/{key}?format=markdown` 同一份）。 |
+| `POST /api/v1/intakes/{slug}/attachments` | **匿名**上传待提交附件（multipart 字段 `file`；请求头 `Idempotency-Key` 必填）。 |
 | `POST /api/v1/intakes/{slug}/tickets` | **匿名**提交：`{"title", "fields", "author_name"}`。 |
 | `PATCH /api/v1/intakes/{slug}/contact` | 编辑部门联系方式（仅管理员）：`{"department_contact"}`。 |
 | `POST /api/v1/intakes/{slug}/deactivate` | 停用（任何成员；幂等 200）。 |
@@ -939,6 +940,22 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   与「不存在」不可区分，防枚举）。响应 `{slug, name, department_contact, url, kind, template}`，其中
   `template` 是当前版本 `{key, name, version, kind, preset_labels, agent_note, fields}`
   （字段结构与 `GET /api/v1/templates/{key}` 相同）。
+- 匿名附件上传（提交前两步上传的入口变体）：
+  - 请求与工单附件上传一致：`multipart/form-data`，文件字段名 `file`；成功 `201`
+    `{id, filename, size, state: "pending", markdown, note}`。单个文件仍受
+    `[attachments] max_file_mb` 限制。
+  - `Idempotency-Key` 必填，且必须是之后提交同一份草稿所用的 key；它在这里标识
+    上传批次，不按单响应快照去重（同一份草稿的多个附件共用它）。缺 key 返回
+    `400 idempotency_key_required`。
+  - 入口不存在、已停用或 slug 已轮换：`404 intake_not_found`。
+  - 按（入口, 客户端 IP）限流，默认每分钟 20 次（`[intake] upload_rate_per_min`）。
+    超限 `429 intake_upload_rate_limited`，带 `Retry-After` 响应头和
+    `retry_after_seconds`。生产部署中服务只监听回环地址并由 Caddy 反代；仅当
+    `RemoteAddr` 是回环地址时取 `X-Forwarded-For` 最右一段，否则忽略该头。
+  - 入口内未认领附件合计默认 200MB（`[intake] pending_quota_mb`），超限
+    `413 intake_pending_quota_exceeded`，附 `used_mb`、`limit_mb`。上传超过 24 小时
+    仍未提交的附件由周期任务连同文件清除。
+
 - 提交（严格校验，与成员建单的 warnings 相反）：
   - 缺必填项直接拦下：`422 missing_fields`，`fields` 附加数组逐项给出
     `{field, hint, example?}`（引导说明、维度字段的「不确定」、单选字段的选项），
@@ -957,6 +974,11 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
     HttpOnly cookie，Agent 可用响应里的 `tbgd_` 设备凭证。访问码是 6 位数字，只在这一个
     响应里出现一次；`department_contact` 供丢失访问码时联系本部门。
     工单类型由模板决定（恒为 `report`）；编号与序号的分配同建单。
+  - 字段值中的 `att:` 引用会在建单事务里认领为「说明」附件，说明从第 1 版就带
+    附件，不产生说明修订事件。只有 `uploader_intake_id` 等于本入口、
+    `intake_upload_key` 等于本次 `Idempotency-Key` 且仍待用的附件可认领；不匹配
+    返回 `422 attachment_not_usable`。认领后的合计仍受
+    `[attachments] max_ticket_mb` 与每帖个数/插图限制。
 - 提交者**视同说明的创建者**：工单的创建者记录为访客（带链接备注
   `反馈入口「<名称>」提交人` 与自报的 `author_name`）；`viewer.role` 为 `creator`，
     用提交时返回/下发的设备凭证即可读工单、修订说明（带「可填写说明」权限）和回复。

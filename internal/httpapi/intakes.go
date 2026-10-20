@@ -50,6 +50,12 @@ func (a *API) handleIntakeRef(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch sub {
+	case "attachments":
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "上传附件用 POST")
+			return
+		}
+		a.handleIntakeAttachments(w, r, slug)
 	case "tickets":
 		if r.Method != http.MethodPost {
 			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "提交反馈用 POST")
@@ -294,6 +300,7 @@ func (a *API) submitToIntake(w http.ResponseWriter, r *http.Request, slug string
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
 		result, err := a.tickets.SubmitToIntake(r.Context(), slug, tickets.SubmissionInput{
 			Title: req.Title, Fields: req.Fields, AuthorName: req.AuthorName,
+			IdempotencyKey: r.Header.Get(IdempotencyKeyHeader),
 		})
 		if err != nil {
 			a.writeIntakesError(w, r, err)

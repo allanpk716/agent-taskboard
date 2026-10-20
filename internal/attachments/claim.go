@@ -10,6 +10,13 @@ import (
 	"time"
 )
 
+// IntakeClaim identifies the anonymous upload batch: all pending rows uploaded
+// through one intake with the submission's Idempotency-Key.
+type IntakeClaim struct {
+	IntakeID  int64
+	UploadKey string
+}
+
 // ClaimMode 是认领模式。
 type ClaimMode int
 
@@ -119,6 +126,79 @@ func (m *Manager) ClaimTx(ctx context.Context, tx *sql.Tx, ticketSeq int64,
 			WHERE id = ? AND state = 'pending'`,
 			attachedTo, at.Format(time.RFC3339Nano), a.ID); err != nil {
 			return fmt.Errorf("认领附件 %s 失败：%w", ref.ID, err)
+		}
+	}
+	return nil
+}
+
+// ClaimIntakeTx 在建单事务里认领入口附件。只有本入口、本次 Idempotency-Key
+// 上传且仍未认领的附件可用；引用一个不匹配的附件会整体拒绝，防止串用。
+// 认领后的工单附件合计同样受 max_ticket_mb 限制。
+func (m *Manager) ClaimIntakeTx(ctx context.Context, tx *sql.Tx, claim IntakeClaim,
+	ticketSeq int64, refs []PostRef, at time.Time) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	rows := make(map[string]AttachmentInfo, len(refs))
+	files, images := 0, 0
+	var total int64
+	for _, ref := range refs {
+		if _, ok := rows[ref.ID]; ok {
+			continue
+		}
+		id, err := ParseRef(ref.ID)
+		if err != nil {
+			return notUsable(ref.ID)
+		}
+		var (
+			a          AttachmentInfo
+			ticket     sql.NullInt64
+			attachedTo sql.NullString
+			intakeID   sql.NullInt64
+			uploadKey  sql.NullString
+		)
+		err = tx.QueryRowContext(ctx, `
+			SELECT id, ticket_seq, filename, size, state, attached_to,
+			       uploader_intake_id, intake_upload_key
+			FROM attachments WHERE id = ?`, id).
+			Scan(&a.ID, &ticket, &a.Filename, &a.Size, &a.State, &attachedTo, &intakeID, &uploadKey)
+		if err != nil || ticket.Valid || a.State != "pending" ||
+			intakeID.Int64 != claim.IntakeID || uploadKey.String != claim.UploadKey {
+			return notUsable(ref.ID)
+		}
+		rows[ref.ID] = a
+		total += a.Size
+	}
+	for _, ref := range refs {
+		row := rows[ref.ID]
+		if ref.ImageSyntax && IsImage(row.Filename) {
+			images++
+		} else {
+			files++
+		}
+	}
+	if files > m.limits.MaxFilesPerPost {
+		return &CountExceededError{Kind: "files", Count: files, Limit: m.limits.MaxFilesPerPost}
+	}
+	if images > m.limits.MaxImagesPerPost {
+		return &CountExceededError{Kind: "images", Count: images, Limit: m.limits.MaxImagesPerPost}
+	}
+	if total > m.limits.MaxTicketBytes {
+		return &QuotaExceededError{Used: 0, Size: total, Limit: m.limits.MaxTicketBytes}
+	}
+	for id := range rows {
+		parsed, err := ParseRef(id)
+		if err != nil {
+			return notUsable(id)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE attachments SET ticket_seq = ?, state = 'attached',
+			       attached_to = '说明', claimed_at = ?
+			WHERE id = ? AND state = 'pending'
+			  AND ticket_seq IS NULL AND uploader_intake_id = ?
+			  AND intake_upload_key = ?`,
+			ticketSeq, at.Format(time.RFC3339Nano), parsed, claim.IntakeID, claim.UploadKey); err != nil {
+			return fmt.Errorf("认领入口附件 %s 失败：%w", id, err)
 		}
 	}
 	return nil

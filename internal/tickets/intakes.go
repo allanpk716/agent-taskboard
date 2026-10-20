@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/template"
 )
@@ -304,6 +305,8 @@ type SubmissionInput struct {
 	Title      string
 	Fields     map[string]string
 	AuthorName string
+	// IdempotencyKey 认领提交前匿名上传到这个入口的附件。
+	IdempotencyKey string
 }
 
 // SubmissionResult 是提交成功的结果：新工单 + 交给提交者的访客链接
@@ -371,6 +374,15 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	labels = dedupe(labels)
 	if err := m.labels.Validate(ctx, labels); err != nil {
 		return SubmissionResult{}, err
+	}
+	// 入口附件必须属于本入口和本次提交的幂等键；ClaimIntakeTx 在建单事务里
+	// 再按数据库当前状态做最终校验。
+	var attachmentRefs []attachments.PostRef
+	for _, v := range in.Fields {
+		attachmentRefs = append(attachmentRefs, attachments.ParsePostRefs(v, nil)...)
+	}
+	if len(attachmentRefs) > 0 && in.IdempotencyKey == "" {
+		return SubmissionResult{}, attachments.ErrNotUsable
 	}
 
 	key, err := identity.NewGuestKey()
@@ -477,6 +489,11 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 			`INSERT INTO ticket_labels (ticket_seq, label) VALUES (?, ?)`, t.Seq, l); err != nil {
 			return SubmissionResult{}, fmt.Errorf("写入标签 %s 失败：%w", l, err)
 		}
+	}
+	if err := m.atts.ClaimIntakeTx(ctx, tx, attachments.IntakeClaim{
+		IntakeID: intake.ID, UploadKey: in.IdempotencyKey,
+	}, t.Seq, attachmentRefs, now); err != nil {
+		return SubmissionResult{}, err
 	}
 	if err := m.commitAndWake(tx, notified); err != nil {
 		return SubmissionResult{}, err

@@ -217,9 +217,9 @@ test('修改说明提交后回到对话，时间线出现修订事件', async ({
   await expect(event).toContainText('第 2 版')
 })
 
-// 4. 入口提交页的图片与附件：文本字段粘贴截图、统一附件区放日志；提交成功后
-//    自动补传并写进说明；维度选「不确定」时不打机型标签（决议 6）。
-test('入口提交的截图与附件在建单后写进说明，不确定不打标签', async ({ page, request }) => {
+// 4. 入口提交页的图片与附件：选择后立即上传、刷新后草稿恢复；提交时随字段认领，
+//    建单说明和时间线都不再走「补传 + 说明修订」。
+test('入口附件立即上传刷新不丢，提交后说明自带附件且无修订事件', async ({ page, request }) => {
   const slug = await seedIntake(request)
   await page.goto(`/i/${slug}`)
 
@@ -242,6 +242,15 @@ test('入口提交的截图与附件在建单后写进说明，不确定不打�
     buffer: Buffer.from('2026-10-16 09:10 E-203 reagent low\n'),
   })
   await expect(page.locator('.drop').locator('~ .staged-files .staged-file')).toContainText('仪器日志.log')
+  await expect(actual.locator('.staged-file.ready')).toContainText('报警截图.png')
+  await expect(page.locator('.staged-file.ready').filter({ hasText: '仪器日志.log' })).toBeVisible()
+
+  // 刷新后：字段文本仍无 att: 引用，两个已上传附件的元数据从草稿恢复。
+  await page.reload()
+  await expect(actual.getByRole('textbox')).toHaveValue(/应正常开始/)
+  await expect(actual.getByRole('textbox')).not.toHaveValue(/att:/)
+  await expect(actual.locator('.staged-file.ready')).toContainText('报警截图.png')
+  await expect(page.locator('.staged-file.ready').filter({ hasText: '仪器日志.log' })).toBeVisible()
 
   await page.getByRole('button', { name: '提交反馈' }).click()
   await expect(page.getByRole('heading', { name: /已提交/ })).toBeVisible({ timeout: 20000 })
@@ -255,8 +264,11 @@ test('入口提交的截图与附件在建单后写进说明，不确定不打�
     localStorage.setItem(`tb:guest-device:${guestKey}`, guestToken)
   }, { guestKey, guestToken })
   await page.getByRole('link', { name: '打开这条反馈' }).click()
+  await page.getByRole('button', { name: '先不填，直接回复 →' }).click()
   const brief = page.locator('[data-bubble="brief"]')
   await expect(brief).toContainText('试剂余量不足')
+  await expect(brief.locator('img.inline-img')).toBeVisible()
+  await expect(brief.locator('a.att-link, a')).toContainText('仪器日志.log')
 
   // 「不确定」不打机型标签；创建者是访客（带入口备注）
   const number = (await page.locator('header').first().textContent())!.match(/\d{8}-\d+/)![0]
@@ -265,6 +277,9 @@ test('入口提交的截图与附件在建单后写进说明，不确定不打�
   expect(res.ok()).toBeTruthy()
   const ticket = await res.json()
   expect(ticket.labels).toEqual(['待初筛'])
+  expect(ticket.attachments).toHaveLength(2)
+  expect(ticket.brief.revision).toBe(1)
+  expect(ticket.timeline.some((e: { type: string }) => e.type === 'brief_revised')).toBe(false)
 })
 
 // 5. 入口提交页的草稿与自动重试（与对话页同一套规则）：服务中断时提示

@@ -52,6 +52,19 @@ type QuotaExceededError struct {
 	Limit int64
 }
 
+// IntakeQuotaExceededError 是入口内未认领附件合计超限（413
+// intake_pending_quota_exceeded）。
+type IntakeQuotaExceededError struct {
+	Used  int64
+	Size  int64
+	Limit int64
+}
+
+func (e *IntakeQuotaExceededError) Error() string {
+	return fmt.Sprintf("这个反馈入口待提交的附件合计不能超过 %s（已用 %s）",
+		mbText(e.Limit), mbText(e.Used))
+}
+
 func (e *QuotaExceededError) Error() string {
 	return fmt.Sprintf("这张工单的附件合计不能超过 %s（已用 %s，含待用附件）",
 		mbText(e.Limit), mbText(e.Used))
@@ -144,11 +157,15 @@ func (a AttachmentInfo) Ref() string { return "att_" + strconv.FormatInt(a.ID, 1
 
 // Manager 是附件存储的入口。
 type Manager struct {
-	db     *sql.DB
-	clk    clock.Clock
-	dir    string // data_dir/attachments
-	limits Limits
+	db                 *sql.DB
+	clk                clock.Clock
+	dir                string // data_dir/attachments
+	limits             Limits
+	intakePendingBytes int64
 }
+
+// SetIntakeLimits 设置入口附件的临时配额（[intake] pending_quota_mb）。
+func (m *Manager) SetIntakeLimits(pendingBytes int64) { m.intakePendingBytes = pendingBytes }
 
 // NewManager 建目录并返回管理器。dataDir 是 config.toml 的 data_dir。
 func NewManager(db *sql.DB, dataDir string, c clock.Clock, limits Limits) (*Manager, error) {
@@ -243,6 +260,54 @@ func (m *Manager) Upload(ctx context.Context, ticketSeq int64, filename string, 
 	return info, MarkdownSnippet(info), nil
 }
 
+// UploadToIntake 匿名上传到反馈入口：附件暂不挂工单，等提交时按入口和
+// Idempotency-Key 认领；24 小时未认领由 CleanupUnreferenced 清除。
+func (m *Manager) UploadToIntake(ctx context.Context, intakeID int64, uploadKey, filename string, content []byte) (AttachmentInfo, string, error) {
+	filename = strings.TrimSpace(filename)
+	if err := ValidateFilename(filename); err != nil {
+		return AttachmentInfo{}, "", err
+	}
+	if uploadKey == "" {
+		return AttachmentInfo{}, "", ErrNotUsable
+	}
+	size := int64(len(content))
+	if size > m.limits.MaxFileBytes {
+		return AttachmentInfo{}, "", &TooLargeError{Size: size, Limit: m.limits.MaxFileBytes}
+	}
+	var used int64
+	if err := m.db.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(size), 0) FROM attachments
+		WHERE uploader_intake_id = ? AND ticket_seq IS NULL`, intakeID).Scan(&used); err != nil {
+		return AttachmentInfo{}, "", err
+	}
+	if used+size > m.intakePendingBytes {
+		return AttachmentInfo{}, "", &IntakeQuotaExceededError{Used: used, Size: size, Limit: m.intakePendingBytes}
+	}
+	now := m.clk.Now()
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AttachmentInfo{}, "", err
+	}
+	defer tx.Rollback()
+	var id int64
+	if err := tx.QueryRowContext(ctx, `
+		INSERT INTO attachments (ticket_seq, filename, size, state,
+		                         uploader_intake_id, intake_upload_key, uploaded_at)
+		VALUES (NULL, ?, ?, 'pending', ?, ?, ?) RETURNING id`,
+		filename, size, intakeID, uploadKey, now.Format(time.RFC3339Nano)).Scan(&id); err != nil {
+		return AttachmentInfo{}, "", fmt.Errorf("写入入口附件元数据失败：%w", err)
+	}
+	if err := os.WriteFile(m.Path(id), content, 0o644); err != nil {
+		return AttachmentInfo{}, "", fmt.Errorf("写附件文件失败：%w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		_ = os.Remove(m.Path(id))
+		return AttachmentInfo{}, "", err
+	}
+	info := AttachmentInfo{ID: id, Filename: filename, Size: size, State: "pending", UploadedAt: now}
+	return info, MarkdownSnippet(info), nil
+}
+
 // MarkdownSnippet 返回现成的引用片段：插图用图片语法，其余用普通链接。
 func MarkdownSnippet(a AttachmentInfo) string {
 	if IsImage(a.Filename) {
@@ -279,7 +344,8 @@ func (m *Manager) ByTicketState(ctx context.Context, ticketSeq int64, state stri
 	return out, nil
 }
 
-// Get 按引用（att_N 或数字）取一条附件元数据。
+// Get 按引用（att_N 或数字）取一条附件元数据。未认领的入口附件还没有工单，
+// 当作不存在。
 func (m *Manager) Get(ctx context.Context, ref string) (AttachmentInfo, error) {
 	id, err := ParseRef(ref)
 	if err != nil {
@@ -288,7 +354,7 @@ func (m *Manager) Get(ctx context.Context, ref string) (AttachmentInfo, error) {
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT id, ticket_seq, filename, size, state, attached_to,
 		       uploader_member_id, uploader_agent_id, uploader_link_id, uploaded_at, claimed_at
-		FROM attachments WHERE id = ?`, id)
+		FROM attachments WHERE id = ? AND ticket_seq IS NOT NULL`, id)
 	if err != nil {
 		return AttachmentInfo{}, err
 	}
@@ -329,6 +395,7 @@ func scanAttachments(rows *sql.Rows) ([]AttachmentInfo, error) {
 	for rows.Next() {
 		var (
 			a          AttachmentInfo
+			ticket     sql.NullInt64
 			attachedTo sql.NullString
 			memberID   sql.NullInt64
 			agentID    sql.NullInt64
@@ -336,10 +403,11 @@ func scanAttachments(rows *sql.Rows) ([]AttachmentInfo, error) {
 			uploadedAt string
 			claimedAt  sql.NullString
 		)
-		if err := rows.Scan(&a.ID, &a.TicketSeq, &a.Filename, &a.Size, &a.State, &attachedTo,
+		if err := rows.Scan(&a.ID, &ticket, &a.Filename, &a.Size, &a.State, &attachedTo,
 			&memberID, &agentID, &linkID, &uploadedAt, &claimedAt); err != nil {
 			return nil, err
 		}
+		a.TicketSeq = ticket.Int64
 		a.AttachedTo = attachedTo.String
 		a.Uploader = Principal{MemberID: memberID.Int64, AgentID: agentID.Int64, LinkID: linkID.Int64}
 		var err error
