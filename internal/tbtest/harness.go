@@ -50,6 +50,7 @@ type options struct {
 	attachments config.Attachments
 	backup      config.Backup
 	update      config.Update
+	intake      config.Intake
 	publicURL   string
 	minClient   string
 }
@@ -90,6 +91,13 @@ func WithMinClientVersion(version string) Option {
 // “没有配置更新源”，测试里指向本地假源，不碰真实 GitHub/UpdateHub）。
 func WithUpdate(u config.Update) Option { return func(o *options) { o.update = u } }
 
+// WithIntake 指定入口匿名上传的限流与临时配额。
+func WithIntake(ratePerMin, pendingQuotaMB int) Option {
+	return func(o *options) {
+		o.intake = config.Intake{UploadRatePerMin: ratePerMin, PendingQuotaMB: pendingQuotaMB}
+	}
+}
+
 // defaultClockStart 是假时钟默认起点：一个工作日的上午。
 var defaultClockStart = time.Date(2026, 10, 16, 9, 0, 0, 0, clock.Beijing)
 
@@ -127,6 +135,9 @@ func Start(t testing.TB, opts ...Option) *Server {
 	}
 	if len(o.update.Sources) > 0 {
 		cfg.Update = o.update
+	}
+	if o.intake != (config.Intake{}) {
+		cfg.Intake = o.intake
 	}
 	if o.publicURL != "" {
 		cfg.Server.PublicURL = o.publicURL

@@ -6,14 +6,13 @@
 // （.fld.miss + .err 提示）由 missing 控制。
 //
 // 组件只管展示与输入回调：字段值、文件暂存/上传、校验都由调用方持有
-//（便于各自接草稿和提交时机——补全说明立即上传拿 att: 引用，入口提交
-// 前拿不到凭证，先暂存本地、建单后补传）。
+//（便于各自接草稿和提交时机——访客场景立即上传拿 att: 引用，成员建单仍先暂存）。
 import { useRef } from 'react'
 import { DimensionSelect } from './DimensionSelect'
 import type { TemplateField } from '../shared/types'
 import { fmtSize } from '../shared/format'
 
-/** 暂存的文件：补全说明场景立即上传（status 就绪时 markdown 里是 att: 引用）；入口场景提交后补传（blob 是文件本体）。 */
+/** 暂存的文件：访客场景立即上传（status 就绪时 markdown 里是 att: 引用）；成员建单场景 blob 先持有文件本体。 */
 export interface StagedFile {
   id: string
   name: string
@@ -32,7 +31,7 @@ export interface StagedFile {
   previewUrl?: string
   /** 是否图片；刷新恢复草稿后没有本地预览，也保留显示元数据。 */
   image?: boolean
-  /** 入口提交前拿不到凭证，先持有文件本体，建单后补传 */
+  /** 成员建单拿到工单前，先持有文件本体 */
   blob?: File
 }
 

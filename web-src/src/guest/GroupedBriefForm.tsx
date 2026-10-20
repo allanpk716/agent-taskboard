@@ -11,17 +11,18 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiError } from '../api'
 import { compressImage } from '../shared/compress'
 import { DimensionSelect } from './DimensionSelect'
-import { briefDraftKey, clearFormDraft, loadAuthor, loadFormDraft, saveAuthor, saveFormDraft, type FormDraft } from './draft'
+import { briefDraftKey, clearFormDraft, loadAuthor, loadFormDraft, saveAuthor, saveFormDraft } from './draft'
 import { guestApi } from './guestApi'
 import { uploadAttachment } from './upload'
 import type { TemplateField, TicketView } from '../shared/types'
 import { fmtSize } from '../shared/format'
 import type { StagedFile } from './FieldForm'
 import {
+  draftAttachments,
+  draftFieldAttachments,
   filledFieldValue,
   joinFieldValue,
   splitFormDraftValues,
-  type FieldAttachmentDraft,
 } from './fieldAttachments'
 
 const RETRY_FIRST_MS = 1500
@@ -94,28 +95,6 @@ export function groupsOf(ticket: TicketView): FieldGroup[] {
     return gs.map((g, i) => ({ title: g.title, subtitle: g.subtitle, fields: fields.filter((f) => f.group === i) }))
   }
   return [{ title: '填写说明', fields }]
-}
-
-function draftAttachments(files: StagedFile[]): NonNullable<FormDraft['attachments']> {
-  return files
-    .filter((f) => f.area && f.status === 'ready' && f.attachmentId)
-    .map((f) => ({ attachmentId: f.attachmentId!, name: f.name, size: f.size }))
-}
-
-function draftFieldAttachments(files: StagedFile[]): Record<string, FieldAttachmentDraft[]> {
-  const out: Record<string, FieldAttachmentDraft[]> = {}
-  for (const f of files) {
-    if (!f.area && f.status === 'ready' && f.attachmentId && f.markdown) {
-      ;(out[f.fieldKey] ??= []).push({
-        attachmentId: f.attachmentId,
-        name: f.name,
-        size: f.size,
-        image: f.markdown.startsWith('!'),
-        markdown: f.markdown,
-      })
-    }
-  }
-  return out
 }
 
 /** ≥768 算宽屏（双栏布局），窗口缩放时实时切换。 */

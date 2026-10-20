@@ -44,6 +44,34 @@ export function filledFieldValue(text: string | undefined, hasAttachment = false
   return !!(text ?? '').trim() || hasAttachment
 }
 
+/** 整张工单附件区的草稿元数据（入口页暂不使用，保持同一套形状）。 */
+export function draftAttachments(
+  files: Array<{ area: boolean; status: string; attachmentId?: string; name: string; size: number }>,
+): NonNullable<import('./draft').FormDraft['attachments']> {
+  return files
+       .filter((f) => f.area && f.status === 'ready' && f.attachmentId)
+    .map((f) => ({ attachmentId: f.attachmentId!, name: f.name, size: f.size }))
+}
+
+/** 字段附件的草稿元数据；fields 只保存纯文本。 */
+export function draftFieldAttachments(
+  files: Array<{ area: boolean; status: string; attachmentId?: string; fieldKey: string; name: string; size: number; markdown?: string }>,
+): Record<string, FieldAttachmentDraft[]> {
+  const out: Record<string, FieldAttachmentDraft[]> = {}
+  for (const f of files) {
+    if (!f.area && f.status === 'ready' && f.attachmentId && f.markdown) {
+      ;(out[f.fieldKey] ??= []).push({
+        attachmentId: f.attachmentId,
+        name: f.name,
+        size: f.size,
+        image: f.markdown.startsWith('!'),
+        markdown: f.markdown,
+      })
+    }
+  }
+  return out
+}
+
 export interface SplitFormDraftValues {
   fields: Record<string, string>
   fieldAttachments: Record<string, FieldAttachmentDraft[]>
@@ -55,7 +83,12 @@ export function splitFormDraftValues(
   stored: Record<string, FieldAttachmentDraft[]> = {},
 ): SplitFormDraftValues {
   const out: SplitFormDraftValues = { fields: {}, fieldAttachments: {} }
-  for (const [key, value] of Object.entries(fields)) {
+  const keys = [...Object.keys(fields)]
+  for (const key of Object.keys(stored)) {
+    if (!keys.includes(key)) keys.push(key)
+  }
+  for (const key of keys) {
+    const value = fields[key]
     const split = splitFieldValue(value)
     out.fields[key] = split.text
     const byId = new Map((stored[key] ?? []).map((a) => [a.attachmentId, a]))
