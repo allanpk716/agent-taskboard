@@ -350,6 +350,14 @@
   flex-wrap: wrap;
   min-height: 28px;
 }
+.dinfo .ival.stacked {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 4px;
+}
+.top-gap {
+  margin-top: 12px;
+}
 .link-card {
   border: 1px solid #e6e9f0;
   border-radius: 7px;
@@ -365,6 +373,39 @@
   color: #24589f;
   font-size: 12.5px;
   word-break: break-all;
+}
+.access-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.access-list li {
+  border: 1px solid #edf0f5;
+  border-radius: 7px;
+  padding: 7px 8px;
+  display: grid;
+  gap: 2px;
+}
+.access-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.access-meta {
+  color: #697386;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.mini-admin {
+  background: #e8f2ef;
+  color: #246b58;
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
 }
 .pc-shell.compact .dsummary {
   display: flex;

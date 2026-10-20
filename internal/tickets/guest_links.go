@@ -158,14 +158,18 @@ func (m *Manager) createGuestLinkTx(ctx context.Context, tx *sql.Tx, ticketSeq i
 
 // GuestLinkInfo 是访客链接的列表项：不含密钥（明文只在创建响应里出现一次）。
 type GuestLinkInfo struct {
-	ID           int64
-	Note         string
-	ExpiresAt    time.Time
-	RevokedAt    *time.Time
-	CanEditBrief bool
-	CreatedBy    Author
-	CreatedAt    time.Time
-	UseCount     int
+	ID                 int64
+	Note               string
+	ExpiresAt          time.Time
+	RevokedAt          *time.Time
+	ClaimedAt          *time.Time
+	AccessCodeLockedAt *time.Time
+	ClaimName          string
+	CanEditBrief       bool
+	CreatedBy          Author
+	CreatedAt          time.Time
+	UseCount           int
+	DeviceCount        int
 }
 
 // GuestLinks 列出 ref 指向的工单的全部访客链接（成员视角；访客 403 members_only
@@ -182,9 +186,13 @@ func (m *Manager) GuestLinks(ctx context.Context, ref string) ([]GuestLinkInfo, 
 // 通知和等待方推导因此在同一事务快照上工作。
 func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]GuestLinkInfo, error) {
 	rows, err := q.QueryContext(ctx, `
-		SELECT g.id, g.note, g.expires_at, g.revoked_at, g.can_edit_brief, g.created_at,
+		SELECT g.id, g.note, g.expires_at, g.revoked_at, g.claimed_at, g.claim_name,
+		       g.access_code_locked_at,
+		       g.can_edit_brief, g.created_at,
 		       m.id, m.name, a.id, a.name, a.revoked_at,
-		       (SELECT COUNT(*) FROM timeline_events e WHERE e.actor_link_id = g.id)
+		       (SELECT COUNT(*) FROM timeline_events e
+		         WHERE e.actor_link_id = g.id AND e.type != 'guest_link_claimed'),
+		       (SELECT COUNT(*) FROM guest_devices d WHERE d.guest_link_id = g.id)
 		FROM guest_links g
 		LEFT JOIN members m ON m.id = g.created_by_member_id
 		LEFT JOIN agent_tokens a ON a.id = g.created_by_agent_id
@@ -206,9 +214,13 @@ func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]Gue
 			agentID      sql.NullInt64
 			agentName    sql.NullString
 			agentRevoked sql.NullString
+			claimedAt    sql.NullString
+			claimName    sql.NullString
+			lockedAt     sql.NullString
 		)
-		if err := rows.Scan(&info.ID, &info.Note, &expiresAt, &revokedAt, &canEdit, &createdAt,
-			&memberID, &memberName, &agentID, &agentName, &agentRevoked, &info.UseCount); err != nil {
+		if err := rows.Scan(&info.ID, &info.Note, &expiresAt, &revokedAt, &claimedAt, &claimName,
+			&lockedAt, &canEdit, &createdAt, &memberID, &memberName, &agentID, &agentName, &agentRevoked,
+			&info.UseCount, &info.DeviceCount); err != nil {
 			return nil, err
 		}
 		if info.ExpiresAt, err = parseTime(expiresAt); err != nil {
@@ -216,6 +228,21 @@ func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]Gue
 		}
 		if info.CreatedAt, err = parseTime(createdAt); err != nil {
 			return nil, err
+		}
+		info.ClaimName = claimName.String
+		if claimedAt.Valid {
+			t, err := parseTime(claimedAt.String)
+			if err != nil {
+				return nil, err
+			}
+			info.ClaimedAt = &t
+		}
+		if lockedAt.Valid {
+			t, err := parseTime(lockedAt.String)
+			if err != nil {
+				return nil, err
+			}
+			info.AccessCodeLockedAt = &t
 		}
 		if revokedAt.Valid {
 			t, err := parseTime(revokedAt.String)

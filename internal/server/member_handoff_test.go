@@ -371,6 +371,9 @@ func strp(s string) *string { return &s }
 func Test交付只限指派人一方(t *testing.T) {
 	w := newHandoffWorld(t)
 	task := w.createHandoffTicket(t, w.wangA, "整理对照表", "李工").Number
+	if res := addCollaborator(t, w.s, w.webWang, task, "赵工"); res.StatusCode != http.StatusCreated {
+		t.Fatalf("加入协作者状态码 = %d", res.StatusCode)
+	}
 
 	deliver := func(c *http.Client, body string) *http.Response {
 		t.Helper()

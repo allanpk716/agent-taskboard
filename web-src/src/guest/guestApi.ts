@@ -1,13 +1,28 @@
-// 访客链接 `/g/<密钥>` 的密钥直接作 Authorization: Bearer（docs/api.md「访客链接」）。
-// 访客页面自己的 API 入口：复用成员端的 fetch 帮手（错误结构、Content-Type、
-// Idempotency-Key 的处理都一样），只是多带一个 Bearer 头（评审 P3-16）。
+// 访客链接 `/g/<密钥>` 只用于首次认领；认领返回的设备凭证保存在本机，
+// 之后读取、回复、上传和下载都由 guestApi 自动改用它。
 import { api, type ApiRequest } from '../api'
 
 export type GuestRequest = ApiRequest
 
-export async function guestApi(linkKey: string, path: string, init?: GuestRequest): Promise<any> {
+function deviceKey(linkKey: string) {
+  return `tb:guest-device:${linkKey}`
+}
+
+export function guestDeviceToken(linkKey: string): string | null {
+  return localStorage.getItem(deviceKey(linkKey))
+}
+
+export function saveGuestDeviceToken(linkKey: string, token: string) {
+  localStorage.setItem(deviceKey(linkKey), token)
+}
+
+export async function guestRawApi(linkKey: string, path: string, init?: GuestRequest): Promise<any> {
   return api(path, {
     ...init,
     headers: { Authorization: `Bearer ${linkKey}`, ...((init?.headers as object) ?? {}) },
   })
+}
+
+export async function guestApi(linkKey: string, path: string, init?: GuestRequest): Promise<any> {
+  return guestRawApi(guestDeviceToken(linkKey) ?? linkKey, path, init)
 }

@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -10,11 +11,12 @@ import (
 
 // intakeView 是 GET /api/v1/intakes/{slug}（匿名）的响应结构。
 type intakeView struct {
-	Slug     string `json:"slug"`
-	Name     string `json:"name"`
-	URL      string `json:"url"`
-	Kind     string `json:"kind"`
-	Template struct {
+	Slug              string `json:"slug"`
+	Name              string `json:"name"`
+	DepartmentContact string `json:"department_contact"`
+	URL               string `json:"url"`
+	Kind              string `json:"kind"`
+	Template          struct {
 		Key          string              `json:"key"`
 		Name         string              `json:"name"`
 		Version      int64               `json:"version"`
@@ -44,12 +46,64 @@ type intakeSubmitBody struct {
 		ExpiresAt    string `json:"expires_at"`
 		CanEditBrief bool   `json:"can_edit_brief"`
 	} `json:"guest_link"`
-	Next string `json:"next"`
+	DeviceToken       string `json:"device_token"`
+	AccessCode        string `json:"access_code"`
+	DepartmentContact string `json:"department_contact"`
+	Next              string `json:"next"`
+}
+
+func Test管理员配置入口部门联系方式(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	s.CreateMember("王工", "member-pass")
+	member := s.Login("王工", "member-pass")
+	createIntake(t, s, admin, map[string]any{
+		"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report",
+		"department_contact": "内线 1234",
+	})
+
+	var public intakeView
+	res := s.Do(t, s.NewClient(), http.MethodGet, "/api/v1/intakes/bug", nil, &public)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("匿名读入口状态码 = %d, 想 200", res.StatusCode)
+	}
+	if public.DepartmentContact != "内线 1234" {
+		t.Fatalf("部门联系方式 = %q, 想 内线 1234", public.DepartmentContact)
+	}
+
+	res = s.Do(t, member, http.MethodPatch, "/api/v1/intakes/bug/contact",
+		map[string]string{"department_contact": "王工试图修改"}, nil)
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("普通成员编辑联系方式状态码 = %d, 想 403", res.StatusCode)
+	}
+
+	var updated struct {
+		DepartmentContact string `json:"department_contact"`
+	}
+	res = s.Do(t, admin, http.MethodPatch, "/api/v1/intakes/bug/contact",
+		map[string]string{"department_contact": "IT 服务台 400-123-4567"}, &updated)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("管理员编辑联系方式状态码 = %d, 想 200", res.StatusCode)
+	}
+	if updated.DepartmentContact != "IT 服务台 400-123-4567" {
+		t.Fatalf("编辑后的联系方式 = %q", updated.DepartmentContact)
+	}
+
+	submitted := submitToIntake(t, s, "bug", map[string]any{
+		"title": "丢失访问码怎么联系", "fields": bugFields(), "author_name": "赵六",
+	})
+	if submitted.DepartmentContact != "IT 服务台 400-123-4567" {
+		t.Fatalf("提交响应联系方式 = %q", submitted.DepartmentContact)
+	}
 }
 
 // submitToIntake 匿名向入口提交一张反馈，返回响应结构（要求 201）。
 func submitToIntake(t testing.TB, s *tbtest.Server, slug string, body map[string]any) intakeSubmitBody {
 	t.Helper()
+	if _, ok := body["author_name"]; !ok {
+		body["author_name"] = "赵六"
+	}
 	res := s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/intakes/"+slug+"/tickets", body, nil)
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("入口提交状态码 = %d, 想 201", res.StatusCode)
@@ -57,6 +111,25 @@ func submitToIntake(t testing.TB, s *tbtest.Server, slug string, body map[string
 	var out intakeSubmitBody
 	tbtest.DecodeJSON(t, res, &out)
 	return out
+}
+
+func Test入口提交缺署名时不产生工单(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+
+	res := s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/intakes/bug/tickets", map[string]any{
+		"title": "缺署名不能提交", "fields": bugFields(),
+	}, nil)
+	var err intakeErrorBody
+	tbtest.DecodeJSON(t, res, &err)
+	if res.StatusCode != http.StatusUnprocessableEntity || err.Error.Code != "claim_name_required" {
+		t.Fatalf("缺署名 = %d/%s, 想 422/claim_name_required", res.StatusCode, err.Error.Code)
+	}
+	if got := s.Do(t, web, http.MethodGet, "/api/v1/tickets/1", nil, nil); got.StatusCode != http.StatusNotFound {
+		t.Fatalf("缺署名不应产生工单（/tickets/1 = %d, 想 404）", got.StatusCode)
+	}
 }
 
 // 匿名经入口提交反馈：拿到新工单和一条带「可填写说明」权限的 30 天访客链接；
@@ -112,12 +185,14 @@ func Test经入口提交反馈拿到工单与访客链接(t *testing.T) {
 	if member.Creator.AuthorName == nil || *member.Creator.AuthorName != "赵六" {
 		t.Errorf("创建者 author_name = %v, 想赵六（提交者自报）", member.Creator.AuthorName)
 	}
-	// 时间线：created（访客作者）与 guest_link_created，都推进变更序号。
-	if len(member.Timeline) != 2 {
-		t.Fatalf("时间线有 %d 条, 想 2（created + guest_link_created）：%+v", len(member.Timeline), member.Timeline)
+	// 时间线：created（访客作者）、guest_link_created 与提交即认领，都推进变更序号。
+	if len(member.Timeline) != 3 {
+		t.Fatalf("时间线有 %d 条, 想 3（created + guest_link_created + guest_link_claimed）：%+v", len(member.Timeline), member.Timeline)
 	}
-	if member.Timeline[0].Type != "created" || member.Timeline[1].Type != "guest_link_created" {
-		t.Fatalf("事件类型 = %s/%s, 想 created/guest_link_created", member.Timeline[0].Type, member.Timeline[1].Type)
+	if member.Timeline[0].Type != "created" || member.Timeline[1].Type != "guest_link_created" ||
+		member.Timeline[2].Type != "guest_link_claimed" {
+		t.Fatalf("事件类型 = %s/%s/%s, 想 created/guest_link_created/guest_link_claimed",
+			member.Timeline[0].Type, member.Timeline[1].Type, member.Timeline[2].Type)
 	}
 	if member.Timeline[1].Note != "反馈入口「部门 Bug 反馈」提交人" {
 		t.Errorf("guest_link_created 的备注 = %q", member.Timeline[1].Note)
@@ -126,8 +201,9 @@ func Test经入口提交反馈拿到工单与访客链接(t *testing.T) {
 		t.Error("guest_link_created 的全局变更序号应大于 created")
 	}
 
-	// 提交者用这条链接读工单（访客视角：无 labels），并修订说明（视同创建者）。
-	guest := s.GuestClient(submitted.GuestLink.URL[len("/g/"):])
+	// 提交者当前浏览器在提交时已认领：用响应里的设备凭证读工单（访客视角：
+	// 无 labels），并修订说明（视同创建者）。
+	guest := s.AgentClient(submitted.DeviceToken)
 	var asGuest ticketResponseBody
 	s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+submitted.Ticket.Number, nil, &asGuest)
 	if asGuest.Title != "UD-2300 质控时报警 E-203" {
@@ -173,6 +249,55 @@ func Test经入口提交反馈拿到工单与访客链接(t *testing.T) {
 	}
 	if last.Actor.AuthorName == nil || *last.Actor.AuthorName != "赵六" {
 		t.Errorf("修订事件的 author_name = %v", last.Actor.AuthorName)
+	}
+}
+
+func Test入口提交成功即认领并返回访问码(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+
+	submitted := submitToIntake(t, s, "bug", map[string]any{
+		"title":       "提交后就归提交者",
+		"fields":      bugFields(),
+		"author_name": "检验科 张三",
+	})
+	if !regexp.MustCompile(`^\d{6}$`).MatchString(submitted.AccessCode) {
+		t.Fatalf("访问码 = %q, 想 6 位数字", submitted.AccessCode)
+	}
+	if !strings.HasPrefix(submitted.DeviceToken, "tbgd_") {
+		t.Fatalf("设备凭证 = %q, 想以 tbgd_ 开头", submitted.DeviceToken)
+	}
+
+	var view ticketResponseBody
+	res := s.Do(t, s.AgentClient(submitted.DeviceToken), http.MethodGet,
+		"/api/v1/tickets/"+submitted.Ticket.Number, nil, &view)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("提交时设备读工单状态码 = %d, 想 200", res.StatusCode)
+	}
+	foundClaim := false
+	for _, ev := range view.Timeline {
+		if ev.Type == "guest_link_claimed" {
+			foundClaim = true
+			if ev.Actor.AuthorName == nil || *ev.Actor.AuthorName != "检验科 张三" {
+				t.Errorf("认领事件自报称呼不对：%+v", ev.Actor)
+			}
+		}
+	}
+	if !foundClaim {
+		t.Fatalf("时间线缺少认领事件：%+v", view.Timeline)
+	}
+
+	key := submitted.GuestLink.URL[len("/g/"):]
+	res = s.Do(t, s.AgentClient(key), http.MethodGet, "/api/v1/tickets/"+submitted.Ticket.Number, nil, nil)
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("单凭链接读工单状态码 = %d, 想 401", res.StatusCode)
+	}
+	var err errorBody
+	tbtest.DecodeJSON(t, res, &err)
+	if err.Error.Code != "link_claimed" {
+		t.Fatalf("单凭链接错误码 = %q, 想 link_claimed", err.Error.Code)
 	}
 }
 
@@ -362,7 +487,7 @@ func Test入口提交缺必填被拦下且逐项提示(t *testing.T) {
 		fields[k] = "略"
 	}
 	res = s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/intakes/bug/tickets",
-		map[string]any{"title": "不知道机型的报警", "fields": fields}, nil)
+		map[string]any{"title": "不知道机型的报警", "fields": fields, "author_name": "赵六"}, nil)
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("「不确定」算已填：状态码 = %d, 想 201", res.StatusCode)
 	}
@@ -387,6 +512,9 @@ func Test入口提交缺必填被拦下且逐项提示(t *testing.T) {
 		{"维度值不在字典里", map[string]any{"title": "t", "fields": withExtra(bugFields(), "哪台仪器？", "BH-9999")}, "unknown_label_value"},
 	}
 	for _, tc := range cases {
+		if _, ok := tc.body["author_name"]; !ok {
+			tc.body["author_name"] = "赵六"
+		}
 		res := s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/intakes/bug/tickets", tc.body, nil)
 		var e intakeErrorBody
 		tbtest.DecodeJSON(t, res, &e)
@@ -503,13 +631,13 @@ func Test停用的入口与旧slug不能再提交(t *testing.T) {
 	if got.Title != "轮换前提交" {
 		t.Errorf("已提交的工单不受停用/轮换影响：%q", got.Title)
 	}
-	res = s.Do(t, s.GuestClient(rotated.GuestLink.URL[len("/g/"):]),
+	res = s.Do(t, s.AgentClient(rotated.DeviceToken),
 		http.MethodGet, "/api/v1/tickets/"+rotated.Ticket.Number, nil, nil)
 	if res.StatusCode != http.StatusOK {
 		t.Errorf("提交者的访客链接在停用/轮换后应继续可用：%d", res.StatusCode)
 	}
 	// 第一张反馈的链接同样可用。
-	res = s.Do(t, s.GuestClient(submitted.GuestLink.URL[len("/g/"):]),
+	res = s.Do(t, s.AgentClient(submitted.DeviceToken),
 		http.MethodGet, "/api/v1/tickets/"+submitted.Ticket.Number, nil, nil)
 	if res.StatusCode != http.StatusOK {
 		t.Errorf("提交者的访客链接在入口停用后应继续可用：%d", res.StatusCode)
@@ -695,7 +823,7 @@ func Test入口提交的反馈在初筛与访客之间轮转(t *testing.T) {
 	submitted := submitToIntake(t, s, "bug", map[string]any{
 		"title": "UD-2300 报警", "fields": bugFields(), "author_name": "赵六",
 	})
-	guest := s.GuestClient(submitted.GuestLink.URL[len("/g/"):])
+	guest := s.AgentClient(submitted.DeviceToken)
 
 	// 尚无回复：反馈轮到本部门（未指派，原因「尚未指派」）。
 	var asMember ticketResponseBody

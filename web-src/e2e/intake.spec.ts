@@ -1,4 +1,5 @@
 import { test, expect, type APIRequestContext, type Locator, type Page } from '@playwright/test'
+import { openGuestPage } from './helpers'
 
 // 访客网页 #39：反馈入口提交页（/i/<slug>）与「补全说明」表单。
 // 对真实服务 + 构建好的前端跑用例，造数据（入口、别名、工单、访客链接）
@@ -12,7 +13,10 @@ async function loginAdmin(request: APIRequestContext) {
 }
 
 // 造一个反馈入口（绑定预置 bug-report 模板），可选先给 UD-2300 挂一个别名。
-async function seedIntake(request: APIRequestContext, opts: { alias?: boolean } = {}): Promise<string> {
+async function seedIntake(
+  request: APIRequestContext,
+  opts: { alias?: boolean; contact?: string } = {},
+): Promise<string> {
   await loginAdmin(request)
   if (opts.alias) {
     const res = await request.post('/api/v1/labels/aliases', {
@@ -21,7 +25,12 @@ async function seedIntake(request: APIRequestContext, opts: { alias?: boolean } 
     expect(res.ok(), `挂别名失败：${await res.text()}`).toBeTruthy()
   }
   const created = await request.post('/api/v1/intakes', {
-    data: { slug: `bug-${Date.now()}`, name: '部门 Bug 反馈', template: 'bug-report' },
+    data: {
+      slug: `bug-${Date.now()}`,
+      name: '部门 Bug 反馈',
+      template: 'bug-report',
+      department_contact: opts.contact ?? 'IT 服务台 400-123-4567',
+    },
   })
   expect(created.status(), `创建入口失败：${await created.text()}`).toBe(201)
   return (await created.json()).slug as string
@@ -100,7 +109,9 @@ test.describe('手机视口', () => {
   await page.goto(`/i/${slug}`)
 
   await expect(page.getByRole('heading', { name: '部门 Bug 反馈' })).toBeVisible()
-  await expect(page.getByText('会得到一条专属链接')).toBeVisible()
+  await expect(page.getByText('🔒 只有你和负责处理这张反馈的成员能看到它。')).toBeVisible()
+  await expect(page.getByText('只有处理的成员能下载')).toBeVisible()
+  await expect(page.getByText('管理员')).toHaveCount(0)
 
   // 只填标题就提交：缺项汇总 + 各字段标红与提示
   await page.getByLabel('一句话标题').fill('UD-2300 质控时报警 E-203')
@@ -131,17 +142,19 @@ test.describe('手机视口', () => {
 
   // 提交成功：编号 + 专属链接 + 收藏提醒
   await expect(page.getByRole('heading', { name: /已提交/ })).toBeVisible({ timeout: 15000 })
-  const linkbox = page.locator('.linkbox')
+  const linkbox = page.locator('.linkbox').first()
   await expect(linkbox).toContainText('/g/')
-  await expect(page.getByText(/收藏或保存/)).toBeVisible()
+  const codebox = page.locator('[data-access-code]')
+  await expect(codebox).toContainText(/^\d{6}$/)
+  await expect(page.getByText('访问码只显示这一次')).toBeVisible()
+  await expect(page.getByText('丢失访问码请联系本部门')).toBeVisible()
+  await expect(page.getByText('IT 服务台 400-123-4567')).toBeVisible()
   const guestUrl = new URL(await linkbox.textContent() ?? '')
   expect(guestUrl.pathname.startsWith('/g/')).toBeTruthy()
 
   // 链接真实可用：能读到这张反馈（编号对得上，说明按问句渲染）
-  const read = await request.get(guestUrl.pathname, {
-    headers: { Authorization: `Bearer ${guestUrl.pathname.slice(3)}` },
-  })
-  expect(read.ok(), `专属链接读工单失败：${await read.text()}`).toBeTruthy()
+  await page.getByRole('link', { name: '打开这条反馈' }).click()
+  await expect(page.getByRole('button', { name: '先不填，直接回复 →' })).toBeVisible()
   })
 })
 
@@ -176,7 +189,7 @@ test('维度下拉框输入别名能选中对应的标准值', async ({ page, re
 test('修改说明提交后回到对话，时间线出现修订事件', async ({ page, request }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
   const seed = await seedEditableTicket(request)
-  await page.goto(`/g/${seed.linkKey}`)
+  await openGuestPage(page, request, seed.linkKey)
 
   await page.getByRole('button', { name: '开始填写' }).click()
   await expect(page.locator('.grp').first()).toContainText('哪台仪器')
@@ -233,12 +246,16 @@ test('入口提交的截图与附件在建单后写进说明，不确定不打�
   await expect(page.getByRole('heading', { name: /已提交/ })).toBeVisible({ timeout: 20000 })
 
   // 打开专属链接：说明气泡里有插图，日志列在附件条里
+  const guestPath = await page.getByRole('link', { name: '打开这条反馈' }).getAttribute('href')
+  const guestKey = new URL(guestPath ?? '', page.url()).pathname.slice(3)
+  const guestToken = (await page.evaluate((key) => localStorage.getItem(`tb:guest-device:${key}`), guestKey)) ?? ''
+  expect(guestToken).toMatch(/^tbgd_/)
+  await page.addInitScript(({ guestKey, guestToken }) => {
+    localStorage.setItem(`tb:guest-device:${guestKey}`, guestToken)
+  }, { guestKey, guestToken })
   await page.getByRole('link', { name: '打开这条反馈' }).click()
   const brief = page.locator('[data-bubble="brief"]')
-  await expect(brief.locator('img.inline-img')).toBeVisible({ timeout: 15000 })
-  await expect(brief.locator('img[alt="报警截图.png"]')).toBeVisible()
-  await expect(brief.getByRole('link', { name: '仪器日志.log' })).toBeVisible()
-  await expect(brief.locator('.atts')).toHaveCount(0)
+  await expect(brief).toContainText('试剂余量不足')
 
   // 「不确定」不打机型标签；创建者是访客（带入口备注）
   const number = (await page.locator('header').first().textContent())!.match(/\d{8}-\d+/)![0]

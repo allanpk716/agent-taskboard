@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	accessrecords "github.com/allanpk716/agent-taskboard/internal/accessrecords"
 	"github.com/allanpk716/agent-taskboard/internal/agentdocs"
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
@@ -36,6 +37,7 @@ type Server struct {
 	Backups       *ops.Backups
 	Idem          *idempotency.Manager
 	Notifications *notifications.Manager
+	AccessRecords *accessrecords.Manager
 
 	handler  http.Handler
 	web      *webapp.Handler
@@ -74,10 +76,11 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	}
 	idem := idempotency.NewManager(st.DB, c)
 	notificationStore := notifications.NewManager(st.DB, c)
+	accessRecords := accessrecords.NewManager(st.DB, c)
 	ticketStore := tickets.NewManager(st.DB, c, labelDict, templateDict, atts)
 	ticketStore.SetNotifier(notificationStore)
 	api := httpapi.NewAPI(ident, ticketStore,
-		templateDict, idem, atts, backups, cfg)
+		templateDict, idem, atts, backups, accessRecords, cfg)
 	api.SetNotifications(notificationStore)
 	web, err := webapp.New(cfg.WebDir)
 	if err != nil {
@@ -96,6 +99,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 		Backups:       backups,
 		Idem:          idem,
 		Notifications: notificationStore,
+		AccessRecords: accessRecords,
 		handler:       mux,
 		web:           web,
 	}, nil

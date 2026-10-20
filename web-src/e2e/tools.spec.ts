@@ -110,6 +110,9 @@ test('个人设置：签发 Agent token，署名正确，撤销后失效', async
   const number = await createTicket(request, { title: '验证 Agent token 的工单' })
   await login(page, ADMIN)
   await page.locator('.b-tabs').getByRole('link', { name: '我的' }).click()
+  await expect(page.locator('[data-agent-model-notice]')).toHaveText(
+    '工单内容会交给这个 Agent 所用的模型处理，请按公司规定选用模型',
+  )
 
   // 生成 token：只显示一次，token 在接入文案里。
   const agentName = `巡检${RUN}`

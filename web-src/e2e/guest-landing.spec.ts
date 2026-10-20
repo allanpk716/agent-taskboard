@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext, type Browser, type Page } from '@playwright/test'
-import { ADMIN, login, loginAdmin } from './helpers'
+import { ADMIN, login, loginAdmin, openGuestPage } from './helpers'
 
 // 访客落地页与自由格式（#66）：持「可填写说明」链接的访客第一次打开链接
 // 先看到落地页（谁请你补充哪张反馈的说明、共几项、几项必填、可以传照片日志、
@@ -74,7 +74,7 @@ test.describe('落地页', () => {
 
   test('第一次打开链接显示落地页，称呼预填链接备注', async ({ page, request }) => {
     const seed = await requestFeedback(request, { title: 'UD-2300 质控时报警 E-203' })
-    await page.goto(`/g/${seed.linkKey}`)
+    await openGuestPage(page, request, seed.linkKey)
 
     const landing = page.locator('.guest-landing')
     await expect(landing).toBeVisible()
@@ -91,7 +91,7 @@ test.describe('落地页', () => {
   // 2. 「先不填，直接回复 →」直接进对话页，能回复。
   test('「先不填，直接回复」直接进对话页，能回复', async ({ page, request }) => {
     const seed = await requestFeedback(request, { title: '先不填直接回复的工单' })
-    await page.goto(`/g/${seed.linkKey}`)
+    await openGuestPage(page, request, seed.linkKey)
     await page.getByRole('button', { name: '先不填，直接回复 →' }).click()
 
     // 对话页：说明卡片 + 回复框；不再有落地页
@@ -108,7 +108,7 @@ test.describe('落地页', () => {
   // 3. 开始填写 → 提交后，再次打开链接直接进对话页。
   test('开始填写提交后，再次打开链接直接进对话页', async ({ page, request }) => {
     const seed = await requestFeedback(request, { title: '再次打开直接进对话' })
-    await page.goto(`/g/${seed.linkKey}`)
+    await openGuestPage(page, request, seed.linkKey)
     await page.getByRole('button', { name: '开始填写' }).click()
     await expect(page.locator('.grp').first()).toBeVisible()
 
@@ -122,7 +122,7 @@ test.describe('落地页', () => {
     await expect(page.locator('.event', { hasText: '修订了说明' })).toContainText('检验科-张三', { timeout: 15000 })
 
     // 再次打开链接：直接进对话页（说明卡片 + ✏ 修改说明），不再显示落地页
-    await page.goto(`/g/${seed.linkKey}`)
+    await openGuestPage(page, request, seed.linkKey)
     await expect(page.locator('.guest-landing')).toHaveCount(0)
     await expect(page.locator('[data-bubble="brief"]')).toBeVisible()
     await expect(page.getByRole('button', { name: '✏ 修改说明' })).toBeVisible()
@@ -142,7 +142,7 @@ test.describe('落地页', () => {
     expect(link.ok(), `创建访客链接失败：${await link.text()}`).toBeTruthy()
     const linkKey = String((await link.json()).url).slice(3)
 
-    await page.goto(`/g/${linkKey}`)
+    await openGuestPage(page, request, linkKey)
     await expect(page.locator('.guest-landing')).toHaveCount(0)
     await expect(page.locator('[data-bubble="brief"]')).toBeVisible()
     await expect(page.getByRole('button', { name: '✏ 修改说明' })).toHaveCount(0)
@@ -156,7 +156,7 @@ test.describe('自由格式', () => {
 
   test('自由格式工单显示「情况说明」组，能上传附件，提交后说明里有内容', async ({ page, request }) => {
     const seed = await requestFeedback(request, { title: '生化仪结果漂移', free: true, note: '门诊-李四' })
-    await page.goto(`/g/${seed.linkKey}`)
+    await openGuestPage(page, request, seed.linkKey)
 
     // 落地页：写一段说明；称呼预填链接备注
     await expect(page.locator('.landing-info')).toContainText('写一段说明')
@@ -253,7 +253,8 @@ async function runFullUseCase(
 
   const ctx = await browser.newContext({ viewport, baseURL: new URL(page.url()).origin })
   const guest = await ctx.newPage()
-  await guest.goto(linkUrl)
+  const linkKey = new URL(linkUrl, page.url()).pathname.slice(3)
+  await openGuestPage(guest, guest.request, linkKey)
 
   // 落地页（成员名 + 标题 + 称呼预填）→ 开始填写 → 填完必填 → 提交 → 确认页 → 查看对话
   const landing = guest.locator('.guest-landing')

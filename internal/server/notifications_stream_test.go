@@ -306,6 +306,9 @@ func Test服务停机时通知流正常结束(t *testing.T) {
 func Test知会通知提交后实时推送到SSE(t *testing.T) {
 	w := newHandoffWorld(t)
 	number := w.createHandoffTicket(t, w.webWang, "实时知会", "李工").Number
+	if res := addCollaborator(t, w.s, w.webWang, number, "赵工"); res.StatusCode != http.StatusCreated {
+		t.Fatalf("加入协作者状态码 = %d", res.StatusCode)
+	}
 	stream := w.s.OpenSSE(t, w.webWang, "")
 	if ev := stream.Event(t); ev.Name != "hello" {
 		t.Fatalf("首帧 = %q, 想 hello", ev.Name)

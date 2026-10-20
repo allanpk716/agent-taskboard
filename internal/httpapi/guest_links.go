@@ -3,12 +3,14 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
 
@@ -37,9 +39,13 @@ type guestLinkBase struct {
 // guestLinkView 是访客链接的对外结构（列表项不含密钥）。
 type guestLinkView struct {
 	guestLinkBase
-	RevokedAt *string    `json:"revoked_at,omitempty"`
-	CreatedBy authorView `json:"created_by"`
-	CreatedAt string     `json:"created_at"`
+	RevokedAt   *string    `json:"revoked_at,omitempty"`
+	Status      string     `json:"status"`
+	ClaimName   *string    `json:"claim_name,omitempty"`
+	ClaimedAt   *string    `json:"claimed_at,omitempty"`
+	DeviceCount int        `json:"device_count"`
+	CreatedBy   authorView `json:"created_by"`
+	CreatedAt   string     `json:"created_at"`
 }
 
 // handleGuestLinks 处理 …/guest-links 与 …/guest-links/{id}[/extend]：
@@ -48,6 +54,7 @@ type guestLinkView struct {
 //	GET    /api/v1/tickets/{id}/guest-links            列表（任何成员；不含密钥）
 //	DELETE /api/v1/tickets/{id}/guest-links/{链接id}    撤销（立即生效，幂等 204）
 //	POST   /api/v1/tickets/{id}/guest-links/{链接id}/extend  延期（已失效的不能延期）
+//	POST   /api/v1/tickets/{id}/guest-links/{链接id}/reset-access-code  重置访问码
 func (a *API) handleGuestLinks(w http.ResponseWriter, r *http.Request, ref string, rest []string) {
 	if len(rest) == 0 {
 		switch r.Method {
@@ -80,13 +87,47 @@ func (a *API) handleGuestLinks(w http.ResponseWriter, r *http.Request, ref strin
 		a.extendGuestLink(w, r, ref, id)
 		return
 	}
+	if len(rest) == 2 && rest[1] == "reset-access-code" {
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "重置访问码用 POST")
+			return
+		}
+		a.resetGuestAccessCode(w, r, ref, id)
+		return
+	}
 	WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
-		"访客链接接口：POST …/guest-links、GET …/guest-links、DELETE …/guest-links/{id}、POST …/guest-links/{id}/extend")
+		"访客链接接口：POST …/guest-links、GET …/guest-links、DELETE …/guest-links/{id}、POST …/guest-links/{id}/extend、POST …/guest-links/{id}/reset-access-code")
+}
+
+func (a *API) resetGuestAccessCode(w http.ResponseWriter, r *http.Request, ref string, id int64) {
+	viewer, ok := a.memberFromRequestFor(w, r, "访客不能管理访客链接")
+	if !ok {
+		return
+	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+		return
+	}
+	code, err := a.tickets.ResetGuestAccessCode(r.Context(), viewer, ref, id)
+	if err != nil {
+		switch {
+		case errors.Is(err, tickets.ErrGuestLinkNotFound):
+			a.writeTicketError(w, r, ref, err)
+		case errors.Is(err, tickets.ErrLinkNotClaimed):
+			WriteError(w, http.StatusConflict, CodeLinkUnclaimed, "这条链接尚未认领，不需要重置访问码", "等待访客认领后再重置")
+		default:
+			a.writeTicketError(w, r, ref, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"access_code": code})
 }
 
 func (a *API) createGuestLink(w http.ResponseWriter, r *http.Request, ref string) {
 	viewer, ok := a.memberFromRequest(w, r)
 	if !ok {
+		return
+	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
 		return
 	}
 	var req guestLinkRequest
@@ -114,7 +155,11 @@ func (a *API) createGuestLink(w http.ResponseWriter, r *http.Request, ref string
 }
 
 func (a *API) listGuestLinks(w http.ResponseWriter, r *http.Request, ref string) {
-	if _, ok := a.memberFromRequest(w, r); !ok {
+	viewer, ok := a.memberFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
 		return
 	}
 	links, err := a.tickets.GuestLinks(r.Context(), ref)
@@ -134,6 +179,9 @@ func (a *API) revokeGuestLink(w http.ResponseWriter, r *http.Request, ref string
 	if !ok {
 		return
 	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+		return
+	}
 	if err := a.tickets.RevokeGuestLink(r.Context(), viewer, ref, id); err != nil {
 		a.writeTicketError(w, r, ref, err)
 		return
@@ -144,6 +192,9 @@ func (a *API) revokeGuestLink(w http.ResponseWriter, r *http.Request, ref string
 func (a *API) extendGuestLink(w http.ResponseWriter, r *http.Request, ref string, id int64) {
 	viewer, ok := a.memberFromRequest(w, r)
 	if !ok {
+		return
+	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
 		return
 	}
 	var req guestLinkRequest
@@ -182,6 +233,14 @@ func newGuestLinkView(l tickets.GuestLinkInfo) guestLinkView {
 	if l.RevokedAt != nil {
 		t := l.RevokedAt.Format(time.RFC3339Nano)
 		v.RevokedAt = &t
+	}
+	v.Status = string(identity.GuestLinkStatusOf(l.RevokedAt, l.AccessCodeLockedAt, l.ClaimedAt))
+	if l.ClaimedAt != nil {
+		t := l.ClaimedAt.Format(time.RFC3339Nano)
+		v.ClaimedAt = &t
+		name := l.ClaimName
+		v.ClaimName = &name
+		v.DeviceCount = l.DeviceCount
 	}
 	return v
 }

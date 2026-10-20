@@ -2,7 +2,9 @@
 import { api, ApiError } from '../api'
 import { compressImage } from '../shared/compress'
 import { fetchServerVersion } from '../shared/health'
-import type { Author, TicketView } from '../shared/types'
+import type { Author, Collaborator, TicketView } from '../shared/types'
+
+export type { Collaborator } from '../shared/types'
 
 export interface Me {
   id: number
@@ -56,6 +58,25 @@ export interface MarkNotificationsReadResult {
   unread_count: number
 }
 
+export interface AccessRecord {
+  actor: {
+    kind: 'member' | 'agent' | 'admin' | 'guest'
+    name: string
+    link_note?: string
+    entry_method?: string
+  }
+  action: 'view' | 'download' | 'denied'
+  attachment?: { id: string; filename: string }
+  first_at: string
+  last_at: string
+  count: number
+}
+
+export interface AccessRecordsResponse {
+  records: AccessRecord[]
+  since: string
+}
+
 export async function fetchSession(): Promise<{ viewer: { kind: string; member: Me } }> {
   return api('/api/v1/session')
 }
@@ -73,6 +94,10 @@ export async function fetchMembers(): Promise<MemberRef[]> {
 
 export async function fetchTicket(ref: string): Promise<MemberTicket> {
   return api(`/api/v1/tickets/${encodeURIComponent(ref)}`)
+}
+
+export async function fetchAccessRecords(ref: string): Promise<AccessRecordsResponse> {
+  return api(`/api/v1/tickets/${encodeURIComponent(ref)}/access-records`)
 }
 
 export function markTicketNotificationsRead(number: string): Promise<MarkNotificationsReadResult> {
@@ -390,6 +415,29 @@ export async function setMemberTriager(id: number, triager: boolean): Promise<vo
   })
 }
 
+/* ---------------- 反馈入口（#165，联系方式仅管理员） ---------------- */
+
+export interface IntakeAccount {
+  slug: string
+  name: string
+  template: string
+  active: boolean
+  url: string
+  department_contact: string
+}
+
+export async function fetchIntakes(): Promise<IntakeAccount[]> {
+  const body = await api('/api/v1/intakes')
+  return (body.intakes ?? []) as IntakeAccount[]
+}
+
+export async function updateIntakeContact(slug: string, contact: string): Promise<IntakeAccount> {
+  return api(`/api/v1/intakes/${encodeURIComponent(slug)}/contact`, {
+    method: 'PATCH',
+    body: JSON.stringify({ department_contact: contact }),
+  })
+}
+
 /* ---------------- 工单写操作 ---------------- */
 
 export async function replyTicket(
@@ -430,6 +478,28 @@ export async function assignTicket(
   })
 }
 
+export async function addCollaborator(number: string, member: string): Promise<{ collaborators: Collaborator[] }> {
+  return api(`/api/v1/tickets/${encodeURIComponent(number)}/collaborators`, {
+    method: 'POST',
+    body: JSON.stringify({ member }),
+    idempotencyKey: crypto.randomUUID(),
+  })
+}
+
+export async function removeCollaborator(number: string, memberID: number): Promise<{ collaborators: Collaborator[] }> {
+  return api(`/api/v1/tickets/${encodeURIComponent(number)}/collaborators/${memberID}`, {
+    method: 'DELETE',
+    idempotencyKey: crypto.randomUUID(),
+  })
+}
+
+export async function leaveCollaborators(number: string): Promise<{ collaborators: Collaborator[] }> {
+  return api(`/api/v1/tickets/${encodeURIComponent(number)}/collaborators/leave`, {
+    method: 'POST',
+    idempotencyKey: crypto.randomUUID(),
+  })
+}
+
 export async function closeTicket(
   number: string,
   body: { reason: string; duplicate_of?: string },
@@ -455,6 +525,10 @@ export interface GuestLink {
   created_by: { member?: { name: string }; agent?: { name: string } | null }
   created_at: string
   use_count?: number
+  status: 'unclaimed' | 'claimed' | 'access_code_locked' | 'revoked'
+  claim_name?: string
+  claimed_at?: string
+  device_count?: number
 }
 
 export interface CreatedGuestLink {
@@ -482,6 +556,15 @@ export async function createGuestLink(
 
 export async function revokeGuestLink(number: string, id: number): Promise<void> {
   await api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}`, { method: 'DELETE' })
+}
+
+export async function resetGuestAccessCode(
+  number: string,
+  id: number,
+): Promise<{ access_code: string }> {
+  return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}/reset-access-code`, {
+    method: 'POST',
+  })
 }
 
 /** 延期：valid_days（7/30/90）或 expires_at（YYYY-MM-DD，管满该日全天）二选一。 */

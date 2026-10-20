@@ -209,8 +209,8 @@ func Test访客修订说明会更新原因和轮次事件(t *testing.T) {
 		t.Fatalf("指派人收件箱原因 = %q, 想 访客修订了说明", got)
 	}
 	for _, it := range inbox.Items {
-		if it.Number == created.Number && (it.SinceSeq == nil || *it.SinceSeq != 5) {
-			t.Errorf("收件箱 since_seq = %v, 想 5（第二次修订事件）", it.SinceSeq)
+		if it.Number == created.Number && (it.SinceSeq == nil || *it.SinceSeq != 6) {
+			t.Errorf("收件箱 since_seq = %v, 想 6（第二次修订事件）", it.SinceSeq)
 		}
 	}
 

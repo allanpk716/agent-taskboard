@@ -41,6 +41,9 @@ func Test场景3改派与越权(t *testing.T) {
 
 	// 建一张派给李工的工单；赵工（不是指派人）尝试交付 → 403。
 	number := w.createHandoffTicket(t, w.wangA, "整理 Q3 质控规则对照表", "李工").Number
+	if res := addCollaborator(t, w.s, w.webWang, number, "赵工"); res.StatusCode != http.StatusCreated {
+		t.Fatalf("加入协作者状态码 = %d", res.StatusCode)
+	}
 	res = w.s.Do(t, w.zhaoA, http.MethodPost, "/api/v1/tickets/"+number+"/replies",
 		map[string]any{"body_md": "我顺手做了", "deliver": true}, nil)
 	if res.StatusCode != http.StatusForbidden {
@@ -156,6 +159,9 @@ func Test凭Markdown的下一步写出交付与验收请求(t *testing.T) {
 	}
 
 	// 不轮到的人（旁观成员）：指引去查收件箱。
+	if res := addCollaborator(t, w.s, w.webWang, number, "赵工"); res.StatusCode != http.StatusCreated {
+		t.Fatalf("把赵工加入协作状态码 = %d", res.StatusCode)
+	}
 	md = w.readMarkdown(t, w.zhaoA, "/api/v1/tickets/"+number+"?format=markdown")
 	for _, want := range []string{"现在不需要你行动", "GET /api/v1/inbox"} {
 		if !strings.Contains(md, want) {

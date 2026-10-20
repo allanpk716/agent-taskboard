@@ -15,12 +15,24 @@ export function eventText(e: TimelineEvent): string {
       return '创建了工单'
     case 'assigned':
       return e.from ? `改派：${e.from} → ${e.to}` : `指派给 ${e.to}`
+    case 'collaborator_added':
+      return `把 ${e.collaborator} 加入协作`
+    case 'collaborator_removed':
+      return `把 ${e.collaborator} 移出协作`
+    case 'collaborator_left':
+      return `${e.collaborator} 退出了协作`
     case 'label_added':
       return `打上了标签 ${e.label}`
     case 'label_removed':
       return `摘掉了标签 ${e.label}`
     case 'guest_link_created':
       return `创建了访客链接「${e.note}」`
+    case 'guest_link_claimed':
+      return `${e.actor?.author_name ?? '访客'} 认领了访客链接「${e.note}」`
+    case 'guest_access_locked':
+      return `访客链接「${e.note}」连续输错访问码，输码已锁定`
+    case 'guest_access_reset':
+      return `重置了访客链接「${e.note}」的访问码`
     case 'guest_link_revoked':
       return `撤销了访客链接「${e.note}」`
     case 'guest_link_extended':

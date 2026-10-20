@@ -33,11 +33,12 @@ import (
 type Server struct {
 	TB testing.TB
 
-	url     string
-	clk     *clock.Fake
-	dataDir string
-	webDir  string
-	srv     *server.Server
+	url               string
+	clk               *clock.Fake
+	dataDir           string
+	webDir            string
+	srv               *server.Server
+	guestDeviceTokens map[string]string
 }
 
 // Option 定制 Start 的行为。
@@ -152,12 +153,13 @@ func Start(t testing.TB, opts ...Option) *Server {
 	})
 
 	return &Server{
-		TB:      t,
-		url:     "http://" + ln.Addr().String(),
-		clk:     clk,
-		dataDir: dataDir,
-		webDir:  webDir,
-		srv:     srv,
+		TB:                t,
+		url:               "http://" + ln.Addr().String(),
+		clk:               clk,
+		dataDir:           dataDir,
+		webDir:            webDir,
+		srv:               srv,
+		guestDeviceTokens: map[string]string{},
 	}
 }
 
@@ -248,10 +250,33 @@ func (s *Server) AgentClient(token string) *http.Client {
 	return &http.Client{Transport: bearerTransport{token: token}}
 }
 
-// GuestClient 返回带 Bearer 访客链接密钥的 HTTP 客户端（模拟访客及其 Agent；
-// 访客链接 /g/<密钥> 的密钥直接作 Bearer token，#32）。
+// GuestClient 返回已认领设备的 Bearer 客户端（模拟访客浏览器）。首次拿到
+// 链接密钥时先走认领接口，之后复用返回的 tbgd_ 设备凭证。
 func (s *Server) GuestClient(key string) *http.Client {
-	return &http.Client{Transport: bearerTransport{token: key}}
+	if token, ok := s.guestDeviceTokens[key]; ok {
+		return &http.Client{Transport: bearerTransport{token}}
+	}
+	if strings.HasPrefix(key, "tbgd_") {
+		return &http.Client{Transport: bearerTransport{token: key}}
+	}
+	raw := &http.Client{Transport: bearerTransport{token: key}}
+	var claimed struct {
+		DeviceToken string `json:"device_token"`
+	}
+	res := s.Do(s.TB, raw, http.MethodPost, "/api/v1/guest-links/claim",
+		map[string]string{"author_name": "检验科 张三"}, &claimed)
+	if res.StatusCode != http.StatusCreated {
+		// 撤销、过期等链接本来就不能认领；保留原始密钥，让后续请求验证其状态。
+		return raw
+	}
+	s.guestDeviceTokens[key] = claimed.DeviceToken
+	return &http.Client{Transport: bearerTransport{token: claimed.DeviceToken}}
+}
+
+// GuestCookieClient 返回只携带访客设备 cookie 的浏览器客户端；cookie 由认领、
+// 访问码进入或入口提交接口下发。
+func (s *Server) GuestCookieClient(token string) *http.Client {
+	return &http.Client{Transport: guestCookieTransport{token: token}}
 }
 
 // CreateGuestLink 用成员凭证为 ref 指向的工单创建一条访客链接，返回响应结构
@@ -416,6 +441,16 @@ type bearerTransport struct {
 func (t bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	clone := req.Clone(req.Context())
 	clone.Header.Set("Authorization", "Bearer "+t.token)
+	return http.DefaultTransport.RoundTrip(clone)
+}
+
+type guestCookieTransport struct {
+	token string
+}
+
+func (t guestCookieTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.Header.Set("Cookie", "tb_guest_device="+t.token)
 	return http.DefaultTransport.RoundTrip(clone)
 }
 

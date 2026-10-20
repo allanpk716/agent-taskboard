@@ -19,13 +19,13 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
 )
 
-// keyFrom 取出提交响应里访客链接的密钥（/g/<密钥>，直接作 Bearer）。
+// keyFrom 取出提交时即认领的设备凭证（入口提交没有未认领阶段）。
 func keyFrom(t testing.TB, submitted intakeSubmitBody) string {
 	t.Helper()
-	if !strings.HasPrefix(submitted.GuestLink.URL, "/g/") {
-		t.Fatalf("提交响应里的访客链接 = %q, 想以 /g/ 开头", submitted.GuestLink.URL)
+	if !strings.HasPrefix(submitted.DeviceToken, "tbgd_") {
+		t.Fatalf("提交响应里的设备凭证 = %q, 想以 tbgd_ 开头", submitted.DeviceToken)
 	}
-	return strings.TrimPrefix(submitted.GuestLink.URL, "/g/")
+	return submitted.DeviceToken
 }
 
 // listItem 是列表项的摘要结构。
@@ -227,8 +227,10 @@ func newQueryWorld(t testing.TB) *queryWorld {
 	t.Helper()
 	s := tbtest.Start(t)
 	s.CreateAdmin("王工", "secret-pass")
-	s.CreateMember("李工", "secret-pass")
-	s.CreateMember("赵工", "secret-pass")
+	// 查询场景断言的是全局列表/计数语义；把查询者设为管理员，避免旧
+	// “成员可见全部”假设影响可见范围测试。
+	s.CreateAdmin("李工", "secret-pass")
+	s.CreateAdmin("赵工", "secret-pass")
 	webWang := s.Login("王工", "secret-pass")
 	webLi := s.Login("李工", "secret-pass")
 	webZhao := s.Login("赵工", "secret-pass")
@@ -1211,23 +1213,23 @@ func Test时间线按本人Agent筛选(t *testing.T) {
 		return body
 	}
 	member := read("?actor_kind=member")
-	if len(member.Events) != 5 { // created、assigned、guest_link_created、张三、王工
-		t.Fatalf("member 事件 = %d 条（%+v）, 想 5", len(member.Events), member.Events)
+	if len(member.Events) != 6 { // created、assigned、guest_link_created、claim、张三、王工
+		t.Fatalf("member 事件 = %d 条（%+v）, 想 6", len(member.Events), member.Events)
 	}
-	if member.Cursor != 5 {
-		t.Errorf("member cursor = %d, 想 5（跳过被筛掉的 Agent 事件）", member.Cursor)
+	if member.Cursor != 6 {
+		t.Errorf("member cursor = %d, 想 6（跳过被筛掉的 Agent 事件）", member.Cursor)
 	}
 	agent := read("?actor_kind=agent")
 	if len(agent.Events) != 1 || agent.Events[0].BodyMD != "（Agent 顺带查了批号记录，暂无异常。）" {
 		t.Fatalf("agent 事件 = %+v, 想 1 条 Agent 回复", agent.Events)
 	}
-	if agent.Cursor != 6 {
-		t.Errorf("agent cursor = %d, 想 6", agent.Cursor)
+	if agent.Cursor != 7 {
+		t.Errorf("agent cursor = %d, 想 7", agent.Cursor)
 	}
 	// 增量：从 member cursor 之后继续拿 Agent 的事件。
-	inc := read("?actor_kind=agent&after=5")
-	if len(inc.Events) != 1 || inc.Cursor != 6 {
-		t.Errorf("after=5 的 agent 增量 = %+v", inc.Events)
+	inc := read("?actor_kind=agent&after=6")
+	if len(inc.Events) != 1 || inc.Cursor != 7 {
+		t.Errorf("after=6 的 agent 增量 = %+v", inc.Events)
 	}
 	// 非法取值 422。
 	res := w.s.Do(t, w.webWang, http.MethodGet, "/api/v1/tickets/"+w.fb+"/timeline?actor_kind=x", nil, nil)

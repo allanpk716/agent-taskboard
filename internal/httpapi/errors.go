@@ -46,6 +46,12 @@ const (
 	CodeAlreadyAssigned      = "already_assigned"        // 改派给当前指派人
 	CodeAssigneeDeactivated  = "assignee_deactivated"    // 指派对象的账号已停用（#42 评审修正）
 
+	// #158：协作者。
+	CodeCollaboratorNotAllowed  = "collaborator_not_allowed"
+	CodeAlreadyCollaborator     = "already_collaborator"
+	CodeNotCollaborator         = "not_collaborator"
+	CodeCollaboratorDeactivated = "collaborator_deactivated"
+
 	// #31：标签、字典与别名。
 	CodeMembersOnly        = "members_only"         // 仅成员可用（访客 403）
 	CodeAdminRequired      = "admin_required"       // 标签治理仅管理员
@@ -80,6 +86,12 @@ const (
 	// #32：访客链接与访客视角。
 	CodeLinkRevoked         = "link_revoked"           // 访客链接已被撤销（401，即时生效）
 	CodeLinkExpired         = "link_expired"           // 访客链接已过期（401，即时生效）
+	CodeLinkUnclaimed       = "link_unclaimed"         // 访客链接尚未认领（401）
+	CodeLinkClaimed         = "link_claimed"           // 访客链接已被认领，链接密钥不再可用
+	CodeClaimNameRequired   = "claim_name_required"    // 认领访客链接时称呼为空
+	CodeAccessCodeRequired  = "access_code_required"   // 凭访问码进入时访问码为空
+	CodeAccessCodeInvalid   = "access_code_invalid"    // 访问码不正确
+	CodeAccessCodeLocked    = "access_code_locked"     // 连续输错后访问码已锁定
 	CodeNoteRequired        = "note_required"          // 创建访客链接缺备注
 	CodeInvalidValidDays    = "invalid_valid_days"     // 有效期不是 7/30/90 或与 expires_at 并存
 	CodeInvalidExpiresAt    = "invalid_expires_at"     // expires_at 不是合法的将来时刻

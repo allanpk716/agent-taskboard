@@ -34,6 +34,9 @@ func (a *API) replyTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if !ok {
 		return
 	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+		return
+	}
 	var req replyRequest
 	if !decodeJSON(w, r, &req, `{"body_md": "…"}`) {
 		return
@@ -77,6 +80,9 @@ type reviseTicketRequest struct {
 func (a *API) reviseTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	viewer, ok := a.viewerFromRequest(w, r)
 	if !ok {
+		return
+	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
 		return
 	}
 	var req reviseTicketRequest
@@ -130,6 +136,9 @@ func (a *API) closeTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if !ok {
 		return
 	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+		return
+	}
 	var req closeTicketRequest
 	if !decodeJSON(w, r, &req, `{"reason": "done|wontfix|duplicate", "duplicate_of?": "编号或序号"}`) {
 		return
@@ -170,6 +179,9 @@ func (a *API) reopenTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	// 重新开启仅限成员；访客 403 members_only。
 	viewer, ok := a.memberFromRequest(w, r)
 	if !ok {
+		return
+	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
 		return
 	}
 	full, err := a.tickets.Reopen(r.Context(), viewer, ref)
@@ -218,6 +230,9 @@ func (a *API) ticketTimeline(w http.ResponseWriter, r *http.Request, ref string)
 	full, ok := a.loadTicketForViewer(w, r, viewer, ref)
 	if !ok {
 		return
+	}
+	if err := a.accessRecords.RecordView(r.Context(), full.Seq, viewer); err != nil {
+		panic(err)
 	}
 	isGuest := viewer.Kind == identity.ViewerGuest
 	visible := func(e tickets.Event) bool {
@@ -315,6 +330,9 @@ type assignTicketView struct {
 func (a *API) assignTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	viewer, ok := a.viewerFromRequest(w, r)
 	if !ok {
+		return
+	}
+	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
 		return
 	}
 	if viewer.Kind != identity.ViewerMember {

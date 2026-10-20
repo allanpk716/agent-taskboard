@@ -7,28 +7,35 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, ApiError } from '../api'
 import type { MemberTicket } from './memberApi'
 import {
+  addCollaborator,
   assignTicket,
   changeLabels,
   closeTicket,
   createGuestLink,
   extendGuestLink,
+  fetchAccessRecords,
   fetchGuestLinks,
   fetchMembers,
   fetchTicket,
+  leaveCollaborators,
   markTicketNotificationsRead,
   reopenTicket,
   replyTicket,
+  removeCollaborator,
+  resetGuestAccessCode,
   revokeGuestLink,
   uploadMemberAttachment,
   type GuestLink,
   type CreatedGuestLink,
+  type AccessRecordsResponse,
   type Me,
   type MemberRef,
+  type Collaborator,
 } from './memberApi'
 import { BriefBubble, EventLine, ReplyBubble } from '../shared/conversation'
 import { DimensionSelect } from '../guest/DimensionSelect'
 import { DeactivatedBadge, Lightbox } from '../shared/widgets'
-import { absoluteUrl, authorName, closeReasonText, fmtLinkExpiry, linkExpired } from '../shared/format'
+import { absoluteUrl, authorName, closeReasonText, fmtBeijing, fmtLinkExpiry, fmtShort, linkExpired } from '../shared/format'
 import { Confirm, Modal, copyText, invalidate, nav, toast, useLocationSearch } from './ui'
 import { HandoffDialog } from './HandoffDialog'
 import { LabelChips, chipClass, turnLabel } from './TicketsPage'
@@ -248,6 +255,146 @@ function AssignDialog({
   )
 }
 
+function CollaboratorsDialog({
+  ticket,
+  members,
+  me,
+  onChanged,
+  onClose,
+}: {
+  ticket: MemberTicket
+  members: MemberRef[]
+  me?: Me
+  onChanged: () => void
+  onClose: () => void
+}) {
+  const [choice, setChoice] = useState('')
+  const [err, setErr] = useState<string | null>(null)
+  const collaborators = ticket.collaborators ?? []
+  const blocked = new Set<number>([
+    ticket.creator.member?.id ?? 0,
+    ticket.assignee?.member?.id ?? 0,
+    ...collaborators.map((c) => c.id),
+  ])
+  const candidates = members.filter((m) => m.active !== false && !blocked.has(m.id))
+
+  function handle(e: unknown, fallback: string) {
+    setErr(e instanceof ApiError ? `${e.code}：${e.message}` : fallback)
+  }
+
+  async function add() {
+    if (!choice) return
+    try {
+      await addCollaborator(ticket.number, choice)
+      setChoice('')
+      setErr(null)
+      onChanged()
+    } catch (e) {
+      handle(e, '加入协作者失败，请重试')
+    }
+  }
+
+  async function remove(c: Collaborator) {
+    try {
+      await removeCollaborator(ticket.number, c.id)
+      setErr(null)
+      onChanged()
+    } catch (e) {
+      handle(e, '移除协作者失败，请重试')
+    }
+  }
+
+  async function leave() {
+    try {
+      await leaveCollaborators(ticket.number)
+      setErr(null)
+      onChanged()
+      onClose()
+    } catch (e) {
+      handle(e, '退出协作失败，请重试')
+    }
+  }
+
+  return (
+    <Modal title={`协作者 · ${ticket.number}`} onClose={onClose}>
+      <table className="mini-tbl">
+        <tbody>
+          {collaborators.length === 0 && (
+            <tr>
+              <td className="hint">还没有协作者</td>
+            </tr>
+          )}
+          {collaborators.map((c) => (
+            <tr key={c.id} data-collaborator={c.id}>
+              <td>
+                {c.name}
+                {c.deactivated && <DeactivatedBadge />}
+              </td>
+              <td className="hint">{new Date(c.added_at).toLocaleDateString('zh-CN')}</td>
+              <td>
+                {c.id === me?.id ? (
+                  <button className="btn sm ghost" onClick={() => void leave()}>
+                    退出
+                  </button>
+                ) : (
+                  ticket.viewer.can.manage_collaborators && (
+                    <button
+                      className="btn sm ghost"
+                      aria-label={`移除 ${c.name}`}
+                      onClick={() => {
+                        void remove(c)
+                      }}
+                    >
+                      移除
+                    </button>
+                  )
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {ticket.viewer.can.manage_collaborators && (
+        <>
+          <div className="inrow top-gap">
+            <select
+              className="sel"
+              aria-label="选择成员"
+              value={choice}
+              onChange={(e) => setChoice(e.target.value)}
+            >
+              <option value="">— 选择成员 —</option>
+              {candidates.map((m) => (
+                <option key={m.id} value={m.name}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+            <button className="btn" disabled={!choice} onClick={() => void add()}>
+              加入
+            </button>
+          </div>
+          <div className="hint">创建者、指派人和管理员可以加人；未指派时初筛人也可以加人。</div>
+        </>
+      )}
+      {ticket.viewer.can.leave_collaborators && !ticket.viewer.can.manage_collaborators && (
+        <div className="inrow top-gap">
+          <button className="btn ghost" onClick={() => void leave()}>
+            退出协作
+          </button>
+        </div>
+      )}
+      {err && <div className="errbox">{err}</div>}
+      <div className="mrow">
+        <span className="sp" />
+        <button className="btn ghost" onClick={onClose}>
+          完成
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
 /* ---------------- 弹窗：访客链接 ---------------- */
 
 function LinksDialog({
@@ -270,6 +417,7 @@ function LinksDialog({
   const [date, setDate] = useState('') // 「指定日期」写法的到期日（YYYY-MM-DD，管满该日全天）
   const [canEdit, setCanEdit] = useState(false)
   const [created, setCreated] = useState<{ url: string } | null>(null)
+  const [resetCode, setResetCode] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [extendDates, setExtendDates] = useState<Record<number, string>>({}) // 每条链接「延期到该日」的日期
 
@@ -292,6 +440,7 @@ function LinksDialog({
               can_edit_brief: canEdit,
             })
       setCreated({ url: link.url })
+      setResetCode(null)
       setErr(null)
       setNote('')
       onCreated(link)
@@ -327,6 +476,15 @@ function LinksDialog({
                     {fmtLinkExpiry(g.expires_at)}
                     {g.revoked_at ? ' · 已撤销' : ''}
                     {!g.revoked_at && linkExpired(g.expires_at) ? ' · 已过期' : ''}
+                    <div className="mini">
+                      {g.status === 'claimed'
+                        ? `已认领 · ${g.claim_name ?? ''} · ${g.claimed_at ? fmtShort(g.claimed_at) : ''} · ${g.device_count ?? 0} 台设备`
+                        : g.status === 'access_code_locked'
+                          ? `已认领 · ${g.claim_name ?? ''} · 输码已锁定`
+                        : g.status === 'revoked' || g.revoked_at
+                          ? '已认领状态不可用'
+                          : '未认领'}
+                    </div>
                   </td>
                   <td>
                     {dead ? (
@@ -370,6 +528,23 @@ function LinksDialog({
                         >
                           延期到该日
                         </button>{' '}
+                        {g.status !== 'unclaimed' && (
+                          <button
+                            className="btn sm ghost"
+                            onClick={() => {
+                              void resetGuestAccessCode(ticket.number, g.id)
+                                .then((result) => {
+                                  setResetCode(result.access_code)
+                                  toast('✓ 已重置访问码，旧设备已退出')
+                                  void reload()
+                                  onChanged()
+                                })
+                                .catch((e) => toast(e instanceof ApiError ? e.message : '重置访问码失败'))
+                            }}
+                          >
+                            重置访问码
+                          </button>
+                        )}{' '}
                         <button
                           className="btn sm ghost"
                           onClick={() => {
@@ -432,6 +607,14 @@ function LinksDialog({
           >
             复制链接
           </button>
+        </div>
+      )}
+      {resetCode && (
+        <div className="okbox">
+          ✓ 新访问码只显示这一次，请私下转给访客本人。
+          <div className="linkbox" data-reset-code>
+            {resetCode}
+          </div>
         </div>
       )}
       <div className="mrow">
@@ -528,11 +711,48 @@ function remainingDays(iso: string): number {
   return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000))
 }
 
+function AccessRecordsPanel({ data }: { data: AccessRecordsResponse | null }) {
+  return (
+    <section aria-label="访问记录">
+      <div className="sec-t">访问记录</div>
+      {data === null ? (
+        <div className="hint">加载中…</div>
+      ) : data.records.length === 0 ? (
+        <div className="hint">自 {data.since} 起记录</div>
+      ) : (
+        <ol className="access-list">
+          {data.records.map((r, i) => (
+            <li key={`${r.first_at}-${i}`}>
+              <div className="access-title">
+                <b>{r.actor.name}</b>
+                {r.actor.kind === 'admin' && <span className="badge mini-admin">管理员</span>}
+              </div>
+              <div className="access-meta">
+                {r.action === 'view' && `查看详情 · ${r.count} 次`}
+                {r.action === 'download' && `下载附件 ${r.attachment?.filename ?? ''}`}
+                {r.action === 'denied' &&
+                  `尝试访问被拒（${r.actor.entry_method === 'expired' ? '链接已过期' : '链接已撤销'}）`}
+              </div>
+              <div className="access-meta">
+                {r.action === 'view' && r.count > 1
+                  ? `${fmtBeijing(r.first_at)} 至 ${fmtBeijing(r.last_at)}`
+                  : fmtBeijing(r.first_at)}
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  )
+}
+
 function TicketInfoColumn({
   ticket,
   links,
   knownUrls,
+  accessRecords,
   onAssign,
+  onCollaborators,
   onLabels,
   onLinks,
   onLabelToggle,
@@ -540,7 +760,9 @@ function TicketInfoColumn({
   ticket: MemberTicket
   links: GuestLink[] | null
   knownUrls: Record<number, string>
+  accessRecords: AccessRecordsResponse | null
   onAssign: () => void
+  onCollaborators: () => void
   onLabels: () => void
   onLinks: () => void
   onLabelToggle: (label: string) => void
@@ -553,6 +775,24 @@ function TicketInfoColumn({
         <div className="ival">
           <span className="badge kind">{ticket.kind === 'task' ? '任务' : '反馈'}</span>
           <span>{open ? turnLabel(ticket.waiting_on, ticket.viewer.your_turn) : '已关闭'}</span>
+        </div>
+      </section>
+      <section>
+        <div className="sec-t">协作者</div>
+        <div className="ival stacked">
+          {(ticket.collaborators ?? []).length === 0 ? (
+            <span className="hint">暂无</span>
+          ) : (
+            (ticket.collaborators ?? []).map((c) => (
+              <span key={c.id}>
+                {c.name}
+                {c.deactivated && <DeactivatedBadge />}
+              </span>
+            ))
+          )}
+          <button className="btn sm ghost" onClick={onCollaborators}>
+            管理
+          </button>
         </div>
       </section>
       <section>
@@ -609,6 +849,7 @@ function TicketInfoColumn({
           })
         )}
       </section>
+      <AccessRecordsPanel data={accessRecords} />
     </aside>
   )
 }
@@ -760,11 +1001,12 @@ export function TicketDetailPage({
   const [error, setError] = useState<string | null>(null)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const [actor, setActor] = useState<ActorFilter>('all')
-  const [dialog, setDialog] = useState<'label' | 'brief' | 'assign' | 'links' | 'close' | 'reopen' | 'agent' | 'share' | null>(null)
+  const [dialog, setDialog] = useState<'label' | 'brief' | 'assign' | 'collaborators' | 'links' | 'close' | 'reopen' | 'agent' | 'share' | null>(null)
   const [mobileMenu, setMobileMenu] = useState(false)
   const [members, setMembers] = useState<MemberRef[]>([])
   const [guestLinks, setGuestLinks] = useState<GuestLink[] | null>(null)
   const [knownLinkUrls, setKnownLinkUrls] = useState<Record<number, string>>({})
+  const [accessRecords, setAccessRecords] = useState<AccessRecordsResponse | null>(null)
   const [allInfoOpen, setAllInfoOpen] = useState(false)
   const markedRef = useRef<string | null>(null)
 
@@ -778,7 +1020,13 @@ export function TicketDetailPage({
         void markTicketNotificationsRead(got.number).catch(() => {})
       }
     } catch (e) {
-      setError(e instanceof ApiError ? `${e.message}（${e.code}）` : '读取工单失败')
+      setError(
+        e instanceof ApiError && e.code === 'ticket_not_found'
+          ? '找不到这张工单，或你没有权限查看'
+          : e instanceof ApiError
+            ? `${e.message}（${e.code}）`
+            : '读取工单失败',
+      )
     }
   }, [ticketRef])
   useEffect(() => {
@@ -801,6 +1049,12 @@ export function TicketDetailPage({
   useEffect(() => {
     void reloadGuestLinks()
   }, [reloadGuestLinks, tier])
+
+  useEffect(() => {
+    fetchAccessRecords(ticketRef)
+      .then(setAccessRecords)
+      .catch(() => setAccessRecords({ records: [], since: '' }))
+  }, [ticketRef])
 
   function changed() {
     void load()
@@ -1024,6 +1278,15 @@ export function TicketDetailPage({
               <b>{closed ? '无（已关闭）' : turnLabel(ticket.waiting_on, ticket.viewer.your_turn)}</b>
             </div>
             <div className="kv">
+              <span>协作者</span>
+              <span>
+                {(ticket.collaborators ?? []).map((c) => c.name).join('、') || '暂无'}{' '}
+                <button className="btn sm ghost" onClick={() => setDialog('collaborators')}>
+                  管理
+                </button>
+              </span>
+            </div>
+            <div className="kv">
               <span>访客链接</span>
               <span>
                 <button className="btn sm ghost" onClick={() => setDialog('links')}>
@@ -1045,6 +1308,7 @@ export function TicketDetailPage({
                 )}
               </span>
             </div>
+            <AccessRecordsPanel data={accessRecords} />
           </details>
         )}
         <div className="actrow" role="region" aria-label="工单操作">
@@ -1065,6 +1329,11 @@ export function TicketDetailPage({
           <button className="btn sm ghost" onClick={() => setDialog('links')}>
             🔗 访客链接
           </button>
+          {(can.manage_collaborators || can.leave_collaborators) && (
+            <button className="btn sm ghost" onClick={() => setDialog('collaborators')}>
+              🤝 协作者
+            </button>
+          )}
           {open ? (
             <button className="btn sm ghost" onClick={() => setDialog('close')}>
               ✔ 关闭
@@ -1080,6 +1349,7 @@ export function TicketDetailPage({
             <span>{ticket.kind === 'task' ? '任务' : '反馈'}</span>
             <span>{open ? turnLabel(ticket.waiting_on, ticket.viewer.your_turn) : '已关闭'}</span>
             <span>指派 {ticket.assignee?.member?.name ?? '未指派'}</span>
+            <span>{`协作者 ${(ticket.collaborators ?? []).length} 人`}</span>
             <span>{(ticket.labels ?? []).join('、') || '无标签'}</span>
             <span>{`访客链接 ${guestLinks?.length ?? 0} 条`}</span>
             <button type="button" className="btn sm ghost" onClick={() => setAllInfoOpen((v) => !v)}>
@@ -1094,7 +1364,9 @@ export function TicketDetailPage({
           ticket={ticket}
           links={guestLinks}
           knownUrls={knownLinkUrls}
+          accessRecords={accessRecords}
           onAssign={() => setDialog('assign')}
+          onCollaborators={() => setDialog('collaborators')}
           onLabels={() => setDialog('label')}
           onLinks={() => setDialog('links')}
           onLabelToggle={toggleDetailLabel}
@@ -1108,7 +1380,9 @@ export function TicketDetailPage({
             ticket={ticket}
             links={guestLinks}
             knownUrls={knownLinkUrls}
+            accessRecords={accessRecords}
             onAssign={() => setDialog('assign')}
+            onCollaborators={() => setDialog('collaborators')}
             onLabels={() => setDialog('label')}
             onLinks={() => setDialog('links')}
             onLabelToggle={toggleDetailLabel}
@@ -1122,6 +1396,15 @@ export function TicketDetailPage({
       {dialog === 'brief' && <BriefEditDialog ticket={ticket} onChanged={changed} onClose={() => setDialog(null)} />}
       {dialog === 'assign' && (
         <AssignDialog
+          ticket={ticket}
+          members={members}
+          me={me}
+          onChanged={changed}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === 'collaborators' && (
+        <CollaboratorsDialog
           ticket={ticket}
           members={members}
           me={me}

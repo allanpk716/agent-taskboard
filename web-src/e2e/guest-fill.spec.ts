@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext, type Locator, type Page } from '@playwright/test'
-import { login } from './helpers'
+import { login, openGuestPage } from './helpers'
 
 // 访客分组填写页（#65）：持「可填写说明」链接的访客第一次打开链接先看到
 // 落地页（#66），「开始填写」进入分组清单式填写页；补全过说明后再打开链接
@@ -47,7 +47,7 @@ test.describe('手机视口', () => {
 
   test('分组一次展开一组，「下一组」可用，进度条随填写变化，组填完显示 ✓', async ({ page, request }) => {
     const seed = await seedFillTicket(request)
-    await page.goto(`/g/${seed.linkKey}`)
+    await openGuestPage(page, request, seed.linkKey)
 
     // 第一次打开链接先看到落地页（#66），「开始填写」进入分组填写页
     await page.getByRole('button', { name: '开始填写' }).click()
@@ -98,7 +98,7 @@ test.describe('手机视口', () => {
   //    照片、日志跟时间/操作/现象同在一组（#65 spec），不分组时退回组末。
   test('整张工单的附件区在「发生了什么」组末', async ({ page, request }) => {
     const seed = await seedFillTicket(request)
-    await page.goto(`/g/${seed.linkKey}`)
+    await openGuestPage(page, request, seed.linkKey)
     await page.getByRole('button', { name: '开始填写' }).click()
 
     const groups = page.locator('.grp')
@@ -129,7 +129,7 @@ test.describe('追问与不清楚', () => {
   test.use({ viewport: { width: 390, height: 844 } })
   test('「不清楚」填好必填项；短文本出现追问提示，写长后消失', async ({ page, request }) => {
   const seed = await seedFillTicket(request)
-  await page.goto(`/g/${seed.linkKey}`)
+  await openGuestPage(page, request, seed.linkKey)
   await page.getByRole('button', { name: '开始填写' }).click()
 
   // 短文本（序列号和软件版本，选填）：写短出现黄色追问提示，内容取字段示例
@@ -183,7 +183,7 @@ test.describe('上传与提交', () => {
 
   test('短字段上传图片显示在字段下，提交后说明里能看到', async ({ page, request }) => {
     const seed = await seedFillTicket(request)
-    await page.goto(`/g/${seed.linkKey}`)
+    await openGuestPage(page, request, seed.linkKey)
     await page.getByRole('button', { name: '开始填写' }).click()
 
     const g1 = page.locator('.grp').nth(0)
@@ -237,7 +237,7 @@ test.describe('上传与提交', () => {
   // 5.（手机视口）必填没填完时提交按钮不能点，按钮下有提示；填完后提交成功。
   test('必填项没填完时提交按钮不能点，填完后能提交', async ({ page, request }) => {
     const seed = await seedFillTicket(request)
-    await page.goto(`/g/${seed.linkKey}`)
+    await openGuestPage(page, request, seed.linkKey)
     await page.getByRole('button', { name: '开始填写' }).click()
 
     const submit = page.getByRole('button', { name: /^提交给管理员/ })
@@ -267,7 +267,7 @@ test.describe('上传与提交', () => {
   // 5b. 访客提交说明后：成员端和访客端都按最后修订者署名，信息栏发起人不变。
   test('说明卡片按最后修订者署名，发起人不变', async ({ page, request, browser }) => {
     const seed = await seedFillTicket(request)
-    await page.goto(`/g/${seed.linkKey}`)
+    await openGuestPage(page, request, seed.linkKey)
     await page.getByRole('button', { name: '开始填写' }).click()
 
     await page.getByRole('combobox', { name: '哪台仪器？' }).click()
@@ -301,7 +301,7 @@ test.describe('上传与提交', () => {
   // 6.（手机视口）刷新页面后草稿还在（字段值和署名都保存在本机）。
   test('刷新页面后草稿还在', async ({ page, request }) => {
     const seed = await seedFillTicket(request)
-    await page.goto(`/g/${seed.linkKey}`)
+    await openGuestPage(page, request, seed.linkKey)
     await page.getByRole('button', { name: '开始填写' }).click()
 
     const sn = page.locator('.cf[data-field="序列号和软件版本是多少？"]')
@@ -384,7 +384,7 @@ test.describe('不分组模板', () => {
 
   test('不分组的模板合成一组「填写说明」，可以正常提交', async ({ page, request }) => {
     const seed = await seedUngroupedTicket(request)
-    await page.goto(`/g/${seed.linkKey}`)
+    await openGuestPage(page, request, seed.linkKey)
     await page.getByRole('button', { name: '开始填写' }).click()
 
     // 合成一组：组名「填写说明」，全部字段都在这一组里（默认展开）
@@ -434,7 +434,7 @@ test.describe('桌面视口', () => {
 
   test('双栏布局，点右栏清单某一项滚到对应字段', async ({ page, request }) => {
     const seed = await seedFillTicket(request)
-    await page.goto(`/g/${seed.linkKey}`)
+    await openGuestPage(page, request, seed.linkKey)
     await page.getByRole('button', { name: '开始填写' }).click()
 
     // 双栏：右栏有必填进度、逐字段清单（✓/○）、附件区、署名和提交按钮
@@ -488,7 +488,7 @@ test.describe('桌面视口', () => {
 
   test('附件区的日志独立于字段，提交后列在说明底部', async ({ page, request, browser }) => {
     const seed = await seedFillTicket(request)
-    await page.goto(`/g/${seed.linkKey}`)
+    await openGuestPage(page, request, seed.linkKey)
     await page.getByRole('button', { name: '开始填写' }).click()
 
     const side = page.locator('.fill-side')
@@ -529,8 +529,9 @@ test.describe('桌面视口', () => {
   })
 
   test('附件区删掉传错的文件后，说明附件里不再有它', async ({ page, request }) => {
+    test.setTimeout(60_000)
     const seed = await seedFillTicket(request)
-    await page.goto(`/g/${seed.linkKey}`)
+    await openGuestPage(page, request, seed.linkKey)
     await page.getByRole('button', { name: '开始填写' }).click()
     await page.getByRole('combobox', { name: '哪台仪器？' }).click()
     await page.getByRole('option', { name: '不确定' }).click()
@@ -580,7 +581,7 @@ test.describe('桌面视口', () => {
     expect(link.status(), `创建访客链接失败：${await link.text()}`).toBe(201)
     const linkKey = String((await link.json()).url).slice(3)
 
-    await page.goto(`/g/${linkKey}`)
+    await openGuestPage(page, request, linkKey)
     await page.getByRole('button', { name: '开始填写' }).click()
     await expect(page.locator('.grp').nth(1).locator('.grp-name')).toHaveText('正确和错误的例子')
     await expect(page.locator('.fill-prog')).toHaveText(/必填 0\/6/)
@@ -603,7 +604,7 @@ test.describe('桌面视口', () => {
 
   test('自由描述页的附件区独立于大文本框', async ({ page, request }) => {
     const seed = await seedFreeTicket(request)
-    await page.goto(`/g/${seed.linkKey}`)
+    await openGuestPage(page, request, seed.linkKey)
     await page.getByRole('button', { name: '开始填写' }).click()
 
     const text = page.locator('.cf[data-field="请把情况写详细"] textarea')

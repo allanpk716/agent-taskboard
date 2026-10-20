@@ -171,11 +171,6 @@ func (a *API) attachmentProjection(ctx context.Context, full tickets.Full, viewe
 	views := make([]attachmentView, 0, len(atts))
 	for _, att := range atts {
 		url := attachmentBasePath(att.Ref()) + url.PathEscape(att.Filename)
-		if viewer.Kind == identity.ViewerGuest {
-			if url, err = a.atts.GuestURL(ctx, att, viewer.GuestLink.ID); err != nil {
-				return nil, attachmentUsage{}, err
-			}
-		}
 		views = append(views, attachmentView{
 			ID: att.Ref(), Filename: att.Filename, Size: att.Size, URL: url, AttachedTo: att.AttachedTo,
 		})

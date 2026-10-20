@@ -56,6 +56,12 @@ func (a *API) handleIntakeRef(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.submitToIntake(w, r, slug)
+	case "contact":
+		if r.Method != http.MethodPatch {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "编辑部门联系方式用 PATCH")
+			return
+		}
+		a.updateIntakeContact(w, r, slug)
 	case "deactivate":
 		if r.Method != http.MethodPost {
 			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "停用入口用 POST")
@@ -76,9 +82,14 @@ func (a *API) handleIntakeRef(w http.ResponseWriter, r *http.Request) {
 
 // intakeCreateRequest 是 POST /api/v1/intakes 的请求体。
 type intakeCreateRequest struct {
-	Slug     string `json:"slug"`
-	Name     string `json:"name"`
-	Template string `json:"template"`
+	Slug              string `json:"slug"`
+	Name              string `json:"name"`
+	Template          string `json:"template"`
+	DepartmentContact string `json:"department_contact"`
+}
+
+type intakeContactRequest struct {
+	DepartmentContact string `json:"department_contact"`
 }
 
 // intakeRotateRequest 是 POST /api/v1/intakes/{slug}/rotate 的请求体：新 slug。
@@ -96,14 +107,15 @@ type intakeSubmitRequest struct {
 
 // intakeSummaryView 是入口的管理侧视图（列表项）。
 type intakeSummaryView struct {
-	Slug          string     `json:"slug"`
-	Name          string     `json:"name"`
-	Template      string     `json:"template"`
-	Active        bool       `json:"active"`
-	URL           string     `json:"url"`
-	DeactivatedAt *string    `json:"deactivated_at,omitempty"`
-	CreatedBy     authorView `json:"created_by"`
-	CreatedAt     string     `json:"created_at"`
+	Slug              string     `json:"slug"`
+	Name              string     `json:"name"`
+	Template          string     `json:"template"`
+	DepartmentContact string     `json:"department_contact"`
+	Active            bool       `json:"active"`
+	URL               string     `json:"url"`
+	DeactivatedAt     *string    `json:"deactivated_at,omitempty"`
+	CreatedBy         authorView `json:"created_by"`
+	CreatedAt         string     `json:"created_at"`
 }
 
 // intakeTemplateView 是匿名读取时回显的模板（始终最新版本）；字段带分组序号，
@@ -121,11 +133,12 @@ type intakeTemplateView struct {
 
 // intakePublicView 是 GET /api/v1/intakes/{slug}（匿名）的响应。
 type intakePublicView struct {
-	Slug     string             `json:"slug"`
-	Name     string             `json:"name"`
-	URL      string             `json:"url"`
-	Kind     string             `json:"kind"`
-	Template intakeTemplateView `json:"template"`
+	Slug              string             `json:"slug"`
+	Name              string             `json:"name"`
+	URL               string             `json:"url"`
+	Kind              string             `json:"kind"`
+	Template          intakeTemplateView `json:"template"`
+	DepartmentContact string             `json:"department_contact"`
 }
 
 // intakeTicketView 是提交响应里的工单摘要。
@@ -146,7 +159,11 @@ type intakeSubmitView struct {
 		ExpiresAt    string `json:"expires_at"`
 		CanEditBrief bool   `json:"can_edit_brief"`
 	} `json:"guest_link"`
-	Next string `json:"next"`
+	Next              string    `json:"next"`
+	DeviceToken       string    `json:"device_token"`
+	AccessCode        string    `json:"access_code"`
+	ClaimedAt         time.Time `json:"claimed_at"`
+	DepartmentContact string    `json:"department_contact"`
 }
 
 func (a *API) createIntake(w http.ResponseWriter, r *http.Request) {
@@ -161,6 +178,7 @@ func (a *API) createIntake(w http.ResponseWriter, r *http.Request) {
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
 		in, err := a.tickets.CreateIntake(r.Context(), viewer, tickets.IntakeSpec{
 			Slug: req.Slug, Name: req.Name, TemplateKey: req.Template,
+			DepartmentContact: req.DepartmentContact,
 		})
 		if err != nil {
 			a.writeIntakesError(w, r, err)
@@ -168,6 +186,24 @@ func (a *API) createIntake(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusCreated, newIntakeSummaryView(in))
 	})
+}
+
+func (a *API) updateIntakeContact(w http.ResponseWriter, r *http.Request, slug string) {
+	if _, ok := a.adminFromRequestFor(w, r,
+		"反馈入口由成员创建和维护；其他部门的人直接使用入口地址提交",
+		"入口的部门联系方式只由管理员编辑"); !ok {
+		return
+	}
+	var req intakeContactRequest
+	if !decodeJSON(w, r, &req, `{"department_contact": "IT 服务台 400-123-4567"}`) {
+		return
+	}
+	in, err := a.tickets.UpdateIntakeDepartmentContact(r.Context(), slug, req.DepartmentContact)
+	if err != nil {
+		a.writeIntakesError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, newIntakeSummaryView(in))
 }
 
 func (a *API) listIntakes(w http.ResponseWriter, r *http.Request) {
@@ -209,6 +245,7 @@ func (a *API) readIntake(w http.ResponseWriter, r *http.Request, slug string) {
 	}
 	writeJSON(w, http.StatusOK, intakePublicView{
 		Slug: in.Slug, Name: in.Name, URL: "/i/" + in.Slug, Kind: t.Kind,
+		DepartmentContact: in.DepartmentContact,
 		Template: intakeTemplateView{
 			Key: t.Key, Name: t.Name, Version: t.Version, Kind: t.Kind,
 			PresetLabels: nonNil(t.PresetLabels), AgentNote: t.AgentNote,
@@ -273,6 +310,15 @@ func (a *API) submitToIntake(w http.ResponseWriter, r *http.Request, slug string
 		view.GuestLink.Note = result.LinkNote
 		view.GuestLink.ExpiresAt = result.ExpiresAt.Format(time.RFC3339Nano)
 		view.GuestLink.CanEditBrief = true
+		view.DeviceToken = result.DeviceToken
+		view.AccessCode = result.AccessCode
+		view.ClaimedAt = result.ClaimedAt
+		view.DepartmentContact = result.DepartmentContact
+		http.SetCookie(w, &http.Cookie{
+			Name: GuestDeviceCookieName, Value: result.DeviceToken, Path: "/",
+			HttpOnly: true, SameSite: http.SameSiteLaxMode,
+			Expires: result.ClaimedAt.Add(365 * 24 * time.Hour),
+		})
 		writeJSON(w, http.StatusCreated, view)
 	})
 }
@@ -280,7 +326,8 @@ func (a *API) submitToIntake(w http.ResponseWriter, r *http.Request, slug string
 func newIntakeSummaryView(in tickets.Intake) intakeSummaryView {
 	v := intakeSummaryView{
 		Slug: in.Slug, Name: in.Name, Template: in.TemplateKey,
-		Active: in.Active, URL: "/i/" + in.Slug,
+		DepartmentContact: in.DepartmentContact,
+		Active:            in.Active, URL: "/i/" + in.Slug,
 		CreatedBy: newAuthorView(in.CreatedBy, false),
 		CreatedAt: in.CreatedAt.Format(time.RFC3339Nano),
 	}
@@ -311,6 +358,9 @@ func (a *API) writeIntakesError(w http.ResponseWriter, r *http.Request, err erro
 	case errors.Is(err, tickets.ErrNameRequired):
 		WriteError(w, http.StatusUnprocessableEntity, CodeNameRequired, err.Error(),
 			"名称会显示在反馈入口上，如「部门 Bug 反馈」")
+	case errors.Is(err, tickets.ErrClaimNameRequired):
+		WriteError(w, http.StatusUnprocessableEntity, CodeClaimNameRequired, err.Error(),
+			"署名会作为访客链接的自报称呼，请填写提交者本人或其 Agent 主人的称呼")
 	case errors.Is(err, tickets.ErrTemplateNotReport):
 		WriteError(w, http.StatusUnprocessableEntity, CodeTemplateNotReport, err.Error(),
 			"入口提交的是反馈，换一份类型为「反馈」的模板（如 bug-report），或先修改模板类型")

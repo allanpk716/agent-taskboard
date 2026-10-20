@@ -68,7 +68,15 @@ export interface TimelineEvent {
   attachment_ids?: string[]
   from?: string
   to?: string
+  collaborator?: string
   label?: string
+}
+
+export interface Collaborator {
+  id: number
+  name: string
+  deactivated?: boolean
+  added_at: string
 }
 
 export type MemberSummary = string
@@ -96,6 +104,7 @@ export interface TicketView {
   template?: string | null
   creator: Author
   assignee?: Author | null
+  collaborators?: Collaborator[]
   waiting_on: { party: string; member?: string | null; text: string; reason: string }
   /** 仅成员视角：工单当前标签（访客响应没有这个字段）。 */
   labels?: string[]
@@ -128,6 +137,7 @@ export interface IntakeView {
   name: string
   url: string
   kind: string
+  department_contact: string
   template: {
     key: string
     name: string
@@ -143,6 +153,9 @@ export interface IntakeView {
 export interface IntakeSubmitResult {
   ticket: { number: string; seq: number; title: string; url: string }
   guest_link: { url: string; note: string; expires_at: string; can_edit_brief: boolean }
+  device_token: string
+  access_code: string
+  department_contact: string
   next: string
 }
 

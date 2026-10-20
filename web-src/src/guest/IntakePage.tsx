@@ -10,7 +10,7 @@ import { ApiError, api } from '../api'
 import { compressImage } from '../shared/compress'
 import { FieldForm, appendRef, missingRequired, type StagedFile } from './FieldForm'
 import { clearFormDraft, intakeDraftKey, loadAuthor, loadFormDraft, saveAuthor, saveFormDraft } from './draft'
-import { guestApi } from './guestApi'
+import { guestApi, saveGuestDeviceToken } from './guestApi'
 import type { IntakeSubmitResult, IntakeView, MissingFieldHint, TemplateField } from '../shared/types'
 import { uploadAttachment } from './upload'
 import { fmtDateCN, absoluteUrl } from '../shared/format'
@@ -98,6 +98,7 @@ export function IntakePage({ slug }: { slug: string }) {
         headers: { 'Idempotency-Key': idemKeyRef.current },
         body: JSON.stringify({ title: t.trim(), fields: out, author_name: a.trim() }),
       })
+      saveGuestDeviceToken(result.guest_link.url.slice(3), result.device_token)
       // 图片/附件此刻才有凭证（专属链接）：上传、把引用补进说明。
       const warnings = await attachFiles(result, a, stateRef.current.files)
       pendingRef.current = false
@@ -242,6 +243,13 @@ export function IntakePage({ slug }: { slug: string }) {
             这是你的专属链接，<b>请收藏或保存</b>，之后在这里查看回复、补充信息：
           </p>
           <div className="linkbox">{url}</div>
+          <div className="linkbox mono" data-access-code>
+            {phase.result.access_code}
+          </div>
+          <p>
+            <b>访问码只显示这一次</b>，请截图或记下来；丢失访问码请联系本部门：
+            {phase.result.department_contact || '请联系给你入口地址的部门'}
+          </p>
           <button type="button" className="btn" onClick={() => void navigator.clipboard?.writeText(url)}>
             复制链接
           </button>
@@ -277,7 +285,7 @@ export function IntakePage({ slug }: { slug: string }) {
         <header className="head">
           <div className="meta">部门工单平台 · 反馈入口</div>
           <h1>{phase.intake.name}</h1>
-          <div className="meta">填好后提交，部门会在这里回复你。会得到一条专属链接，用来查看进展。</div>
+          <div className="meta">🔒 只有你和负责处理这张反馈的成员能看到它。</div>
         </header>
         {notice && (
           <div className={`notice ${notice.kind}`} role="status">
@@ -324,6 +332,7 @@ export function IntakePage({ slug }: { slug: string }) {
           files={files}
           onPickFiles={(fieldKey, picked, viaArea) => void pickFiles(fieldKey, picked, viaArea)}
           onRemoveFile={(id) => setFiles((prev) => prev.filter((f) => f.id !== id))}
+          attachmentHint="只有处理的成员能下载"
         />
         <div className="form">
           <div className={`fld${displayMissing.has(AUTHOR_KEY) ? ' miss' : ''}`}>

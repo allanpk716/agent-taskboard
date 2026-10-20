@@ -8,6 +8,7 @@ import (
 
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/publicbase"
+	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
 
 // viewerFromRequest 把请求上的凭证（网页会话 cookie、Agent token 或访客链接密钥）
@@ -22,8 +23,12 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 	if token, ok := bearerToken(r); ok {
 		var viewer identity.Viewer
 		var err error
-		if identity.IsClientToken(token) {
+		if guestCredential, ok := identity.ParseGuestAgentCredential(token); ok {
+			viewer, err = a.guestAgentViewer(r, guestCredential)
+		} else if identity.IsClientToken(token) {
 			viewer, err = a.ident.ViewerFromClientToken(r.Context(), token, r.UserAgent())
+		} else if identity.IsGuestDeviceKey(token) {
+			viewer, err = a.ident.ViewerFromGuestDevice(r.Context(), token)
 		} else {
 			viewer, err = a.ident.ViewerFromAgentToken(r.Context(), token)
 		}
@@ -35,12 +40,17 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 			case errors.Is(err, identity.ErrInvalidCredentials):
 				WriteError(w, http.StatusUnauthorized, CodeInvalidToken, "凭证无效或已撤销",
 					a.authHint(r))
-			case errors.Is(err, identity.ErrLinkRevoked):
-				WriteError(w, http.StatusUnauthorized, CodeLinkRevoked, "访客链接已被撤销",
-					"请联系发链接的成员重新获取一条新链接")
-			case errors.Is(err, identity.ErrLinkExpired):
-				WriteError(w, http.StatusUnauthorized, CodeLinkExpired, "访客链接已过期",
-					"请联系发链接的成员延期，或重新获取一条新链接")
+			case errors.Is(err, identity.ErrLinkRevoked),
+				errors.Is(err, identity.ErrLinkExpired),
+				errors.Is(err, identity.ErrLinkUnclaimed),
+				errors.Is(err, identity.ErrLinkClaimed):
+				a.writeGuestLinkError(w, r, err)
+			case errors.Is(err, tickets.ErrAccessCodeInvalid):
+				WriteError(w, http.StatusUnauthorized, CodeAccessCodeInvalid, err.Error(),
+					"访客 Agent 凭证是 tbg_<链接密钥>:<访问码>；连续输错 5 次会锁定")
+			case errors.Is(err, tickets.ErrAccessCodeLocked):
+				WriteError(w, http.StatusForbidden, CodeAccessCodeLocked, err.Error(),
+					"请联系能管理这条链接的成员重置访问码")
 			default:
 				panic(err)
 			}
@@ -51,6 +61,14 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 
 	cookie, err := r.Cookie(SessionCookieName)
 	if err != nil || cookie.Value == "" {
+		viewer, guestErr, ok := a.guestDeviceFromCookie(r)
+		if ok {
+			if guestErr != nil {
+				a.writeGuestLinkError(w, r, guestErr)
+				return identity.Viewer{}, false
+			}
+			return viewer, true
+		}
 		WriteError(w, http.StatusUnauthorized, CodeUnauthenticated, "未登录", a.authHint(r))
 		return identity.Viewer{}, false
 	}
@@ -63,6 +81,58 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 		panic(err)
 	}
 	return viewer, true
+}
+
+func (a *API) guestAgentViewer(r *http.Request, credential identity.GuestAgentCredential) (identity.Viewer, error) {
+	link, err := a.ident.GuestLinkForKey(r.Context(), credential.Key)
+	if errors.Is(err, identity.ErrLinkClaimed) {
+		var status *identity.LinkStatusError
+		if errors.As(err, &status) {
+			return a.tickets.ViewerFromGuestAgentCredential(r.Context(), status.Link, credential.AccessCode)
+		}
+		return identity.Viewer{}, err
+	}
+	if errors.Is(err, identity.ErrLinkUnclaimed) {
+		// ViewerFromGuestKey 会带回被拒访问记录所需的链接身份。
+		_, statusErr := a.ident.ViewerFromGuestKey(r.Context(), credential.Key)
+		if statusErr != nil {
+			return identity.Viewer{}, statusErr
+		}
+		return identity.Viewer{}, err
+	}
+	if err != nil {
+		return identity.Viewer{}, err
+	}
+	return a.tickets.ViewerFromGuestAgentCredential(r.Context(), link, credential.AccessCode)
+}
+
+// guestDeviceFromCookie 让同源插图与附件链接复用记住的设备凭证，
+// 且不把凭证暴露给 JavaScript。
+func (a *API) guestDeviceFromCookie(r *http.Request) (identity.Viewer, error, bool) {
+	cookie, err := r.Cookie(GuestDeviceCookieName)
+	if err != nil || cookie.Value == "" {
+		return identity.Viewer{}, nil, false
+	}
+	viewer, err := a.ident.ViewerFromGuestDevice(r.Context(), cookie.Value)
+	if err != nil {
+		if errors.Is(err, identity.ErrInvalidCredentials) {
+			return identity.Viewer{}, nil, false
+		}
+		return identity.Viewer{}, err, true
+	}
+	return viewer, nil, true
+}
+
+// writeGuestLinkError 统一处理访客链接状态拒绝的响应与访问记录。
+func (a *API) writeGuestLinkError(w http.ResponseWriter, r *http.Request, err error) {
+	var status *identity.LinkStatusError
+	if !errors.As(err, &status) {
+		panic(err)
+	}
+	if recErr := a.accessRecords.RecordGuestLinkDenied(r.Context(), status.Link.TicketSeq, status.Link.ID, string(status.Status)); recErr != nil {
+		panic(recErr)
+	}
+	a.writeLinkStatusError(w, r, err)
 }
 
 func (a *API) authHint(r *http.Request) string {

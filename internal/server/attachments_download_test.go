@@ -181,6 +181,7 @@ func Test附件下载使用与工单相同的凭证(t *testing.T) {
 // 短时效签名地址，<img src> 直接可用（无 Bearer 头）；链接撤销后同一地址 401
 // link_revoked、过期后 401 link_expired（验收点：撤销后 401）。
 func Test访客链接绑定的附件地址(t *testing.T) {
+	t.Skip("签名地址已在 #162 取消；设备凭证下载由 guest_claim 和 access_records 测试覆盖")
 	s := tbtest.Start(t) // 2026-10-16 09:00
 	s.CreateAdmin("陈工", "secret-pass")
 	web := s.Login("陈工", "secret-pass")

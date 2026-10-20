@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext } from '@playwright/test'
-import { ADMIN, createTicket, login } from './helpers'
+import { ADMIN, claimGuestLink, createTicket, login } from './helpers'
 
 async function createGuestReplyTicket(
   request: APIRequestContext,
@@ -12,9 +12,10 @@ async function createGuestReplyTicket(
   })
   expect(link.ok(), `创建访客链接失败：${await link.text()}`).toBeTruthy()
   const key = String((await link.json()).url).slice(3)
+  const deviceToken = await claimGuestLink(request, key)
   const sent = await request.post(`/api/v1/tickets/${number}/replies`, {
     data: { body_md: reply },
-    headers: { Authorization: `Bearer ${key}` },
+    headers: { Authorization: `Bearer ${deviceToken}` },
   })
   expect(sent.ok(), `访客回复失败：${await sent.text()}`).toBeTruthy()
   return number

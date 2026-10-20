@@ -10,6 +10,7 @@ import {
   deactivateLabel,
   deactivateMemberAccount,
   fetchDictionary,
+  fetchIntakes,
   fetchMemberAccounts,
   reactivateMemberAccount,
   resetMemberPassword,
@@ -22,12 +23,14 @@ import {
   type LabelDimension,
   type MemberAccount,
   type Me,
+  type IntakeAccount,
+  updateIntakeContact,
 } from './memberApi'
 import { Confirm, Modal, copyText, toast } from './ui'
 import { chipClass } from './TicketsPage'
 import { SystemPanel } from './admin/SystemPanel'
 
-type AdminTab = 'members' | 'governance'
+type AdminTab = 'members' | 'intakes' | 'governance'
 
 export function AdminPage({ me }: { me: Me }) {
   const [tab, setTab] = useState<AdminTab>('members')
@@ -59,6 +62,14 @@ export function AdminPage({ me }: { me: Me }) {
             成员账号
           </button>
           <button
+            className={`fchip${tab === 'intakes' ? ' on' : ''}`}
+            role="tab"
+            aria-selected={tab === 'intakes'}
+            onClick={() => setTab('intakes')}
+          >
+            反馈入口
+          </button>
+          <button
             className={`fchip${tab === 'governance' ? ' on' : ''}`}
             role="tab"
             aria-selected={tab === 'governance'}
@@ -68,12 +79,130 @@ export function AdminPage({ me }: { me: Me }) {
           </button>
         </div>
       </div>
-      {tab === 'members' ? <MembersTab me={me} /> : <GovernanceTab />}
+      {tab === 'members' ? <MembersTab me={me} /> : tab === 'intakes' ? <IntakesTab /> : <GovernanceTab />}
       {/* 系统状态（#45）：备份状态（最近一次成功备份、超 36 小时标红、
           「备份未离开本机」）与版本更新（管理页按钮与命令行、管理 API 共用
           同一套逻辑）。 */}
       <SystemPanel />
     </div>
+  )
+}
+
+/* ---------------- 反馈入口 ---------------- */
+
+function IntakesTab() {
+  const [intakes, setIntakes] = useState<IntakeAccount[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [editing, setEditing] = useState<IntakeAccount | null>(null)
+
+  async function refresh() {
+    try {
+      setIntakes(await fetchIntakes())
+      setError(null)
+    } catch (e) {
+      setError(e instanceof ApiError ? `${e.message}（${e.code}）` : '读取反馈入口失败')
+    }
+  }
+
+  useEffect(() => {
+    void refresh()
+  }, [])
+
+  return (
+    <div className="mcard">
+      <div className="hint" style={{ marginTop: 0 }}>
+        提交者丢失访问码时，反馈入口的成功页会显示这里的部门联系方式。
+      </div>
+      {error && <div className="errbox">{error}</div>}
+      <table className="mini-tbl">
+        <tbody>
+          {(intakes ?? []).map((intake) => (
+            <tr key={intake.slug} data-intake={intake.slug}>
+              <td>
+                <b>{intake.name}</b>
+                {!intake.active && <span className="badge closed">已停用</span>}
+                <div className="hint mono">{intake.url}</div>
+              </td>
+              <td>{intake.department_contact || <span className="hint">未填写</span>}</td>
+              <td>
+                <button className="btn sm ghost" onClick={() => setEditing(intake)}>
+                  编辑联系方式
+                </button>
+              </td>
+            </tr>
+          ))}
+          {intakes !== null && intakes.length === 0 && (
+            <tr>
+              <td className="hint" colSpan={3}>
+                还没有反馈入口。
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      {editing && (
+        <IntakeContactDialog
+          intake={editing}
+          onClose={() => setEditing(null)}
+          onSaved={async () => {
+            setEditing(null)
+            await refresh()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function IntakeContactDialog({
+  intake,
+  onClose,
+  onSaved,
+}: {
+  intake: IntakeAccount
+  onClose: () => void
+  onSaved: () => Promise<void>
+}) {
+  const [contact, setContact] = useState(intake.department_contact)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  async function submit() {
+    setBusy(true)
+    try {
+      await updateIntakeContact(intake.slug, contact.trim())
+      toast('✓ 已保存部门联系方式')
+      await onSaved()
+    } catch (e) {
+      setError(e instanceof ApiError ? `${e.message}（${e.code}）` : '保存失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal title={`部门联系方式 · ${intake.name}`} onClose={onClose}>
+      <div className="fld">
+        <label htmlFor="intake-contact">部门联系方式</label>
+        <input
+          id="intake-contact"
+          value={contact}
+          placeholder="如：IT 服务台 400-123-4567"
+          onChange={(e) => setContact(e.target.value)}
+        />
+      </div>
+      <div className="hint">会显示在提交成功页；请写部门对外渠道，不要写个人姓名。</div>
+      {error && <div className="errbox">{error}</div>}
+      <div className="mrow">
+        <button className="btn ghost" onClick={onClose}>
+          取消
+        </button>
+        <span className="sp" />
+        <button className="btn" disabled={busy || !contact.trim()} onClick={() => void submit()}>
+          保存
+        </button>
+      </div>
+    </Modal>
   )
 }
 

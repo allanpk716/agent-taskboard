@@ -1,7 +1,7 @@
 // 极简 Markdown 渲染（照 prototype/guest-web shared.js 的 md()，React 化）：
 // 段落、粗体、行内代码、有序/无序列表、正文中的 att: 引用（插图/附件）
 // 以及 UNC（NAS）路径文本块（带「复制路径」按钮，不做成链接）。
-import { type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { Attachment } from './types'
 
 export interface MarkdownProps {
@@ -58,6 +58,46 @@ function UncBlock({ path }: { path: string }) {
   )
 }
 
+function AuthorizedImage({
+  url,
+  alt,
+  onClick,
+}: {
+  url: string
+  alt: string
+  onClick?: (url: string) => void
+}) {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    let blobUrl: string | null = null
+    let revoked = false
+    // 图片与页面同源：成员会话或访客设备 cookie 由浏览器自动带上。
+    void fetch(url)
+      .then((res) => (res.ok ? res.blob() : null))
+      .then((blob) => {
+        if (!blob || revoked) return
+        blobUrl = URL.createObjectURL(blob)
+        setObjectUrl(blobUrl)
+      })
+      .catch(() => {})
+    return () => {
+      revoked = true
+      if (blobUrl) URL.revokeObjectURL(blobUrl)
+    }
+  }, [url])
+
+  if (!objectUrl) return <span className="att-missing">🖼 {alt}</span>
+  return (
+    <img
+      className="inline-img"
+      src={objectUrl}
+      alt={alt}
+      onClick={() => onClick?.(objectUrl)}
+    />
+  )
+}
+
 function renderInline(text: string, props: MarkdownProps, keyPrefix: string): ReactNode[] {
   const out: ReactNode[] = []
   let last = 0
@@ -71,12 +111,11 @@ function renderInline(text: string, props: MarkdownProps, keyPrefix: string): Re
       const att = props.attachments.get(m[2])
       if (att) {
         out.push(
-          <img
+          <AuthorizedImage
             key={key}
-            className="inline-img"
-            src={att.url}
+            url={att.url}
             alt={m[1] || att.filename}
-            onClick={() => props.onImageClick?.(att.url)}
+            onClick={props.onImageClick}
           />,
         )
       } else {

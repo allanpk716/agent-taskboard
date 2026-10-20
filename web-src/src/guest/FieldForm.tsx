@@ -47,6 +47,8 @@ export interface FieldFormProps {
   /** 暂存文件列表（两处共用的统一附件区与字段下的附件条） */
   files?: StagedFile[]
   onRemoveFile?: (id: string) => void
+  /** 入口页的附件提示；成员建单页沿用默认说明。 */
+  attachmentHint?: string
 }
 
 /** 统一附件区默认把引用挂在最后一个文本字段后面（PATCH 只认字段值里的 att: 引用）。 */
@@ -88,7 +90,7 @@ function FileChips({ files, onRemove }: { files: StagedFile[]; onRemove?: (id: s
 }
 
 export function FieldForm(props: FieldFormProps) {
-  const { fields, values, onChange, missing, hints, onPickFiles, files, onRemoveFile } = props
+  const { fields, values, onChange, missing, hints, onPickFiles, files, onRemoveFile, attachmentHint } = props
   const areaField = lastTextFieldKey(fields)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const pickTargetRef = useRef<{ fieldKey: string; viaArea: boolean }>({ fieldKey: '', viaArea: false })
@@ -159,7 +161,9 @@ export function FieldForm(props: FieldFormProps) {
       })}
       <div className="fld">
         <label>附件</label>
-        <div className="guide">照片、日志等文件；单个不超过 5 MB，超限请写 NAS 共享盘路径。</div>
+        <div className="guide">
+          {attachmentHint ?? '照片、日志等文件；单个不超过 5 MB，超限请写 NAS 共享盘路径。'}
+        </div>
         <label
           className="drop"
           onDragOver={(e) => e.preventDefault()}
