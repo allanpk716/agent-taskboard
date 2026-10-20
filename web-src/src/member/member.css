@@ -156,7 +156,7 @@
   display: contents;
 }
 .pc-list-pane {
-  width: 380px;
+  width: 316px;
   flex: none;
   min-width: 0;
   height: 100vh;
@@ -279,11 +279,17 @@
   flex: 1;
   min-height: 0;
   width: 100%;
-  max-width: min(860px, 100%);
+  max-width: none;
   overflow-y: auto;
   margin-top: 0;
   border-radius: 0;
   background: transparent;
+}
+.pc-detail .conv > .bubble,
+.pc-detail .conv > .event {
+  width: min(860px, calc(100% - 24px));
+  margin-left: auto;
+  margin-right: auto;
 }
 .pc-detail .detail-main > .composer {
   flex: none;

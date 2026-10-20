@@ -17,13 +17,17 @@ test('wide detail fills the pane from the list edge to the viewport edge', async
     await expect(page.getByRole('heading', { name: '宽屏铺满详情的工单' })).toBeVisible()
 
     const list = await page.getByTestId('ticket-list-pane').boundingBox()
+    const pane = await page.locator('main.pc-detail').boundingBox()
     const info = await page.locator('.dinfo').boundingBox()
     const conversation = await page.locator('.detail-main').boundingBox()
     const composer = await page.locator('.composer textarea').boundingBox()
     const head = await page.locator('.dhead').boundingBox()
 
-    expect(conversation!.x).toBeCloseTo(list!.x + list!.width, 1)
+    expect(pane!.x).toBeCloseTo(list!.x + list!.width, 1)
+    expect(pane!.x + pane!.width).toBeCloseTo(viewport.width, 1)
+    expect(conversation!.x).toBeCloseTo(pane!.x, 1)
     expect(conversation!.x + conversation!.width).toBeCloseTo(info!.x, 1)
+    expect(conversation!.width).toBeGreaterThanOrEqual(600)
     expect(conversation!.height).toBeGreaterThanOrEqual(
       viewport.height - head!.height - 4,
     )
