@@ -291,6 +291,7 @@ func TestSSE空闲超过六十秒时断开重连(t *testing.T) {
 	defer cancel()
 	done := fake.startClient(t, ctx, proxy.URL)
 	waitCondition(t, func() bool { return proxy.streams() == 1 })
+	waitForFakeTimer(t, fake.clock, time.Minute)
 	fake.clock.Advance(61 * time.Second)
 	waitCondition(t, func() bool { return proxy.streams() >= 2 })
 	select {
@@ -777,6 +778,15 @@ func waitCondition(t testing.TB, ok func() bool) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("等待条件超时")
+}
+
+func waitForFakeTimer(t testing.TB, fake *clock.Fake, d time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if !fake.WaitForTimer(ctx, d) {
+		t.Fatalf("等待 %v 的假时钟计时器注册超时", d)
+	}
 }
 
 func drainChannel[T any](ch <-chan T) {
