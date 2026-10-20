@@ -5,9 +5,12 @@ import { api } from '../../api'
 export interface BackupsStatus {
   local_only: boolean
   last_success_at: string | null
+  last_local_fallback_at?: string | null
+  target_unreachable?: boolean
+  target_unreachable_error?: string
   overdue: boolean
   last_failure: { at: string; kind: string; error: string } | null
-  records: { at: string; kind: string; filename: string; success: boolean }[]
+  records: { at: string; kind: string; filename: string; success: boolean; location: string }[]
 }
 
 export interface ComponentStatus {
@@ -34,6 +37,7 @@ export interface UpdateResult {
   client_updated: boolean
   restart_needed: boolean
   preupdate_backup?: string
+  preupdate_backup_local?: boolean
 }
 
 export async function fetchBackupsStatus(): Promise<BackupsStatus> {

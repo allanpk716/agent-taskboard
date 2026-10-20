@@ -67,7 +67,7 @@ export function SystemPanel() {
 
   return (
     <>
-      <div className="mcard" data-testid="backup-card">
+      <div className="mcard" id="backup" data-testid="backup-card">
         <div className="sec-t" style={{ marginTop: 0 }}>
           备份
         </div>
@@ -80,6 +80,12 @@ export function SystemPanel() {
         {backups?.overdue && (
           <div className="hint sys-red" data-testid="backup-overdue">
             超过 36 小时没有成功备份，请检查备份目标是否可连（每小时会自动重试）。
+          </div>
+        )}
+        {backups?.target_unreachable && backups.last_local_fallback_at && (
+          <div className="hint sys-red" data-testid="backup-target-unreachable">
+            备份目标不可达（{backups.target_unreachable_error || '原因未知'}）。最近一份只在本机：
+            {fmtBeijing(backups.last_local_fallback_at)}
           </div>
         )}
         {backups?.local_only && (
@@ -153,7 +159,8 @@ export function SystemPanel() {
             {result.message
               ? result.message
               : `已更新（${result.source_used}）：${result.steps.join('；')}${
-                  result.restart_needed ? '；后端已更新，服务正在重启。' : ''
+                  result.preupdate_backup_local ? '；更新前备份只在本机。' : ''
+                }${result.restart_needed ? '；后端已更新，服务正在重启。' : ''
                 }`}
           </div>
         )}

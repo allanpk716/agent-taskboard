@@ -111,19 +111,22 @@ func Test损坏的副本改名bad且好副本不被淘汰(t *testing.T) {
 	}
 }
 
-// 刚生成的副本校验不通过时，同样改名 .bad，记一次失败。
-func Test新副本校验不通过改名bad记失败(t *testing.T) {
+// 快照导出失败时记一次失败，且不生成本机兜底副本。
+func Test快照导出失败记失败(t *testing.T) {
 	target := t.TempDir()
-	b, clk, _ := newBackups(t, target)
-	// 用一个写保护失败不了库；改为直接预占文件名：VACUUM INTO 遇到已存在
-	// 文件会失败，走失败记录路径。
-	name := filepath.Join(target, ops.BackupFileName(clk.Now(), ops.KindDaily))
+	b, clk, dataDir := newBackups(t, target)
+	// 预占本机 staging 文件名：VACUUM INTO 遇到已存在文件会失败。
+	stagingDir := filepath.Join(dataDir, "backups")
+	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Join(stagingDir, "."+ops.BackupFileName(clk.Now(), ops.KindDaily)+".part")
 	if err := os.WriteFile(name, []byte("占位"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	rec, err := b.BackupNow(context.Background(), ops.KindDaily)
-	if err == nil {
-		t.Fatal("同名文件存在时备份应失败")
+	if err == nil || rec.IntegrityOK {
+		t.Fatal("快照导出应失败")
 	}
 	if rec.Success() {
 		t.Fatalf("应记为失败：%+v", rec)

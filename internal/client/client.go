@@ -47,6 +47,7 @@ type Notification struct {
 		Title  string `json:"title"`
 		URL    string `json:"url"`
 	} `json:"ticket"`
+	URL string `json:"url"`
 }
 
 // Config 是客户端行为配置。
@@ -850,7 +851,11 @@ func (a *App) openNotification(n Notification) {
 		return
 	}
 	a.syncUnread([]int64{n.ID}, len(a.currentUnread())-1, 0)
-	_ = a.deps.Browser.Open(a.absolute(n.Ticket.URL))
+	path := n.URL
+	if path == "" {
+		path = n.Ticket.URL
+	}
+	_ = a.deps.Browser.Open(a.absolute(path))
 }
 
 func (a *App) loadUnread(token string, count int, latest int64) error {

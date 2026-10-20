@@ -32,7 +32,7 @@ func (b *Backups) CheckSchedule(ctx context.Context) bool {
 		// 失败：一小时后重试（“之后每小时重试一次，直到成功”）。原因已写库，
 		// 这里再进服务日志，不用登录管理页也能看到（#46）。
 		b.nextDue = now.Add(RetryEvery)
-		log.Printf("定时备份失败（%s 后重试）：%v", RetryEvery, err)
+		log.Printf("定时备份失败（%s 后重试）：%s", RetryEvery, rec.Err)
 	}
 	return true
 }

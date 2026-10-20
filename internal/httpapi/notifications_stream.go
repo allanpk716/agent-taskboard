@@ -44,6 +44,7 @@ func (a *API) handleNotificationsStream(w http.ResponseWriter, r *http.Request) 
 	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
 		replay, err := a.notifications.List(r.Context(), notifications.ListQuery{
 			MemberID: viewer.Member.ID, After: &last, Limit: -1,
+			IncludeSystem: viewer.Agent == nil,
 		})
 		if err != nil {
 			panic(err)
@@ -55,7 +56,7 @@ func (a *API) handleNotificationsStream(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
-	unread, err := a.notifications.Unread(r.Context(), viewer.Member.ID)
+	unread, err := a.notifications.UnreadForViewer(r.Context(), viewer.Member.ID, viewer.Agent == nil)
 	if err != nil {
 		panic(err)
 	}
@@ -90,6 +91,7 @@ func (a *API) handleNotificationsStream(w http.ResponseWriter, r *http.Request) 
 			case notifications.EventKindNotify:
 				replay, err := a.notifications.List(r.Context(), notifications.ListQuery{
 					MemberID: viewer.Member.ID, After: &last, Limit: -1,
+					IncludeSystem: viewer.Agent == nil,
 				})
 				if err != nil {
 					panic(err)

@@ -77,6 +77,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	}
 	idem := idempotency.NewManager(st.DB, c)
 	notificationStore := notifications.NewManager(st.DB, c)
+	backups.SetNotifier(notificationStore)
 	accessRecords := accessrecords.NewManager(st.DB, c)
 	ticketStore := tickets.NewManager(st.DB, c, labelDict, templateDict, atts)
 	ticketStore.SetNotifier(notificationStore)

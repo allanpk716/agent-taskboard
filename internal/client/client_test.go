@@ -128,6 +128,49 @@ func Test新通知弹出Toast点击后标已读并打开工单(t *testing.T) {
 	waitClient(t, done)
 }
 
+func Test系统通知点击后打开顶层URL(t *testing.T) {
+	fake := newFakeDesktop(t)
+	s := fake.startService(t)
+	webAdmin := s.Login("王工", "secret-pass")
+	fake.browser.web = webAdmin
+	fake.browser.serverURL = s.URL()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := fake.startClient(t, ctx, s.URL())
+	fake.waitState(t, client.TrayNormal)
+
+	if err := s.Notifications().NotifySystem(context.Background(),
+		"backup_failing", "备份失败：测试原因"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	var shown client.Notification
+	for shown.ID == 0 {
+		toasts := fake.toaster.shown(t)
+		for _, n := range toasts {
+			if n.Reason == "backup_failing" {
+				shown = n
+			}
+		}
+		if shown.ID == 0 {
+			if time.Now().After(deadline) {
+				t.Fatalf("未收到系统通知：%+v", toasts)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	if shown.Ticket.Number != "" || shown.URL != "/admin#backup" {
+		t.Fatalf("系统通知 = %+v", shown)
+	}
+	fake.toaster.click(t, shown)
+	if got := fake.browser.opened(t); got != s.URL()+"/admin#backup" {
+		t.Fatalf("点击系统通知打开 = %q", got)
+	}
+
+	cancel()
+	waitClient(t, done)
+}
+
 func Test别处标已读后托盘状态和菜单同步(t *testing.T) {
 	fake := newFakeDesktop(t)
 	s := fake.startService(t)

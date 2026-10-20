@@ -264,8 +264,10 @@ func Test客户端失败不阻断服务端和前端更新(t *testing.T) {
 		Update: config.Update{Sources: []string{"github"}, GitHub: config.UpdateGitHub{
 			Repo: "example/example", Mirror: []string{fake.server.URL + "/m/"},
 		}}, DataDir: dataDir, WebDir: webDir, ExePath: exePath, ServerVersion: "0.0.0",
-		Preupdate: func(context.Context) (string, error) { return "backup.sql", nil },
-		Log:       func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) },
+		Preupdate: func(context.Context) (PreupdateBackup, error) {
+			return PreupdateBackup{Filename: "backup.sql"}, nil
+		},
+		Log: func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) },
 	})
 	if err != nil {
 		t.Fatalf("client 失败不应让整次更新失败：%v", err)

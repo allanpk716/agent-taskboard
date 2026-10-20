@@ -12,17 +12,18 @@ import (
 )
 
 type notificationItemView struct {
-	ID        int64                  `json:"id"`
-	Ticket    notificationTicketView `json:"ticket"`
-	Kind      string                 `json:"kind"`
-	Reason    string                 `json:"reason"`
-	Text      string                 `json:"text"`
-	Event     notificationEventView  `json:"event"`
-	Summary   string                 `json:"summary"`
-	ReadNew   string                 `json:"read_new"`
-	ReadFull  string                 `json:"read_full"`
-	CreatedAt string                 `json:"created_at"`
-	ReadAt    *string                `json:"read_at"`
+	ID        int64                   `json:"id"`
+	Ticket    *notificationTicketView `json:"ticket"`
+	URL       string                  `json:"url"`
+	Kind      string                  `json:"kind"`
+	Reason    string                  `json:"reason"`
+	Text      string                  `json:"text"`
+	Event     notificationEventView   `json:"event"`
+	Summary   string                  `json:"summary"`
+	ReadNew   string                  `json:"read_new"`
+	ReadFull  string                  `json:"read_full"`
+	CreatedAt string                  `json:"created_at"`
+	ReadAt    *string                 `json:"read_at"`
 }
 
 type notificationTicketView struct {
@@ -106,6 +107,7 @@ func (a *API) handleNotifications(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("format"); raw != "" {
 		q.Format = raw
 	}
+	q.IncludeSystem = viewer.Agent == nil
 	result, err := a.notifications.List(r.Context(), q)
 	if err != nil {
 		panic(err)
@@ -134,7 +136,7 @@ func (a *API) handleNotificationsUnread(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	out, err := a.notifications.Unread(r.Context(), viewer.Member.ID)
+	out, err := a.notifications.UnreadForViewer(r.Context(), viewer.Member.ID, viewer.Agent == nil)
 	if err != nil {
 		panic(err)
 	}
@@ -225,13 +227,15 @@ func newNotificationItemView(it notifications.Item) notificationItemView {
 	}
 	v := notificationItemView{
 		ID: it.ID, Kind: it.Kind, Reason: it.Reason, Text: it.Text, Summary: it.Summary,
-		Ticket: notificationTicketView{Number: it.Number, Title: it.Title, URL: "/t/" + it.Number},
-		Event: notificationEventView{Seq: it.EventSeq, Type: it.EventType,
+		URL: it.URL, CreatedAt: formatTime(it.CreatedAt),
+	}
+	if it.Number != "" {
+		v.Ticket = &notificationTicketView{Number: it.Number, Title: it.Title, URL: "/t/" + it.Number}
+		v.Event = notificationEventView{Seq: it.EventSeq, Type: it.EventType,
 			Actor: notificationActorView{Kind: it.ActorKind, MemberID: it.ActorMemberID,
-				AgentID: it.ActorAgentID, Name: it.ActorName}},
-		ReadNew:   fmt.Sprintf("/api/v1/tickets/%s/timeline?after=%d", it.Number, it.EventSeq-1),
-		ReadFull:  "/api/v1/tickets/" + it.Number + "?format=markdown",
-		CreatedAt: formatTime(it.CreatedAt),
+				AgentID: it.ActorAgentID, Name: it.ActorName}}
+		v.ReadNew = fmt.Sprintf("/api/v1/tickets/%s/timeline?after=%d", it.Number, it.EventSeq-1)
+		v.ReadFull = "/api/v1/tickets/" + it.Number + "?format=markdown"
 	}
 	if readAt != "" {
 		v.ReadAt = &readAt
@@ -241,6 +245,10 @@ func newNotificationItemView(it notifications.Item) notificationItemView {
 
 func notificationMarkdown(n notificationItemView) string {
 	var b strings.Builder
+	if n.Ticket == nil {
+		fmt.Fprintf(&b, "- #%d [%s/%s] %s（%s）\n  - 打开：%s", n.ID, n.Kind, n.Reason, n.Text, n.CreatedAt, n.URL)
+		return b.String()
+	}
 	fmt.Fprintf(&b, "- #%d [%s/%s] %s（%s）\n  - 新事件：%s\n  - 全文：%s", n.ID, n.Kind, n.Reason, n.Text, n.CreatedAt, n.ReadNew, n.ReadFull)
 	if n.Summary != "" {
 		fmt.Fprintf(&b, "\n  - 摘要：%s", n.Summary)

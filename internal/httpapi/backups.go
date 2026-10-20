@@ -38,13 +38,21 @@ func (a *API) handleAdminBackups(w http.ResponseWriter, r *http.Request) {
 		s := status.LastSuccessAt.Format(time.RFC3339Nano)
 		lastSuccessAt = &s
 	}
+	var lastLocalFallbackAt *string
+	if status.LastLocalFallbackAt != nil {
+		v := status.LastLocalFallbackAt.Format(time.RFC3339Nano)
+		lastLocalFallbackAt = &v
+	}
 	writeJSON(w, http.StatusOK, backupsStatusView{
-		LocalOnly:     status.LocalOnly,
-		LastSuccessAt: lastSuccessAt,
-		Overdue:       status.Overdue,
-		OverdueAfter:  int(ops.OverdueAfter.Hours()),
-		LastFailure:   lastFailure,
-		Records:       records,
+		LocalOnly:              status.LocalOnly,
+		LastSuccessAt:          lastSuccessAt,
+		LastLocalFallbackAt:    lastLocalFallbackAt,
+		TargetUnreachable:      status.TargetUnreachable,
+		TargetUnreachableError: status.TargetUnreachableError,
+		Overdue:                status.Overdue,
+		OverdueAfter:           int(ops.OverdueAfter.Hours()),
+		LastFailure:            lastFailure,
+		Records:                records,
 	})
 }
 
@@ -52,12 +60,15 @@ func (a *API) handleAdminBackups(w http.ResponseWriter, r *http.Request) {
 // 管理页显示“备份未离开本机”；overdue 为 true 时（超过 36 小时或从未成功）
 // 标红。
 type backupsStatusView struct {
-	LocalOnly     bool               `json:"local_only"`
-	LastSuccessAt *string            `json:"last_success_at"`
-	Overdue       bool               `json:"overdue"`
-	OverdueAfter  int                `json:"overdue_after_hours"`
-	LastFailure   *backupRecordView  `json:"last_failure"`
-	Records       []backupRecordView `json:"records"`
+	LocalOnly              bool               `json:"local_only"`
+	LastSuccessAt          *string            `json:"last_success_at"`
+	LastLocalFallbackAt    *string            `json:"last_local_fallback_at"`
+	TargetUnreachable      bool               `json:"target_unreachable"`
+	TargetUnreachableError string             `json:"target_unreachable_error,omitempty"`
+	Overdue                bool               `json:"overdue"`
+	OverdueAfter           int                `json:"overdue_after_hours"`
+	LastFailure            *backupRecordView  `json:"last_failure"`
+	Records                []backupRecordView `json:"records"`
 }
 
 // backupRecordView 是一条备份记录的对外结构。
@@ -68,6 +79,7 @@ type backupRecordView struct {
 	Size        int64  `json:"size"`
 	IntegrityOK bool   `json:"integrity_ok"`
 	FilesAdded  int    `json:"files_added"`
+	Location    string `json:"location"`
 	Error       string `json:"error,omitempty"`
 	Success     bool   `json:"success"`
 }
@@ -76,6 +88,7 @@ func newBackupRecordView(r ops.Record) backupRecordView {
 	return backupRecordView{
 		At: r.At.Format(time.RFC3339Nano), Kind: string(r.Kind), Filename: r.Filename,
 		Size: r.Size, IntegrityOK: r.IntegrityOK, FilesAdded: r.FilesAdded,
-		Error: r.Err, Success: r.Success(),
+		Location: string(r.Location),
+		Error:    r.Err, Success: r.Success(),
 	}
 }
