@@ -121,6 +121,7 @@ test('建单指派给同事后完成区域有交接入口', async ({ page }) => 
   await page.getByLabel(/说明/).fill('完成后把清单发回来。')
   await page.getByLabel('标签输入').fill('1680')
   await page.getByRole('button', { name: '添加', exact: true }).click()
+  await expect(page.locator('.lblrow .chip').filter({ hasText: '机型:US-1680' })).toBeVisible()
   await page.getByLabel('指派给').selectOption('王工')
   await page.getByRole('button', { name: '创建工单' }).click()
 

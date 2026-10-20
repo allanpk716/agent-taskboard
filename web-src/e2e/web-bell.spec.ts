@@ -239,7 +239,8 @@ for (const viewport of viewports) {
       })
       await page.goto('/')
       await expect(page.locator('.bellbtn')).toBeVisible()
-      expect(streamRequests).toBe(1)
+      // EventSource 在铃铛渲染之后的 effect 里才发起，铃铛可见时请求不一定已经发出。
+      await expect.poll(() => streamRequests).toBe(1)
 
       const navInPage = (to: string) =>
         page.evaluate((path) => {

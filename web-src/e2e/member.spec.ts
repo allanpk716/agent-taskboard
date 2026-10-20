@@ -122,6 +122,8 @@ test('派活到验收：A建单指派B，B收件箱交付，A验收关闭', asyn
   await page.getByLabel('说明').fill('把对照表整理一份，周五前交。')
   await page.getByLabel('标签输入').fill('机型:SL-1000')
   await page.getByRole('button', { name: '添加', exact: true }).click()
+  // 添加要先等 /labels/resolve 返回才出 chip；不等就提交会被 dimension_label_required 拦下（#184）。
+  await expect(page.locator('.lblrow .chip').filter({ hasText: '机型:SL-1000' })).toBeVisible()
   await page.getByLabel('指派给').selectOption('王工')
   await page.getByRole('button', { name: '创建工单' }).click()
   await expect(page.locator('.donet')).toContainText('已创建')
@@ -550,6 +552,7 @@ test('建单在服务中断时自动重试且只建一张', async ({ page, reque
   await page.getByLabel('说明', { exact: true }).fill('内容。')
   await page.getByLabel('标签输入').fill('机型:UD-2300')
   await page.getByLabel('标签输入').press('Enter')
+  await expect(page.locator('.lblrow .chip').filter({ hasText: '机型:UD-2300' })).toBeVisible()
 
   // 模拟服务不可用：拦下建单请求
   await page.route('**/api/v1/tickets', (route) => route.abort('connectionfailed'))

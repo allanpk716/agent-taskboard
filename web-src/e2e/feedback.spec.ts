@@ -128,6 +128,7 @@ test('建单（高级）仍然能正常建单', async ({ page }) => {
   await expect(page.locator('.errbox')).toContainText('dimension_label_required')
   await page.getByLabel('标签输入').fill('机型:UD-2300')
   await page.getByRole('button', { name: '添加' }).click()
+  await expect(page.locator('.lblrow .chip').filter({ hasText: '机型:UD-2300' })).toBeVisible()
   await page.getByRole('button', { name: '创建工单' }).click()
   await expect(page.locator('.donet')).toContainText('已创建')
 
