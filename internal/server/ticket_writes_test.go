@@ -211,6 +211,7 @@ func Test反馈单成员回复后轮到访客(t *testing.T) {
 	}
 	var created createTicketResponse
 	tbtest.DecodeJSON(t, res, &created)
+	s.CreateGuestLink(t, web, created.Number, map[string]any{"note": "检验科-张三"})
 
 	var got replyBody
 	res = s.Do(t, web, http.MethodPost, "/api/v1/tickets/"+created.Number+"/replies",

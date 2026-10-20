@@ -115,7 +115,9 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 					})
 				}
 			}
-		} else if turn.MemberID != 0 && !selfAction(in.Actor, turn.MemberID) && oppositeActor(in.After, turn.MemberID, in.Actor) {
+		} else if turn.MemberID != 0 && !selfAction(in.Actor, turn.MemberID) &&
+			(oppositeActor(in.After, turn.MemberID, in.Actor) ||
+				(turn.Why == tickets.WhyAgentReplied && in.Actor.AgentID != 0 && in.Actor.MemberID == turn.MemberID)) {
 			summary := replySummary(in.Event.BodyMD)
 			out = append(out, Decision{
 				MemberID: turn.MemberID, Kind: KindTurn, Reason: notificationReason(turn.Why),
