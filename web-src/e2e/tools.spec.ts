@@ -14,7 +14,9 @@ test('模板维护：格式错误报行号，修正后保存产生新版本', as
   await page.goto('/templates')
 
   // 列表里有预置模板
-  await expect(page.locator('.tcard', { hasText: 'Bug 反馈' })).toBeVisible()
+  await expect(
+    page.locator('.tcard').filter({ has: page.getByText('Bug 反馈', { exact: true }) }),
+  ).toBeVisible()
 
   // 新建：先写一处格式错误（第 3 行类型不合法）
   await page.getByRole('button', { name: '＋ 新建模板' }).click()

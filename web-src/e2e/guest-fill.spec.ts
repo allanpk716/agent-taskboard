@@ -55,9 +55,9 @@ test.describe('手机视口', () => {
     const groups = page.locator('.grp')
     await expect(groups).toHaveCount(3)
 
-    // 顶部吸顶：标题 + 必填进度（全部留空：0/6）
+    // 顶部吸顶：标题 + 必填进度（全部留空：0/5）
     await expect(page.locator('.fill-sticky')).toContainText('UD-2300 质控时报警 E-203')
-    await expect(page.locator('.fill-sticky .fill-prog')).toHaveText(/必填 0\/6/)
+    await expect(page.locator('.fill-sticky .fill-prog')).toHaveText(/必填 0\/5/)
 
     // 第一组默认展开：组头有序号、组名、副标题和「必填 0/1」
     const g1 = groups.nth(0)
@@ -73,13 +73,13 @@ test.describe('手机视口', () => {
     await expect(g2.locator('.cf')).toHaveCount(0)
     await expect(groups.nth(2).locator('.cf')).toHaveCount(0)
 
-    // 填第一组的必填维度字段：组完成 → 组头数字变绿色 ✓，进度条 1/6
+    // 填第一组的必填维度字段：组完成 → 组头数字变绿色 ✓，进度条 1/5
     await g1.getByRole('combobox', { name: '哪台仪器？' }).click()
     await g1.getByRole('option', { name: 'UD-2300' }).click()
     await expect(g1.locator('.grp-num')).toHaveText('✓')
     await expect(g1.locator('.grp-num')).toHaveClass(/ok/)
     await expect(g1.locator('.grp-req')).toHaveText('必填 1/1')
-    await expect(page.locator('.fill-sticky .fill-prog')).toHaveText(/必填 1\/6/)
+    await expect(page.locator('.fill-sticky .fill-prog')).toHaveText(/必填 1\/5/)
 
     // 组末的「下一组：发生了什么 ›」：展开第二组并收起第一组
     await g1.getByRole('button', { name: '下一组：发生了什么 ›' }).click()
@@ -154,8 +154,8 @@ test.describe('追问与不清楚', () => {
   await expect(when.locator('textarea')).toHaveValue('不清楚')
   await expect(when.locator('.nudge')).toHaveCount(0)
 
-  // 必填进度计入「不清楚」：0/6 → 2/6
-  await expect(page.locator('.fill-sticky .fill-prog')).toHaveText(/必填 2\/6/)
+  // 必填进度计入「不清楚」：0/5 → 2/5
+  await expect(page.locator('.fill-sticky .fill-prog')).toHaveText(/必填 2\/5/)
   })
 })
 
@@ -209,9 +209,9 @@ test.describe('上传与提交', () => {
     })
     await expect(sn.locator('.staged-file.failed')).toContainText('NAS', { timeout: 15000 })
 
-    // 填完其余必填：第二组 4 个必填都用「不清楚」，第三组单选「每次」
+    // 填完其余必填：第二组 3 个必填都用「不清楚」，第三组单选「每次」
     await g1.getByRole('button', { name: '下一组：发生了什么 ›' }).click()
-    for (const q of ['什么时候发生的？', '你做了哪些操作？', '实际看到了什么？', '你期望看到什么？']) {
+    for (const q of ['什么时候发生的？', '你做了哪些操作？', '出错的例子']) {
       await page.locator(`.cf[data-field="${q}"]`).getByRole('button', { name: '不清楚', exact: true }).click()
     }
     await page.locator('.grp').nth(2).locator('.grp-hd').click()
@@ -241,19 +241,19 @@ test.describe('上传与提交', () => {
     await page.getByRole('button', { name: '开始填写' }).click()
 
     const submit = page.getByRole('button', { name: /^提交给管理员/ })
-    await expect(page.locator('.fill-prog')).toHaveText(/必填 0\/6/)
+    await expect(page.locator('.fill-prog')).toHaveText(/必填 0\/5/)
     await expect(submit).toBeDisabled()
     await expect(page.getByText('不知道的必填项写“不清楚”就行')).toBeVisible()
 
     // 填一项：进度变化，但还没填完，仍然不能点
     await page.getByRole('combobox', { name: '哪台仪器？' }).click()
     await page.getByRole('option', { name: '不确定' }).click()
-    await expect(page.locator('.fill-prog')).toHaveText(/必填 1\/6/)
+    await expect(page.locator('.fill-prog')).toHaveText(/必填 1\/5/)
     await expect(submit).toBeDisabled()
 
     // 全部填完（不清楚 + 单选）→ 能点；提交后进确认页
     await page.getByRole('button', { name: '下一组：发生了什么 ›' }).click()
-    for (const q of ['什么时候发生的？', '你做了哪些操作？', '实际看到了什么？', '你期望看到什么？']) {
+    for (const q of ['什么时候发生的？', '你做了哪些操作？', '出错的例子']) {
       await page.locator(`.cf[data-field="${q}"]`).getByRole('button', { name: '不清楚', exact: true }).click()
     }
     await page.locator('.grp').nth(2).locator('.grp-hd').click()
@@ -273,7 +273,7 @@ test.describe('上传与提交', () => {
     await page.getByRole('combobox', { name: '哪台仪器？' }).click()
     await page.getByRole('option', { name: '不确定' }).click()
     await page.getByRole('button', { name: '下一组：发生了什么 ›' }).click()
-    for (const q of ['什么时候发生的？', '你做了哪些操作？', '实际看到了什么？', '你期望看到什么？']) {
+    for (const q of ['什么时候发生的？', '你做了哪些操作？', '出错的例子']) {
       await page.locator(`.cf[data-field="${q}"]`).getByRole('button', { name: '不清楚', exact: true }).click()
     }
     await page.locator('.grp').nth(2).locator('.grp-hd').click()
@@ -440,7 +440,7 @@ test.describe('桌面视口', () => {
     // 双栏：右栏有必填进度、逐字段清单（✓/○）、附件区、署名和提交按钮
     await expect(page.locator('.fill-twocol')).toBeVisible()
     const side = page.locator('.fill-side')
-    await expect(side.locator('.fill-prog')).toHaveText(/必填 0\/6/)
+    await expect(side.locator('.fill-prog')).toHaveText(/必填 0\/5/)
     const check = side.locator('.fill-check .check-item')
     await expect(check).toHaveCount(9)
     await expect(check.first()).toContainText('○')
@@ -459,9 +459,9 @@ test.describe('桌面视口', () => {
     await check.filter({ hasText: '你的猜测或补充？' }).click()
     await expect(guess).toBeInViewport()
 
-    // 填一个字段后：清单该项的 ○ 变成绿色 ✓，进度条 1/6
+    // 填一个字段后：清单该项的 ○ 变成绿色 ✓，进度条 1/5
     await page.locator('.cf[data-field="什么时候发生的？"] textarea').fill('今天上午 9 点左右')
-    await expect(side.locator('.fill-prog')).toHaveText(/必填 1\/6/)
+    await expect(side.locator('.fill-prog')).toHaveText(/必填 1\/5/)
     const item = check.filter({ hasText: '什么时候发生的？' })
     await expect(item).toHaveClass(/ok/)
     await expect(item.locator('.mark')).toHaveText('✓')
@@ -508,7 +508,7 @@ test.describe('桌面视口', () => {
 
     await page.getByRole('combobox', { name: '哪台仪器？' }).click()
     await page.getByRole('option', { name: '不确定' }).click()
-    for (const q of ['什么时候发生的？', '你做了哪些操作？', '实际看到了什么？', '你期望看到什么？']) {
+    for (const q of ['什么时候发生的？', '你做了哪些操作？', '出错的例子']) {
       await page.locator(`.cf[data-field="${q}"]`).getByRole('button', { name: '不清楚', exact: true }).click()
     }
     await page.locator('.cf[data-field="出现得频繁吗？"]').getByRole('radio', { name: '每次' }).check()
@@ -535,7 +535,7 @@ test.describe('桌面视口', () => {
     await page.getByRole('button', { name: '开始填写' }).click()
     await page.getByRole('combobox', { name: '哪台仪器？' }).click()
     await page.getByRole('option', { name: '不确定' }).click()
-    for (const q of ['什么时候发生的？', '你做了哪些操作？', '实际看到了什么？', '你期望看到什么？']) {
+    for (const q of ['什么时候发生的？', '你做了哪些操作？', '出错的例子']) {
       await page.locator(`.cf[data-field="${q}"]`).getByRole('button', { name: '不清楚', exact: true }).click()
     }
     await page.locator('.cf[data-field="出现得频繁吗？"]').getByRole('radio', { name: '每次' }).check()
@@ -561,6 +561,45 @@ test.describe('桌面视口', () => {
     await expect(brief.locator('.atts .att')).toHaveCount(1)
     await expect(brief.locator('.atts .att')).toContainText('正确日志.log')
     await expect(brief.locator('.atts .att')).not.toContainText('传错日志.log')
+  })
+
+  test('带数据模板不填正常的例子不能提交，补上后能提交', async ({ page, request }) => {
+    await loginAdmin(request)
+    const created = await request.post('/api/v1/tickets', {
+      data: {
+        template: 'bug-report-data',
+        title: '同一文件不同参数解码不同',
+        fields: {},
+        labels: ['机型:UD-2300'],
+      },
+    })
+    expect(created.status(), `建单失败：${await created.text()}`).toBe(201)
+    const number: string = (await created.json()).number
+    const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
+      data: { note: '检验科-张三', valid_days: 30, can_edit_brief: true },
+    })
+    expect(link.status(), `创建访客链接失败：${await link.text()}`).toBe(201)
+    const linkKey = String((await link.json()).url).slice(3)
+
+    await page.goto(`/g/${linkKey}`)
+    await page.getByRole('button', { name: '开始填写' }).click()
+    await expect(page.locator('.grp').nth(1).locator('.grp-name')).toHaveText('正确和错误的例子')
+    await expect(page.locator('.fill-prog')).toHaveText(/必填 0\/6/)
+
+    await page.getByRole('combobox', { name: '哪台仪器？' }).click()
+    await page.getByRole('option', { name: '不确定' }).click()
+    await page.locator('.cf[data-field="什么时候发生的？"] textarea').fill('今天上午 9 点左右')
+    await page.locator('.cf[data-field="你做了哪些操作？"]').getByRole('button', { name: '不清楚', exact: true }).click()
+    await page.locator('.cf[data-field="出错的例子"] textarea').fill('THIRDDIFF 参数导入样本清单.xlsx → 姓名乱码 → 应显示张三')
+    await page.locator('.cf[data-field="出现得频繁吗？"]').getByRole('radio', { name: '每次' }).check()
+
+    const submit = page.getByRole('button', { name: /^提交给管理员/ })
+    await expect(page.locator('.fill-prog')).toHaveText(/必填 5\/6/)
+    await expect(submit).toBeDisabled()
+    await page.locator('.cf[data-field="正常的例子"] textarea').fill('FIVEDIFF 参数导入同一个文件 → 姓名显示张三')
+    await expect(page.locator('.fill-prog')).toHaveText(/必填都写好了/)
+    await submit.click()
+    await expect(page.locator('.fill-done')).toContainText('已提交给管理员')
   })
 
   test('自由描述页的附件区独立于大文本框', async ({ page, request }) => {

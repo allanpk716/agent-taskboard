@@ -1,6 +1,6 @@
 // 「请人反馈」（#64）：一屏向导。两项必填——「请谁反馈」（作链接备注）和
-// 「什么事」（作工单标题）；单选让对方填哪份启用中的反馈类模板（默认 Bug
-// 反馈）或「自由格式」；有效期（7/30/90 天，默认 30）和跟进人（默认本人）
+// 「什么事」（作工单标题）；单选让对方填哪份启用中的模板（按类型分组，
+// 默认 Bug 反馈）或「自由格式」；有效期（7/30/90 天，默认 30）和跟进人（默认本人）
 // 收在折叠的「更多选项」里。点「生成链接」一次建好工单和带「可填写说明」
 // 权限的访客链接（服务端免维度标签）；完成页展示服务端生成的转发文案，
 // 可一键复制。视觉参考原型 prototype/feedback-wizard 的 a.html。
@@ -16,8 +16,8 @@ import {
 } from './memberApi'
 import { copyText, invalidate, nav, toast } from './ui'
 
-/** 反馈类模板 + 「自由格式」。「自由格式」是不用模板的哨兵选项（不出现在
- *  请求里：选中时建 kind=report 的无模板工单）。 */
+/** 模板 + 「自由格式」。「自由格式」是不用模板的哨兵选项（不出现在请求里：
+ *  选中时建 kind=report 的无模板工单）。 */
 const NO_TEMPLATE_OPTION = '__free__'
 
 /** 「自由格式」选项（模板列表加载失败时也用它兜底）。 */
@@ -31,6 +31,7 @@ interface WizardOption {
   key: string // 模板 key 或 NO_TEMPLATE_OPTION
   name: string
   desc: string
+  kind?: string
 }
 
 interface CreatedFeedback {
@@ -87,13 +88,13 @@ export function FeedbackRequestPage({ me }: { me: Me }) {
     }
   }, [])
 
-  // 模板选项：启用中的反馈类模板 + 自由格式；默认 Bug 反馈（不在时取第一项）。
+  // 模板选项：全部启用中的模板按类型分组 + 自由格式；默认 Bug 反馈。
   useEffect(() => {
     if (options !== null) return
     let alive = true
     ;(async () => {
       try {
-        const list = (await fetchTemplates()).filter((t) => t.active && t.kind === 'report')
+        const list = (await fetchTemplates()).filter((t) => t.active)
         const opts: WizardOption[] = []
         for (const t of list) {
           const detail = await fetchTemplate(t.key).catch(() => null)
@@ -101,6 +102,7 @@ export function FeedbackRequestPage({ me }: { me: Me }) {
             key: t.key,
             name: t.name,
             desc: detail ? templateDesc(detail) : '对方按模板引导填写。',
+            kind: t.kind,
           })
         }
         opts.push(FREE_FORM_OPTION)
@@ -249,6 +251,16 @@ export function FeedbackRequestPage({ me }: { me: Me }) {
   }
 
   const followText = assignee === me.name ? '由我跟进' : `由${assignee}跟进`
+  const kindLabels = new Map([['report', '反馈'], ['task', '任务']])
+  const optionGroups =
+    options === null
+      ? []
+      : [...kindLabels].flatMap(([kind, label]) => {
+          const items = options.filter((o) => o.kind === kind)
+          return items.length > 0 ? [{ label, items }] : []
+        })
+  const unkinded = options?.filter((o) => o.kind && !kindLabels.has(o.kind)) ?? []
+  if (unkinded.length > 0) optionGroups.push({ label: '其他', items: unkinded })
   return (
     <div className="bpage">
       <div className="mcard form">
@@ -287,18 +299,39 @@ export function FeedbackRequestPage({ me }: { me: Me }) {
           ) : (
             <>
               <div className="chips" role="radiogroup" aria-label="请对方填写">
-                {options.map((o) => (
-                  <label key={o.key} className={`chip${tpl === o.key ? ' on' : ''}`}>
-                    <input
-                      type="radio"
-                      name="fr-tpl"
-                      checked={tpl === o.key}
-                      onChange={() => setTpl(o.key)}
-                    />
-                    {o.name}
-                    {o.key === 'bug-report' ? '（推荐）' : ''}
-                  </label>
+                {optionGroups.map((group) => (
+                  <div key={group.label} className="fr-tpl-group">
+                    <div className="guide">{group.label}</div>
+                    <div className="fr-tpl-items">
+                      {group.items.map((o) => (
+                        <label key={o.key} className={`chip${tpl === o.key ? ' on' : ''}`}>
+                          <input
+                            type="radio"
+                            name="fr-tpl"
+                            checked={tpl === o.key}
+                            onChange={() => setTpl(o.key)}
+                          />
+                          {o.name}
+                          {o.key === 'bug-report' ? '（推荐）' : ''}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                 ))}
+                <div className="fr-tpl-group">
+                  <div className="guide">自由格式</div>
+                  <div className="fr-tpl-items">
+                    <label className={`chip${tpl === NO_TEMPLATE_OPTION ? ' on' : ''}`}>
+                      <input
+                        type="radio"
+                        name="fr-tpl"
+                        checked={tpl === NO_TEMPLATE_OPTION}
+                        onChange={() => setTpl(NO_TEMPLATE_OPTION)}
+                      />
+                      {FREE_FORM_OPTION.name}
+                    </label>
+                  </div>
+                </div>
               </div>
               <div className="hint" style={{ marginTop: 6 }}>
                 {options.find((o) => o.key === tpl)?.desc}
@@ -353,7 +386,7 @@ export function FeedbackRequestPage({ me }: { me: Me }) {
           生成链接
         </button>
         <div className="hint" style={{ textAlign: 'center', marginTop: 8 }}>
-          需要填完整说明、打标签？用{' '}
+          要自己把说明填完整、打标签？→{' '}
           <a
             href="/new"
             onClick={(e) => {
@@ -361,7 +394,7 @@ export function FeedbackRequestPage({ me }: { me: Me }) {
               nav('/new')
             }}
           >
-            建单（高级）
+            完整建单
           </a>
         </div>
       </div>

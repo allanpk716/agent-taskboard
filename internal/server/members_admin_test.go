@@ -103,6 +103,37 @@ func Test管理员在网页上创建成员账号(t *testing.T) {
 	}
 }
 
+func Test创建成员拒绝乱码名字(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+
+	res := s.Do(t, admin, http.MethodPost, "/api/v1/members",
+		map[string]string{"username": "broken", "name": "赵�工"}, nil)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("乱码名字状态码 = %d, 想 422", res.StatusCode)
+	}
+	var errBody errorBody
+	tbtest.DecodeJSON(t, res, &errBody)
+	if errBody.Error.Code != "invalid_name" {
+		t.Errorf("错误码 = %q, 想 invalid_name", errBody.Error.Code)
+	}
+
+	var created struct {
+		Member struct {
+			Name string `json:"name"`
+		} `json:"member"`
+	}
+	res = s.Do(t, admin, http.MethodPost, "/api/v1/members",
+		map[string]string{"username": "zhao", "name": "赵工"}, &created)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("正常中文名状态码 = %d, 想 201", res.StatusCode)
+	}
+	if created.Member.Name != "赵工" {
+		t.Errorf("创建的成员名字 = %q, 想 赵工", created.Member.Name)
+	}
+}
+
 // 创建与停用成员账号只接受管理员的网页会话：非管理员 403 admin_required，
 // Agent token 403 web_session_required（Agent 不能创建账号，ADR 0003），
 // 访客 403 members_only，匿名 401。

@@ -149,7 +149,7 @@ func Test工单读取带上模板分组(t *testing.T) {
 	}
 	wantGroups := []groupBody{
 		{Title: "哪台仪器", Subtitle: "型号和版本"},
-		{Title: "发生了什么", Subtitle: "时间、操作、现象，照片和日志"},
+		{Title: "发生了什么", Subtitle: "时间、操作、出错和正常的例子"},
 		{Title: "影响多大", Subtitle: "频率、影响和你的猜测"},
 	}
 	for i, want := range wantGroups {
@@ -238,15 +238,15 @@ func Test全新空库的Bug反馈模板直接带分组(t *testing.T) {
 	}
 }
 
-// 迁移：原样（与升级前预置原文逐字节一致）的 Bug 反馈模板在服务重启后
-// 出现带分组的新版本，版本历史里两个版本都可见。
-func Test原样的Bug反馈模板升级出带分组的新版本(t *testing.T) {
+// 迁移：原样（与 #63 预置原文逐字节一致）的 Bug 反馈模板在服务重启后
+// 出现 #154 新版本，版本历史里两个版本都可见。
+func Test原样的Bug反馈模板升级出新版本(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")
 	web := s.Login("陈工", "secret-pass")
 
-	// 把数据目录伪装成升级前的老库：bug-report 版本 1 = 升级前原文。
-	setBugReportCurrent(t, s, templates.LegacyBugReportMarkdown)
+	// 把数据目录伪装成 #154 之前的库：bug-report 版本 1 = #63 原文。
+	setBugReportCurrent(t, s, templates.BugReport63Markdown)
 
 	url := restartServer(t, s)
 
@@ -258,8 +258,8 @@ func Test原样的Bug反馈模板升级出带分组的新版本(t *testing.T) {
 	if got.Version != 2 {
 		t.Fatalf("升级后版本 = %d, 想 2", got.Version)
 	}
-	if len(got.Groups) != 3 {
-		t.Fatalf("升级后分组数 = %d, 想 3：%+v", len(got.Groups), got.Groups)
+	if len(got.Groups) != 3 || got.Groups[1].Title != "发生了什么" {
+		t.Fatalf("升级后分组不对：%+v", got.Groups)
 	}
 	if got.Groups[0] != (groupBody{Title: "哪台仪器", Subtitle: "型号和版本"}) {
 		t.Errorf("分组 0 = %+v", got.Groups[0])
@@ -289,18 +289,23 @@ func Test原样的Bug反馈模板升级出带分组的新版本(t *testing.T) {
 	if newest.Version != 2 || oldest.Version != 1 {
 		t.Fatalf("版本顺序不对：%+v", versions.Versions)
 	}
-	if oldest.Markdown != templates.LegacyBugReportMarkdown {
+	if oldest.Markdown != templates.BugReport63Markdown {
 		t.Error("升级前的版本 1 原文应逐字节保留")
 	}
-	if !strings.Contains(newest.Markdown, "# 哪台仪器") {
-		t.Errorf("新版本原文应带分组标记：\n%s", newest.Markdown)
+	if !strings.Contains(newest.Markdown, "## 出错的例子 {必填}") {
+		t.Errorf("新版本原文应带新字段：\n%s", newest.Markdown)
 	}
-	// 再次重启不重复升级（当前版本已不是旧原文）。
+	// 再次重启不重复升级或导入 bug-report-data 新版本。
 	url2 := restartServer(t, s)
 	var again templateBody
 	doURL(t, web, http.MethodGet, url2+"/api/v1/templates/bug-report", nil, &again)
 	if again.Version != 2 {
 		t.Errorf("第二次重启后版本 = %d, 想 2（一次性迁移不重复执行）", again.Version)
+	}
+	var dataAgain templateBody
+	doURL(t, web, http.MethodGet, url2+"/api/v1/templates/bug-report-data", nil, &dataAgain)
+	if dataAgain.Version != 1 {
+		t.Errorf("第二次重启后 bug-report-data 版本 = %d, 想 1", dataAgain.Version)
 	}
 }
 
@@ -311,7 +316,7 @@ func Test改过的Bug反馈模板不迁移(t *testing.T) {
 	web := s.Login("陈工", "secret-pass")
 
 	// 老库，但 bug-report 已经被成员改过一个字。
-	modified := strings.Replace(templates.LegacyBugReportMarkdown,
+	modified := strings.Replace(templates.BugReport63Markdown,
 		"帮助我们判断优先级。", "帮助我们判断优先级（本部门改过）。", 1)
 	setBugReportCurrent(t, s, modified)
 
@@ -332,6 +337,43 @@ func Test改过的Bug反馈模板不迁移(t *testing.T) {
 		if _, has := raw["groups"]; has {
 			t.Error("改过的模板不应被加上分组")
 		}
+	}
+}
+
+// 已有部署缺少 bug-report-data 时启动导入；key 已存在（哪怕被成员改过）
+// 时不动。
+func TestBug反馈带数据模板按缺失导入且已存在不动(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+
+	// 模拟 #154 之前的已有库：删除种子刚导入的 bug-report-data。
+	if _, err := s.Store().DB.Exec(`DELETE FROM template_versions WHERE template_key = 'bug-report-data';
+		DELETE FROM templates WHERE key = 'bug-report-data'`); err != nil {
+		t.Fatalf("删除 bug-report-data 失败：%v", err)
+	}
+	url := restartServer(t, s)
+	var got templateBody
+	res := doURL(t, web, http.MethodGet, url+"/api/v1/templates/bug-report-data", nil, &got)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("读导入模板状态码 = %d", res.StatusCode)
+	}
+	if got.Version != 1 || got.Name != "Bug 反馈（带数据）" || !got.Active {
+		t.Errorf("导入的模板不对：version=%d name=%q active=%v", got.Version, got.Name, got.Active)
+	}
+
+	// 成员改过之后重启：保持版本 2，不被预置原文覆盖。
+	updated := strings.Replace(got.Markdown, "## 正常的例子 {必填}", "## 正常的例子 {必填}\n多一点细节也可以。", 1)
+	res = doURL(t, web, http.MethodPatch, url+"/api/v1/templates/bug-report-data",
+		map[string]string{"markdown": updated}, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("修改 bug-report-data 状态码 = %d", res.StatusCode)
+	}
+	url2 := restartServer(t, s)
+	var again templateBody
+	doURL(t, web, http.MethodGet, url2+"/api/v1/templates/bug-report-data", nil, &again)
+	if again.Version != 2 || again.Markdown != updated {
+		t.Errorf("已存在的 bug-report-data 不应被改动：version=%d markdown=%s", again.Version, again.Markdown)
 	}
 }
 

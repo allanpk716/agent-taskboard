@@ -58,7 +58,8 @@ npm run e2e
 `s.CreateGuestLink` 造访客链接，`s.GuestClient` 先用链接密钥走认领接口、再复用返回的 `tbgd_` 设备凭证作 Bearer；`s.GuestCookieClient` 模拟只带 `tb_guest_device` cookie 的访客浏览器（认领、访问码进入与入口提交测试里可从响应头取 cookie），`internal/server/intakes_test.go` 里的 `createIntake` / `submitToIntake` 造反馈入口与匿名提交（#35），`s.DoWithHeaders` 发带自定义请求头的请求（如 `Idempotency-Key`，此时不预读响应体，可自己逐字节比较），`s.OpenSSE` 打开并解析通知 SSE（可用假时钟推进 25 秒保活），`s.IssueClientCredential` 走完整 PKCE 流程签发桌面客户端凭证，`s.ClientCredentialClient` 以该凭证发请求（#74）；`s.Store()` 暴露数据库，供「第 1000 张编号」这类测试直连造数（断言外部行为仍走 HTTP），`tbtest.WithAttachments(maxFileMB, maxFilesPerPost, maxImagesPerPost, maxTicketMB)` 调小附件上限（#33，测试 413 不用打 5MB 载荷）、`s.Attachments()` 暴露附件模块（直接触发 24 小时清除任务：`CleanupUnreferenced`，服务里由周期任务调用）、`s.Idempotency()` 暴露幂等模块（同理直接触发过期记录清除：`PurgeExpired`），`tbtest.WithBackup(config.Backup)` 指定备份目标（#43：临时目录充当目标，或「文件下的子路径」模拟连不上的目标）、`s.Backups()` 暴露备份模块（直接做一次备份或触发调度检查，服务里由周期任务调用）。见 `internal/tbtest/harness.go` 和 `internal/server/*_test.go` 里的用例；原型场景的移植范例见 `internal/server/scenarios36_test.go`（member-handoff 的 4 个场景）、`member_handoff_test.go`（等待方推导表逐行）与 `internal/server/ticket_query_scenarios_test.go`（ticket-query 的 5 个场景 32 步，#37；`ticket_query_test.go` 是配套的世界 fixture 与逐项断言）。备份与恢复的接缝是 `internal/ops`：备份命名/镜像/轮换/.bad/调度在 `internal/ops/*_test.go`（注入时钟模拟多天）。
 - **CLI 测试**：`cmd/taskboard/main_test.go` 编译真实二进制后走 `create-admin` → `serve` → HTTP 登录；`cmd/taskboard/backup_cli_test.go` 走 `backup` / `restore` 的备份与恢复全流程（数据写入 → 备份 → 损坏 → 恢复 → 工单数一致、附件能打开）；`cmd/taskboard/update_cli_test.go` 走 `update` / `rollback` 的更新全流程（#45）：本地 HTTP 服务伪装 GitHub/UpdateHub 源，更新操作只针对临时安装目录里的替身 exe，绝不替换测试进程自己的二进制。
 - **更新与前端切换（#45）**：源回退、镜像前缀、SHA1/SHA256 双校验在 `internal/updater/*_test.go`（假源是本地 HTTP 服务，不碰真实 GitHub/UpdateHub）；前端原子切换在 `internal/webapp/switch_test.go`（直接打服务层：并发重建 `web/` 目录链接期间，逐个请求与「页面 + 哈希资源」要么全旧要么全新）。
-- **Playwright**：对“真实服务 + 构建好的前端”跑用例，见 `web-src/e2e/`。
+- **Playwright**：对“真实服务 + 构建好的前端”跑用例（含两份 Bug 反馈模板的
+  访客填写行为），见 `web-src/e2e/`。
 
 ## 发布
 

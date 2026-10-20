@@ -143,6 +143,7 @@ export interface TemplateField {
 export interface TemplateDetail extends TemplateSummary {
   agent_note: string
   fields: TemplateField[]
+  groups?: { title: string; subtitle?: string }[]
   markdown: string
   updated_by: AuthorRef | null
   updated_at: string

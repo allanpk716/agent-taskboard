@@ -25,6 +25,13 @@ test('请人反馈：向导生成链接，完成页可复制，访客能打开',
 
   // 模板选项：默认 Bug 反馈，下面有一句白话（分组未上线时取前三个字段的问句）。
   await expect(page.getByText('会问：').or(page.getByText(/哪台仪器/))).toBeVisible()
+  const groups = page.locator('.fr-tpl-group')
+  await expect(groups).toHaveCount(3)
+  await expect(groups.nth(0).locator('.guide')).toHaveText('反馈')
+  await expect(groups.nth(1).locator('.guide')).toHaveText('任务')
+  await expect(groups.nth(2).locator('.guide')).toHaveText('自由格式')
+  await expect(groups.nth(0).locator('.chip')).toHaveCount(2)
+  await expect(groups.nth(1).locator('.chip')).toHaveCount(2)
 
   // 更多选项默认折叠，摘要写「有效期 30 天 · 由我跟进」；展开改成 7 天。
   await expect(page.getByText('有效期 30 天 · 由我跟进')).toBeVisible()
@@ -124,11 +131,30 @@ test('建单（高级）仍然能正常建单', async ({ page }) => {
   await page.getByRole('button', { name: '创建工单' }).click()
   await expect(page.locator('.donet')).toContainText('已创建')
 
-  // 向导表单底部也有一条通往「建单（高级）」的链接。
+  // 向导表单底部有一条通往完整建单的链接。
   await page.goto('/')
   await page.getByRole('button', { name: '＋ 请人反馈' }).click()
-  const adv = page.locator('.submitrow').getByRole('link', { name: '建单（高级）' })
+  const adv = page.locator('.submitrow').getByRole('link', { name: '完整建单' })
   await expect(adv).toBeVisible()
   await adv.click()
   await expect(page.getByRole('heading', { name: '建单（高级）' })).toBeVisible()
+})
+
+// 3. 向导列出的任务模板同样可用：工单类型由模板决定，访客链接照常生成。
+test('请人反馈可选任务模板，工单类型跟随模板', async ({ page }) => {
+  await login(page, ADMIN)
+  await page.getByRole('button', { name: '＋ 请人反馈' }).click()
+  await page.getByLabel('请谁反馈').fill('检验科-李四')
+  await page.getByLabel('什么事').fill('整理质控规则对照表')
+  await page.getByRole('radio', { name: '分配任务' }).check()
+  await page.getByRole('button', { name: '生成链接' }).click()
+
+  const done = page.locator('.donet')
+  await expect(done).toContainText(/已创建/)
+  const number = (await done.locator('b').textContent()) ?? ''
+  const res = await page.request.get(`/api/v1/tickets/${number}`)
+  expect(res.ok()).toBeTruthy()
+  const body = await res.json()
+  expect(body.kind).toBe('task')
+  expect(body.template).toBe('assign-task')
 })

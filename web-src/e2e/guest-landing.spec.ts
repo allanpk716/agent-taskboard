@@ -50,7 +50,7 @@ function smallPng(page: Page, width = 600, height = 400): Promise<Uint8Array> {
   }, { width, height })
 }
 
-/** 填完 Bug 反馈模板的 6 个必填项（维度「不确定」+ 第二组四个「不清楚」+
+/** 填完 Bug 反馈模板的 5 个必填项（维度「不确定」+ 第二组两个「不清楚」+
  *  单选「每次」）；手机要先「下一组」，桌面双栏全部展开直接填。 */
 async function fillBugRequired(page: Page, mobile: boolean, model = '不确定') {
   await page.getByRole('combobox', { name: '哪台仪器？' }).click()
@@ -58,7 +58,7 @@ async function fillBugRequired(page: Page, mobile: boolean, model = '不确定')
   if (mobile) {
     await page.getByRole('button', { name: '下一组：发生了什么 ›' }).click()
   }
-  for (const q of ['什么时候发生的？', '你做了哪些操作？', '实际看到了什么？', '你期望看到什么？']) {
+  for (const q of ['什么时候发生的？', '你做了哪些操作？', '出错的例子']) {
     await page.locator(`.cf[data-field="${q}"]`).getByRole('button', { name: '不清楚', exact: true }).click()
   }
   if (mobile) {
@@ -80,7 +80,7 @@ test.describe('落地页', () => {
     await expect(landing).toBeVisible()
     await expect(landing.locator('.landing-lead')).toHaveText('管理员 请你补充这张反馈的说明')
     await expect(landing.getByRole('heading', { name: 'UD-2300 质控时报警 E-203' })).toBeVisible()
-    await expect(landing.locator('.landing-info')).toContainText('9 项（6 项必填）')
+    await expect(landing.locator('.landing-info')).toContainText('9 项（5 项必填）')
     await expect(landing.locator('.landing-info')).toContainText('可以上传照片、截图和日志')
     await expect(landing.locator('.landing-info')).toContainText('内容保存在这台设备上')
     await expect(landing.getByLabel('你的称呼（管理员会看到）')).toHaveValue('检验科-张三')

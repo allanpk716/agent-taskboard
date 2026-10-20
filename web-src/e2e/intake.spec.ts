@@ -47,8 +47,7 @@ async function seedEditableTicket(request: APIRequestContext): Promise<{ number:
         '哪台仪器？': 'UD-2300',
         '什么时候发生的？': '10月15日上午 9:10 左右',
         '你做了哪些操作？': '1. 开机自检完成\n2. 进入质控界面\n3. 点击「开始」',
-        '实际看到了什么？': '屏幕弹出「E-203 试剂余量不足」。',
-        '你期望看到什么？': '正常开始质控测试。',
+        '出错的例子': '屏幕弹出「E-203 试剂余量不足」；应正常开始质控测试。',
         '出现得频繁吗？': '每次',
       },
       // 序列号/软件版本、猜测等留空 → 补全说明表单里有可改的字段
@@ -119,24 +118,23 @@ test.describe('手机视口', () => {
   await page.getByRole('button', { name: '提交反馈' }).click()
   const missbox = page.locator('.missbox')
   await expect(missbox).toBeVisible()
-  await expect(missbox.getByText('还差 7 项必填')).toBeVisible()
-  for (const q of ['哪台仪器？', '什么时候发生的？', '你做了哪些操作？', '实际看到了什么？', '你期望看到什么？', '你的署名']) {
+  await expect(missbox.getByText('还差 6 项必填')).toBeVisible()
+  for (const q of ['哪台仪器？', '什么时候发生的？', '你做了哪些操作？', '出错的例子', '你的署名']) {
     await expect(missbox).toContainText(q)
   }
   const steps = page.locator('.fld', { hasText: '你做了哪些操作？' })
   await expect(steps).toHaveClass(/miss/)
-  await expect(steps.locator('.err')).toContainText('按顺序写')
+  await expect(steps.locator('.err')).toContainText('从开机或进入某个界面开始')
 
   // 实时：填好一项后，这一项的红消失（汇总数字随之变化）
   await steps.getByRole('textbox').fill('1. 开机自检完成\n2. 点击「开始」')
-  await expect(missbox.getByText('还差 6 项必填')).toBeVisible()
+  await expect(missbox.getByText('还差 5 项必填')).toBeVisible()
   await expect(steps).not.toHaveClass(/miss/)
 
-  // 补全其余必填：维度下拉（含「不确定」）、时间、现象、期望、单选、署名
+  // 补全其余必填：维度下拉（含「不确定」）、时间、出错例子、单选、署名
   await pickDimension(page, '哪台仪器？', 'BH-7300', 'BH-7300')
   await page.locator('.fld', { hasText: '什么时候发生的？' }).getByRole('textbox').fill('今天上午 9 点左右')
-  await page.locator('.fld', { hasText: '实际看到了什么？' }).getByRole('textbox').fill('弹出「E-203 试剂余量不足」，试剂是新换的。')
-  await page.locator('.fld', { hasText: '你期望看到什么？' }).getByRole('textbox').fill('正常开始质控测试')
+  await page.locator('.fld', { hasText: '出错的例子' }).getByRole('textbox').fill('弹出「E-203 试剂余量不足」，试剂是新换的；应正常开始质控测试。')
   await page.locator('.fld', { hasText: '出现得频繁吗？' }).getByRole('radio', { name: '每次' }).check()
   await page.getByLabel('你的署名').fill('检验科 张三')
 
@@ -171,8 +169,7 @@ test('维度下拉框输入别名能选中对应的标准值', async ({ page, re
   await page.getByLabel('一句话标题').fill('UD-2300 质控时报警 E-203')
   await page.locator('.fld', { hasText: '什么时候发生的？' }).getByRole('textbox').fill('今天上午 9 点左右')
   await page.locator('.fld', { hasText: '你做了哪些操作？' }).getByRole('textbox').fill('点「开始」就报警')
-  await page.locator('.fld', { hasText: '实际看到了什么？' }).getByRole('textbox').fill('E-203 报警')
-  await page.locator('.fld', { hasText: '你期望看到什么？' }).getByRole('textbox').fill('正常开始')
+  await page.locator('.fld', { hasText: '出错的例子' }).getByRole('textbox').fill('E-203 报警，应正常开始')
   await page.locator('.fld', { hasText: '出现得频繁吗？' }).getByText('每次').check()
   await page.getByLabel('你的署名').fill('张三')
   await page.getByRole('button', { name: '提交反馈' }).click()
@@ -202,7 +199,7 @@ test('修改说明提交后回到对话，时间线出现修订事件', async ({
   await ver.locator('textarea').fill('序列号 7600CS-2023-0412，软件 V3.2.1')
 
   // 文本字段可以直接粘贴截图：上传后引用插进这个字段的值里
-  const actual = page.locator('.cf', { hasText: '实际看到了什么？' })
+  const actual = page.locator('.cf', { hasText: '出错的例子' })
   const png = await smallPng(page)
   await pasteFile(actual.locator('textarea'), png, '报警截图.png', 'image/png')
   await expect(actual.locator('textarea')).toHaveValue(/att:/, { timeout: 15000 })
@@ -229,9 +226,8 @@ test('入口提交的截图与附件在建单后写进说明，不确定不打�
   await pickDimension(page, '哪台仪器？', '不确定', '不确定')
   await page.locator('.fld', { hasText: '什么时候发生的？' }).getByRole('textbox').fill('今天上午 9 点左右')
   await page.locator('.fld', { hasText: '你做了哪些操作？' }).getByRole('textbox').fill('点「开始」就报警')
-  const actual = page.locator('.fld', { hasText: '实际看到了什么？' })
-  await actual.getByRole('textbox').fill('弹出「E-203 试剂余量不足」。截图如下：')
-  await page.locator('.fld', { hasText: '你期望看到什么？' }).getByRole('textbox').fill('正常开始')
+  const actual = page.locator('.fld', { hasText: '出错的例子' })
+  await actual.getByRole('textbox').fill('弹出「E-203 试剂余量不足」，应正常开始。截图如下：')
   await page.locator('.fld', { hasText: '出现得频繁吗？' }).getByRole('radio', { name: '每次' }).check()
   await page.getByLabel('你的署名').fill('检验科 张三')
 
@@ -282,8 +278,7 @@ test('入口提交时服务中断草稿仍在，恢复后自动重试且只建�
   await pickDimension(page, '哪台仪器？', 'UD', 'UD-2300')
   await page.locator('.fld', { hasText: '什么时候发生的？' }).getByRole('textbox').fill('今天上午 9 点左右')
   await page.locator('.fld', { hasText: '你做了哪些操作？' }).getByRole('textbox').fill('点「开始」就报警')
-  await page.locator('.fld', { hasText: '实际看到了什么？' }).getByRole('textbox').fill('E-203 报警')
-  await page.locator('.fld', { hasText: '你期望看到什么？' }).getByRole('textbox').fill('正常开始')
+  await page.locator('.fld', { hasText: '出错的例子' }).getByRole('textbox').fill('E-203 报警，应正常开始')
   await page.locator('.fld', { hasText: '出现得频繁吗？' }).getByRole('radio', { name: '每次' }).check()
   await page.getByLabel('你的署名').fill('张三')
 
@@ -295,7 +290,7 @@ test('入口提交时服务中断草稿仍在，恢复后自动重试且只建�
   // 刷新后草稿仍在（各字段值原样恢复）
   await page.reload()
   await expect(page.getByLabel('一句话标题')).toHaveValue(title)
-  await expect(page.locator('.fld', { hasText: '实际看到了什么？' }).getByRole('textbox')).toHaveValue('E-203 报警')
+  await expect(page.locator('.fld', { hasText: '出错的例子' }).getByRole('textbox')).toHaveValue('E-203 报警，应正常开始')
   await expect(page.getByLabel('你的署名')).toHaveValue('张三')
 
   // 恢复服务：自动重试成功，进入提交成功页
