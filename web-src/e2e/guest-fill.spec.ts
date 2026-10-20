@@ -581,7 +581,7 @@ test.describe('桌面视口', () => {
     expect(link.status(), `创建访客链接失败：${await link.text()}`).toBe(201)
     const linkKey = String((await link.json()).url).slice(3)
 
-    await page.goto(`/g/${linkKey}`)
+    await openGuestPage(page, request, linkKey)
     await page.getByRole('button', { name: '开始填写' }).click()
     await expect(page.locator('.grp').nth(1).locator('.grp-name')).toHaveText('正确和错误的例子')
     await expect(page.locator('.fill-prog')).toHaveText(/必填 0\/6/)
