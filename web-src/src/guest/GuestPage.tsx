@@ -161,6 +161,7 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
       <main className="guest-root landing-root">
         <LandingPage
           ticket={ticket}
+          linkKey={linkKey}
           onStart={(author) => {
             setAuthorSeed(author)
             setMode('fill')

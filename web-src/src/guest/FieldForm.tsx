@@ -30,6 +30,8 @@ export interface StagedFile {
   attachmentId?: string
   /** 图片的本地预览地址（objectURL，仅展示用） */
   previewUrl?: string
+  /** 是否图片；刷新恢复草稿后没有本地预览，也保留显示元数据。 */
+  image?: boolean
   /** 入口提交前拿不到凭证，先持有文件本体，建单后补传 */
   blob?: File
 }

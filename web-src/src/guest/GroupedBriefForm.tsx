@@ -3,7 +3,7 @@
 // 顶部吸顶必填进度；宽屏（≥768）双栏：左边全部分组，右边吸顶必填进度、
 // 逐字段清单（点一下滚到该字段）、整张工单的附件区、署名与提交。保存沿用
 // 旧逻辑：草稿实时写本机、一次 PATCH（带 base_revision）+ 幂等键重试、版本
-// 冲突时重读重试。字段内文件上传后把 att: 引用写进字段值；整张工单附件区
+// 冲突时重读重试。字段内文件上传后作为字段附件单独暂存；整张工单附件区
 // 只维护 attachment_ids。必填校验只在前端拦提交，服务端规则不变。无模板的
 // 工单（#66 自由格式）合成一组「情况说明」，修订时提交 brief_md。
 // 视觉参考 prototype/guest-fill 的 c.html（原型代码不合并）。
@@ -16,7 +16,13 @@ import { guestApi } from './guestApi'
 import { uploadAttachment } from './upload'
 import type { TemplateField, TicketView } from '../shared/types'
 import { fmtSize } from '../shared/format'
-import { appendRef, type StagedFile } from './FieldForm'
+import type { StagedFile } from './FieldForm'
+import {
+  filledFieldValue,
+  joinFieldValue,
+  splitFormDraftValues,
+  type FieldAttachmentDraft,
+} from './fieldAttachments'
 
 const RETRY_FIRST_MS = 1500
 const RETRY_MS = 4000
@@ -96,6 +102,22 @@ function draftAttachments(files: StagedFile[]): NonNullable<FormDraft['attachmen
     .map((f) => ({ attachmentId: f.attachmentId!, name: f.name, size: f.size }))
 }
 
+function draftFieldAttachments(files: StagedFile[]): Record<string, FieldAttachmentDraft[]> {
+  const out: Record<string, FieldAttachmentDraft[]> = {}
+  for (const f of files) {
+    if (!f.area && f.status === 'ready' && f.attachmentId && f.markdown) {
+      ;(out[f.fieldKey] ??= []).push({
+        attachmentId: f.attachmentId,
+        name: f.name,
+        size: f.size,
+        image: f.markdown.startsWith('!'),
+        markdown: f.markdown,
+      })
+    }
+  }
+  return out
+}
+
 /** ≥768 算宽屏（双栏布局），窗口缩放时实时切换。 */
 function useDesktop(): boolean {
   const [desktop, setDesktop] = useState(() => window.matchMedia(DESKTOP_QUERY).matches)
@@ -106,10 +128,6 @@ function useDesktop(): boolean {
     return () => mq.removeEventListener('change', onChange)
   }, [])
   return desktop
-}
-
-function filled(value: string | undefined): boolean {
-  return !!(value ?? '').trim()
 }
 
 /** 追问提示文案：统一「能再具体一点吗？比如：…」的形式，内容取字段专属
@@ -123,9 +141,13 @@ function nudgeText(f: FillField, value: string): string | null {
 }
 
 /** 必填进度：已填必填数 / 必填总数。 */
-function reqProgress(fields: FillField[], values: Record<string, string>): [number, number] {
+function reqProgress(
+  fields: FillField[],
+  values: Record<string, string>,
+  readyFieldKeys: ReadonlySet<string>,
+): [number, number] {
   const reqs = fields.filter((f) => f.required)
-  return [reqs.filter((f) => filled(values[f.key])).length, reqs.length]
+  return [reqs.filter((f) => filledFieldValue(values[f.key], readyFieldKeys.has(f.key))).length, reqs.length]
 }
 
 /** 需要在说明里提交给对方的成员名（建单的成员；兜底同对话页的联系人）。 */
@@ -292,9 +314,10 @@ function FileChips({ files, onRemove }: { files: StagedFile[]; onRemove?: (id: s
     <div className="staged-files">
       {files.map((f) => (
         <span key={f.id} className={`staged-file ${f.status}`}>
-          {f.previewUrl ? <img src={f.previewUrl} alt="" /> : '📄'}
+          {f.previewUrl ? <img src={f.previewUrl} alt="" /> : f.image ? '🖼' : '📄'}
           <span className="name">
-            {f.name} · {fmtSize(f.size)}
+            {f.name}
+            {Number.isFinite(f.size) && ` · ${fmtSize(f.size)}`}
           </span>
           {f.status === 'uploading' && <span className="state">上传中…</span>}
           {f.status === 'failed' && <span className="state">{f.error ?? '失败'}</span>}
@@ -406,14 +429,18 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
   const groups = groupsOf(ticket)
   const key = briefDraftKey(linkKey, ticket.number)
   const initialDraft = useRef(loadFormDraft(key))
-  const [values, setValues] = useState<Record<string, string>>(() =>
-    free
-      ? { [NO_TEMPLATE_FIELD_KEY]: ticket.brief.markdown, ...(initialDraft.current?.fields ?? {}) }
-      : { ...(ticket.brief.fields ?? {}), ...(initialDraft.current?.fields ?? {}) },
+  const restoredDraft = useRef(
+    splitFormDraftValues(
+      free
+        ? { [NO_TEMPLATE_FIELD_KEY]: ticket.brief.markdown, ...(initialDraft.current?.fields ?? {}) }
+        : { ...(ticket.brief.fields ?? {}), ...(initialDraft.current?.fields ?? {}) },
+      initialDraft.current?.fieldAttachments ?? {},
+    ),
   )
+  const [values, setValues] = useState<Record<string, string>>(restoredDraft.current.fields)
   const [author, setAuthor] = useState(initialDraft.current?.author ?? initialAuthor ?? loadAuthor())
-  const [files, setFiles] = useState<StagedFile[]>(() =>
-    (initialDraft.current?.attachments ?? []).map((a) => ({
+  const [files, setFiles] = useState<StagedFile[]>(() => {
+    const restored: StagedFile[] = (initialDraft.current?.attachments ?? []).map((a) => ({
       id: a.attachmentId,
       attachmentId: a.attachmentId,
       name: a.name,
@@ -421,8 +448,24 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
       fieldKey: '',
       area: true,
       status: 'ready',
-    })),
-  )
+    }))
+    for (const [fieldKey, attachments] of Object.entries(restoredDraft.current.fieldAttachments)) {
+      for (const a of attachments) {
+        restored.push({
+          id: a.attachmentId,
+          attachmentId: a.attachmentId,
+          name: a.name,
+          size: a.size ?? Number.NaN,
+          fieldKey,
+          area: false,
+          status: 'ready',
+          image: a.image,
+          markdown: a.markdown,
+        })
+      }
+    }
+    return restored
+  })
   const [attachmentIds, setAttachmentIds] = useState<string[]>(
     () => initialDraft.current?.attachmentIds ?? ticket.brief.attachment_ids,
   )
@@ -441,7 +484,12 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
   authorRef.current = author
   const attachmentIdsRef = useRef(attachmentIds)
   attachmentIdsRef.current = attachmentIds
+  const filesRef = useRef(files)
+  filesRef.current = files
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const readyFieldKeys = new Set(
+    files.filter((f) => !f.area && f.status === 'ready' && !!f.attachmentId).map((f) => f.fieldKey),
+  )
   const areaFiles = [
     ...files.filter((f) => f.area),
     ...attachmentIds
@@ -459,11 +507,11 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
       })),
   ]
 
-  const [reqDone, reqTotal] = reqProgress(fields, values)
+  const [reqDone, reqTotal] = reqProgress(fields, values, readyFieldKeys)
   const uploading = files.some((f) => f.status === 'uploading')
   const canSubmit = reqDone === reqTotal && !uploading && !saving
 
-  // 实时保存草稿；字段值里的 att: 引用随字段值一并保存。整张工单附件区
+  // 实时保存草稿；字段文本与字段附件元数据分开保存。整张工单附件区
   // 另存有序 id 与元数据（待用附件不在工单附件列表里，刷新后靠草稿恢复）。
   useEffect(() => {
     if (submitted) return
@@ -473,6 +521,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
       idemKey: idemKeyRef.current,
       pending: pendingRef.current,
       attachments: draftAttachments(files),
+      fieldAttachments: draftFieldAttachments(files),
       attachmentIds: attachmentIdsRef.current,
     })
   }, [key, values, author, submitted, files, attachmentIds])
@@ -495,7 +544,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
     setValues((prev) => ({ ...prev, [k]: v }))
   }
 
-  /** 立即上传：字段文件把 att: 引用写进字段值，附件区文件进 attachment_ids。 */
+  /** 立即上传：字段文件进字段附件列表，附件区文件进 attachment_ids。 */
   async function pickFiles(fieldKey: string, picked: File[], viaArea: boolean) {
     for (const file of picked) {
       const id = crypto.randomUUID()
@@ -516,7 +565,6 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
           prev.map((f) => (f.id === id ? { ...f, status: 'ready', markdown: att.markdown, attachmentId: att.id, size: att.size } : f)),
         )
         if (viaArea) setAttachmentIds((prev) => [...prev, att.id])
-        else setValues((prev) => ({ ...prev, [fieldKey]: appendRef(prev[fieldKey] ?? '', att.markdown) }))
       } catch (err) {
         if (err instanceof ApiError && err.status === 401 && (err.code === 'link_revoked' || err.code === 'link_expired')) {
           onLinkDead(err.code)
@@ -553,21 +601,27 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
         author: authorRef.current,
         idemKey: idemKeyRef.current,
         pending: true,
-        attachments: draftAttachments(files),
+        attachments: draftAttachments(filesRef.current),
+        fieldAttachments: draftFieldAttachments(filesRef.current),
         attachmentIds: attachmentIdsRef.current,
       })
       const name = authorRef.current.trim()
+      const readyFieldAttachments = draftFieldAttachments(filesRef.current)
+      const joinedValues: Record<string, string> = {}
+      for (const fieldKey of free ? [NO_TEMPLATE_FIELD_KEY] : templateFields.map((f) => f.key)) {
+        joinedValues[fieldKey] = joinFieldValue(valuesRef.current[fieldKey] ?? '', readyFieldAttachments[fieldKey] ?? [])
+      }
       // 自由格式提交整块 brief_md（非模板工单）；模板工单逐字段提交。
       const body = free
         ? {
-            brief_md: valuesRef.current[NO_TEMPLATE_FIELD_KEY] ?? '',
+            brief_md: joinedValues[NO_TEMPLATE_FIELD_KEY],
             attachment_ids: attachmentIdsRef.current,
             base_revision: baseRevisionRef.current,
             ...(name ? { author_name: name } : {}),
           }
         : (() => {
             const out: Record<string, string> = {}
-            for (const f of templateFields) out[f.key] = valuesRef.current[f.key] ?? ''
+            Object.assign(out, joinedValues)
             return {
               fields: out,
               attachment_ids: attachmentIdsRef.current,
@@ -675,7 +729,7 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
   const groupsView = (openAll: boolean) => (
     <>
       {groups.map((g, i) => {
-        const [done, total] = reqProgress(g.fields, values)
+        const [done, total] = reqProgress(g.fields, values, readyFieldKeys)
         const groupDone = done === total
         const open = openAll || openGroup === i
         const last = i === groups.length - 1
@@ -744,13 +798,15 @@ export function GroupedBriefForm({ linkKey, ticket, initialAuthor, onSaved, onBa
                   {fields.map((f) => (
                     <div
                       key={f.key}
-                      className={`check-item${filled(values[f.key]) ? ' ok' : ''}`}
+                      className={`check-item${filledFieldValue(values[f.key], readyFieldKeys.has(f.key)) ? ' ok' : ''}`}
                       role="button"
                       tabIndex={0}
                       onClick={() => scrollToField(f.key)}
                       onKeyDown={(e) => e.key === 'Enter' && scrollToField(f.key)}
                     >
-                      <span className={`mark${filled(values[f.key]) ? ' ok' : ''}`}>{filled(values[f.key]) ? '✓' : '○'}</span>
+                      <span className={`mark${filledFieldValue(values[f.key], readyFieldKeys.has(f.key)) ? ' ok' : ''}`}>
+                        {filledFieldValue(values[f.key], readyFieldKeys.has(f.key)) ? '✓' : '○'}
+                      </span>
                       {f.title}
                       {f.required && <i className="req">*</i>}
                     </div>

@@ -198,11 +198,12 @@ test('修改说明提交后回到对话，时间线出现修订事件', async ({
   const ver = page.locator('.cf', { hasText: '序列号和软件版本是多少？' })
   await ver.locator('textarea').fill('序列号 7600CS-2023-0412，软件 V3.2.1')
 
-  // 文本字段可以直接粘贴截图：上传后引用插进这个字段的值里
+  // 文本字段可以直接粘贴截图：引用单独挂在字段附件列表里
   const actual = page.locator('.cf', { hasText: '出错的例子' })
   const png = await smallPng(page)
   await pasteFile(actual.locator('textarea'), png, '报警截图.png', 'image/png')
-  await expect(actual.locator('textarea')).toHaveValue(/att:/, { timeout: 15000 })
+  await expect(actual.locator('.staged-file')).toContainText('报警截图.png', { timeout: 15000 })
+  await expect(actual.locator('textarea')).not.toHaveValue(/att:/)
 
   await page.getByRole('button', { name: /^提交给管理员/ }).click()
   await expect(page.locator('.fill-done')).toContainText('已提交给管理员')
