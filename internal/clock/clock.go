@@ -3,6 +3,7 @@
 package clock
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -28,6 +29,7 @@ type Fake struct {
 	mu     sync.Mutex
 	now    time.Time
 	timers []fakeTimer
+	notify chan struct{}
 }
 
 type fakeTimer struct {
@@ -37,7 +39,7 @@ type fakeTimer struct {
 
 // NewFake 以 t（会先转成北京时间）为起点构造假时钟。
 func NewFake(t time.Time) *Fake {
-	return &Fake{now: t.In(Beijing)}
+	return &Fake{now: t.In(Beijing), notify: make(chan struct{}, 1)}
 }
 
 func (f *Fake) Now() time.Time {
@@ -58,11 +60,34 @@ func (f *Fake) Advance(d time.Duration) {
 	f.advance(d)
 }
 
+// WaitForTimer 等待至少一个剩余时长为 d 的计时器被挂上。
+// 它让测试能在 Advance 前确认被测代码已经完成计时器注册。
+func (f *Fake) WaitForTimer(ctx context.Context, d time.Duration) bool {
+	for {
+		f.mu.Lock()
+		want := f.now.Add(d)
+		for _, timer := range f.timers {
+			if timer.when.Equal(want) {
+				f.mu.Unlock()
+				return true
+			}
+		}
+		f.mu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			return false
+		case <-f.notify:
+		}
+	}
+}
+
 func (f *Fake) After(d time.Duration) <-chan time.Time {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	ch := make(chan time.Time, 1)
 	f.timers = append(f.timers, fakeTimer{when: f.now.Add(d), ch: ch})
+	f.signalTimerChangeLocked()
 	return ch
 }
 
@@ -80,11 +105,19 @@ func (f *Fake) advance(d time.Duration) {
 		}
 	}
 	f.timers = remaining
+	f.signalTimerChangeLocked()
 	f.mu.Unlock()
 	for _, timer := range due {
 		select {
 		case timer.ch <- now:
 		default:
 		}
+	}
+}
+
+func (f *Fake) signalTimerChangeLocked() {
+	select {
+	case f.notify <- struct{}{}:
+	default:
 	}
 }

@@ -79,6 +79,7 @@ func Test自动更新三十秒无就绪时结束新进程并换回旧版(t *test
 	defer cancel()
 	done := fake.startClient(t, ctx, s.URL())
 	fake.waitState(t, client.TrayNormal)
+	waitForFakeTimer(t, fake.clock, 30*time.Second)
 	fake.clock.Advance(31 * time.Second)
 
 	waitCondition(t, func() bool { return len(fx.updater.stoppedList()) == 1 })
@@ -155,6 +156,7 @@ func Test自动更新SHA256不符时不替换并继续运行(t *testing.T) {
 	defer cancel()
 	done := fake.startClient(t, ctx, proxy.URL)
 	fake.waitState(t, client.TrayNormal)
+	waitForFakeTimer(t, fake.clock, 6*time.Hour)
 
 	if got := readFile(t, fx.exePath); string(got) != string(oldExe) {
 		t.Fatal("SHA256 不符时不应替换 exe")
@@ -196,6 +198,7 @@ func Test自动更新每六小时检查一次新版本(t *testing.T) {
 	}
 
 	installClientPackage(t, s, "1.2.0", testClientBinary(t, "1.2.0 new"))
+	waitForFakeTimer(t, fake.clock, 6*time.Hour)
 	fake.clock.Advance(6 * time.Hour)
 	fx.updater.waitStarted(t)
 	waitClient(t, done)
