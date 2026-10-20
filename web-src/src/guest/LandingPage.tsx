@@ -6,15 +6,19 @@
 // prototype/guest-fill 的 c.html（原型代码不合并）。
 import { useState } from 'react'
 import { groupsOf, memberNameOf } from './GroupedBriefForm'
-import { loadAuthor } from './draft'
+import { briefDraftKey, loadAuthor, loadFormDraft } from './draft'
+import { filledFieldValue, splitFormDraftValues } from './fieldAttachments'
 import type { TicketView } from '../shared/types'
 
 export function LandingPage({
   ticket,
+  linkKey,
   onStart,
   onTalk,
 }: {
   ticket: TicketView
+  /** 读取本机说明草稿，判断是否显示「继续填写」。 */
+  linkKey: string
   /** 「开始填写」进分组填写页；带上落地页里改过的称呼作署名初值。 */
   onStart: (author: string) => void
   /** 「先不填，直接回复 →」直接进对话页。 */
@@ -23,6 +27,13 @@ export function LandingPage({
   const member = memberNameOf(ticket)
   const fields = groupsOf(ticket).flatMap((g) => g.fields)
   const required = fields.filter((f) => f.required).length
+  const draft = loadFormDraft(briefDraftKey(linkKey, ticket.number))
+  const draftValues = draft ? splitFormDraftValues(draft.fields, draft.fieldAttachments) : null
+  const requiredDone = fields.filter(
+    (f) =>
+      f.required &&
+      filledFieldValue(draftValues?.fields[f.key], (draftValues?.fieldAttachments[f.key] ?? []).length > 0),
+  ).length
   // 自由格式是一整段话（大约 3 分钟）；模板按字段数估几分钟（封在 3–10）。
   const free = (ticket.brief.template_fields ?? []).length === 0
   const minutes = free ? 3 : Math.max(3, Math.min(10, Math.round(fields.length * 0.55)))
@@ -48,7 +59,7 @@ export function LandingPage({
           />
         </div>
         <button type="button" className="btn big block start-btn" onClick={() => onStart(author)}>
-          开始填写
+          {draft ? `继续填写（必填 ${requiredDone}/${required}）` : '开始填写'}
         </button>
         <div className="landing-talk">
           <button type="button" className="linkish" onClick={onTalk}>

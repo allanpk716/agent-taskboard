@@ -176,12 +176,12 @@ function smallPng(page: Page, width = 600, height = 400): Promise<Uint8Array> {
   }, { width, height })
 }
 
-// 4.（手机视口）给短字段（序列号和软件版本）上传图片：结果显示在该字段下，
-//    引用写进字段值；提交后确认页 → 对话页，说明里能看到这张图。
+// 4.（手机视口）给短字段上传图片：引用不写进字段值；刷新后附件列表随草稿
+//    恢复且可删除，提交时引用拼回字段值，说明里能看到图。
 test.describe('上传与提交', () => {
   test.use({ viewport: { width: 390, height: 844 } })
 
-  test('短字段上传图片显示在字段下，提交后说明里能看到', async ({ page, request }) => {
+  test('短字段附件随草稿恢复、可删除，提交后说明里能看到图', async ({ page, request }) => {
     const seed = await seedFillTicket(request)
     await openGuestPage(page, request, seed.linkKey)
     await page.getByRole('button', { name: '开始填写' }).click()
@@ -199,7 +199,8 @@ test.describe('上传与提交', () => {
       buffer: Buffer.from(png),
     })
     await expect(sn.locator('.staged-file')).toContainText('版本铭牌.png', { timeout: 15000 })
-    await expect(sn.locator('textarea')).toHaveValue(/att:/, { timeout: 15000 })
+    await expect(sn.locator('textarea')).not.toHaveValue(/att:/)
+    await sn.locator('textarea').fill('序列号 7600CS-2023-0412，软件 V3.2.1')
 
     // 单个文件超过 5 MB：提示改为写 NAS 路径（服务端 413 的 hint）
     await sn.locator('input[type=file]').setInputFiles({
@@ -208,6 +209,25 @@ test.describe('上传与提交', () => {
       buffer: Buffer.alloc(6 * 1024 * 1024, 1),
     })
     await expect(sn.locator('.staged-file.failed')).toContainText('NAS', { timeout: 15000 })
+
+    // 刷新后回到落地页：有草稿时按钮显示必填进度；附件和纯文本都从草稿恢复
+    await page.reload()
+    await expect(page.getByRole('button', { name: '继续填写（必填 1/5）' })).toBeVisible()
+    await page.getByRole('button', { name: '继续填写（必填 1/5）' }).click()
+    await expect(sn.locator('.staged-file.ready')).toContainText('版本铭牌.png')
+    await expect(sn.locator('textarea')).toHaveValue('序列号 7600CS-2023-0412，软件 V3.2.1')
+    await expect(sn.locator('textarea')).not.toHaveValue(/att:/)
+
+    // 恢复后的字段附件仍可删除；再上传一张，提交时只有现存引用会拼回字段值
+    await sn.getByRole('button', { name: '移除 版本铭牌.png' }).click()
+    await expect(sn.locator('.staged-file')).toHaveCount(0)
+    const again = await smallPng(page)
+    await sn.locator('input[type=file]').setInputFiles({
+      name: '复拍铭牌.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(again),
+    })
+    await expect(sn.locator('.staged-file.ready')).toContainText('复拍铭牌.png', { timeout: 15000 })
 
     // 填完其余必填：第二组 3 个必填都用「不清楚」，第三组单选「每次」
     await g1.getByRole('button', { name: '下一组：发生了什么 ›' }).click()
@@ -232,6 +252,87 @@ test.describe('上传与提交', () => {
     await expect(event).toBeVisible({ timeout: 15000 })
     await expect(event).toContainText('第 2 版')
     await expect(event).toContainText('检验科 张三')
+  })
+
+  test('必填字段只上传附件也算已填并可直接提交', async ({ page, request }) => {
+    const seed = await seedFillTicket(request)
+    await openGuestPage(page, request, seed.linkKey)
+    await page.getByRole('button', { name: '开始填写' }).click()
+
+    await page.getByRole('combobox', { name: '哪台仪器？' }).click()
+    await page.getByRole('option', { name: '不确定' }).click()
+    await page.getByRole('button', { name: '下一组：发生了什么 ›' }).click()
+
+    const example = page.locator('.cf[data-field="出错的例子"]')
+    await expect(example.locator('textarea')).toHaveValue('')
+    const png = await smallPng(page)
+    await example.locator('input[type=file]').setInputFiles({
+      name: '报警画面.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(png),
+    })
+    await expect(example.locator('.staged-file.ready')).toContainText('报警画面.png', { timeout: 15000 })
+    await expect(page.locator('.fill-prog')).toHaveText(/必填 2\/5/)
+
+    for (const q of ['什么时候发生的？', '你做了哪些操作？']) {
+      await page.locator(`.cf[data-field="${q}"]`).getByRole('button', { name: '不清楚', exact: true }).click()
+    }
+    await page.locator('.grp').nth(2).locator('.grp-hd').click()
+    await page.locator('.cf[data-field="出现得频繁吗？"]').getByRole('radio', { name: '每次' }).check()
+    await expect(page.locator('.fill-prog')).toHaveText(/必填都写好了/)
+
+    const submit = page.getByRole('button', { name: /^提交给管理员/ })
+    await expect(submit).toBeEnabled()
+    await submit.click()
+    await expect(page.locator('.fill-done')).toContainText('已提交给管理员')
+  })
+
+  test('重新打开已提交的字段附件时拆分显示，直接提交仍保留引用', async ({ page, request }) => {
+    const seed = await seedFillTicket(request)
+    await openGuestPage(page, request, seed.linkKey)
+    await page.getByRole('button', { name: '开始填写' }).click()
+
+    await page.getByRole('combobox', { name: '哪台仪器？' }).click()
+    await page.getByRole('option', { name: '不确定' }).click()
+    await page.getByRole('button', { name: '下一组：发生了什么 ›' }).click()
+    for (const q of ['什么时候发生的？', '你做了哪些操作？']) {
+      await page.locator(`.cf[data-field="${q}"]`).getByRole('button', { name: '不清楚', exact: true }).click()
+    }
+    const example = page.locator('.cf[data-field="出错的例子"]')
+    const png = await smallPng(page)
+    await example.locator('input[type=file]').setInputFiles({
+      name: '现场照片.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(png),
+    })
+    await expect(example.locator('.staged-file.ready')).toContainText('现场照片.png', { timeout: 15000 })
+    await page.locator('.grp').nth(2).locator('.grp-hd').click()
+    await page.locator('.cf[data-field="出现得频繁吗？"]').getByRole('radio', { name: '每次' }).check()
+    await page.getByRole('button', { name: /^提交给管理员/ }).click()
+    await page.getByRole('button', { name: '查看对话' }).click()
+
+    await page.evaluate(({ linkKey, number }) => {
+      localStorage.removeItem(`tb:guest:draft:${linkKey}:${number}:brief`)
+    }, seed)
+    await page.reload()
+    await page.getByRole('button', { name: '✏ 修改说明' }).click()
+
+    await page.locator('.grp').nth(1).locator('.grp-hd').click()
+    await expect(example.locator('textarea')).not.toHaveValue(/att:/)
+    await expect(example.locator('.staged-file.ready')).toContainText('现场照片.png')
+    await expect(page.locator('.fill-prog')).toHaveText(/必填都写好了/)
+    await page.getByRole('button', { name: /^提交给管理员/ }).click()
+    await expect(page.locator('.fill-done')).toContainText('已提交给管理员')
+
+    const res = await request.get(`/api/v1/tickets/${seed.number}`)
+    expect(res.ok(), `读取工单失败：${await res.text()}`).toBeTruthy()
+    const ticket = (await res.json()) as {
+      brief: { fields?: Record<string, string>; template_fields?: Array<{ key: string; title: string }> }
+    }
+    const field = ticket.brief.template_fields?.find((f) => f.title === '出错的例子')
+    const value = field ? ticket.brief.fields?.[field.key] : undefined
+    expect(value).toContain('现场照片.png')
+    expect(value).toContain('(att:')
   })
 
   // 5.（手机视口）必填没填完时提交按钮不能点，按钮下有提示；填完后提交成功。
@@ -309,7 +410,7 @@ test.describe('上传与提交', () => {
     await page.getByLabel('署名').fill('检验科 张三')
 
     await page.reload()
-    await page.getByRole('button', { name: '开始填写' }).click()
+    await page.getByRole('button', { name: '继续填写（必填 0/5）' }).click()
     await expect(page.locator('.cf[data-field="序列号和软件版本是多少？"] textarea')).toHaveValue(
       '序列号 7600CS-2023-0412，软件 V3.2.1',
     )
@@ -471,7 +572,7 @@ test.describe('桌面视口', () => {
     const png = await smallPng(page)
     await pasteFile(sn.locator('textarea'), png, '粘贴的截图.png', 'image/png')
     await expect(sn.locator('.staged-file')).toContainText('粘贴的截图.png', { timeout: 15000 })
-    await expect(sn.locator('textarea')).toHaveValue(/att:/, { timeout: 15000 })
+    await expect(sn.locator('textarea')).not.toHaveValue(/att:/)
     await sn.locator('textarea').evaluate(
       (ta, payload) => {
         const dt = new DataTransfer()
@@ -500,7 +601,7 @@ test.describe('桌面视口', () => {
     await expect(side.locator('.staged-file.ready')).toContainText('质控日志.log', { timeout: 15000 })
 
     await page.reload()
-    await page.getByRole('button', { name: '开始填写' }).click()
+    await page.getByRole('button', { name: '继续填写（必填 0/5）' }).click()
     await expect(page.locator('.fill-side .staged-file')).toContainText('质控日志.log')
     for (const textarea of await page.locator('.cf:not(.area) textarea').all()) {
       await expect(textarea).not.toHaveValue(/att:/)

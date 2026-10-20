@@ -58,7 +58,7 @@ export function saveAuthor(name: string) {
 }
 
 // #39：补全说明与反馈入口的表单草稿也是实时写入 localStorage（同一个“键 =
-// 凭证/入口 + 工单”思路）；文本字段值里的 att: 引用随字段值一并保存。
+// 凭证/入口 + 工单”思路）；分组填写页把文本与字段附件元数据分开保存。
 export interface FormDraft {
   title?: string
   fields: Record<string, string>
@@ -67,6 +67,8 @@ export interface FormDraft {
   pending?: boolean
   /** 整张工单附件区的元数据；附件 id 在上传成功后才有。 */
   attachments?: Array<{ attachmentId: string; name: string; size: number }>
+  /** 字段内附件的元数据；fields 只保存不含 att: 引用的纯文本。 */
+  fieldAttachments?: Record<string, import('./fieldAttachments').FieldAttachmentDraft[]>
   /** 整张工单附件区的当前有序列表（含已挂到说明上的附件）。 */
   attachmentIds?: string[]
 }
