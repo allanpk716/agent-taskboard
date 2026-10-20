@@ -20,7 +20,7 @@ export function eventText(e: TimelineEvent): string {
     case 'collaborator_removed':
       return `把 ${e.collaborator} 移出协作`
     case 'collaborator_left':
-      return `${e.collaborator} 退出了协作`
+      return '退出了协作'
     case 'label_added':
       return `打上了标签 ${e.label}`
     case 'label_removed':
@@ -28,7 +28,7 @@ export function eventText(e: TimelineEvent): string {
     case 'guest_link_created':
       return `创建了访客链接「${e.note}」`
     case 'guest_link_claimed':
-      return `${e.actor?.author_name ?? '访客'} 认领了访客链接「${e.note}」`
+      return `认领了访客链接「${e.note}」`
     case 'guest_access_locked':
       return `访客链接「${e.note}」连续输错访问码，输码已锁定`
     case 'guest_access_reset':
