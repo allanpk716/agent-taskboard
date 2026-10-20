@@ -169,7 +169,10 @@ export function InboxPage({
                 {it.role === 'assignee' ? '我是指派人' : it.role === 'triager' ? '我是初筛人' : '我是发起人'}
               </span>
             </div>
-            <div className="tc-title">{it.title}</div>
+            <div className={`tc-title${it.unread ? ' unread' : ''}`}>
+              {it.unread && <span className="unread-dot" aria-hidden="true" />}
+              {it.title}
+            </div>
             <div className="tc-meta">
               {it.number}
               {it.assignee?.member?.deactivated && <DeactivatedBadge />}

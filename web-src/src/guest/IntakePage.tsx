@@ -2,18 +2,18 @@
 // 提交成功显示工单编号和专属访客链接，并提醒收藏。严格校验：网页实时标出
 // 未填的必填项，提交被拦下时顶部汇总「还差 N 项必填」、各字段标红并显示
 // 提示和示例；服务端的 422 missing_fields（逐项 hint）并入同一展示。
-// 入口提交前拿不到任何凭证，图片/附件先暂存本机，建单拿到专属链接后立即
-// 上传并把引用补进说明；草稿与自动重试的规则与对话页相同（同一个
-// Idempotency-Key，收到 2xx 才清草稿）。
+// 附件在选中/粘贴时立即匿名上传并保存引用；草稿与自动重试的规则与对话页
+// 相同（同一个 Idempotency-Key，收到 2xx 才清草稿），提交时附件随字段认领。
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, api } from '../api'
 import { compressImage } from '../shared/compress'
-import { FieldForm, appendRef, missingRequired, type StagedFile } from './FieldForm'
+import { FieldForm, missingRequired, type StagedFile } from './FieldForm'
 import { clearFormDraft, intakeDraftKey, loadAuthor, loadFormDraft, saveAuthor, saveFormDraft } from './draft'
-import { guestApi, saveGuestDeviceToken } from './guestApi'
+import { saveGuestDeviceToken } from './guestApi'
 import type { IntakeSubmitResult, IntakeView, MissingFieldHint, TemplateField } from '../shared/types'
-import { uploadAttachment } from './upload'
+import { uploadIntakeAttachment } from './upload'
 import { fmtDateCN, absoluteUrl } from '../shared/format'
+import { draftFieldAttachments, joinFieldValue, splitFormDraftValues } from './fieldAttachments'
 
 const RETRY_FIRST_MS = 1500
 const RETRY_MS = 4000
@@ -22,7 +22,7 @@ type Phase =
   | { kind: 'loading' }
   | { kind: 'missing' } // 入口不存在 / 已停用 / slug 已轮换
   | { kind: 'ready'; intake: IntakeView }
-  | { kind: 'done'; result: IntakeSubmitResult; warnings: string[] }
+  | { kind: 'done'; result: IntakeSubmitResult }
 
 /** 表单里必填的额外键（不属于模板字段）。 */
 const TITLE_KEY = '__title__'
@@ -69,12 +69,16 @@ export function IntakePage({ slug }: { slug: string }) {
     }
     if (doneRef.current) return // 已提交成功：迟到的重试直接作废
 
-    const { title: t, values: v, author: a } = stateRef.current
+    const { title: t, values: v, author: a, files: staged } = stateRef.current
     // 严格校验（与成员建单只 warnings 相反）：缺必填直接拦下。
     const missing = computeMissing(fieldsRef.current, t, v, a)
     if (missing.length > 0) {
       pendingRef.current = false
       setShowMiss(true)
+      return
+    }
+    if (staged.some((f) => f.status === 'uploading')) {
+      setNotice({ kind: 'err', text: '附件还在上传，完成后会自动继续；也可以先移除失败的项目。' })
       return
     }
     submittingRef.current = true
@@ -89,9 +93,11 @@ export function IntakePage({ slug }: { slug: string }) {
         idemKey: idemKeyRef.current,
         pending: true,
       })
+      const byField = intakeFieldAttachments(staged)
       const out: Record<string, string> = {}
       for (const [k, val] of Object.entries(v)) {
-        if (val.trim() !== '') out[k] = val
+        const joined = joinFieldValue(val, byField[k] ?? [])
+        if (joined.trim() !== '') out[k] = joined
       }
       const result: IntakeSubmitResult = await api(`/api/v1/intakes/${encodeURIComponent(slug)}/tickets`, {
         method: 'POST',
@@ -99,15 +105,13 @@ export function IntakePage({ slug }: { slug: string }) {
         body: JSON.stringify({ title: t.trim(), fields: out, author_name: a.trim() }),
       })
       saveGuestDeviceToken(result.guest_link.url.slice(3), result.device_token)
-      // 图片/附件此刻才有凭证（专属链接）：上传、把引用补进说明。
-      const warnings = await attachFiles(result, a, stateRef.current.files)
       pendingRef.current = false
       idemKeyRef.current = undefined
       doneRef.current = true
       if (retryTimer.current) clearTimeout(retryTimer.current)
       clearFormDraft(intakeDraftKey(slug))
       saveAuthor(a)
-      setPhase({ kind: 'done', result, warnings })
+      setPhase({ kind: 'done', result })
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.status === 422 && err.code === 'missing_fields') {
@@ -153,11 +157,27 @@ export function IntakePage({ slug }: { slug: string }) {
         fieldsRef.current = intake.template.fields
         const draft = loadFormDraft(intakeDraftKey(slug))
         if (draft) {
+          const restored = splitFormDraftValues(draft.fields ?? {}, draft.fieldAttachments ?? {})
           setTitle(draft.title ?? '')
-          setValues(draft.fields ?? {})
+          setValues(restored.fields)
           setAuthor(draft.author ?? loadAuthor())
           idemKeyRef.current = draft.idemKey
           pendingRef.current = !!draft.pending
+          setFiles(
+            Object.entries(restored.fieldAttachments).flatMap(([fieldKey, list]) =>
+              list.map((a) => ({
+                id: a.attachmentId,
+                attachmentId: a.attachmentId,
+                name: a.name,
+                size: a.size ?? Number.NaN,
+                fieldKey,
+                area: false,
+                status: 'ready' as const,
+                image: a.image,
+                markdown: a.markdown,
+              })),
+            ),
+          )
         } else {
           setAuthor(loadAuthor())
         }
@@ -189,29 +209,62 @@ export function IntakePage({ slug }: { slug: string }) {
       author,
       idemKey: idemKeyRef.current,
       pending: pendingRef.current,
+      fieldAttachments: intakeFieldAttachments(files),
     })
-  }, [phase, slug, title, values, author])
+  }, [phase, slug, title, values, author, files])
 
   function setField(k: string, v: string) {
     setValues((prev) => ({ ...prev, [k]: v }))
     setTouched((prev) => new Set(prev).add(k))
   }
 
-  /** 入口提交前拿不到凭证：文件先暂存本机（刷新会丢，页面有提示），建单后补传。 */
+  /** 立即匿名上传；引用保存进草稿，刷新后附件列表仍可恢复。 */
   async function pickFiles(fieldKey: string, picked: File[], viaArea: boolean) {
-    setFiles((prev) => [
-      ...prev,
-      ...picked.map((file) => ({
-        id: crypto.randomUUID(),
+    if (!idemKeyRef.current) {
+      idemKeyRef.current = crypto.randomUUID()
+      saveFormDraft(intakeDraftKey(slug), {
+        title,
+        fields: values,
+        author,
+        idemKey: idemKeyRef.current,
+        pending: pendingRef.current,
+        fieldAttachments: intakeFieldAttachments(files),
+      })
+    }
+    for (const file of picked) {
+      const id = crypto.randomUUID()
+      const staged: StagedFile = {
+        id,
         name: file.name,
         size: file.size,
         fieldKey,
         area: viaArea,
-        status: 'ready' as const,
+        status: 'uploading',
         previewUrl: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
-        blob: file,
-      })),
-    ])
+      }
+      setFiles((prev) => [...prev, staged])
+      try {
+        const prepared = file.type.startsWith('image/') ? await compressImage(file) : file
+        const att = await uploadIntakeAttachment(slug, idemKeyRef.current, prepared)
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.id === id
+              ? { ...f, status: 'ready', attachmentId: att.id, markdown: att.markdown, size: att.size, image: att.markdown.startsWith('!') }
+              : f,
+          ),
+        )
+      } catch (err) {
+        const text =
+          err instanceof ApiError
+            ? err.status === 429
+              ? `${file.name} 上传太频繁：${err.message}，请稍后再试。`
+              : err.status === 413
+                ? `${file.name} 超过上限：${err.message}${err.hint ? `。${err.hint}` : ''}`
+                : `${err.message}${err.hint ? `（${err.hint}）` : ''}`
+            : `${file.name} 上传失败，请重试。`
+        setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, status: 'failed', error: text } : f)))
+      }
+    }
   }
 
   if (phase.kind === 'loading') {
@@ -262,13 +315,6 @@ export function IntakePage({ slug }: { slug: string }) {
             部门回复后，轮到你时页面顶部会显示「现在轮到你回复」。链接{' '}
             {fmtDateCN(phase.result.guest_link.expires_at)}到期。
           </p>
-          {phase.warnings.length > 0 && (
-            <div className="notice err" role="status">
-              {phase.warnings.map((w, i) => (
-                <div key={i}>{w}</div>
-              ))}
-            </div>
-          )}
         </div>
       </main>
     )
@@ -353,9 +399,6 @@ export function IntakePage({ slug }: { slug: string }) {
             {displayMissing.has(AUTHOR_KEY) && <div className="err">请填写这一项，例如：检验科 张三。</div>}
           </div>
         </div>
-        {files.some((f) => f.blob) && (
-          <div className="meta staged-note">附件会在提交成功后自动上传；提交前请别刷新页面。</div>
-        )}
         <div className="composer intake-composer">
           <div className="row">
             <span className="saved">已自动保存在本机</span>
@@ -384,40 +427,7 @@ function computeMissing(
   return out
 }
 
-/** 建单后补传暂存文件：用专属链接上传拿引用，再 PATCH 说明把引用挂上（挂到「说明」）。 */
-async function attachFiles(result: IntakeSubmitResult, author: string, stagedFiles: StagedFile[]): Promise<string[]> {
-  const warnings: string[] = []
-  const staged = stagedFiles.filter((f) => f.blob)
-  const linkKey = result.guest_link.url.slice(3)
-  const number = result.ticket.number
-  const refsByField: Record<string, string[]> = {}
-  for (const f of staged) {
-    try {
-      const blob = f.blob!
-      const prepared = blob.type.startsWith('image/') ? await compressImage(blob) : blob
-      const att = await uploadAttachment(linkKey, number, prepared)
-      ;(refsByField[f.fieldKey] ??= []).push(att.markdown)
-    } catch (err) {
-      const why = err instanceof ApiError ? `${err.message}${err.hint ? `（${err.hint}）` : ''}` : '上传失败'
-      warnings.push(`「${f.name}」未能附上（${why}），请打开链接后用「补全说明」或回复补充。`)
-    }
-  }
-  if (Object.keys(refsByField).length === 0) return warnings
-  try {
-    const fresh = await guestApi(linkKey, `/api/v1/tickets/${encodeURIComponent(number)}`)
-    const merged: Record<string, string> = { ...(fresh.brief.fields ?? {}) }
-    for (const [fieldKey, refs] of Object.entries(refsByField)) {
-      merged[fieldKey] = appendRef(merged[fieldKey] ?? '', refs.join('\n'))
-    }
-    const name = author.trim()
-    await guestApi(linkKey, `/api/v1/tickets/${encodeURIComponent(number)}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ fields: merged, base_revision: fresh.brief.revision, ...(name ? { author_name: name } : {}) }),
-      idempotencyKey: crypto.randomUUID(),
-    })
-  } catch (err) {
-    const why = err instanceof ApiError ? `${err.message}${err.hint ? `（${err.hint}）` : ''}` : '网络问题'
-    warnings.push(`附件已上传，但没能写进说明（${why}），请打开链接后用「补全说明」补充。`)
-  }
-  return warnings
+/** 入口页没有独立的整单附件接口；统一附件区同样作为最后一个字段的引用提交。 */
+function intakeFieldAttachments(files: StagedFile[]) {
+  return draftFieldAttachments(files.map((f) => ({ ...f, area: false })))
 }

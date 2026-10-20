@@ -33,6 +33,7 @@ type InboxItem struct {
 	AssigneeID          int64
 	AssigneeName        string
 	AssigneeDeactivated bool
+	Unread              bool
 }
 
 // Inbox 列出 memberID 当前轮到的全部开启工单（按工单序号）。
@@ -87,6 +88,10 @@ func (m *Manager) Inbox(ctx context.Context, viewer identity.Viewer) ([]InboxIte
 				updated = e.At
 			}
 		}
+		unread, err := m.IsUnread(ctx, memberID, full.Seq)
+		if err != nil {
+			return nil, err
+		}
 		items = append(items, InboxItem{
 			Number:              full.Number,
 			Title:               full.Title,
@@ -106,6 +111,7 @@ func (m *Manager) Inbox(ctx context.Context, viewer identity.Viewer) ([]InboxIte
 			AssigneeID:          full.AssigneeID,
 			AssigneeName:        full.AssigneeName,
 			AssigneeDeactivated: full.AssigneeDeactivated,
+			Unread:              unread,
 		})
 	}
 	return items, nil

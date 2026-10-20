@@ -36,6 +36,7 @@ export interface TicketListItem {
   labels: string[]
   waiting_on: { party: string; member?: string | null; text: string; reason: string }
   updated_at: string
+  unread: boolean
 }
 
 interface ListResponse {
@@ -146,7 +147,8 @@ export function TicketCard({
             <span className="pc-row-number">{item.number}</span>
             <span className="pc-row-time">{fmtShort(item.updated_at)}</span>
           </div>
-          <div className="pc-row-title">
+          <div className={`pc-row-title${item.unread ? ' unread' : ''}`}>
+            {item.unread && <span className="unread-dot" aria-hidden="true" />}
             {item.title}
           </div>
           <div className={`pc-row-turn${mine ? ' mine' : ''}`}>
@@ -171,7 +173,10 @@ export function TicketCard({
               {fmtShort(item.updated_at)}
             </span>
           </div>
-          <div className="tc-title">{item.title}</div>
+          <div className={`tc-title${item.unread ? ' unread' : ''}`}>
+            {item.unread && <span className="unread-dot" aria-hidden="true" />}
+            {item.title}
+          </div>
           <div className="tc-meta">
             {item.number} · 发起人 {creator}
             {item.creator_deactivated && <DeactivatedBadge />}
@@ -241,6 +246,7 @@ export function TicketsPage({
   const [templates, setTemplates] = useState<{ key: string; name: string }[]>([])
   const [labelHints, setLabelHints] = useState<string[]>([])
   const hintTimer = useRef<number | undefined>(undefined)
+  const loadSeq = useRef(0)
 
   // 标签输入的候选：resolve 接口把俗称/别名换成标准值（评审 P2-11，别名可用）。
   useEffect(() => {
@@ -261,12 +267,15 @@ export function TicketsPage({
   }, [filters.label])
 
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current
     try {
       const body: ListResponse = await api(`/api/v1/tickets?${toQuery(filters)}`)
+      if (seq !== loadSeq.current) return
       setData(body)
       setExtra([])
       setError(null)
     } catch (e) {
+      if (seq !== loadSeq.current) return
       setError(e instanceof ApiError ? `${e.message}（${e.code}）` : '读取列表失败')
     }
   }, [filters])

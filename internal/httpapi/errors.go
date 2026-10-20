@@ -111,12 +111,15 @@ const (
 	CodeAttachmentURLExpired    = "attachment_url_expired"    // 附件签名地址过期（401）
 
 	// #35：反馈入口。
-	CodeIntakeNotFound    = "intake_not_found"    // 入口不存在或已停用（含轮换后的旧 slug）
-	CodeSlugRequired      = "slug_required"       // 创建/轮换入口时没写 slug
-	CodeInvalidSlug       = "invalid_slug"        // slug 里有不适合 URL 的字符
-	CodeSlugTaken         = "slug_taken"          // slug 已被另一个入口占用
-	CodeTemplateNotReport = "template_not_report" // 入口只能绑定反馈类型的模板
-	CodeMissingFields     = "missing_fields"      // 入口提交缺必填项（严格校验，逐项提示）
+	CodeIntakeNotFound             = "intake_not_found"         // 入口不存在或已停用（含轮换后的旧 slug）
+	CodeSlugRequired               = "slug_required"            // 创建/轮换入口时没写 slug
+	CodeInvalidSlug                = "invalid_slug"             // slug 里有不适合 URL 的字符
+	CodeSlugTaken                  = "slug_taken"               // slug 已被另一个入口占用
+	CodeTemplateNotReport          = "template_not_report"      // 入口只能绑定反馈类型的模板
+	CodeMissingFields              = "missing_fields"           // 入口提交缺必填项（严格校验，逐项提示）
+	CodeIdempotencyKeyRequired     = "idempotency_key_required" // 入口附件上传缺提交归属键
+	CodeIntakeUploadRateLimited    = "intake_upload_rate_limited"
+	CodeIntakePendingQuotaExceeded = "intake_pending_quota_exceeded"
 
 	// #45：更新。
 	CodeUpdateSourceUnreachable = "update_source_unreachable" // 所有更新源都连不上（502）

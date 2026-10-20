@@ -25,6 +25,12 @@ max_files_per_post  = 5    # 每条说明或回复的附件个数（插图另计
 max_images_per_post = 10   # 每条说明或回复的插图张数
 max_ticket_mb       = 50   # 整张工单合计（待用附件也计入）
 
+# 反馈入口匿名上传防护（#47）：按（入口, 来源 IP）限流；入口内未提交的附件
+# 共占一个临时配额，24 小时未提交自动清除。
+[intake]
+upload_rate_per_min = 20
+pending_quota_mb    = 200
+
 # 备份（#43，见 docs/deploy-and-release.md「备份与恢复」）。定时备份内置在 serve 里；
 # 手动备份用 taskboard backup，恢复用 taskboard restore <备份文件>。
 [backup]
