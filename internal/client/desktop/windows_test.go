@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"image/png"
+	"path/filepath"
 	"testing"
 	"unsafe"
 
@@ -58,6 +59,14 @@ func Test托盘状态图标是合法ICO(t *testing.T) {
 				t.Fatalf("PNG 尺寸 = %dx%d，想 16x16", bounds.Dx(), bounds.Dy())
 			}
 		})
+	}
+}
+
+func Test进程启动命令使用可执行文件目录(t *testing.T) {
+	const path = `C:\Program Files\Taskboard\taskboard.exe`
+	cmd := newProcessCommand(path, []string{"--arg"})
+	if cmd.Dir != filepath.Dir(path) {
+		t.Fatalf("工作目录 = %q，想 %q", cmd.Dir, filepath.Dir(path))
 	}
 }
 

@@ -396,7 +396,7 @@ func (m *WindowsUpdateManager) SendQuit() error { return windows.SetEvent(m.quit
 func (m *WindowsUpdateManager) ResetQuit() error { return windows.ResetEvent(m.quitEvent) }
 
 func (m *WindowsUpdateManager) Start(path string, args []string) (client.UpdateProcess, error) {
-	cmd := exec.Command(path, args...)
+	cmd := newProcessCommand(path, args)
 	cmd.SysProcAttr = &windows.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
 	if err := cmd.Start(); err != nil {
 		return nil, err
@@ -670,11 +670,17 @@ func (UserFileSystem) RemoveExecutable(path string) error {
 type ProcessLauncher struct{}
 
 func (ProcessLauncher) Start(path string, args []string) error {
-	cmd := exec.Command(path, args...)
+	cmd := newProcessCommand(path, args)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
 	return cmd.Process.Release()
+}
+
+func newProcessCommand(path string, args []string) *exec.Cmd {
+	cmd := exec.Command(path, args...)
+	cmd.Dir = filepath.Dir(path)
+	return cmd
 }
 
 func (ProcessLauncher) DeleteLater(path string) error {
