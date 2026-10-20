@@ -147,6 +147,7 @@ test('建单不带暂存附件时说明仍保持第一版', async ({ page }) => 
   await page.getByLabel('说明').fill('说明保持原样。')
   await page.getByLabel('标签输入').fill('机型:UD-2300')
   await page.getByRole('button', { name: '添加', exact: true }).click()
+  await expect(page.getByLabel('标签输入')).toHaveValue('')
   await page.getByRole('button', { name: '创建工单' }).click()
   await expect(page.locator('.donet')).toContainText('已创建')
 
