@@ -104,6 +104,7 @@
   flex: 1;
   min-width: 0;
   overflow-x: hidden;
+  position: relative;
 }
 .pc-main .bpage {
   max-width: none;
@@ -243,6 +244,7 @@
   height: 100vh;
   box-sizing: border-box;
   overflow-y: auto;
+  position: relative;
 }
 /* #102：宽屏详情 = 标题区 + 对话主体 + 右侧固定宽信息栏。 */
 .pc-detail .detail .back {
@@ -727,6 +729,329 @@
   display: block;
   font-size: 11.5px;
   color: #98a1b3;
+}
+
+/* #136：通知铃铛与抽屉 */
+.pc-detail > .bellbtn,
+.pc-main > .bellbtn {
+  position: absolute;
+  top: 14px;
+  right: 20px;
+  z-index: 20;
+}
+.bellbtn {
+  position: relative;
+  border: 0;
+  background: transparent;
+  font-size: 19px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 7px;
+  color: #55607a;
+}
+.bellbtn:hover {
+  background: #f2f5fa;
+  color: #22304a;
+}
+.bellbtn b {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 17px;
+  background: #e5554f;
+  color: #fff;
+  border-radius: 9px;
+  font-size: 10.5px;
+  line-height: 16px;
+  padding: 0 5px;
+  text-align: center;
+  font-weight: 400;
+}
+.floating-bell {
+  position: fixed;
+  top: 14px;
+  right: 20px;
+  z-index: 20;
+}
+.notice-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(34, 48, 74, 0.32);
+  z-index: 90;
+}
+.noticepanel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 420px;
+  max-width: 100vw;
+  background: #fff;
+  border-left: 1px solid #dfe4ee;
+  box-shadow: -18px 0 46px rgba(20, 30, 50, 0.24);
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 100;
+}
+.noticepanel.open {
+  display: flex;
+}
+.notice-head {
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid #e6eaf2;
+  background: #fff;
+  flex: none;
+}
+.notice-head.mobile {
+  border-top: 0;
+}
+.notice-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.notice-title-row h2 {
+  margin: 0;
+  font-size: 17px;
+  flex: 1;
+}
+.panel-close {
+  border: 0;
+  background: transparent;
+  color: #7d8798;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 2px 7px;
+}
+.panel-close:hover {
+  background: #f2f5fa;
+  color: #22304a;
+}
+.markread {
+  border: 0;
+  background: none;
+  color: #2a6fdb;
+  font-size: 12.5px;
+  cursor: pointer;
+  padding: 2px;
+}
+.markread:disabled {
+  color: #98a1b3;
+  cursor: default;
+}
+.notice-controls .seg {
+  margin-top: 9px;
+}
+.seg {
+  display: inline-flex;
+  border: 1px solid #d7dde8;
+  border-radius: 14px;
+  overflow: hidden;
+}
+.seg button {
+  border: 0;
+  background: #fff;
+  color: #55607a;
+  padding: 3px 13px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.seg button.on {
+  background: #2a6fdb;
+  color: #fff;
+}
+.scope-note {
+  margin: 10px 0 0;
+  background: #f2f5fa;
+  border-left: 3px solid #2a6fdb;
+  color: #55607a;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 7px 9px;
+  border-radius: 5px;
+}
+.notice-scroll {
+  overflow-y: auto;
+  padding: 8px;
+  flex: 1;
+  min-height: 0;
+}
+.nrow {
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  padding: 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.nrow:hover {
+  background: #f2f5fa;
+}
+.nrow.system {
+  background: #f7f9fc;
+}
+.nrow.system:hover {
+  background: #eef3fa;
+}
+.ndot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2a6fdb;
+  margin-top: 6px;
+  visibility: hidden;
+}
+.nrow.unread .ndot {
+  visibility: visible;
+}
+.nrow.unread .ntitle {
+  font-weight: 800;
+}
+.nkind {
+  display: inline-block;
+  font-size: 11.5px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: #e8e8e8;
+  color: #666;
+  margin-right: 6px;
+}
+.nkind.action {
+  background: #fff1d6;
+  color: #a35f00;
+  font-weight: 700;
+}
+.nreason {
+  color: #7d8798;
+  font-size: 12px;
+}
+.ntitle {
+  font-size: 14px;
+  line-height: 1.4;
+  margin: 4px 0 3px;
+  color: #222;
+}
+.nmeta {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  color: #8a94a6;
+  font-size: 12px;
+}
+.loadmore {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 6px 8px 12px;
+  border: 1px solid #d7dde8;
+  background: #fff;
+  border-radius: 7px;
+  color: #2a6fdb;
+  padding: 8px;
+  cursor: pointer;
+}
+.empty {
+  padding: 44px 15px;
+  text-align: center;
+  color: #8a94a6;
+}
+.notice-foot {
+  border-top: 1px solid #e6eaf2;
+  padding: 11px 12px;
+  background: #fff;
+  flex: none;
+}
+.switchrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #55607a;
+  font-size: 13.5px;
+}
+.switch {
+  width: 40px;
+  height: 22px;
+  border-radius: 11px;
+  border: 1px solid #c9d2df;
+  background: #e2e6ee;
+  position: relative;
+  cursor: pointer;
+  padding: 0;
+  flex: none;
+}
+.switch i {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: 0.15s;
+}
+.switch.on {
+  background: #2a6fdb;
+  border-color: #2a6fdb;
+}
+.switch.on i {
+  left: 20px;
+}
+.switchsub {
+  margin: 5px 0 0;
+  color: #98a1b3;
+  font-size: 11.5px;
+}
+.notice-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 80vh;
+  background: #fff;
+  border-radius: 14px 14px 0 0;
+  z-index: 100;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 -12px 35px rgba(20, 30, 50, 0.22);
+}
+.sheet-handle {
+  height: 16px;
+  flex: none;
+  cursor: grab;
+  touch-action: none;
+  position: relative;
+}
+.sheet-handle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 7px;
+  width: 38px;
+  height: 4px;
+  margin-left: -19px;
+  border-radius: 2px;
+  background: #cbd4e0;
+}
+.nrow.mrow {
+  background: #fff;
+  border-radius: 14px;
+  margin-bottom: 9px;
+  box-shadow: 0 1px 3px rgba(20, 30, 50, 0.06);
+  grid-template-columns: 12px 1fr;
+}
+.nrow.mrow:hover {
+  background: #fff;
 }
 .b-body {
   flex: 1;

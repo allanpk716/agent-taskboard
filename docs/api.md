@@ -77,7 +77,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 | 方法与路径 | 说明 |
 |---|---|
 | `GET /api/v1/notifications` | 列出当前成员通知。`after` 存在时按 id 升序增量拉取；否则按 id 降序分页，`before` 取本页最后一条 id。支持 `unread=1`、`limit`（默认 50，最大 200）、`format=markdown`。 |
-| `GET /api/v1/notifications/unread` | 只返回 `{unread_count, latest_id}`。 |
+| `GET /api/v1/notifications/unread` | 只返回 `{unread_count, latest_id, client_online}`。`client_online` 表示该成员当前是否有客户端凭证建立的 `/notifications/stream` 连接；网页会话与成员 Agent 的连接不计入。 |
 | `POST /api/v1/notifications/read` | 标已读。请求体 `{"ids":[…]}` / `{"ticket":"…"}` / `{"up_to":N}` 三选一；幂等。成员 Agent 403 `agent_cannot_mark_read`，`ids` 最多 500 个（400 `too_many_notification_ids`）。 |
 | `GET /api/v1/notifications/stream` | SSE。首连推 `hello`；`Last-Event-ID` 重连先升序补发 `notification` 再推 `hello`；在线期间推 `notification` / `read`，每 25 秒推 `: ping`。 |
 

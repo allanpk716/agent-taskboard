@@ -15,6 +15,7 @@ import { TemplatesPage } from './TemplatesPage'
 import { TemplateEditPage } from './TemplateEditPage'
 import { MePage } from './MePage'
 import { AdminPage } from './AdminPage'
+import { NotificationBell } from './NotificationBell'
 import { detailListSource } from './listFilters'
 import { nav, useLocationSearch, useNavSeq, useRoute, type Route } from './ui'
 import { useLayoutTier } from './useLayoutTier'
@@ -109,6 +110,7 @@ export function MemberApp() {
   const detailReturnTo = fromInbox
     ? `/${detailQuery ? '?' + detailQuery : ''}`
     : `/tickets${detailQuery ? '?' + detailQuery : ''}`
+  const bell = <NotificationBell tier={tier} onNavigate={() => window.dispatchEvent(new Event('tb:invalidate'))} />
   const page = (
     <>
       {route.page === 'inbox' && <InboxPage key={route.page} />}
@@ -190,40 +192,46 @@ export function MemberApp() {
     const listish = h.page === 'tickets' || h.page === 'inbox' || h.page === 'detail'
     if (listish && (tier === 'wide' || tier === 'medium')) {
       return (
-        <div className={`pc-shell${compact ? ' compact' : ''}`}>
-          {sidebar}
-          <div className="pc-split">
-            <section className="pc-list-slot" aria-label="工单列表">
-              {h.page === 'inbox' || fromInbox ? (
-                <InboxPage desktop selected={route.page === 'detail' ? route.ref : undefined} me={me} />
-              ) : (
-                <TicketsPage desktop selected={route.page === 'detail' ? route.ref : undefined} me={me} />
-              )}
-            </section>
-            <main className="pc-detail">
-              {route.page === 'detail' && (
-                <TicketDetailPage ticketRef={route.ref} me={me} returnTo={detailReturnTo} />
-              )}
-            </main>
+        <>
+          {bell}
+          <div className={`pc-shell${compact ? ' compact' : ''}`}>
+            {sidebar}
+            <div className="pc-split">
+              <section className="pc-list-slot" aria-label="工单列表">
+                {h.page === 'inbox' || fromInbox ? (
+                  <InboxPage desktop selected={route.page === 'detail' ? route.ref : undefined} me={me} />
+                ) : (
+                  <TicketsPage desktop selected={route.page === 'detail' ? route.ref : undefined} me={me} />
+                )}
+              </section>
+              <main className="pc-detail">
+                {route.page === 'detail' && (
+                  <TicketDetailPage ticketRef={route.ref} me={me} returnTo={detailReturnTo} />
+                )}
+              </main>
+            </div>
           </div>
-        </div>
+        </>
       )
     }
     return (
-      <div className={`pc-shell${compact ? ' compact' : ''}`}>
-        {sidebar}
-        <main className="pc-main">
-          <div className={centered ? 'pc-centered' : undefined}>
-            {h.page === 'tickets' ? (
-              <TicketsPage desktop me={me} />
-            ) : h.page === 'inbox' ? (
-              <InboxPage desktop me={me} />
-            ) : (
-              page
-            )}
-          </div>
-        </main>
-      </div>
+      <>
+        {bell}
+        <div className={`pc-shell${compact ? ' compact' : ''}`}>
+          {sidebar}
+          <main className="pc-main">
+            <div className={centered ? 'pc-centered' : undefined}>
+              {h.page === 'tickets' ? (
+                <TicketsPage desktop me={me} />
+              ) : h.page === 'inbox' ? (
+                <InboxPage desktop me={me} />
+              ) : (
+                page
+              )}
+            </div>
+          </main>
+        </div>
+      </>
     )
   }
 
@@ -232,6 +240,7 @@ export function MemberApp() {
       <div className="b-app">
         <header className="b-top">
           <h1 className="b-title">{pageTitle(route)}</h1>
+          {bell}
           <div className="b-me">
             {me.name}
             <i>{me.is_admin ? '管理员' : '成员'}</i>

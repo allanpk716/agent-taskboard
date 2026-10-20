@@ -25,6 +25,10 @@ func (a *API) handleNotificationsStream(w http.ResponseWriter, r *http.Request) 
 		WriteError(w, http.StatusForbidden, CodeMembersOnly, "通知接口仅限成员使用", "访客请继续使用工单链接和反馈入口")
 		return
 	}
+	if viewer.Client != nil {
+		defer a.releaseClientOnline(viewer.Member.ID)
+		a.retainClientOnline(viewer.Member.ID)
+	}
 	events, stop := a.notifications.Subscribe(viewer.Member.ID)
 	defer stop()
 	last := int64(0)
@@ -112,6 +116,29 @@ func (a *API) handleNotificationsStream(w http.ResponseWriter, r *http.Request) 
 }
 
 const notificationPingInterval = 25 * time.Second
+
+func (a *API) retainClientOnline(memberID int64) {
+	a.clientOnlineMu.Lock()
+	a.clientOnline[memberID]++
+	a.clientOnlineMu.Unlock()
+}
+
+func (a *API) releaseClientOnline(memberID int64) {
+	a.clientOnlineMu.Lock()
+	if a.clientOnline[memberID] <= 1 {
+		delete(a.clientOnline, memberID)
+	} else {
+		a.clientOnline[memberID]--
+	}
+	a.clientOnlineMu.Unlock()
+}
+
+func (a *API) memberClientOnline(memberID int64) bool {
+	a.clientOnlineMu.Lock()
+	online := a.clientOnline[memberID] > 0
+	a.clientOnlineMu.Unlock()
+	return online
+}
 
 func (a *API) streamViewerValid(r *http.Request, memberID int64) bool {
 	fresh := r.WithContext(withoutViewerContext{r.Context()})

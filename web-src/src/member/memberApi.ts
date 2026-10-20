@@ -59,6 +59,42 @@ export interface MarkNotificationsReadResult {
   unread_count: number
 }
 
+export interface NotificationTicket {
+  number: string
+  title: string
+  url: string
+}
+
+export interface NotificationItem {
+  id: number
+  ticket: NotificationTicket | null
+  url: string
+  kind: 'turn' | 'fyi' | string
+  reason: string
+  text: string
+  event: {
+    seq: number
+    type: string
+    actor: { kind: string; member_id: number; agent_id: number; name: string }
+  }
+  summary: string
+  created_at: string
+  read_at?: string | null
+}
+
+export interface NotificationsResponse {
+  items: NotificationItem[]
+  cursor: number
+  unread_count: number
+  next: string | null
+}
+
+export interface NotificationsUnreadResponse {
+  unread_count: number
+  latest_id: number
+  client_online: boolean
+}
+
 export interface AccessRecord {
   actor: {
     kind: 'member' | 'agent' | 'admin' | 'guest'
@@ -105,6 +141,29 @@ export function markTicketNotificationsRead(number: string): Promise<MarkNotific
   return api('/api/v1/notifications/read', {
     method: 'POST',
     body: JSON.stringify({ ticket: number }),
+  })
+}
+
+export async function fetchNotifications(
+  opts: { unread?: boolean; before?: number; limit?: number } = {},
+): Promise<NotificationsResponse> {
+  const params = new URLSearchParams()
+  if (opts.unread) params.set('unread', '1')
+  if (opts.before !== undefined) params.set('before', String(opts.before))
+  params.set('limit', String(opts.limit ?? 30))
+  return api(`/api/v1/notifications?${params}`)
+}
+
+export function fetchNotificationsUnread(): Promise<NotificationsUnreadResponse> {
+  return api('/api/v1/notifications/unread')
+}
+
+export function markNotificationsRead(
+  target: { ids?: number[]; ticket?: string; up_to?: number },
+): Promise<MarkNotificationsReadResult> {
+  return api('/api/v1/notifications/read', {
+    method: 'POST',
+    body: JSON.stringify(target),
   })
 }
 

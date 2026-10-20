@@ -40,13 +40,16 @@ type API struct {
 	intakeUploads   *intakeUploadLimiter
 	stampedClientMu sync.Mutex
 	stampedClients  map[string]*stampedClient
+	clientOnlineMu  sync.Mutex
+	clientOnline    map[int64]int
 }
 
 func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager, backups *ops.Backups, accessRecs *accessrecords.Manager, cfg config.Config, clk clock.Clock) *API {
 	return &API{ident: ident, tickets: tk, templates: tpl, idem: idem, atts: atts, backups: backups,
 		accessRecords: accessRecs, cfg: cfg,
 		intakeUploads:  newIntakeUploadLimiter(cfg.Intake.UploadRatePerMin, clk),
-		stampedClients: make(map[string]*stampedClient)}
+		stampedClients: make(map[string]*stampedClient),
+		clientOnline:   make(map[int64]int)}
 }
 
 // Handler 返回 /api/v1 前缀的 http.Handler（带 panic 恢复，统一错误格式）。

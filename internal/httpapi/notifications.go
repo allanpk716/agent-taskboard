@@ -140,7 +140,10 @@ func (a *API) handleNotificationsUnread(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		panic(err)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"unread_count": out.Count, "latest_id": out.LatestID})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"unread_count": out.Count, "latest_id": out.LatestID,
+		"client_online": a.memberClientOnline(viewer.Member.ID),
+	})
 }
 
 type markNotificationsReadRequest struct {
