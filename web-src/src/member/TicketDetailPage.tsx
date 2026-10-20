@@ -18,7 +18,6 @@ import {
   fetchMembers,
   fetchTicket,
   leaveCollaborators,
-  markTicketNotificationsRead,
   reopenTicket,
   replyTicket,
   removeCollaborator,
@@ -1008,17 +1007,11 @@ export function TicketDetailPage({
   const [knownLinkUrls, setKnownLinkUrls] = useState<Record<number, string>>({})
   const [accessRecords, setAccessRecords] = useState<AccessRecordsResponse | null>(null)
   const [allInfoOpen, setAllInfoOpen] = useState(false)
-  const markedRef = useRef<string | null>(null)
-
   const load = useCallback(async () => {
     try {
       const got = await fetchTicket(ticketRef)
       setTicket(got)
       setError(null)
-      if (markedRef.current !== ticketRef) {
-        markedRef.current = ticketRef
-        void markTicketNotificationsRead(got.number).catch(() => {})
-      }
     } catch (e) {
       setError(
         e instanceof ApiError && e.code === 'ticket_not_found'

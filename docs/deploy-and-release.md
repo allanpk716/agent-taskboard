@@ -86,7 +86,7 @@ max_ticket_mb       = 50
    2. 做一次更新前备份（见「备份与恢复」），备份失败就中止更新，不替换 exe；
    3. 把正在运行的 exe 改名为 `taskboard.exe.prev`，放入新的 exe（正在运行的 exe 只改名不覆盖，Windows 也允许）；
    4. 管理页/管理 API 触发时：写完响应后进程退出，由 NSSM 拉起新版本；命令行触发时：提示执行 `nssm restart <服务名>`；
-   5. 新版本启动时执行迁移（serve 打开库时自动做），再做健康检查：对自身的 `GET /api/v1/health` 自检一次，通过则打印版本，不通过只警告不退出（是否重启交给 NSSM；新版本起不来时回滚见下）。
+  5. 新版本启动时执行迁移（serve 打开库时自动做），再做健康检查：对自身的 `GET /api/v1/health` 自检一次，通过则打印版本，不通过只警告不退出（是否重启交给 NSSM；新版本起不来时回滚见下）。迁移 `0026_ticket_reads.sql` 会记录当时的全局变更序号作为工单未读基线：上线前的历史工单全部视为已读，不回填「成员 × 工单」；基线之后的新事件按 #135 的未读规则计算。
 4. **前端**：下载 zip，校验 SHA256，解压到 `web-<version>/`（连同写入 `version.json` 版本标记），再原子地切换 `web/`（重建目录链接），服务不用重启。刚换下的版本目录再保留两代：翻到一半的旧页面还能取到旧哈希资源，不会半新半旧。UpdateHub 源取到的是 nupkg：先按 feed 里的 SHA1 校验整包，解包后再按里面的 manifest 的 SHA256 校验产物。
 5. **桌面客户端**：下载 `taskboard-client.exe`，按 manifest 的 SHA256 和大小校验并确认是 Windows/amd64 PE 后，按版本存入 `data_dir/client/taskboard-client-<version>.exe`，再原子切换 `client.json` 的当前/上一版指针；更早版本尽力清理。成员从「我的」页面下载，客户端自动更新时调 `GET /api/v1/client/latest` 与下载接口。所有组件都先下载并校验，之后才开始替换磁盘文件；客户端组件失败只记录在该组件结果里，不阻断前后端更新。
 6. **回滚**：在服务器上执行 `taskboard rollback`（服务必须已停止，配置的端口上仍在监听时拒绝执行），换回 `.prev` 版本和最近一次更新前的备份（先恢复库再换 exe，两步都完成后才启动服务；更新之后新产生的数据会回滚掉）。新版本起不来时网页上的按钮不可用，只能这样回滚。如果新 exe 连运行都运行不了（`taskboard rollback` 本身也执行不了），就手动处理：服务停着时把 `taskboard.exe` 改名挪开，复制 `taskboard.exe.prev` 为 `taskboard.exe`，再 `nssm start`。新版本没启动过就没跑过迁移，库不用恢复。更新器替换前会检查新 exe 能否在本机运行，挡住了这类产物（2026-10-17 的 server/v0.1.4 在 Ubuntu 上漏设 GOOS，`taskboard.exe` 其实是 Linux 二进制，生产因此中断约 2 分钟，就是这样手动换回的）；流水线构建后也会用 `release check-exe` 核对产物平台。

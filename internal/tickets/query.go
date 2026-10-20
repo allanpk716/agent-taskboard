@@ -77,6 +77,7 @@ type ListRow struct {
 	Meta      TicketMeta
 	WaitingOn WaitingOn
 	Hit       *SearchHit // 带 q 时非 nil
+	Unread    bool
 }
 
 // QueryList 按条件筛出全部工单（工单序号顺序；排序由调用方做）。
@@ -106,11 +107,16 @@ func (m *Manager) QueryList(ctx context.Context, q ListQuery) ([]ListRow, error)
 				continue
 			}
 		}
+		unread, err := m.IsUnread(ctx, q.Viewer.Member.ID, full.Seq)
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, ListRow{
 			Full:      full,
 			Meta:      MetaOf(full),
 			WaitingOn: turn,
 			Hit:       hit,
+			Unread:    unread,
 		})
 	}
 	return out, nil

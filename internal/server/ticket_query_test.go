@@ -48,6 +48,7 @@ type listItem struct {
 	ReplyCount  int           `json:"reply_count"`
 	LastChange  int64         `json:"last_change"`
 	ReadFull    string        `json:"read_full"`
+	Unread      bool          `json:"unread"`
 	MatchedIn   []string      `json:"matched_in"`
 	Snippet     string        `json:"snippet"`
 	Brief       *struct {

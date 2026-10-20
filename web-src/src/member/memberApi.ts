@@ -29,6 +29,7 @@ export interface InboxItem {
   waiting_on: string
   who: string
   updated_at: string
+  unread: boolean
 }
 
 export interface InboxResponse {

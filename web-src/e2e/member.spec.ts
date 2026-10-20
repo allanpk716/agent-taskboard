@@ -61,9 +61,11 @@ test('工单列表按状态、指派与本人/Agent筛选，支持关键词', as
 
   // 操作方 = Agent：只剩 B（创建者署名是成员 Agent）；本人只剩 A
   await grp('操作方').getByRole('button', { name: 'Agent' }).click()
+  await expect(page).toHaveURL(/actor_kind=agent/)
   await expect(page.locator('.tcard', { hasText: b })).toBeVisible()
   await expect(page.locator('.tcard', { hasText: a })).toHaveCount(0)
   await grp('操作方').getByRole('button', { name: '本人' }).click()
+  await expect(page).toHaveURL(/actor_kind=member/)
   await expect(page.locator('.tcard', { hasText: a })).toBeVisible()
   await expect(page.locator('.tcard', { hasText: b })).toHaveCount(0)
   await grp('操作方').getByRole('button', { name: '全部' }).click()
