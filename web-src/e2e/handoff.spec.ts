@@ -132,6 +132,38 @@ test('建单指派给同事后完成区域有交接入口', async ({ page }) => 
   await expect(done.getByRole('button', { name: '复制交接文案' })).toBeVisible()
 })
 
+test('建单完成区域按是否指派显示未指派提示', async ({ page }) => {
+  await login(page, ADMIN)
+  const hint = '未指派的工单不会出现在任何人的收件箱里，要在工单列表里找到它。'
+
+  const createFreeForm = async (assignee: string) => {
+    await page.goto('/new')
+    await page.getByText('自由格式').click()
+    await page.getByLabel('标题').fill(`建单指派状态 ${Date.now()} ${assignee || '暂不指派'}`)
+    await page.getByLabel(/说明/).fill('检查完成区域的指派提示。')
+    await page.getByLabel('标签输入').fill('1680')
+    await page.getByRole('button', { name: '添加', exact: true }).click()
+    await expect(page.getByLabel('标签输入')).toHaveValue('')
+    await page.getByLabel('指派给').selectOption(assignee)
+    await page.getByRole('button', { name: '创建工单' }).click()
+    await expect(page.locator('.donet')).toContainText('已创建')
+  }
+
+  await createFreeForm('管理员')
+  await expect(page.locator('.bpage')).not.toContainText(hint)
+
+  await createFreeForm('')
+  await expect(page.locator('.bpage')).toContainText(hint)
+
+  await createFreeForm('王工')
+  const done = page.locator('.bpage')
+  await expect(done).toContainText('📨 发给 王工')
+  await expect(done.locator('[data-handoff-role="hint"]')).toContainText(
+    '复制后发给王工，他再把后半段交给自己的 Agent',
+  )
+  await expect(done).not.toContainText(hint)
+})
+
 test('指派人按成员id判断而不是重名判断', async ({ page, request }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
   const session = await request.post('/api/v1/session', { data: ADMIN })

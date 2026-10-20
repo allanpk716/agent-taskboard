@@ -33,6 +33,7 @@ interface Created {
   number: string
   seq: number
   warnings: { field: string; message: string }[]
+  assignee?: { id: number; name: string } | null
   share_text?: string | null
   handoff_text?: string
 }
@@ -118,6 +119,7 @@ export function NewTicketPage() {
   if (step.phase === 'done') {
     const t = step.created
     const assignee = step.assignee
+    const unassigned = t.assignee === undefined ? !assignee : t.assignee === null
     return (
       <div className="bpage">
         <div className="bigok">✓</div>
@@ -177,7 +179,7 @@ export function NewTicketPage() {
             返回收件箱
           </button>
         </div>
-        {!t.share_text && (
+        {unassigned && (
           <div className="hint" style={{ textAlign: 'center' }}>
             未指派的工单不会出现在任何人的收件箱里，要在工单列表里找到它。
           </div>
