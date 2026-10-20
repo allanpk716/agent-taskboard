@@ -1075,6 +1075,8 @@ export function TicketDetailPage({
   const closed = !open
   const deliveredToMe =
     open && ticket.viewer.your_turn && ticket.waiting_on.reason.includes('交付') && ticket.waiting_on.reason.includes('验收')
+  const hasActiveGuestLink =
+    guestLinks?.some((link) => !link.revoked_at && !linkExpired(link.expires_at)) ?? false
 
   function toggleDetailLabel(label: string) {
     const { fromInbox, query: sourceQuery } = detailListSource(search)
@@ -1161,7 +1163,17 @@ export function TicketDetailPage({
       </div>
 
       {open ? (
-        <Composer ticket={ticket} canDeliver={!!can.deliver} onSent={changed} />
+        <>
+          {ticket.kind === 'report' && guestLinks !== null && !hasActiveGuestLink && (
+            <div className="warnbox no-guest-link">
+              <span>这张反馈没有可用的访客链接，访客看不到回复</span>
+              <button type="button" className="btn sm" onClick={() => setDialog('links')}>
+                发访客链接
+              </button>
+            </div>
+          )}
+          <Composer ticket={ticket} canDeliver={!!can.deliver} onSent={changed} />
+        </>
       ) : (
         <div className="composer ro">
           <span>工单已关闭（{closeReasonText(ticket.close_reason)}）</span>

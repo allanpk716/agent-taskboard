@@ -884,7 +884,7 @@ func WhyText(why string) string {
 //	有对手任务：指派人一方回复 → 创建者；创建者一方回复 → 指派人
 //	自派自：交付后 → 本人验收；有有效访客链接时普通回复 → 访客；
 //	  无链接时按 Agent/本人/退回规则留在本人
-//	反馈工单成员回复 → 访客
+//	反馈工单：成员回复有有效访客链接时 → 访客；没有时留在指派人/department
 //	第三位成员的回复不参与推导；成员 Agent 算所属成员一方；
 //	改派后原指派人的旧回复不再参与推导
 func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
@@ -921,7 +921,12 @@ func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 		if selfAssigned {
 			memberRelevant = e.Actor.MemberID == a
 		}
-		if !(isGuest || (!selfAssigned && c == 0) || memberRelevant) {
+		// 反馈工单没有有效访客链接时，只有指派人一方的回复参与推导；有链接时保持任何成员回复都轮到访客。
+		reportNoLink := t.Kind == "report" && !hasActiveGuestLink(guestLinks, now)
+		if reportNoLink {
+			memberRelevant = a == 0 || e.Actor.MemberID == a
+		}
+		if !(isGuest || (!reportNoLink && !selfAssigned && c == 0) || memberRelevant) {
 			continue // 第三位成员的回复不改变轮次
 		}
 		if last != nil && last.Deliver && last.Actor.MemberID == a && a != 0 {
@@ -1010,6 +1015,41 @@ func WaitingOnOf(t Full, guestLinks []GuestLinkInfo, now time.Time) WaitingOn {
 			why = WhyGuestRevised
 			if guestRevisions == 1 {
 				why = WhyGuestCompleted
+			}
+		}
+		return toAssignee(why)
+	}
+	if t.Kind == "report" {
+		if hasActiveGuestLink(guestLinks, now) {
+			return WaitingOn{Party: "guest", Text: "访客", SinceSeq: since}
+		}
+		if last.Actor.AgentID != 0 {
+			return toAssignee(WhyAgentReplied)
+		}
+		why := WhyNew
+		guestRevisionsBefore := 0
+		for i := range t.Timeline {
+			e := &t.Timeline[i]
+			if e.Seq >= last.Seq {
+				continue
+			}
+			if e.Type == "brief_revised" {
+				if e.Actor.MemberID == 0 {
+					guestRevisionsBefore++
+					why = WhyGuestRevised
+					if guestRevisionsBefore == 1 {
+						why = WhyGuestCompleted
+					}
+				}
+				continue
+			}
+			if e.Type != "reply" {
+				continue
+			}
+			if e.Actor.MemberID == 0 {
+				why = WhyGuestReplied
+			} else if e.Actor.MemberID == a && e.Actor.AgentID != 0 {
+				why = WhyAgentReplied
 			}
 		}
 		return toAssignee(why)

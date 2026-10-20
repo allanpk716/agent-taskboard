@@ -234,6 +234,35 @@ test('详情页创建访客链接并复制', async ({ page, request }) => {
   await expect(page.getByRole('heading', { name: '要发访客链接的工单' })).toBeVisible()
 })
 
+test('反馈没有可用访客链接时提示并可发链接', async ({ page, request }) => {
+  await loginAdmin(request)
+  const created = await request.post('/api/v1/tickets', {
+    data: {
+      kind: 'report',
+      title: '没有可用访客链接的反馈',
+      labels: ['机型:UD-2300'],
+      assignee: '管理员',
+      guest_link: { note: '检验科-张三' },
+    },
+  })
+  expect(created.status(), await created.text()).toBe(201)
+  const body = (await created.json()) as { number: string; guest_link: { id: number } }
+  const revoked = await request.delete(
+    `/api/v1/tickets/${body.number}/guest-links/${body.guest_link.id}`,
+  )
+  expect(revoked.ok()).toBeTruthy()
+
+  await login(page, ADMIN)
+  await page.goto(`/t/${body.number}`)
+  await expect(page.getByText('这张反馈没有可用的访客链接，访客看不到回复')).toBeVisible()
+
+  await page.getByRole('button', { name: '发访客链接' }).click()
+  await expect(page.locator('.modal')).toContainText(`访客链接 · ${body.number}`)
+  await page.getByLabel('备注').fill('检验科-李四')
+  await page.getByRole('button', { name: '创建', exact: true }).click()
+  await expect(page.getByText('这张反馈没有可用的访客链接，访客看不到回复')).toHaveCount(0)
+})
+
 // 5. 时间线按「本人 / Agent」筛选后结果正确（验收标准 3）。
 test('时间线按本人/Agent筛选后结果正确', async ({ page, request }) => {
   const number = await createTicket(request, { title: '有本人与Agent回复的工单', assignee: '管理员' })

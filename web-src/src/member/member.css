@@ -1159,6 +1159,15 @@
   flex-wrap: wrap;
 }
 
+.no-guest-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 12px;
+}
+
 /* 工具页占位行 */
 .toolrow {
   display: flex;

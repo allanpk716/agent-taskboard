@@ -268,6 +268,8 @@ func Test等待方推导表(t *testing.T) {
 	var reportBody createAssignedResponse
 	tbtest.DecodeJSON(t, reportRes, &reportBody)
 	report := reportBody.Number
+	w.s.CreateGuestLink(t, w.webWang, selfReport, map[string]any{"note": "检验科-张三"})
+	w.s.CreateGuestLink(t, w.webWang, report, map[string]any{"note": "检验科-李四"})
 
 	// 行 1a：尚无回复、未指派 → department / 尚未指派。
 	plain := w.createHandoffTicket(t, w.webWang, "未指派的工单", "").Number
