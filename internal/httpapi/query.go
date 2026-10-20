@@ -694,6 +694,7 @@ type ticketListItemView struct {
 	ReplyCount          int           `json:"reply_count"`
 	LastChange          int64         `json:"last_change"`
 	ReadFull            string        `json:"read_full"`
+	Unread              bool          `json:"unread"`
 	MatchedIn           []string      `json:"matched_in,omitempty"`
 	Snippet             string        `json:"snippet,omitempty"`
 	Brief               *briefView    `json:"brief,omitempty"` // include=brief 时附带说明
@@ -715,6 +716,7 @@ func newTicketListItem(row *tickets.ListRow, include string) ticketListItemView 
 		UpdatedAt:  row.Meta.UpdatedAt,
 		LastChange: row.Meta.Change,
 		ReadFull:   "/api/v1/tickets/" + t.Number + "?format=markdown",
+		Unread:     row.Unread,
 	}
 	if t.Creator.MemberID != 0 {
 		v.Creator = t.Creator.MemberName

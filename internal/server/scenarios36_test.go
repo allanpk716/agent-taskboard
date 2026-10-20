@@ -26,6 +26,7 @@ type inboxItemBody struct {
 	SinceSeq *int64      `json:"since_seq"`
 	ReadNew  string      `json:"read_new"`
 	ReadFull string      `json:"read_full"`
+	Unread   bool        `json:"unread"`
 	Assignee *authorBody `json:"assignee"`
 }
 

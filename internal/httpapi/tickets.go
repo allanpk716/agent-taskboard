@@ -323,6 +323,11 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if err := a.accessRecords.RecordView(r.Context(), full.Seq, viewer); err != nil {
 		panic(err)
 	}
+	if viewer.Kind == identity.ViewerMember && viewer.Agent == nil {
+		if err := a.tickets.MarkRead(r.Context(), viewer.Member.ID, full.Seq); err != nil {
+			panic(err)
+		}
+	}
 	atts, usage, err := a.attachmentProjection(r.Context(), full, viewer)
 	if err != nil {
 		panic(err)
