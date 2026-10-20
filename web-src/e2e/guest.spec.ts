@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
-import { openGuestPage } from './helpers'
+import { login, openGuestPage } from './helpers'
 
 // 访客网页（#38）：工单对话页。对真实服务 + 构建好的前端跑用例，
 // 造数据（工单、回复、访客链接）全部通过 HTTP API 完成。
@@ -219,6 +219,22 @@ test('打开访客链接看到徽标与说明气泡，回复并附带粘贴的�
   await expect(page.locator('.lightbox img')).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page.locator('.lightbox')).toBeHidden()
+})
+
+test('认领访客链接的时间线不重复显示署名', async ({ page, request }) => {
+  const seed = await seedGuestTicket(request, {})
+  await openGuestPage(page, request, seed.linkKey)
+
+  const view = await (await request.get(`/api/v1/tickets/${seed.number}`)).json()
+  const claimedAt = view.timeline.find((e: any) => e.type === 'guest_link_claimed').at as string
+  const expected = `检验科 张三 认领了访客链接「检验科-张三」 · ${claimedAt.slice(5, 7)}-${claimedAt.slice(8, 10)} ${claimedAt.slice(11, 16)}`
+
+  await expect(page.locator('.event').last()).toHaveText(expected)
+
+  const member = await page.context().newPage()
+  await login(member, ADMIN)
+  await member.goto(`/t/${seed.number}`)
+  await expect(member.locator('.event').last()).toHaveText(expected)
 })
 
 // 2. 工单关闭后只读；链接撤销/过期后整页提示。
