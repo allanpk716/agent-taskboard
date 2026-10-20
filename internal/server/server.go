@@ -103,6 +103,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 		Notifications: notificationStore,
 		AccessRecords: accessRecords,
 		handler:       mux,
+		httpSrv:       &http.Server{Handler: mux},
 		web:           web,
 	}, nil
 }
@@ -115,7 +116,6 @@ func (s *Server) Handler() http.Handler { return s.handler }
 // 和备份调度（每天 daily_at；备份时刻同样由注入时钟决定，见 internal/ops）。
 func (s *Server) Serve(ln net.Listener) error {
 	s.listener = ln
-	s.httpSrv = &http.Server{Handler: s.handler}
 	janitorDone := make(chan struct{})
 	backupDone := make(chan struct{})
 	idemDone := make(chan struct{})
@@ -207,9 +207,7 @@ func (s *Server) selfHealthCheck() {
 // Shutdown 优雅停机。
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.Notifications.Close()
-	if s.httpSrv == nil {
-		return nil
-	}
+	// httpSrv 在 New 里建好：Shutdown 先于 Serve 时，Serve 会立即返回 ErrServerClosed。
 	return s.httpSrv.Shutdown(ctx)
 }
 
