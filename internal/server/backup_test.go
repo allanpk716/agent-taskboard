@@ -16,11 +16,14 @@ import (
 )
 
 type backupsStatusBody struct {
-	LocalOnly     bool              `json:"local_only"`
-	LastSuccessAt *string           `json:"last_success_at"`
-	Overdue       bool              `json:"overdue"`
-	LastFailure   *backupRecordVue  `json:"last_failure"`
-	Records       []backupRecordVue `json:"records"`
+	LocalOnly              bool              `json:"local_only"`
+	LastSuccessAt          *string           `json:"last_success_at"`
+	LastLocalFallbackAt    *string           `json:"last_local_fallback_at"`
+	TargetUnreachable      bool              `json:"target_unreachable"`
+	TargetUnreachableError string            `json:"target_unreachable_error"`
+	Overdue                bool              `json:"overdue"`
+	LastFailure            *backupRecordVue  `json:"last_failure"`
+	Records                []backupRecordVue `json:"records"`
 }
 
 type backupRecordVue struct {
@@ -30,6 +33,7 @@ type backupRecordVue struct {
 	Size        int64  `json:"size"`
 	IntegrityOK bool   `json:"integrity_ok"`
 	FilesAdded  int    `json:"files_added"`
+	Location    string `json:"location"`
 	Error       string `json:"error"`
 	Success     bool   `json:"success"`
 }
@@ -110,11 +114,11 @@ func Test备份目标连不上时记录失败且服务照常运行(t *testing.T)
 	admin := s.Login("admin", "pass-word")
 
 	rec, err := s.Backups().BackupNow(context.Background(), ops.KindDaily)
-	if err == nil {
-		t.Fatal("目标连不上时备份应当失败")
+	if err != nil {
+		t.Fatalf("目标连不上但本机兜底成功时调用方应可继续：%v", err)
 	}
-	if rec.Success() || rec.Err == "" {
-		t.Fatalf("失败应记入记录：%+v", rec)
+	if rec.Success() || rec.Err == "" || rec.Location != ops.LocationLocal {
+		t.Fatalf("目标失败应记入本机兜底记录：%+v", rec)
 	}
 
 	// 服务照常运行：登录、读会话都正常。
@@ -129,6 +133,10 @@ func Test备份目标连不上时记录失败且服务照常运行(t *testing.T)
 	}
 	if status.LastFailure == nil || status.LastFailure.Error == "" {
 		t.Fatalf("应能看到最近一次失败：%+v", status.LastFailure)
+	}
+	if !status.TargetUnreachable || status.TargetUnreachableError == "" ||
+		status.LastLocalFallbackAt == nil || status.Records[0].Location != "local" {
+		t.Fatalf("目标不可达与兜底状态应进入 API：%+v", status)
 	}
 }
 

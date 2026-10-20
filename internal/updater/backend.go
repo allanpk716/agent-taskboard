@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
@@ -17,21 +18,21 @@ import (
 
 // defaultPreupdate 打开 data_dir 的库做一次更新前备份（ops.Preupdate 与
 // 每日定时备份是同一段代码）。返回备份文件名。
-func defaultPreupdate(ctx context.Context, o *Options) (string, error) {
+func defaultPreupdate(ctx context.Context, o *Options) (PreupdateBackup, error) {
 	st, err := store.Open(o.DataDir)
 	if err != nil {
-		return "", fmt.Errorf("打开数据库做更新前备份：%w", err)
+		return PreupdateBackup{}, fmt.Errorf("打开数据库做更新前备份：%w", err)
 	}
 	defer st.Close()
 	b, err := ops.NewBackups(st.DB, o.DataDir, o.Backup.BackupOptions(), clock.Real{})
 	if err != nil {
-		return "", err
+		return PreupdateBackup{}, err
 	}
 	rec, err := b.Preupdate(ctx)
 	if err != nil {
-		return "", err
+		return PreupdateBackup{}, err
 	}
-	return rec.Filename, nil
+	return PreupdateBackup{Filename: rec.Filename, Local: rec.Location == ops.LocationLocal}, nil
 }
 
 // swapExe 把 exePath 改名为 exePath.prev，再放入新 exe 的内容。当前 exe
@@ -128,18 +129,23 @@ type preupdateBackup struct {
 }
 
 // latestPreupdateBackup 找最近的更新前备份（文件名里的时间戳保证字典序就是
-// 时间序）。没配置备份目标时在 data_dir\backups 下找（备份代码就是这么落的）。
+// 时间序）。配置了目标时也要看 data_dir\backups：目标不可达时的兜底副本在那里。
 func latestPreupdateBackup(opt Options) (*preupdateBackup, error) {
-	dir := opt.Backup.Target
-	if dir == "" {
-		dir = filepath.Join(opt.DataDir, "backups")
+	var matches []string
+	dirs := []string{filepath.Join(opt.DataDir, "backups")}
+	if opt.Backup.Target != "" {
+		dirs = append(dirs, opt.Backup.Target)
 	}
-	matches, err := filepath.Glob(filepath.Join(dir, "taskboard-*-preupdate.db"))
-	if err != nil {
-		return nil, err
+	for _, dir := range dirs {
+		found, err := filepath.Glob(filepath.Join(dir, "taskboard-*-preupdate.db"))
+		if err != nil {
+			return nil, err
+		}
+		matches = append(matches, found...)
 	}
 	if len(matches) == 0 {
-		return nil, fmt.Errorf("在 %s 下没有更新前备份（taskboard-*-preupdate.db），无法回滚数据库", dir)
+		return nil, fmt.Errorf("在 %s 下没有更新前备份（taskboard-*-preupdate.db），无法回滚数据库",
+			strings.Join(dirs, " 或 "))
 	}
 	// 字典序最大的就是最新的。
 	latest := matches[0]

@@ -11,6 +11,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/ops"
 	"github.com/allanpk716/agent-taskboard/internal/updater"
 )
 
@@ -23,12 +24,12 @@ func (a *API) updateOptions() updater.Options {
 	return updater.Options{
 		Update: a.cfg.Update, DataDir: a.cfg.DataDir, Backup: a.cfg.Backup,
 		WebDir: a.cfg.WebDir, Port: a.cfg.Port,
-		Preupdate: func(ctx context.Context) (string, error) {
+		Preupdate: func(ctx context.Context) (updater.PreupdateBackup, error) {
 			rec, err := a.backups.Preupdate(ctx)
 			if err != nil {
-				return "", err
+				return updater.PreupdateBackup{}, err
 			}
-			return rec.Filename, nil
+			return updater.PreupdateBackup{Filename: rec.Filename, Local: rec.Location == ops.LocationLocal}, nil
 		},
 	}
 }
@@ -77,11 +78,15 @@ func (a *API) handleAdminUpdate(w http.ResponseWriter, r *http.Request) {
 			ClientUpdated: res.ClientUpdated,
 			ClientError:   res.ClientError,
 			RestartNeeded: res.RestartNeeded, PreupdateBackup: res.PreupdateBackup,
+			PreupdateBackupLocal: res.PreupdateBackupLocal,
 		}
 		if len(res.Steps) == 0 {
 			view.Message = "已是最新，无需更新"
 		} else if res.RestartNeeded {
 			view.Message = "后端已更新：服务即将退出，由 NSSM 拉起新版本（新版本启动时会自动迁移并做健康检查）"
+		}
+		if res.PreupdateBackupLocal && view.Message != "" {
+			view.Message += "；更新前备份只在本机"
 		}
 		writeJSON(w, http.StatusOK, view)
 		if res.RestartNeeded {
@@ -126,13 +131,14 @@ type componentStatusView struct {
 
 // updateResultView 是 POST /api/v1/admin/update 的响应。
 type updateResultView struct {
-	SourceUsed      string   `json:"source_used"`
-	Steps           []string `json:"steps"`
-	Message         string   `json:"message,omitempty"`
-	ServerUpdated   bool     `json:"server_updated"`
-	WebUpdated      bool     `json:"web_updated"`
-	ClientUpdated   bool     `json:"client_updated"`
-	ClientError     string   `json:"client_error,omitempty"`
-	RestartNeeded   bool     `json:"restart_needed"`
-	PreupdateBackup string   `json:"preupdate_backup,omitempty"`
+	SourceUsed           string   `json:"source_used"`
+	Steps                []string `json:"steps"`
+	Message              string   `json:"message,omitempty"`
+	ServerUpdated        bool     `json:"server_updated"`
+	WebUpdated           bool     `json:"web_updated"`
+	ClientUpdated        bool     `json:"client_updated"`
+	ClientError          string   `json:"client_error,omitempty"`
+	RestartNeeded        bool     `json:"restart_needed"`
+	PreupdateBackup      string   `json:"preupdate_backup,omitempty"`
+	PreupdateBackupLocal bool     `json:"preupdate_backup_local"`
 }

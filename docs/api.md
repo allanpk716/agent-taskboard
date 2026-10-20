@@ -72,7 +72,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 
 ## 通知（#74）
 
-通知接口接受成员网页会话、成员 Agent token 和客户端凭证；访客一律 403 `members_only`。
+通知接口接受成员网页会话、成员 Agent token 和客户端凭证；访客一律 403 `members_only`。网页会话和客户端凭证能看到工单通知与系统通知；成员 Agent 只返回工单通知，系统通知需要人处理，不进入 Agent 的通知流。
 
 | 方法与路径 | 说明 |
 |---|---|
@@ -82,7 +82,8 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 | `GET /api/v1/notifications/stream` | SSE。首连推 `hello`；`Last-Event-ID` 重连先升序补发 `notification` 再推 `hello`；在线期间推 `notification` / `read`，每 25 秒推 `: ping`。 |
 
 - 列表响应 `{items, cursor, unread_count, next}`；`next` 保留 `unread`、`limit`、`format`，只替换 `before`。
-- 通知项含 `id, ticket{number,title,url}, kind, reason, text, event, summary, read_new, read_full, created_at, read_at`。
+- 通知项含 `id, url, ticket{number,title,url}, kind, reason, text, event, summary, read_new, read_full, created_at, read_at`。`url` 是打开这条通知的顶层地址；工单通知指向工单页，系统通知指向管理页备份区且 `ticket` 为 `null`。
+- 系统通知 `kind` 为 `fyi`，reason 为 `backup_failing` / `backup_recovered`，发给全体在职管理员；备份恢复时会把这段失败期间发出的告警标为已读。
 - 轮到类通知的 `reason` 取固定值：`assigned`、`delivered`、`assignee_replied`、
   `returned`、`creator_replied`、`agent_replied`、`guest_replied`、`guest_completed`、
   `guest_revised`、`department`。
@@ -983,22 +984,25 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 {
   "local_only": true,
   "last_success_at": "2026-10-16T03:00:05+08:00",
+  "last_local_fallback_at": null,
+  "target_unreachable": false,
   "overdue": false,
   "overdue_after_hours": 36,
   "last_failure": null,
   "records": [
     {"at": "2026-10-16T03:00:05+08:00", "kind": "daily", "filename": "taskboard-20261016-030005-daily.db",
-     "size": 192512, "integrity_ok": true, "files_added": 2, "success": true}
+     "size": 192512, "integrity_ok": true, "files_added": 2, "location": "target", "success": true}
   ]
 }
 ```
 
 - `local_only` 为 `true` 表示没有配置备份目标（备份都在本机 `data_dir\backups\`），
   管理页据此显示「备份未离开本机」。
+- `last_success_at` 只认成功写到配置目标的备份；`last_local_fallback_at` 是最近一次本机兜底时间。
+- `target_unreachable` 表示最近一次尝试没写到目标，为 true 时带 `target_unreachable_error`；管理页显示「备份目标不可达……最近一份只在本机」横幅。
 - `overdue` 为 `true` 表示最近一次成功备份已超过 `overdue_after_hours`（36）小时，
   或从未成功过；管理页据此标红。
-- `records` 是最近 20 条备份记录（新→旧），失败记录带 `error` 字段与
-  `success: false`（含目标连不上、完整性校验未通过等）。
+- `records` 是最近 20 条备份记录（新→旧），每条带 `location`（`target` / `local`）；失败记录带 `error` 字段与 `success: false`。目标不可达但兜底成功的记录 `location` 为 `local`，`filename` 是本机副本，`error` 是目标失败原因。
 - 手动备份走命令行 `taskboard backup`（与定时备份、更新前备份共用同一段代码），
   不提供 HTTP 触发；更新流程的「更新前备份」由 #45 的更新接口触发。
 
@@ -1045,12 +1049,14 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   "web_updated": true,
   "client_updated": true,
   "restart_needed": true,
-  "preupdate_backup": "taskboard-20261016-220105-preupdate.db"
+  "preupdate_backup": "taskboard-20261016-220105-preupdate.db",
+  "preupdate_backup_local": true
 }
 ```
 
 - 已经是最新时 `steps` 为空、`message` 为「已是最新，无需更新」。
 - 后端或前端更新失败（更新前备份失败等）返回 `500 update_failed`；客户端是独立组件，
   失败时响应仍为 200，`client_updated=false` 且 `client_error` 说明原因（例如 SHA256 不符），后端/前端照常更新。
+- 更新前备份目标不可达但本机兜底成功时更新继续，`preupdate_backup_local` 为 `true` 并在结果里标明「只在本机」。
 - 后端更新成功后服务写完响应即退出，由 NSSM 拉起新版本；命令行等价的入口是
   `taskboard update`（提示重启）、`taskboard rollback`（回滚）。

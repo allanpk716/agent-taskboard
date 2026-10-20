@@ -25,6 +25,7 @@ type Item struct {
 	ActorName     string
 	ActorMemberID int64
 	ActorAgentID  int64
+	URL           string
 	CreatedAt     time.Time
 	ReadAt        *time.Time
 }
@@ -38,6 +39,8 @@ type ListQuery struct {
 	// RequestedLimit 与 Format 只用于构造对外 next 链接。
 	RequestedLimit int
 	Format         string
+	// IncludeSystem 为 false 时过滤系统通知；成员 Agent 只能看到工单通知。
+	IncludeSystem bool
 }
 
 type ListResult struct {
@@ -67,12 +70,15 @@ func (m *Manager) List(ctx context.Context, q ListQuery) (ListResult, error) {
 	if q.Unread {
 		where = append(where, "read_at IS NULL")
 	}
+	if !q.IncludeSystem {
+		where = append(where, "ticket_seq IS NOT NULL")
+	}
 	order := "DESC"
 	if ascending {
 		order = "ASC"
 	}
 	query := `SELECT id, member_id, kind, reason, text, summary, ticket_number, ticket_title,
-		trigger_seq, trigger_type, actor_kind, actor_name, actor_member_id, actor_agent_id, created_at, read_at
+		trigger_seq, trigger_type, actor_kind, actor_name, actor_member_id, actor_agent_id, url, created_at, read_at
 		FROM notifications WHERE ` + strings.Join(where, " AND ") + `
 		ORDER BY id ` + order + ` LIMIT ?`
 	sqlArgs := args
@@ -92,14 +98,21 @@ func (m *Manager) List(ctx context.Context, q ListQuery) (ListResult, error) {
 		var createdAt string
 		var readAt sql.NullString
 		var summary sql.NullString
-		var actorMemberID, actorAgentID sql.NullInt64
+		var ticketNumber, ticketTitle, eventType, actorKind, actorName sql.NullString
+		var actorMemberID, actorAgentID, eventSeq sql.NullInt64
 		if err := rows.Scan(&it.ID, &it.MemberID, &it.Kind, &it.Reason, &it.Text, &summary,
-			&it.Number, &it.Title, &it.EventSeq, &it.EventType, &it.ActorKind, &it.ActorName,
-			&actorMemberID, &actorAgentID,
+			&ticketNumber, &ticketTitle, &eventSeq, &eventType, &actorKind, &actorName,
+			&actorMemberID, &actorAgentID, &it.URL,
 			&createdAt, &readAt); err != nil {
 			return ListResult{}, err
 		}
 		it.Summary = summary.String
+		it.Number = ticketNumber.String
+		it.Title = ticketTitle.String
+		it.EventSeq = eventSeq.Int64
+		it.EventType = eventType.String
+		it.ActorKind = actorKind.String
+		it.ActorName = actorName.String
 		it.ActorMemberID = actorMemberID.Int64
 		it.ActorAgentID = actorAgentID.Int64
 		if it.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt); err != nil {
@@ -146,7 +159,7 @@ func (m *Manager) List(ctx context.Context, q ListQuery) (ListResult, error) {
 		}
 		next = "/api/v1/notifications?" + query.Encode()
 	}
-	unread, err := m.Unread(ctx, q.MemberID)
+	unread, err := m.UnreadForViewer(ctx, q.MemberID, q.IncludeSystem)
 	if err != nil {
 		return ListResult{}, err
 	}
@@ -162,6 +175,19 @@ func (m *Manager) Unread(ctx context.Context, memberID int64) (UnreadResult, err
 	var out UnreadResult
 	err := m.db.QueryRowContext(ctx,
 		`SELECT COALESCE(SUM(read_at IS NULL), 0), COALESCE(MAX(id), 0) FROM notifications WHERE member_id = ?`,
+		memberID).Scan(&out.Count, &out.LatestID)
+	return out, err
+}
+
+// UnreadForViewer 按 Agent 身份过滤系统通知；网页会话和客户端凭证都能看到。
+func (m *Manager) UnreadForViewer(ctx context.Context, memberID int64, includeSystem bool) (UnreadResult, error) {
+	var out UnreadResult
+	where := "member_id = ?"
+	if !includeSystem {
+		where += " AND ticket_seq IS NOT NULL"
+	}
+	err := m.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(read_at IS NULL), 0), COALESCE(MAX(id), 0) FROM notifications WHERE `+where,
 		memberID).Scan(&out.Count, &out.LatestID)
 	return out, err
 }

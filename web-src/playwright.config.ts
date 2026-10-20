@@ -8,6 +8,7 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 15_000 },
   fullyParallel: false, // 同一个服务实例，串行跑
+  workers: 1,
   use: { baseURL, viewport: { width: 390, height: 844 } },
   outputDir: 'test-results',
   reporter: [['list'], ['html', { open: 'never', outputFolder: '../playwright-report' }]],

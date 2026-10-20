@@ -434,8 +434,8 @@ func webVersionOf(t *testing.T, webDir string) string {
 	return v.Version
 }
 
-// 更新前备份失败时中止，不替换 exe。
-func Test命令行更新备份失败时中止不换exe(t *testing.T) {
+// 更新前备份目标失败但本机兜底成功时，更新继续并标明只在本机。
+func Test命令行更新备份兜底成功时继续并标明只在本机(t *testing.T) {
 	if testing.Short() {
 		t.Skip("短模式跳过：需要编译真实二进制")
 	}
@@ -449,17 +449,21 @@ func Test命令行更新备份失败时中止不换exe(t *testing.T) {
 	f.writeConfig(updateTomlGitHub(src.server.URL) + fmt.Sprintf("\n[backup]\ntarget = '%s'\n", filepath.ToSlash(filepath.Join(blocker, "nas"))))
 
 	out, err := runUpdate(f)
-	if err == nil {
-		t.Fatalf("备份失败时应中止：%s", out)
+	if err != nil {
+		t.Fatalf("兜底成功时更新应继续：%s", out)
 	}
-	if !strings.Contains(out, "更新前备份") {
-		t.Errorf("错误信息应说明是更新前备份失败：%s", out)
+	if !strings.Contains(out, "只在本机") {
+		t.Errorf("更新结果应标明更新前备份只在本机：%s", out)
 	}
-	if got := readExe(t, f.exePath); got != "old taskboard exe 0.0.0 build" {
-		t.Errorf("备份失败时不应替换 exe，得到 %q", got)
+	if got := readExe(t, f.exePath); got == "old taskboard exe 0.0.0 build" {
+		t.Errorf("兜底成功后应替换 exe，得到 %q", got)
 	}
-	if _, err := os.Stat(f.exePath + ".prev"); !os.IsNotExist(err) {
-		t.Errorf("备份失败时不应产生 .prev")
+	if _, err := os.Stat(f.exePath + ".prev"); err != nil {
+		t.Errorf("更新后应产生 .prev：%v", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(f.dataDir, "backups", "taskboard-*-preupdate.db"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("应留下一份本机兜底：%v, err=%v", matches, err)
 	}
 }
 

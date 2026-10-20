@@ -12,6 +12,9 @@ test('系统面板的备份时间按北京时间显示', async ({ page }) => {
       json: {
         local_only: true,
         last_success_at: '2026-10-16T09:30:00+08:00',
+        last_local_fallback_at: '2026-10-16T10:00:00+08:00',
+        target_unreachable: true,
+        target_unreachable_error: 'NAS 共享无法连接',
         overdue: false,
         last_failure: null,
         records: [],
@@ -21,4 +24,7 @@ test('系统面板的备份时间按北京时间显示', async ({ page }) => {
   await login(page, ADMIN)
   await page.goto('/admin')
   await expect(page.getByTestId('backup-last-success')).toHaveText('2026-10-16 09:30')
+  await expect(page.getByTestId('backup-target-unreachable')).toHaveText(
+    '备份目标不可达（NAS 共享无法连接）。最近一份只在本机：2026-10-16 10:00',
+  )
 })

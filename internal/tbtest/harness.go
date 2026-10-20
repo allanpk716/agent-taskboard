@@ -24,6 +24,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
+	"github.com/allanpk716/agent-taskboard/internal/notifications"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
 	"github.com/allanpk716/agent-taskboard/internal/server"
 	"github.com/allanpk716/agent-taskboard/internal/store"
@@ -199,6 +200,9 @@ func (s *Server) Attachments() *attachments.Manager { return s.srv.Atts }
 // Backups 暴露备份模块（#43）：测试里直接做一次备份或触发调度检查
 // （服务里由定时器周期调用；备份时刻由注入时钟决定）。
 func (s *Server) Backups() *ops.Backups { return s.srv.Backups }
+
+// Notifications 暴露通知模块（#177 系统通知测试用）。
+func (s *Server) Notifications() *notifications.Manager { return s.srv.Notifications }
 
 // Idempotency 暴露幂等模块（评审修正）：测试里直接触发 24 小时清除任务
 // （服务里由定时器周期调用；不睡真实时间，用注入时钟推进后手动跑）。

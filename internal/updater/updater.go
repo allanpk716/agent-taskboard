@@ -31,9 +31,9 @@ type Options struct {
 	ExePath string
 	// ServerVersion 是当前后端版本；空串用编译时注入的 version.Server。
 	ServerVersion string
-	// Preupdate 做一次更新前备份，返回备份文件名；为 nil 时用默认实现
+	// Preupdate 做一次更新前备份，返回备份文件名和是否只在本机；为 nil 时用默认实现
 	// （打开 data_dir 的库调 ops.Backups.Preupdate）。
-	Preupdate func(ctx context.Context) (string, error)
+	Preupdate func(ctx context.Context) (PreupdateBackup, error)
 	// HTTP 可注入的客户端（测试用）。
 	HTTP *http.Client
 	// Log 输出进度；为空时静默。
@@ -141,6 +141,8 @@ type Result struct {
 	RestartNeeded bool
 	// PreupdateBackup 是更新前备份的文件名。
 	PreupdateBackup string
+	// PreupdateBackupLocal 表示更新前副本只写到了本机兜底目录。
+	PreupdateBackupLocal bool
 }
 
 // Apply 检查并安装更新：
@@ -234,13 +236,14 @@ func Apply(ctx context.Context, opt Options) (*Result, error) {
 		}
 	}
 
-	var backup string
+	var backup PreupdateBackup
 	if needServer {
 		backup, err = opt.preupdate(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("更新前备份失败，更新中止（未替换 exe）：%w", err)
 		}
-		res.PreupdateBackup = backup
+		res.PreupdateBackup = backup.Filename
+		res.PreupdateBackupLocal = backup.Local
 	}
 	if needClient {
 		if err := InstallClient(opt.DataDir, clientExe, clientPkg); err != nil {
@@ -263,7 +266,11 @@ func Apply(ctx context.Context, opt Options) (*Result, error) {
 		res.ServerUpdated = true
 		res.RestartNeeded = true
 		res.Steps = append(res.Steps, fmt.Sprintf("后端 %s → %s", serverCur, latest.Server.Manifest.Version))
-		opt.logf("后端已更新 %s → %s（更新前备份 %s）", serverCur, latest.Server.Manifest.Version, backup)
+		backupNote := backup.Filename
+		if backup.Local {
+			backupNote += "（只在本机）"
+		}
+		opt.logf("后端已更新 %s → %s（更新前备份 %s）", serverCur, latest.Server.Manifest.Version, backupNote)
 	}
 
 	if needWeb {
@@ -282,11 +289,17 @@ func Apply(ctx context.Context, opt Options) (*Result, error) {
 }
 
 // preupdate 执行更新前备份（与定时备份同一段代码，见 internal/ops）。
-func (o *Options) preupdate(ctx context.Context) (string, error) {
+func (o *Options) preupdate(ctx context.Context) (PreupdateBackup, error) {
 	if o.Preupdate != nil {
 		return o.Preupdate(ctx)
 	}
 	return defaultPreupdate(ctx, o)
+}
+
+// PreupdateBackup 是更新前备份结果；Local 为 true 表示目标不可达但本机兜底成功。
+type PreupdateBackup struct {
+	Filename string
+	Local    bool
 }
 
 // serverExeFile 返回当前平台应下载的后端产物名（发布产物里 Windows 主部署，

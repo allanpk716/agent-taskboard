@@ -12,6 +12,8 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -73,7 +75,17 @@ type Record struct {
 	IntegrityOK bool // PRAGMA integrity_check 是否通过
 	FilesAdded  int  // 本次附件镜像新增文件数
 	Err         string
+	Location    Location
 }
+
+// Location 表示副本最终写在哪里：target 是配置的目标（未配目标时即本机
+// backups 目录），local 是目标不可达时的本机兜底副本。
+type Location string
+
+const (
+	LocationTarget Location = "target"
+	LocationLocal  Location = "local"
+)
 
 // Success 报告这次备份是否整体成功（产出了通过校验的副本）。
 func (r Record) Success() bool { return r.Err == "" && r.IntegrityOK }
@@ -84,7 +96,10 @@ type Status struct {
 	// 管理页据此提示“备份未离开本机”。
 	LocalOnly bool
 	// LastSuccessAt 是最近一次成功备份的时间；从未成功过为 nil。
-	LastSuccessAt *time.Time
+	LastSuccessAt          *time.Time
+	LastLocalFallbackAt    *time.Time
+	TargetUnreachable      bool
+	TargetUnreachableError string
 	// Overdue 报告最近一次成功备份是否已超过 36 小时（或从未成功过）。
 	Overdue bool
 	// LastFailure 是最近一次失败的记录；没有失败过为 nil。
@@ -115,16 +130,29 @@ type Backups struct {
 	opts    BackupOptions
 	atHour  int
 	atMin   int
+	verify  func(path string) (bool, error)
 
 	// 调度状态（CheckSchedule / RunSchedule 用）。
-	mu      sync.Mutex
-	started bool
-	nextDue time.Time
+	mu       sync.Mutex
+	started  bool
+	nextDue  time.Time
+	notifier BackupNotifier
 }
+
+// BackupNotifier 是备份模块向系统通知模块发出的告警接口；测试可注入假实现。
+type BackupNotifier interface {
+	LastBackupAlertAt(ctx context.Context, since time.Time) (time.Time, bool, error)
+	NotifyBackupFailing(ctx context.Context, startedAt time.Time, lastSuccessAt *time.Time, fallback bool, cause string) error
+	NotifyBackupStillFailing(ctx context.Context, startedAt time.Time, hours int) error
+	NotifyBackupRecovered(ctx context.Context, startedAt time.Time, text string) error
+}
+
+// SetNotifier 注入系统通知实现；不注入时备份照常运行，只写记录和日志。
+func (b *Backups) SetNotifier(n BackupNotifier) { b.notifier = n }
 
 // NewBackups 建备份管理器。daily_at 写错（不是 HH:MM）会返回错误。
 func NewBackups(db *sql.DB, dataDir string, opts BackupOptions, c clock.Clock) (*Backups, error) {
-	b := &Backups{db: db, clk: c, dataDir: dataDir, opts: opts}
+	b := &Backups{db: db, clk: c, dataDir: dataDir, opts: opts, verify: verifyCopy}
 	h, m, err := parseDailyAt(opts.DailyAt)
 	if err != nil {
 		return nil, err
@@ -163,8 +191,88 @@ func (b *Backups) attachmentsDir() string { return filepath.Join(b.dataDir, "att
 // 失败也返回记录（已写库）和错误；调用方的服务照常运行。
 func (b *Backups) BackupNow(ctx context.Context, kind Kind) (Record, error) {
 	now := b.clk.Now()
-	rec := Record{At: now, Kind: kind}
+	rec := Record{At: now, Kind: kind, Location: LocationTarget}
 
+	if b.opts.Target == "" {
+		rec, err := b.backupLocalOnly(ctx, now, kind)
+		b.notifyResult(ctx, rec, false)
+		return rec, err
+	}
+
+	localDir := filepath.Join(b.dataDir, "backups")
+	if err := os.MkdirAll(localDir, 0o755); err != nil {
+		return b.fail(ctx, rec, fmt.Errorf("建本机兜底目录 %s 失败：%w", localDir, err))
+	}
+	name := BackupFileName(now, kind)
+	staging := filepath.Join(localDir, "."+name+".part")
+	if err := b.export(ctx, staging); err != nil {
+		_ = os.Remove(staging)
+		return b.fail(ctx, rec, err)
+	}
+	rec.Filename = name
+	if info, err := os.Stat(staging); err == nil {
+		rec.Size = info.Size()
+	}
+	ok, err := b.verify(staging)
+	if err != nil || !ok {
+		_ = os.Rename(staging, staging+".bad")
+		if err != nil {
+			return b.fail(ctx, rec, fmt.Errorf("副本 %s 完整性校验出错：%w", rec.Filename, err))
+		}
+		return b.fail(ctx, rec, fmt.Errorf("副本 %s 完整性校验未通过", rec.Filename))
+	}
+
+	if err := b.writeTarget(ctx, staging, name); err != nil {
+		return b.fallbackLocal(ctx, rec, staging, localDir, name, err)
+	}
+
+	added, err := b.syncMirror()
+	if err != nil {
+		_ = os.Remove(filepath.Join(b.opts.Target, name))
+		return b.fallbackLocal(ctx, rec, staging, localDir, name, err)
+	}
+	rec.FilesAdded = added
+	rec.IntegrityOK = true
+
+	episodeStart, hadFailure := b.failureEpisodeStart(ctx)
+	if err := b.insertRecord(ctx, rec); err != nil {
+		return rec, err
+	}
+	b.sweepAndRotate(b.opts.Target, rec.Filename)
+	_ = os.Remove(staging)
+	if hadFailure {
+		b.notifyRecovered(ctx, episodeStart)
+	}
+	return rec, nil
+}
+
+// fallbackLocal 在目标失败后尝试把已校验的暂存副本转成本机兜底副本；同一天
+// 已兜底过则只记录失败，不再生成第二份。
+func (b *Backups) fallbackLocal(ctx context.Context, rec Record, staging, localDir, name string, cause error) (Record, error) {
+	wrapped := fmt.Errorf("备份目标不可达 %s：%w", b.opts.Target, cause)
+	if b.localFallbackDone(ctx, rec.At, rec.Kind, name) {
+		_ = os.Remove(staging)
+		rec.Filename = ""
+		rec.Size = 0
+		return b.fail(ctx, rec, wrapped)
+	}
+	if err := os.Rename(staging, filepath.Join(localDir, name)); err != nil {
+		_ = os.Remove(staging)
+		return b.fail(ctx, rec, fmt.Errorf("备份目标不可达 %s：%w；本机兜底也失败：%v", b.opts.Target, cause, err))
+	}
+	rec.Location = LocationLocal
+	rec.Err = wrapped.Error()
+	rec.IntegrityOK = true
+	if err := b.insertRecord(ctx, rec); err != nil {
+		return rec, err
+	}
+	b.sweepAndRotate(localDir, rec.Filename)
+	b.notifyResult(ctx, rec, false)
+	return rec, nil
+}
+
+func (b *Backups) backupLocalOnly(ctx context.Context, now time.Time, kind Kind) (Record, error) {
+	rec := Record{At: now, Kind: kind, Location: LocationTarget}
 	dir := b.TargetDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return b.fail(ctx, rec, fmt.Errorf("连不上备份目标 %s：%w", dir, err))
@@ -207,6 +315,31 @@ func (b *Backups) BackupNow(ctx context.Context, kind Kind) (Record, error) {
 	return rec, nil
 }
 
+func (b *Backups) writeTarget(ctx context.Context, staging, name string) error {
+	dir := b.TargetDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	final := filepath.Join(dir, name)
+	if err := copyFile(staging, final+".part"); err != nil {
+		_ = os.Remove(final + ".part")
+		return err
+	}
+	if err := os.Rename(final+".part", final); err != nil {
+		_ = os.Remove(final + ".part")
+		return err
+	}
+	ok, err := verifyCopy(final)
+	if err != nil || !ok {
+		_ = os.Remove(final)
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("目标副本 %s 完整性校验未通过", name)
+	}
+	return nil
+}
+
 // Preupdate 是更新前备份（#45 的更新流程调用；失败时更新必须中止）。
 func (b *Backups) Preupdate(ctx context.Context) (Record, error) {
 	return b.BackupNow(ctx, KindPreupdate)
@@ -218,7 +351,97 @@ func (b *Backups) fail(ctx context.Context, rec Record, cause error) (Record, er
 	if err := b.insertRecord(ctx, rec); err != nil {
 		return rec, fmt.Errorf("%v（且记录失败：%w）", cause, err)
 	}
+	b.notifyResult(ctx, rec, false)
 	return rec, cause
+}
+
+func (b *Backups) localFallbackDone(ctx context.Context, now time.Time, kind Kind, name string) bool {
+	var where string
+	var args []any
+	if kind == KindPreupdate {
+		where = "location = 'local' AND filename = ?"
+		args = []any{name}
+	} else {
+		where = "location = 'local' AND kind = ? AND substr(at, 1, 10) = ?"
+		args = []any{string(kind), now.Format("2006-01-02")}
+	}
+	var n int
+	if err := b.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM backup_records WHERE `+where, args...).Scan(&n); err != nil {
+		return false
+	}
+	return n > 0
+}
+
+func (b *Backups) notifyResult(ctx context.Context, rec Record, recovered bool) {
+	if recovered || rec.Err == "" || rec.Kind == KindPreupdate || b.notifier == nil {
+		return
+	}
+	start, ok := b.failureEpisodeStartLocked(ctx)
+	if !ok {
+		return
+	}
+	var lastSuccess *time.Time
+	if at, ok := b.lastTargetSuccess(ctx); ok {
+		lastSuccess = &at
+	}
+	lastAlert, alerted, err := b.notifier.LastBackupAlertAt(ctx, start)
+	if err != nil {
+		log.Printf("查备份告警节奏失败：%v", err)
+		return
+	}
+	if !alerted {
+		if err := b.notifier.NotifyBackupFailing(ctx, start, lastSuccess, rec.Location == LocationLocal, rec.Err); err != nil {
+			log.Printf("发备份失败告警失败：%v", err)
+		}
+		return
+	}
+	if elapsed := b.clk.Now().Sub(lastAlert); elapsed >= 24*time.Hour {
+		hours := int(math.Ceil(b.clk.Now().Sub(start).Hours()))
+		if err := b.notifier.NotifyBackupStillFailing(ctx, start, hours); err != nil {
+			log.Printf("发备份持续失败提醒失败：%v", err)
+		}
+	}
+}
+
+func (b *Backups) notifyRecovered(ctx context.Context, start time.Time) {
+	if b.notifier == nil {
+		return
+	}
+	if err := b.notifier.NotifyBackupRecovered(ctx, start, "备份已恢复，最新副本已写到目标"); err != nil {
+		log.Printf("发备份恢复通知失败：%v", err)
+	}
+}
+
+func (b *Backups) failureEpisodeStartLocked(ctx context.Context) (time.Time, bool) {
+	success := ""
+	if at, ok := b.lastTargetSuccess(ctx); ok {
+		success = at.Format(time.RFC3339Nano)
+	}
+	var at string
+	if err := b.db.QueryRowContext(ctx, `
+		SELECT at FROM backup_records
+		WHERE error IS NOT NULL AND kind != 'preupdate' AND at > ?
+		ORDER BY at ASC, id ASC LIMIT 1`, success).Scan(&at); err != nil {
+		return time.Time{}, false
+	}
+	t, err := time.ParseInLocation(time.RFC3339Nano, at, clock.Beijing)
+	return t, err == nil
+}
+
+func (b *Backups) failureEpisodeStart(ctx context.Context) (time.Time, bool) {
+	return b.failureEpisodeStartLocked(ctx)
+}
+
+func (b *Backups) lastTargetSuccess(ctx context.Context) (time.Time, bool) {
+	var at string
+	if err := b.db.QueryRowContext(ctx, `
+		SELECT at FROM backup_records
+		WHERE error IS NULL AND integrity_ok = 1 AND location = 'target'
+		ORDER BY at DESC, id DESC LIMIT 1`).Scan(&at); err != nil {
+		return time.Time{}, false
+	}
+	t, err := time.ParseInLocation(time.RFC3339Nano, at, clock.Beijing)
+	return t, err == nil
 }
 
 // export 用 VACUUM INTO 做在线备份，不直接复制运行中的库文件。
@@ -361,9 +584,9 @@ func (b *Backups) insertRecord(ctx context.Context, r Record) error {
 		ok = 1
 	}
 	_, err := b.db.ExecContext(ctx, `
-		INSERT INTO backup_records (at, kind, filename, size, integrity_ok, files_added, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		r.At.Format(time.RFC3339Nano), string(r.Kind), r.Filename, r.Size, ok, r.FilesAdded, errText)
+		INSERT INTO backup_records (at, kind, filename, size, integrity_ok, files_added, error, location)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.At.Format(time.RFC3339Nano), string(r.Kind), r.Filename, r.Size, ok, r.FilesAdded, errText, string(r.Location))
 	if err != nil {
 		return fmt.Errorf("写备份记录失败：%w", err)
 	}
@@ -378,14 +601,14 @@ func (b *Backups) Status(ctx context.Context) Status {
 	var at string
 	if err := b.db.QueryRowContext(ctx, `
 		SELECT at FROM backup_records
-		WHERE error IS NULL AND integrity_ok = 1
+		WHERE error IS NULL AND integrity_ok = 1 AND location = 'target'
 		ORDER BY at DESC, id DESC LIMIT 1`).Scan(&at); err == nil {
 		if t, err := time.ParseInLocation(time.RFC3339Nano, at, clock.Beijing); err == nil {
 			s.LastSuccessAt = &t
 		}
 	}
 	rows, err := b.db.QueryContext(ctx, `
-		SELECT at, kind, filename, size, integrity_ok, files_added, error
+		SELECT at, kind, filename, size, integrity_ok, files_added, error, location
 		FROM backup_records ORDER BY at DESC, id DESC LIMIT 20`)
 	if err != nil {
 		return s
@@ -393,24 +616,45 @@ func (b *Backups) Status(ctx context.Context) Status {
 	defer rows.Close()
 	for rows.Next() {
 		var (
-			r       Record
-			at      string
-			kind    string
-			ok      int
-			errText sql.NullString
+			r        Record
+			at       string
+			kind     string
+			ok       int
+			errText  sql.NullString
+			location string
 		)
-		if err := rows.Scan(&at, &kind, &r.Filename, &r.Size, &ok, &r.FilesAdded, &errText); err != nil {
+		if err := rows.Scan(&at, &kind, &r.Filename, &r.Size, &ok, &r.FilesAdded, &errText, &location); err != nil {
 			return s
 		}
 		r.At, _ = time.ParseInLocation(time.RFC3339Nano, at, clock.Beijing)
 		r.Kind = Kind(kind)
 		r.IntegrityOK = ok == 1
 		r.Err = errText.String
+		r.Location = Location(location)
 		if !r.Success() && s.LastFailure == nil {
 			f := r
 			s.LastFailure = &f
 		}
 		s.Records = append(s.Records, r)
+	}
+	var fallbackAt string
+	if err := b.db.QueryRowContext(ctx, `
+		SELECT at FROM backup_records WHERE location = 'local'
+		ORDER BY at DESC, id DESC LIMIT 1`).Scan(&fallbackAt); err == nil {
+		if t, err := time.ParseInLocation(time.RFC3339Nano, fallbackAt, clock.Beijing); err == nil {
+			s.LastLocalFallbackAt = &t
+		}
+	}
+	var targetErr sql.NullString
+	var latestLocation string
+	if err := b.db.QueryRowContext(ctx, `
+		SELECT error, location FROM backup_records
+		ORDER BY at DESC, id DESC LIMIT 1`).Scan(&targetErr, &latestLocation); err == nil {
+		errText := targetErr.String
+		if errText != "" && (latestLocation == string(LocationLocal) || strings.HasPrefix(errText, "备份目标不可达")) {
+			s.TargetUnreachable = true
+			s.TargetUnreachableError = errText
+		}
 	}
 	if s.LastSuccessAt == nil {
 		s.Overdue = true // 从未成功备份过
