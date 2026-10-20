@@ -468,6 +468,19 @@
   line-height: 1.35;
   margin: 7px 0 4px;
 }
+.pc-row-title.unread,
+.tc-title.unread {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.unread-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2a6fdb;
+}
 .pc-row-turn {
   color: #697386;
   font-size: 12.5px;
@@ -1144,6 +1157,15 @@
   align-items: center;
   margin-top: 8px;
   flex-wrap: wrap;
+}
+
+.no-guest-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 12px;
 }
 
 /* 工具页占位行 */

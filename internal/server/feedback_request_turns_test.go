@@ -128,6 +128,40 @@ func Test访客链接过期未补全时无通知地轮到指派人(t *testing.T)
 	}
 }
 
+func Test反馈没有访客链接时Agent回复留在指派人并通知(t *testing.T) {
+	w := newHandoffWorld(t)
+	created, _ := createFeedbackRequest(t, w, "UD-2300 质控结果偏高", "李工")
+	res := w.s.Do(t, w.webWang, http.MethodDelete,
+		"/api/v1/tickets/"+created.Number+"/guest-links/"+strconv.FormatInt(created.GuestLink.ID, 10), nil, nil)
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("撤销访客链接状态码 = %d, 想 204", res.StatusCode)
+	}
+
+	var replied replyBody
+	res = w.s.Do(t, w.liA, http.MethodPost, "/api/v1/tickets/"+created.Number+"/replies",
+		map[string]string{"body_md": "我先核对日志。"}, &replied)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("Agent 回复状态码 = %d, 想 201", res.StatusCode)
+	}
+	assertWaitingOn(t, replied.WaitingOn, waitingOnBody{
+		Party: "assignee", Member: strp("李工"), Text: "李工（指派人）",
+		Reason: "你的 Agent 回复了", Why: "agent_replied",
+	}, "链接撤销后 Agent 回复")
+	if got := w.inboxOf(t, w.liA).reasonByNumber()[created.Number]; got != "你的 Agent 回复了" {
+		t.Fatalf("指派人收件箱原因 = %q, 想 你的 Agent 回复了", got)
+	}
+
+	got := notificationsOf(t, w, w.liA, "")
+	if len(got.Items) != 1 {
+		t.Fatalf("指派人通知数 = %d, 想 1（Agent 回复）", len(got.Items))
+	}
+	latest := got.Items[0]
+	if latest.Kind != "turn" || latest.Reason != "agent_replied" ||
+		latest.Text != "李工 的 Agent · 工位 回复了「UD-2300 质控结果偏高」" {
+		t.Fatalf("Agent 回复通知 = %+v, 想 turn/agent_replied", latest)
+	}
+}
+
 // 「请人反馈」的说明补全参与轮次推导（#127）：访客还没填、也没有回复时，
 // 只等待访客，不占任何成员的收件箱。
 func Test请人反馈建单后等待访客补全且不进收件箱(t *testing.T) {

@@ -215,7 +215,7 @@ spec 用户故事 84），没有 `inbox`：
 | `POST /api/v1/tickets` | 建单（成员/成员 Agent；访客 403 `members_only`，访客建单走反馈入口 #35）。可带 `guest_link` 一并创建访客链接（#64「请人反馈」）。 |
 | `GET /api/v1/tickets` | 条件列表（#37，仅成员；只返回当前凭证可见范围内的工单，见「查询与计数（#37）」）。 |
 | `GET /api/v1/tickets/counts` | 按一个维度计数（#37，仅成员；筛选与可见范围均与列表相同）。 |
-| `GET /api/v1/tickets/{id}` | 读一张可见范围内的工单；`?format=markdown` 返回给 Agent 读的 Markdown。 |
+| `GET /api/v1/tickets/{id}` | 读一张可见范围内的工单；`?format=markdown` 返回给 Agent 读的 Markdown。网页会话与客户端凭证读取时把该成员的工单未读游标推进到最新事件；成员 Agent 读取不改变未读状态。 |
 | `PATCH /api/v1/tickets/{id}` | 修订标题/说明（创建者一方；持「可填写说明」链接的访客；乐观锁）。 |
 | `POST /api/v1/tickets/{id}/replies` | 回复（成员、成员 Agent、访客）；`deliver: true` 仅指派人一方（#36）。 |
 | `POST /api/v1/tickets/{id}/close` | 关闭（可见范围内的成员；访客 403 `members_only`）。 |
@@ -483,7 +483,11 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
                                 本人：此前有交付则 发起人退回修改，否则沿用上一条
                                 相关回复的原因（没有上一条时为新指派给你）
     第三位成员与改派前原指派人的回复 → 不参与相关回复集
-反馈成员回复                    → 访客
+反馈成员回复                    → 有仍有效访客链接（任何种类）时轮到访客；
+                                 没有时留在指派人/department：成员 Agent 的原因
+                                 「你的 Agent 回复了」；本人回复沿用上一条相关
+                                 回复的原因（没有上一条时为新指派给你）
+反馈第三位成员回复             → 不改变轮次（不参与相关回复集）
 成员 Agent 的回复算其所属成员一方；改派后按当前指派人重算，原指派人的回复不再参与
 ```
 
@@ -502,7 +506,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   （Agent 定时轮询它即可，不靠人口头转告）；未指派、轮到本部门的工单进入有效
   初筛人的收件箱。响应：`{member, count, items}`，每项：
   - `{number, title, role(assignee|creator|triager), reason, reason_code, since_seq,
-    read_new, read_full, kind, creator, assignee, labels, waiting_on, who, updated_at}`。
+    read_new, read_full, kind, creator, assignee, labels, waiting_on, who, updated_at, unread}`。
     `kind` 到 `updated_at` 是列表摘要字段，供网页收件箱栏使用；`assignee` 为作者结构，
     指派给已停用成员时其 `member.deactivated` 为 `true`（#115）。
   - `reason` 文案：新指派给你 / 已交付，待你验收 / 指派人回复了，待你答复 /
@@ -561,12 +565,16 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   filters(解析后的标准条件，含 `label_any` + 实际 sort), resolved_aliases?}`。每项是**摘要**：
   `number, seq, url, kind, title, status, close_reason, template, creator, assignee,
   labels, waiting_on, created_at, updated_at, closed_at, reply_count, last_change,
-  read_full`（时间线不在列表里给）；`include=brief` 附带 `brief`（拼好的 Markdown、
+  read_full, unread`（时间线不在列表里给）；`include=brief` 附带 `brief`（拼好的 Markdown、
   模板工单的 `fields`，含 `revision` 与 `last_revised`）；`q` 命中附
   `matched_in/snippet`。
   摘要中的 `creator` 与 `assignee` 保持原有姓名字符串。成员已停用时额外出现
   `creator_deactivated: true` 或 `assignee_deactivated: true`（只在停用时出现；
   访客视图不出现），正常账号没有这两个兄弟字段。
+- `unread` 按成员计算：可见工单上存在大于其已读游标的回复（含交付）、访客修订或补全说明、
+  指派或改派、关闭或重开、协作者变动，且不是本人亲自操作时为 `true`；本人名下成员 Agent
+  的操作为 `true`。标签增删不计。成员用网页会话或客户端凭证读详情会推进游标，成员 Agent
+  读详情不推进。上线迁移前的历史工单按基线视为已读。该状态独立于通知已读。
 - `format=markdown` 返回 `text/markdown`：一张表格（编号/标题/状态/指派人/轮到/标签/更新，
   命中信息内联在标题行）+ 末尾「下一步」（读全文、跟 `next` 翻页、`changed_after` 增量）。
 

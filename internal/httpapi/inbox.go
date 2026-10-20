@@ -59,6 +59,7 @@ type inboxItemView struct {
 	WaitingOn  string      `json:"waiting_on"`
 	Who        string      `json:"who"`
 	UpdatedAt  time.Time   `json:"updated_at"`
+	Unread     bool        `json:"unread"`
 }
 
 func newInboxItemView(it tickets.InboxItem) inboxItemView {
@@ -68,6 +69,7 @@ func newInboxItemView(it tickets.InboxItem) inboxItemView {
 		ReadNew:    it.ReadNew, ReadFull: it.ReadFull,
 		Kind: it.Kind, Creator: it.Creator,
 		Labels: it.Labels, WaitingOn: it.Waiting, Who: it.Who, UpdatedAt: it.UpdatedAt,
+		Unread: it.Unread,
 	}
 	if it.SinceSeq != 0 {
 		s := it.SinceSeq
