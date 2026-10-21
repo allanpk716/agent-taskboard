@@ -1,6 +1,7 @@
-// 极简 Markdown 渲染（照 prototype/guest-web shared.js 的 md()，React 化）：
-// 段落、粗体、行内代码、有序/无序列表、正文中的 att: 引用（插图/附件）
-// 以及 UNC（NAS）路径文本块（带「复制路径」按钮，不做成链接）。
+// 共享 Markdown 渲染（成员端 / 访客端）：CommonMark + GFM + 单换行保留。
+import ReactMarkdown, { type Components, type UrlTransform } from 'react-markdown'
+import remarkBreaks from 'remark-breaks'
+import remarkGfm from 'remark-gfm'
 import { useEffect, useState, type ReactNode } from 'react'
 import type { Attachment } from './types'
 
@@ -13,19 +14,9 @@ export interface MarkdownProps {
 }
 
 // UNC 路径：\\server\share\…（反斜杠两道开头，后面至少一段 \xxx）。
-const UNC_RE = /\\\\[^\s\\]+(?:\\.+)+/g
-
-// 行内元素：插图 / 附件链接 / 粗体 / 行内代码 / UNC 路径。
-const INLINE_RE = new RegExp(
-  [
-    '!\\[([^\\]]*)\\]\\(att:([A-Za-z0-9_]+)\\)', // ![名字](att:att_N)
-    '\\[([^\\]]+)\\]\\(att:([A-Za-z0-9_]+)\\)', // [名字](att:att_N)
-    '\\*\\*([^*]+)\\*\\*', // **粗体**
-    '`([^`]+)`', // `代码`
-    `(${UNC_RE.source})`, // UNC 路径进第 7 组（UNC_RE 自身只有非捕获组）
-  ].join('|'),
-  'g',
-)
+const UNC_REPLACE_RE = /\\\\[^\s\\]+(?:\\[^\s\\]+)+/
+const UNC_TEST_RE = /\\\\[^\s\\]+(?:\\[^\s\\]+)+/
+const INLINE_CODE_RE = /(`+)[\s\S]*?\1(?!`)/g
 
 function copyText(text: string) {
   const done = () => {}
@@ -98,56 +89,51 @@ function AuthorizedImage({
   )
 }
 
-function renderInline(text: string, props: MarkdownProps, keyPrefix: string): ReactNode[] {
-  const out: ReactNode[] = []
-  let last = 0
-  let m: RegExpExecArray | null
-  INLINE_RE.lastIndex = 0
-  for (let i = 0; (m = INLINE_RE.exec(text)) !== null; i++) {
-    if (m.index > last) out.push(text.slice(last, m.index))
-    const key = `${keyPrefix}-${i}`
-    if (m[2] !== undefined) {
-      // 插图：最宽 800px，点击查看大图。
-      const att = props.attachments.get(m[2])
-      if (att) {
-        out.push(
-          <AuthorizedImage
-            key={key}
-            url={att.url}
-            alt={m[1] || att.filename}
-            onClick={props.onImageClick}
-          />,
-        )
-      } else {
-        out.push(
-          <span key={key} className="att-missing">
-            🖼 {m[1] || m[2]}
-          </span>,
-        )
-      }
-    } else if (m[4] !== undefined) {
-      const att = props.attachments.get(m[4])
-      out.push(
-        att ? (
-          <a key={key} className="att-link" href={att.url} target="_blank" rel="noreferrer">
-            {m[3]}
-          </a>
-        ) : (
-          <span key={key}>{m[3]}</span>
-        ),
-      )
-    } else if (m[5] !== undefined) {
-      out.push(<b key={key}>{m[5]}</b>)
-    } else if (m[6] !== undefined) {
-      out.push(<code key={key}>{m[6]}</code>)
-    } else if (m[7] !== undefined) {
-      out.push(<UncBlock key={key} path={m[7]} />)
-    }
-    last = m.index + m[0].length
-  }
-  if (last < text.length) out.push(text.slice(last))
-  return out
+function textOf(children: ReactNode): string {
+  if (typeof children === 'string') return children
+  if (Array.isArray(children)) return children.map(textOf).join('')
+  return ''
 }
+
+function ordinaryText(line: string) {
+  return line.replace(/</g, '\\<').replace(UNC_REPLACE_RE, (path) => `\`${path}\``)
+}
+
+function preprocessLine(line: string) {
+  let out = ''
+  let last = 0
+  let match: RegExpExecArray | null
+  INLINE_CODE_RE.lastIndex = 0
+  while ((match = INLINE_CODE_RE.exec(line)) !== null) {
+    out += ordinaryText(line.slice(last, match.index)) + match[0]
+    last = match.index + match[0].length
+  }
+  return out + ordinaryText(line.slice(last))
+}
+
+/** 裸 UNC 先入行内代码；同时把代码区外的原始 HTML 起始符转成文本。 */
+export function preprocessMarkdown(body: string) {
+  const lines = body.split('\n')
+  let fence: string | null = null
+  return lines
+    .map((line) => {
+      const open = /^\s{0,3}(`{3,}|~{3,})/.exec(line)
+      if (fence) {
+        if (open?.[1].startsWith(fence[0][0]) && open[1].length >= fence.length) fence = null
+        return line
+      }
+      if (open) {
+        fence = open[1]
+        return line
+      }
+      // 缩进代码块也不做 UNC / HTML 预处理。
+      if (/^(?: {4}|\t)/.test(line)) return line
+      return preprocessLine(line)
+    })
+    .join('\n')
+}
+
+const urlTransform: UrlTransform = (url) => (/^(?:https?|mailto|att):/i.test(url) ? url : '')
 
 /** 正文里的 att: 引用（插图语法）集合：这些附件不重复列在气泡底部的附件条里。 */
 export function inlineImageIds(body: string): Set<string> {
@@ -159,40 +145,69 @@ export function inlineImageIds(body: string): Set<string> {
 }
 
 export function Markdown(props: MarkdownProps) {
-  const blocks = props.body.replace(/\s+$/, '').split(/\n{2,}/)
+  const components: Components = {
+    a({ children, href }) {
+      const attId = href?.startsWith('att:') ? href.slice(4) : null
+      if (attId) {
+        const att = props.attachments.get(attId)
+        if (!att) return <span>{children}</span>
+        return (
+          <a className="att-link" href={att.url} target="_blank" rel="noreferrer">
+            {children}
+          </a>
+        )
+      }
+      if (!href) return <span>{children}</span>
+      const external = /^https?:/i.test(href)
+      return (
+        <a href={href} {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}>
+          {children}
+        </a>
+      )
+    },
+    code({ children, className, node }) {
+      const text = textOf(children)
+      const blockCode = (node as { parent?: { tagName?: string } })?.parent?.tagName === 'pre'
+      if (!className && !blockCode && UNC_TEST_RE.test(text)) {
+        return <UncBlock path={text} />
+      }
+      return <code className={className}>{children}</code>
+    },
+    img({ src, alt }) {
+      if (typeof src === 'string' && src.startsWith('att:')) {
+        const att = props.attachments.get(src.slice(4))
+        if (att) {
+          return (
+            <AuthorizedImage
+              url={att.url}
+              alt={alt || att.filename}
+              onClick={props.onImageClick}
+            />
+          )
+        }
+        return <span className="att-missing">🖼 {alt || src.slice(4)}</span>
+      }
+      // 不加载外部图片，保留替代文字。
+      return <span>{alt}</span>
+    },
+    table({ children }) {
+      return (
+        <div className="md-table-wrap">
+          <table>{children}</table>
+        </div>
+      )
+    },
+  }
+
   return (
     <div className="md">
-      {blocks.map((block, bi) => {
-        const lines = block.split('\n')
-        if (lines.every((l) => /^\d+\.\s/.test(l))) {
-          return (
-            <ol key={bi}>
-              {lines.map((l, li) => (
-                <li key={li}>{renderInline(l.replace(/^\d+\.\s/, ''), props, `${bi}-${li}`)}</li>
-              ))}
-            </ol>
-          )
-        }
-        if (lines.every((l) => /^[-*]\s/.test(l))) {
-          return (
-            <ul key={bi}>
-              {lines.map((l, li) => (
-                <li key={li}>{renderInline(l.replace(/^[-*]\s/, ''), props, `${bi}-${li}`)}</li>
-              ))}
-            </ul>
-          )
-        }
-        return (
-          <p key={bi}>
-            {lines.map((l, li) => (
-              <span key={li}>
-                {li > 0 && <br />}
-                {renderInline(l, props, `${bi}-${li}`)}
-              </span>
-            ))}
-          </p>
-        )
-      })}
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkBreaks]}
+        urlTransform={urlTransform}
+        components={components}
+      >
+        {preprocessMarkdown(props.body)}
+      </ReactMarkdown>
     </div>
   )
 }
