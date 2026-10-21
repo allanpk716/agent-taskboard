@@ -31,7 +31,7 @@ test('请人反馈：向导生成链接，完成页可复制，访客能打开',
   await expect(groups.nth(1).locator('.guide')).toHaveText('任务')
   await expect(groups.nth(2).locator('.guide')).toHaveText('自由格式')
   await expect(groups.nth(0).locator('.chip')).toHaveCount(2)
-  await expect(groups.nth(1).locator('.chip')).toHaveCount(2)
+  await expect(groups.nth(1).locator('.chip')).toHaveCount(3)
 
   // 更多选项默认折叠，摘要写「有效期 30 天 · 由我跟进」；展开改成 7 天。
   await expect(page.getByText('有效期 30 天 · 由我跟进')).toBeVisible()
