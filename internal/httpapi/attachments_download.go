@@ -5,6 +5,7 @@
 package httpapi
 
 import (
+	"errors"
 	"mime"
 	"net/http"
 	"net/url"
@@ -13,7 +14,7 @@ import (
 	"strings"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
-	"github.com/allanpk716/agent-taskboard/internal/identity"
+	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
 
 // handleAttachmentDownload 处理 GET /api/v1/attachments/{att_N}/{filename}。
@@ -43,12 +44,23 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if viewer.Kind == identity.ViewerGuest && viewer.GuestLink.TicketSeq != att.TicketSeq {
+	_, err = a.tickets.ForViewer(r.Context(), viewer, strconv.FormatInt(att.TicketSeq, 10))
+	var invisible *tickets.TicketInvisibleError
+	var crossTicket *tickets.GuestLinkScopeError
+	switch {
+	case errors.As(err, &invisible):
+		if err := a.accessRecords.RecordDenied(r.Context(), invisible.Seq, viewer, att); err != nil {
+			panic(err)
+		}
+		WriteError(w, http.StatusNotFound, CodeAttachmentNotFound, "没有这个附件",
+			"附件引用从上传响应或工单读取接口拿")
+	case errors.As(err, &crossTicket):
 		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
 			"访客链接只能访问它所指向的那张工单")
-		return
+	case err != nil:
+		a.writeTicketError(w, r, att.Ref(), err)
 	}
-	if !a.attachmentTicketVisible(w, r, viewer, att) {
+	if err != nil {
 		return
 	}
 	if att.State != "attached" {
@@ -98,32 +110,6 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(content)
-}
-
-// attachmentTicketVisible 把附件地址反查到工单后走统一可见范围判断；被拒
-// 响应与不存在的附件地址一致。
-func (a *API) attachmentTicketVisible(w http.ResponseWriter, r *http.Request, viewer identity.Viewer, att attachments.AttachmentInfo) bool {
-	if viewer.Kind != identity.ViewerMember {
-		return true
-	}
-	full, err := a.tickets.ByRef(r.Context(), strconv.FormatInt(att.TicketSeq, 10))
-	if err != nil {
-		a.writeTicketError(w, r, att.Ref(), err)
-		return false
-	}
-	visible, err := a.tickets.CanSee(r.Context(), viewer, full)
-	if err != nil {
-		panic(err)
-	}
-	if !visible {
-		if err := a.accessRecords.RecordDenied(r.Context(), att.TicketSeq, viewer, att); err != nil {
-			panic(err)
-		}
-		WriteError(w, http.StatusNotFound, CodeAttachmentNotFound, "没有这个附件",
-			"附件引用从上传响应或工单读取接口拿")
-		return false
-	}
-	return true
 }
 
 // contentTypeOf 按扩展名给 Content-Type；文本类补 charset，未知的用
