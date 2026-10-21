@@ -35,7 +35,7 @@ func (a *API) replyTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		return
 	}
 	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
-		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	var req replyRequest
@@ -51,7 +51,7 @@ func (a *API) replyTicket(w http.ResponseWriter, r *http.Request, ref string) {
 			ViaAgent:      req.ViaAgent,
 		})
 		if err != nil {
-			a.writeTicketErrorForViewer(w, r, ref, viewer, err)
+			a.writeTicketError(w, r, ref, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, replyTicketView{
@@ -84,7 +84,7 @@ func (a *API) reviseTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		return
 	}
 	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
-		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	var req reviseTicketRequest
@@ -106,7 +106,7 @@ func (a *API) reviseTicket(w http.ResponseWriter, r *http.Request, ref string) {
 			ViaAgent:      req.ViaAgent,
 		})
 		if err != nil {
-			a.writeTicketErrorForViewer(w, r, ref, viewer, err)
+			a.writeTicketError(w, r, ref, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, reviseTicketView{Revision: t.BriefRevision})
@@ -139,7 +139,7 @@ func (a *API) closeTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		return
 	}
 	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
-		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	var req closeTicketRequest
@@ -155,7 +155,7 @@ func (a *API) closeTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		DuplicateOf: duplicateOf,
 	})
 	if err != nil {
-		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	view := closeTicketView{Status: t.Status, CloseReason: t.CloseReason}
@@ -165,7 +165,7 @@ func (a *API) closeTicket(w http.ResponseWriter, r *http.Request, ref string) {
 			d := dup.Number
 			view.DuplicateOf = &d
 		} else {
-			a.writeTicketErrorForViewer(w, r, ref, viewer, err)
+			a.writeTicketError(w, r, ref, err)
 			return
 		}
 	}
@@ -184,9 +184,13 @@ func (a *API) reopenTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if !ok {
 		return
 	}
+	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
+		a.writeTicketError(w, r, ref, err)
+		return
+	}
 	full, err := a.tickets.Reopen(r.Context(), viewer, ref)
 	if err != nil {
-		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	waitingOn, err := a.tickets.WaitingOn(r.Context(), full)
@@ -229,7 +233,7 @@ func (a *API) ticketTimeline(w http.ResponseWriter, r *http.Request, ref string)
 	}
 	full, err := a.tickets.ForViewer(r.Context(), viewer, ref)
 	if err != nil {
-		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	if err := a.accessRecords.RecordView(r.Context(), full.Seq, viewer); err != nil {
@@ -334,7 +338,7 @@ func (a *API) assignTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		return
 	}
 	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
-		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	if viewer.Kind != identity.ViewerMember {
@@ -353,7 +357,7 @@ func (a *API) assignTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
 		result, err := a.tickets.Assign(r.Context(), viewer, ref, req.Assignee.ref)
 		if err != nil {
-			a.writeTicketErrorForViewer(w, r, ref, viewer, err)
+			a.writeTicketError(w, r, ref, err)
 			return
 		}
 		view := assignTicketView{

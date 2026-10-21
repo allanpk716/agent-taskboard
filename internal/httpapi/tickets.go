@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -161,7 +160,7 @@ func (a *API) ticketAccessRecords(w http.ResponseWriter, r *http.Request, ref st
 	}
 	full, err := a.tickets.ForViewer(r.Context(), viewer, ref)
 	if err != nil {
-		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	records, err := a.accessRecords.List(r.Context(), full.Seq)
@@ -320,7 +319,7 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	}
 	full, err := a.tickets.ForViewer(r.Context(), viewer, ref)
 	if err != nil {
-		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	if err := a.accessRecords.RecordView(r.Context(), full.Seq, viewer); err != nil {
@@ -366,10 +365,8 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, ref strin
 	var crossTicket *tickets.GuestLinkScopeError
 	switch {
 	case errors.As(err, &invisible):
-		if viewer, ok := viewerFromContext(r.Context()); ok {
-			if recordErr := a.accessRecords.RecordDenied(r.Context(), invisible.Seq, viewer); recordErr != nil {
-				panic(recordErr)
-			}
+		if recordErr := a.accessRecords.RecordDenied(r.Context(), invisible.Seq, invisible.Viewer); recordErr != nil {
+			panic(recordErr)
 		}
 		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
 			"用工单编号（YYYYMMDD-NNN）或全局序号引用；编号按北京时间分配")
@@ -502,12 +499,6 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, ref strin
 	default:
 		panic(err)
 	}
-}
-
-// writeTicketErrorForViewer 先把 handler 已解析的凭证放进请求上下文，再复用
-// writeTicketError；普通网页会话与 Agent token 不经过会写上下文的中间件。
-func (a *API) writeTicketErrorForViewer(w http.ResponseWriter, r *http.Request, ref string, viewer identity.Viewer, err error) {
-	a.writeTicketError(w, r.WithContext(context.WithValue(r.Context(), viewerContextKey, viewer)), ref, err)
 }
 
 func isAttachmentCountExceeded(err error) bool {

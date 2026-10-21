@@ -42,7 +42,7 @@ type SetLabelsResult struct {
 // label_added / label_removed 时间线事件（访客不可见，#32 起过滤），
 // 并推进全局变更序号。摘一个工单上没有的标签是幂等成功；解析不到的写法报 422。
 func (m *Manager) SetLabels(ctx context.Context, in SetLabelsInput) (SetLabelsResult, error) {
-	full, err := m.loadForViewer(ctx, in.Actor, in.Ref)
+	full, err := m.ForViewer(ctx, in.Actor, in.Ref)
 	if err != nil {
 		return SetLabelsResult{}, err
 	}

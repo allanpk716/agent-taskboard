@@ -89,7 +89,7 @@ type ReplyResult struct {
 // 工单关闭后只读，重开后恢复可回复（spec「凭证与访问」）。访客的回复带
 // 链接备注与自报信息；成员的自报字段不采纳（署名由凭证决定，ADR 0003）。
 func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string, in ReplyInput) (ReplyResult, error) {
-	full, err := m.loadForViewer(ctx, viewer, ref)
+	full, err := m.ForViewer(ctx, viewer, ref)
 	if err != nil {
 		return ReplyResult{}, err
 	}
@@ -203,7 +203,7 @@ type ReviseInput struct {
 // 持「可填写说明」链接的访客（工单需开启；无权限的链接 403 link_cannot_edit_brief）。
 // 反馈入口提交者（#35）也视同创建者，届时在这里加入。
 func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string, in ReviseInput) (Ticket, error) {
-	full, err := m.loadForViewer(ctx, viewer, ref)
+	full, err := m.ForViewer(ctx, viewer, ref)
 	if err != nil {
 		return Ticket{}, err
 	}
@@ -372,7 +372,7 @@ type CloseInput struct {
 
 // Close 以 viewer 的身份关闭工单。任何成员都可关闭；duplicate 必须指出与哪张重复。
 func (m *Manager) Close(ctx context.Context, viewer identity.Viewer, ref string, in CloseInput) (Ticket, error) {
-	full, err := m.loadForViewer(ctx, viewer, ref)
+	full, err := m.ForViewer(ctx, viewer, ref)
 	if err != nil {
 		return Ticket{}, err
 	}
@@ -453,7 +453,7 @@ func (m *Manager) Close(ctx context.Context, viewer identity.Viewer, ref string,
 
 // Reopen 以 viewer 的身份重新开启已关闭的工单；任何成员都可重开。
 func (m *Manager) Reopen(ctx context.Context, viewer identity.Viewer, ref string) (Full, error) {
-	full, err := m.loadForViewer(ctx, viewer, ref)
+	full, err := m.ForViewer(ctx, viewer, ref)
 	if err != nil {
 		return Full{}, err
 	}

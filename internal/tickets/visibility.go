@@ -9,7 +9,10 @@ import (
 
 // TicketInvisibleError 表示凭证指向的工单存在，但当前成员不可见。
 // HTTP 层用它记录被拒访问；对请求方仍按「不存在」返回。
-type TicketInvisibleError struct{ Seq int64 }
+type TicketInvisibleError struct {
+	Seq    int64
+	Viewer identity.Viewer
+}
 
 func (e *TicketInvisibleError) Error() string {
 	return fmt.Sprintf("成员不能查看工单 %d", e.Seq)
@@ -25,11 +28,9 @@ func (e *GuestLinkScopeError) Unwrap() error { return ErrNotFound }
 
 // ForViewer 用请求凭证读取一张工单：先按 ref 找工单，再套访客链接作用域
 // 与成员可见范围。查不到、访客跨工单、成员不可见分别返回对应的错误。
+// handler 在写操作前调用它是刻意的：写方法内部还会按凭证加载一次，但
+// 这层预检保住「不可见 404」先于请求体校验、成员权限等后续响应的顺序。
 func (m *Manager) ForViewer(ctx context.Context, viewer identity.Viewer, ref string) (Full, error) {
-	return m.loadForViewer(ctx, viewer, ref)
-}
-
-func (m *Manager) loadForViewer(ctx context.Context, viewer identity.Viewer, ref string) (Full, error) {
 	full, err := m.ByRef(ctx, ref)
 	if err != nil {
 		return Full{}, err
@@ -43,14 +44,14 @@ func (m *Manager) loadForViewer(ctx context.Context, viewer identity.Viewer, ref
 			return Full{}, err
 		}
 		if !visible {
-			return Full{}, &TicketInvisibleError{Seq: full.Seq}
+			return Full{}, &TicketInvisibleError{Seq: full.Seq, Viewer: viewer}
 		}
 	}
 	return full, nil
 }
 
 // CanSee 是成员、成员 Agent 与管理员的统一「能否看到」判断。访客不经过
-// 这里：访客链接始终只指向一张工单，由 loadForViewer 按 ticket_seq 判定。
+// 这里：访客链接始终只指向一张工单，由 ForViewer 按 ticket_seq 判定。
 func (m *Manager) CanSee(ctx context.Context, viewer identity.Viewer, full Full) (bool, error) {
 	if viewer.Kind != identity.ViewerMember {
 		return false, fmt.Errorf("可见范围只判断成员凭证")

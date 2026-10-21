@@ -82,7 +82,7 @@ func guestViewer(seq int64) identity.Viewer {
 	}}
 }
 
-func assertAccessResult(t *testing.T, err error, want string, seq int64) {
+func assertAccessResult(t *testing.T, err error, want string, seq int64, viewer identity.Viewer) {
 	t.Helper()
 	var invisible *TicketInvisibleError
 	var crossTicket *GuestLinkScopeError
@@ -96,6 +96,9 @@ func assertAccessResult(t *testing.T, err error, want string, seq int64) {
 	case "invisible":
 		if !errors.As(err, &invisible) || invisible.Seq != seq {
 			t.Fatalf("错误 = %v, 想成员不可见工单 %d", err, seq)
+		}
+		if invisible.Viewer != viewer {
+			t.Fatalf("成员不可见错误未带回请求凭证：%+v, 想 %+v", invisible.Viewer, viewer)
 		}
 		if errors.Is(err, ErrNotFound) {
 			t.Fatalf("成员不可见不应包住 ErrNotFound：%v", err)
@@ -119,11 +122,11 @@ func assertAccessResult(t *testing.T, err error, want string, seq int64) {
 func TestForViewer按凭证读工单(t *testing.T) {
 	f := newViewerAccessFixture(t)
 	ctx := context.Background()
-	assertAccessResult(t, accessErr(f.manager.ForViewer(ctx, f.creator, "1")), "visible", 1)
-	assertAccessResult(t, accessErr(f.manager.ForViewer(ctx, f.outsider, "1")), "invisible", 1)
-	assertAccessResult(t, accessErr(f.manager.ForViewer(ctx, guestViewer(1), "1")), "visible", 1)
-	assertAccessResult(t, accessErr(f.manager.ForViewer(ctx, guestViewer(2), "1")), "cross-ticket", 1)
-	assertAccessResult(t, accessErr(f.manager.ForViewer(ctx, f.creator, "404")), "not-found", 0)
+	assertAccessResult(t, accessErr(f.manager.ForViewer(ctx, f.creator, "1")), "visible", 1, f.creator)
+	assertAccessResult(t, accessErr(f.manager.ForViewer(ctx, f.outsider, "1")), "invisible", 1, f.outsider)
+	assertAccessResult(t, accessErr(f.manager.ForViewer(ctx, guestViewer(1), "1")), "visible", 1, guestViewer(1))
+	assertAccessResult(t, accessErr(f.manager.ForViewer(ctx, guestViewer(2), "1")), "cross-ticket", 1, guestViewer(2))
+	assertAccessResult(t, accessErr(f.manager.ForViewer(ctx, f.creator, "404")), "not-found", 0, f.creator)
 }
 
 func accessErr(_ any, err error) error { return err }
@@ -223,7 +226,7 @@ func Test写方法按凭证加载工单(t *testing.T) {
 						viewer = memberViewer(4, "可退出成员")
 					}
 					err := tc.run(t, fixture, viewer, ref)
-					assertAccessResult(t, err, credential.want, credential.seq)
+					assertAccessResult(t, err, credential.want, credential.seq, viewer)
 				})
 			}
 		})

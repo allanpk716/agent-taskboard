@@ -46,17 +46,13 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = a.tickets.ForViewer(r.Context(), viewer, strconv.FormatInt(att.TicketSeq, 10))
 	var invisible *tickets.TicketInvisibleError
-	var crossTicket *tickets.GuestLinkScopeError
 	switch {
 	case errors.As(err, &invisible):
-		if err := a.accessRecords.RecordDenied(r.Context(), invisible.Seq, viewer, att); err != nil {
+		if err := a.accessRecords.RecordDenied(r.Context(), invisible.Seq, invisible.Viewer, att); err != nil {
 			panic(err)
 		}
 		WriteError(w, http.StatusNotFound, CodeAttachmentNotFound, "没有这个附件",
 			"附件引用从上传响应或工单读取接口拿")
-	case errors.As(err, &crossTicket):
-		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
-			"访客链接只能访问它所指向的那张工单")
 	case err != nil:
 		a.writeTicketError(w, r, att.Ref(), err)
 	}

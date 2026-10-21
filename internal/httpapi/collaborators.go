@@ -57,7 +57,7 @@ func (a *API) addCollaborator(w http.ResponseWriter, r *http.Request, ref string
 		return
 	}
 	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
-		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	var req addCollaboratorRequest
@@ -71,7 +71,7 @@ func (a *API) addCollaborator(w http.ResponseWriter, r *http.Request, ref string
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
 		result, err := a.tickets.AddCollaborator(r.Context(), viewer, ref, req.Member.ref)
 		if err != nil {
-			a.writeTicketErrorForViewer(w, r, ref, viewer, err)
+			a.writeTicketError(w, r, ref, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, newCollaboratorsView(result.Full))
@@ -105,10 +105,14 @@ func (a *API) removeCollaborator(w http.ResponseWriter, r *http.Request, ref, ra
 		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidAssignee, "成员 id 必须是正整数", "")
 		return
 	}
+	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
+		a.writeTicketError(w, r, ref, err)
+		return
+	}
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
 		result, err := a.tickets.RemoveCollaborator(r.Context(), viewer, ref, id)
 		if err != nil {
-			a.writeTicketErrorForViewer(w, r, ref, viewer, err)
+			a.writeTicketError(w, r, ref, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, newCollaboratorsView(result.Full))
@@ -120,10 +124,14 @@ func (a *API) leaveCollaborators(w http.ResponseWriter, r *http.Request, ref str
 	if !ok {
 		return
 	}
+	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
+		a.writeTicketError(w, r, ref, err)
+		return
+	}
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
 		result, err := a.tickets.LeaveCollaborators(r.Context(), viewer, ref)
 		if err != nil {
-			a.writeTicketErrorForViewer(w, r, ref, viewer, err)
+			a.writeTicketError(w, r, ref, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, newCollaboratorsView(result.Full))
