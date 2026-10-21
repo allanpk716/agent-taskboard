@@ -192,7 +192,7 @@ test('mine inbox chip shows every turn and wide filter row has no feedback butto
   await page.goto('/?inbox=mine')
   await expect(page.locator('.tcard', { hasText: mine })).toBeVisible()
   await expect(page.locator('.tcard', { hasText: guest })).toBeVisible()
-  await expect(page.getByTestId('inbox-list-pane').getByRole('button', { name: '＋ 请人反馈' })).toHaveCount(0)
+  await expect(page.getByTestId('inbox-list-pane').getByRole('button', { name: '＋ 建单' })).toHaveCount(0)
 })
 
 test('ticket rows do not claim unread state without list data', async ({ page, request }) => {

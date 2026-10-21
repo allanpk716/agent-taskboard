@@ -137,15 +137,15 @@ export function InboxPage({
   return (
     <div className="bpage">
       <div className="mcard fr-card">
-        <div className="fr-title">有人要提反馈？</div>
-        <div className="hint">写个标题和对方是谁，生成链接发给他，细节让他按引导补全。</div>
+        <div className="fr-title">要建一张工单？</div>
+        <div className="hint">派任务、提需求、问问题，或者请部门外的人来填，都从这里开始。</div>
         <button
           className="btn big"
           onClick={() => {
-            nav('/feedback')
+            nav('/new')
           }}
         >
-          ＋ 请人反馈
+          ＋ 建单
         </button>
       </div>
       <div className="b-note">现在轮到你处理的工单。</div>

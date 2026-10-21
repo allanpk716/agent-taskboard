@@ -12,6 +12,7 @@ async function upload(request: APIRequestContext, number: string, name: string, 
 test('建单暂存的附件进入整单附件条，不写进说明', async ({ page }) => {
   await login(page, ADMIN)
   await page.locator('.b-tabs').getByRole('link', { name: '建单' }).click()
+  await page.getByRole('button', { name: /我自己填/ }).click()
   await page.getByRole('button', { name: /^Bug 反馈 report/ }).click()
 
   await page.getByLabel('标题').fill('建单暂存整单附件')
@@ -40,6 +41,7 @@ test('建单暂存的附件进入整单附件条，不写进说明', async ({ pa
 test('建单时字段内附件留在字段下，不进整张工单的附件', async ({ page }) => {
   await login(page, ADMIN)
   await page.locator('.b-tabs').getByRole('link', { name: '建单' }).click()
+  await page.getByRole('button', { name: /我自己填/ }).click()
   await page.getByRole('button', { name: /^Bug 反馈 report/ }).click()
 
   await page.getByLabel('标题').fill('字段附件与整单附件各归各位')
@@ -142,6 +144,7 @@ test('成员修改模板说明时按字段键保存，其余字段保持不变',
 test('建单不带暂存附件时说明仍保持第一版', async ({ page }) => {
   await login(page, ADMIN)
   await page.locator('.b-tabs').getByRole('link', { name: '建单' }).click()
+  await page.getByRole('button', { name: /我自己填/ }).click()
   await page.locator('.tplpick', { hasText: '自由格式' }).click()
   await page.getByLabel('标题').fill('不带附件建单')
   await page.getByLabel('说明').fill('说明保持原样。')

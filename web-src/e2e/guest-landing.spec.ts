@@ -13,7 +13,7 @@ interface Seed {
   linkKey: string
 }
 
-/** 用「请人反馈」的方式建单（POST /api/v1/tickets 带 guest_link，与向导同一
+/** 用「发链接请人填写」的方式建单（POST /api/v1/tickets 带 guest_link，与向导同一
  *  接口）：默认 Bug 反馈模板；free 为真时是一张不用模板的反馈工单。 */
 async function requestFeedback(
   request: APIRequestContext,
@@ -28,7 +28,7 @@ async function requestFeedback(
       ...(opts.free ? { kind: 'report', brief_md: '' } : { template: 'bug-report', fields: {} }),
     },
   })
-  expect(res.status(), `请人反馈建单失败：${await res.text()}`).toBe(201)
+  expect(res.status(), `发链接请人填写建单失败：${await res.text()}`).toBe(201)
   const body = await res.json()
   return { number: body.number, linkKey: String(body.guest_link.url).slice(3) }
 }
@@ -67,7 +67,7 @@ async function fillBugRequired(page: Page, mobile: boolean, model = '不确定')
   await page.locator('.cf[data-field="出现得频繁吗？"]').getByRole('radio', { name: '每次' }).check()
 }
 
-// 1. 用请人反馈的方式建单后，第一次打开链接显示落地页：成员名、标题、
+// 1. 用发链接请人填写的方式建单后，第一次打开链接显示落地页：成员名、标题、
 //    问题数、必填数正确，称呼预填链接备注。
 test.describe('落地页', () => {
   test.use({ viewport: { width: 390, height: 844 } })
@@ -225,11 +225,13 @@ async function runFullUseCase(
 
   // 成员向导：收件箱卡片进入，两项必填（默认 Bug 反馈），生成链接
   const feedbackEntry = mobile
-    ? page.getByRole('button', { name: '＋ 请人反馈' })
-    : page.getByRole('navigation', { name: '侧栏' }).getByRole('link', { name: '＋ 请人反馈' })
+    ? page.getByRole('button', { name: '＋ 建单' })
+    : page.getByRole('navigation', { name: '侧栏' }).getByRole('link', { name: '＋ 建单' })
   await feedbackEntry.click()
-  await expect(page.getByLabel('请谁反馈')).toBeVisible()
-  await page.getByLabel('请谁反馈').fill('检验科-张三')
+  await page.getByRole('button', { name: /发链接请人填写/ }).click()
+  await page.locator('.tplpick', { hasText: 'Bug 反馈 report' }).click()
+  await expect(page.getByLabel('请谁填写')).toBeVisible()
+  await page.getByLabel('请谁填写').fill('检验科-张三')
   await page.getByLabel('什么事').fill('完整用例：UD-2300 质控报 E-203')
   await page.getByRole('button', { name: '生成链接' }).click()
   const done = page.locator('.donet')
