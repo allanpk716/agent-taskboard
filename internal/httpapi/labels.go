@@ -244,7 +244,8 @@ func (a *API) setTicketLabels(w http.ResponseWriter, r *http.Request, ref string
 	if !ok {
 		return
 	}
-	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
+		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
 		return
 	}
 	var req setTicketLabelsRequest
@@ -260,7 +261,7 @@ func (a *API) setTicketLabels(w http.ResponseWriter, r *http.Request, ref string
 	})
 	if err != nil {
 		if errors.Is(err, tickets.ErrNotFound) {
-			a.writeTicketError(w, r, ref, err)
+			a.writeTicketErrorForViewer(w, r, ref, viewer, err)
 			return
 		}
 		a.writeLabelsError(w, err)

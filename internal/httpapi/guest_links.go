@@ -104,18 +104,15 @@ func (a *API) resetGuestAccessCode(w http.ResponseWriter, r *http.Request, ref s
 	if !ok {
 		return
 	}
-	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
-		return
-	}
 	code, err := a.tickets.ResetGuestAccessCode(r.Context(), viewer, ref, id)
 	if err != nil {
 		switch {
 		case errors.Is(err, tickets.ErrGuestLinkNotFound):
-			a.writeTicketError(w, r, ref, err)
+			a.writeTicketErrorForViewer(w, r, ref, viewer, err)
 		case errors.Is(err, tickets.ErrLinkNotClaimed):
 			WriteError(w, http.StatusConflict, CodeLinkUnclaimed, "这条链接尚未认领，不需要重置访问码", "等待访客认领后再重置")
 		default:
-			a.writeTicketError(w, r, ref, err)
+			a.writeTicketErrorForViewer(w, r, ref, viewer, err)
 		}
 		return
 	}
@@ -127,7 +124,8 @@ func (a *API) createGuestLink(w http.ResponseWriter, r *http.Request, ref string
 	if !ok {
 		return
 	}
-	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
+		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
 		return
 	}
 	var req guestLinkRequest
@@ -141,7 +139,7 @@ func (a *API) createGuestLink(w http.ResponseWriter, r *http.Request, ref string
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
 		link, err := a.tickets.CreateGuestLink(r.Context(), viewer, ref, spec)
 		if err != nil {
-			a.writeTicketError(w, r, ref, err)
+			a.writeTicketErrorForViewer(w, r, ref, viewer, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, guestLinkView{
@@ -159,12 +157,13 @@ func (a *API) listGuestLinks(w http.ResponseWriter, r *http.Request, ref string)
 	if !ok {
 		return
 	}
-	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
+		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
 		return
 	}
 	links, err := a.tickets.GuestLinks(r.Context(), ref)
 	if err != nil {
-		a.writeTicketError(w, r, ref, err)
+		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
 		return
 	}
 	out := []guestLinkView{}
@@ -179,11 +178,8 @@ func (a *API) revokeGuestLink(w http.ResponseWriter, r *http.Request, ref string
 	if !ok {
 		return
 	}
-	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
-		return
-	}
 	if err := a.tickets.RevokeGuestLink(r.Context(), viewer, ref, id); err != nil {
-		a.writeTicketError(w, r, ref, err)
+		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -194,7 +190,8 @@ func (a *API) extendGuestLink(w http.ResponseWriter, r *http.Request, ref string
 	if !ok {
 		return
 	}
-	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
+		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
 		return
 	}
 	var req guestLinkRequest
@@ -212,7 +209,7 @@ func (a *API) extendGuestLink(w http.ResponseWriter, r *http.Request, ref string
 	}
 	link, err := a.tickets.ExtendGuestLink(r.Context(), viewer, ref, id, spec)
 	if err != nil {
-		a.writeTicketError(w, r, ref, err)
+		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, newGuestLinkView(link))
