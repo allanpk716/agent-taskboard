@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>原型（一次性）：成员 Agent 侧的草稿接口契约</title>
+<style>
+  body{font:14px/1.6 system-ui,"Microsoft YaHei",sans-serif;margin:0;color:#222;background:#fafafa}
+  main{max-width:1180px;margin:0 auto;padding:24px}
+  h1{font-size:20px;margin:0 0 4px} .sub{color:#666;margin:0 0 16px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  section{background:#fff;border:1px solid #e3e3e3;border-radius:8px;padding:14px}
+  h2{font-size:15px;margin:0 0 8px}
+  button{font:inherit;margin:3px;padding:4px 10px;border:1px solid #b45309;background:#fff;color:#b45309;border-radius:5px;cursor:pointer}
+  button.done{opacity:.4} button.next{background:#b45309;color:#fff}
+  pre{background:#f5f5f4;padding:8px;border-radius:6px;white-space:pre-wrap;word-break:break-all;font-size:12px;max-height:340px;overflow:auto}
+  .tabs button{border-color:#999;color:#444} .tabs button.on{background:#444;color:#fff}
+</style>
+</head>
+<body>
+<main>
+<h1>原型（一次性）：成员 Agent 侧的草稿接口契约</h1>
+<p class="sub">问题：必须走草稿的成员 Agent 调原有的建单/回复/修订接口时拿到什么；它怎么读、改自己的草稿；
+<code>draft_pending</code> 和乐观锁冲突怎么报；Agent 怎么知道自己是哪种模式。下面用内存里的假工单板跑一遍。
+左边是每次请求和响应，右边是平台当前的状态。</p>
+
+<div class="tabs" id="tabs"></div>
+<section id="scenario"></section>
+<div class="grid" style="margin-top:16px">
+  <section><h2>最近一次请求 → 响应</h2><pre id="last"></pre></section>
+  <section><h2>平台状态（工单、草稿、Agent 模式）</h2><pre id="state"></pre></section>
+</div>
+</main>
+
+<script>
+// ==MODULE START==  可移植的纯逻辑：world + request(world, cred, method, path, body) → {world, status, body}
+const DraftAPI = (() => {
+  const clone = (x) => JSON.parse(JSON.stringify(x));
+  const err = (status, code, message, hint, extra) =>
+    ({ status, body: { error: Object.assign({ code, message }, hint ? { hint } : {}, extra || {}) } });
+
+  function createWorld() {
+    return {
+      members: { 1: { id: 1, name: "陈工", notices: ["drafts_intro"] }, 2: { id: 2, name: "李工", notices: ["drafts_intro"] } },
+      // 上线迁移：已有 token 一律改为必须走草稿
+      tokens: { 3: { id: 3, member: 1, name: "codex-1", draft_mode: "required" },
+                4: { id: 4, member: 1, name: "笔记本", draft_mode: "direct" },
+                5: { id: 5, member: 2, name: "claude", draft_mode: "required" } },
+      tickets: { 1: { seq: 1, number: "20261021-001", title: "仪器 A 报错", brief_md: "开机报 E12", revision: 1,
+                      status: "open", creator: 2, assignee: 1, timeline: [{ seq: 1, type: "created" }], replies: 0 } },
+      nextTicket: 2, drafts: {}, nextDraft: 1, clock: 0,
+    };
+  }
+
+  const who = (w, cred) => cred.kind === "web"
+    ? { member: w.members[cred.member], agent: null }
+    : { member: w.members[w.tokens[cred.token].member], agent: w.tokens[cred.token] };
+  const visible = (t, m) => t.creator === m || t.assignee === m;
+  const findTicket = (w, ref) => Object.values(w.tickets).find((t) => t.number === ref || String(t.seq) === ref);
+  const lastSeq = (t) => t.timeline[t.timeline.length - 1].seq;
+  const slotDraft = (w, t, m) => Object.values(w.drafts).find((d) => d.status === "pending" && d.ticket === t.seq && d.member === m);
+  const previewURL = (w, d) => d.ticket ? `/t/${w.tickets[d.ticket].number}#draft` : `/drafts/${d.id}`;
+  const authorOf = (v) => v.agent ? { member: v.member.name, agent: v.agent.name } : { member: v.member.name, agent: null };
+
+  function draftView(w, d) {
+    const t = d.ticket ? w.tickets[d.ticket] : null;
+    const latest = d.versions[d.versions.length - 1];
+    const out = {
+      id: d.id, kind: d.kind, status: d.status, version: latest.version,
+      ticket: t ? { number: t.number, seq: t.seq, url: `/t/${t.number}` } : null,
+      request: latest.request, author: latest.author,
+      versions: d.versions.map((v) => ({ version: v.version, author: v.author, at: v.at })),
+      base: Object.assign({ timeline_seq: latest.base_seq }, d.kind === "brief_revision" ? { brief_revision: latest.request.base_revision } : {}),
+      new_events: t ? t.timeline.filter((e) => e.seq > latest.base_seq).length : 0,
+      preview_url: previewURL(w, d), url: `/api/v1/drafts/${d.id}`,
+    };
+    if (d.status === "sent") out.result = d.result;
+    return out;
+  }
+  const draftRef = (w, d) => ({ id: d.id, kind: d.kind, version: d.versions.length, preview_url: previewURL(w, d), url: `/api/v1/drafts/${d.id}` });
+
+  function draftPending(w, d, viaWeb) {
+    return err(409, "draft_pending", "你这一方在这张工单上有一份待确认的草稿，发出或丢弃之前不能直接回复或修订说明。",
+      viaWeb ? "先在草稿处发出或丢弃"
+             : `要改内容就在这份草稿上改：PUT ${draftRef(w, d).url}（带 base_version）；要直接发出或丢弃，请成员打开 ${previewURL(w, d)}`,
+      { draft: draftRef(w, d) });
+  }
+
+  function saveDraft(w, me, kind, ticket, request) {
+    const id = `dft_${w.nextDraft++}`;
+    const d = { id, kind, member: me.member.id, ticket: ticket ? ticket.seq : null, status: "pending", versions: [] };
+    d.versions.push({ version: 1, author: authorOf(me), at: ++w.clock, request, base_seq: ticket ? lastSeq(ticket) : 0 });
+    w.drafts[id] = d;
+    w.members[me.member.id].notify = (w.members[me.member.id].notify || 0) + 1; // 「你的 Agent 写了草稿待确认」
+    return { status: 202, body: { draft: draftView(w, d), preview_url: previewURL(w, d),
+      message: `已存成草稿（第 1 版），${me.member.name}在网页上确认后才会发出。`,
+      next: `把 preview_url 发给${me.member.name}，请他查看并发出；之后要改就 PUT ${draftRef(w, d).url}` } };
+  }
+
+  // —— 校验：与原接口相同（草稿保存时就校验，发出时再校验一次）——
+  function validateReply(t, me, b) {
+    if (!b.body_md && !(b.attachment_ids || []).length) return err(422, "empty_reply", "回复既无正文也无附件");
+    if (b.deliver && t.assignee !== me.member.id) return err(403, "deliver_assignee_only", "交付只限指派人一方");
+    return null;
+  }
+
+  function route(w, cred, method, path, body) {
+    const me = who(w, cred);
+    const web = cred.kind === "web";
+    const draftMode = !web && me.agent.draft_mode === "required";
+    let m;
+
+    if (method === "GET" && path === "/session") {
+      return { status: 200, body: { viewer: { kind: "member", member: { id: me.member.id, name: me.member.name },
+        agent: me.agent ? { id: me.agent.id, name: me.agent.name, draft_mode: me.agent.draft_mode } : null },
+        drafts: { count: Object.values(w.drafts).filter((d) => d.status === "pending" && d.member === me.member.id).length, url: "/api/v1/drafts" },
+        ...(web ? { notices: me.member.notices } : {}) } };
+    }
+
+    if (method === "POST" && path === "/me/notices/drafts_intro/seen") {
+      if (!web) return err(403, "web_session_required", "只接受网页会话");
+      me.member.notices = me.member.notices.filter((n) => n !== "drafts_intro");
+      return { status: 204, body: null };
+    }
+
+    if ((m = path.match(/^\/me\/agent-tokens\/(\d+)$/)) && method === "PATCH") {
+      if (!web) return err(403, "web_session_required", "Agent 不能改自己或别人的草稿模式（ADR 0003）");
+      const tk = w.tokens[m[1]];
+      if (!tk || tk.member !== me.member.id) return err(404, "agent_token_not_found", "没有这个 Agent");
+      if (!["required", "direct"].includes(body.draft_mode)) return err(422, "invalid_draft_mode", "draft_mode 只能是 required 或 direct");
+      tk.draft_mode = body.draft_mode;
+      return { status: 200, body: { id: tk.id, name: tk.name, draft_mode: tk.draft_mode } };
+    }
+
+    // —— 建单 ——
+    if (method === "POST" && path === "/tickets") {
+      if (!body.title) return err(422, "title_required", "标题必填");
+      if (draftMode) return saveDraft(w, me, "create", null, body);
+      return { status: 201, body: createTicket(w, me, body, null) };
+    }
+
+    // —— 读工单（带 my_draft）——
+    if ((m = path.match(/^\/tickets\/([^/]+)$/)) && method === "GET") {
+      const t = findTicket(w, m[1]);
+      if (!t || !visible(t, me.member.id)) return err(404, "ticket_not_found", "工单不存在");
+      const d = slotDraft(w, t, me.member.id);
+      return { status: 200, body: { number: t.number, title: t.title, status: t.status, brief: { markdown: t.brief_md, revision: t.revision },
+        timeline_last_seq: lastSeq(t), my_draft: d ? Object.assign(draftRef(w, d), { new_events: draftView(w, d).new_events }) : null } };
+    }
+
+    // —— 回复 ——
+    if ((m = path.match(/^\/tickets\/([^/]+)\/replies$/)) && method === "POST") {
+      const t = findTicket(w, m[1]);
+      if (!t || !visible(t, me.member.id)) return err(404, "ticket_not_found", "工单不存在");
+      const d = slotDraft(w, t, me.member.id);
+      if (d) return draftPending(w, d, web);
+      const bad = validateReply(t, me, body); if (bad) return bad;
+      if (draftMode) {
+        if (t.status === "closed") return err(409, "ticket_closed", "工单已关闭，回复草稿发不出去", "需要继续沟通，请成员先重开工单");
+        return saveDraft(w, me, "reply", t, body);
+      }
+      return { status: 201, body: postReply(w, t, me, body, null) };
+    }
+
+    // —— 修订说明 ——
+    if ((m = path.match(/^\/tickets\/([^/]+)$/)) && method === "PATCH") {
+      const t = findTicket(w, m[1]);
+      if (!t || !visible(t, me.member.id)) return err(404, "ticket_not_found", "工单不存在");
+      if (t.creator !== me.member.id) return err(403, "not_brief_owner", "只有创建者一方能修订说明", "用回复补充内容");
+      const d = slotDraft(w, t, me.member.id);
+      if (d) return draftPending(w, d, web);
+      if (body.base_revision == null) return err(422, "base_revision_required", "缺 base_revision");
+      if (body.base_revision !== t.revision) return err(409, "revision_conflict", "说明已被改过", "重新读取工单，合并修改后再提交", { current_revision: t.revision });
+      if (draftMode) return saveDraft(w, me, "brief_revision", t, body);
+      return { status: 200, body: reviseBrief(w, t, me, body, null) };
+    }
+
+    // —— 关闭 / 重开（不走草稿；用来制造「草稿写成后的新变化」）——
+    if ((m = path.match(/^\/tickets\/([^/]+)\/(close|reopen)$/)) && method === "POST") {
+      const t = findTicket(w, m[1]);
+      if (!t || !visible(t, me.member.id)) return err(404, "ticket_not_found", "工单不存在");
+      t.status = m[2] === "close" ? "closed" : "open";
+      t.timeline.push({ seq: lastSeq(t) + 1, type: m[2] === "close" ? "closed" : "reopened", by: authorOf(me) });
+      return { status: 200, body: { status: t.status } };
+    }
+
+    // —— 原型捷径：持「可填写说明」链接的访客补全说明（创建者一方有草稿时，只有访客能让说明版本前进）——
+    if ((m = path.match(/^\/_guest\/tickets\/([^/]+)\/brief$/)) && method === "POST") {
+      const t = findTicket(w, m[1]);
+      t.revision++; t.brief_md = body.brief_md; t.timeline.push({ seq: lastSeq(t) + 1, type: "brief_revised", revision: t.revision, by: "访客" });
+      return { status: 200, body: { revision: t.revision } };
+    }
+
+    // —— 草稿资源 ——
+    if (method === "GET" && path === "/drafts") {
+      const list = Object.values(w.drafts).filter((d) => d.status === "pending" && d.member === me.member.id).map((d) => draftView(w, d));
+      return { status: 200, body: { count: list.length, drafts: list } };
+    }
+    if ((m = path.match(/^\/drafts\/(dft_\d+)(\/send)?$/))) {
+      const d = w.drafts[m[1]];
+      // 只对主人一方可见；丢弃即删除，不留痕迹 —— 两种情况都是 404
+      if (!d || d.member !== me.member.id) return err(404, "draft_not_found", "没有这份草稿", "可能已被成员丢弃；用 GET /api/v1/drafts 看现有草稿");
+      if (method === "GET" && !m[2]) return { status: 200, body: draftView(w, d) };
+      if (d.status === "sent") return err(409, "draft_already_sent", "这份草稿已经发出", "发出结果见 GET 的 result", { result: d.result });
+      const cur = d.versions.length;
+
+      if (method === "PUT" && !m[2]) {
+        if (body.base_version == null) return err(422, "base_version_required", "缺 base_version", "先 GET 草稿取 version");
+        if (body.base_version !== cur) return err(409, "draft_version_conflict", "草稿在你读取后又被改过（可能是成员手改）",
+          "重新 GET 草稿，在最新版上修改，不要覆盖成员的改动", { current_version: cur, last_author: d.versions[cur - 1].author });
+        const req = clone(body.request || {});
+        const t = d.ticket ? w.tickets[d.ticket] : null;
+        if (d.kind === "create" && !req.title) return err(422, "title_required", "标题必填");
+        if (d.kind === "reply") { const bad = validateReply(t, me, req); if (bad) return bad; }
+        if (d.kind === "brief_revision") {
+          if (req.base_revision == null) return err(422, "base_revision_required", "缺 base_revision");
+          if (req.base_revision !== t.revision) return err(409, "revision_conflict", "说明已被改过", "重新读取工单，基于最新说明重写", { current_revision: t.revision });
+        }
+        d.versions.push({ version: cur + 1, author: authorOf(me), at: ++w.clock, request: req, base_seq: t ? lastSeq(t) : 0 });
+        return { status: 200, body: draftView(w, d) }; // 改草稿不再发通知：只在草稿首次写成时通知一次
+      }
+
+      if (!web) return err(403, "web_session_required", "只有成员本人能在网页上发出或丢弃草稿",
+        `请把 ${previewURL(w, d)} 发给${me.member.name}`);
+
+      if (method === "DELETE" && !m[2]) { delete w.drafts[d.id]; return { status: 204, body: null }; }
+
+      if (method === "POST" && m[2]) {
+        if (body.version !== cur) return err(409, "draft_version_conflict", "你看到的不是最新一版", "刷新后再发出", { current_version: cur });
+        const v = d.versions[cur - 1];
+        const t = d.ticket ? w.tickets[d.ticket] : null;
+        if (t) {
+          if (!visible(t, me.member.id)) return err(404, "ticket_not_found", "你已看不到这张工单", "丢弃这份草稿");
+          if (d.kind === "reply" && t.status === "closed") return err(409, "ticket_closed", "工单已关闭，回复草稿不能发出", "重开工单后再发出，或丢弃");
+          if (d.kind === "brief_revision" && v.request.base_revision !== t.revision)
+            return err(409, "revision_conflict", "草稿写成后说明又被改过，不能发出", "复制修改指令给 Agent，让它基于最新说明重写", { current_revision: t.revision });
+          const fresh = t.timeline.filter((e) => e.seq > v.base_seq);
+          if (fresh.length && !(body.confirm_through_seq >= lastSeq(t)))
+            return err(409, "ticket_changed", `草稿写成后工单有 ${fresh.length} 条新变化`, "看过后带 confirm_through_seq 再发出",
+              { new_events: fresh.length, through_seq: lastSeq(t) });
+        }
+        const edited = d.versions.some((x) => !x.author.agent);
+        const lastAgent = d.versions.slice().reverse().find((x) => x.author.agent).author.agent; // 署名取最后执笔的 Agent
+        const sig = { member: me.member.name, agent: lastAgent, confirmed_by: me.member.name, edited };
+        let result;
+        if (d.kind === "create") result = { number: createTicket(w, me, v.request, sig).number };
+        else if (d.kind === "reply") result = { ticket: t.number, reply_no: postReply(w, t, me, v.request, sig).reply_no };
+        else result = { ticket: t.number, revision: reviseBrief(w, t, me, v.request, sig).revision };
+        d.status = "sent"; d.result = result;
+        return { status: 201, body: { result, signature: sig, drafting: draftView(w, d).versions } };
+      }
+    }
+    return err(404, "not_found", `原型里没有 ${method} ${path}`);
+  }
+
+  function createTicket(w, me, b, sig) {
+    const seq = w.nextTicket++;
+    const t = { seq, number: `20261021-${String(seq).padStart(3, "0")}`, title: b.title, brief_md: b.brief_md || "", revision: 1,
+      status: "open", creator: me.member.id, assignee: null, timeline: [{ seq: 1, type: "created", by: sig || authorOf(me) }], replies: 0 };
+    w.tickets[seq] = t;
+    return { number: t.number, url: `/t/${t.number}` };
+  }
+  function postReply(w, t, me, b, sig) {
+    t.replies++;
+    t.timeline.push({ seq: lastSeq(t) + 1, type: "reply", reply_no: t.replies, deliver: !!b.deliver, body_md: b.body_md, by: sig || authorOf(me) });
+    return { reply_no: t.replies };
+  }
+  function reviseBrief(w, t, me, b, sig) {
+    t.revision++; if (b.brief_md != null) t.brief_md = b.brief_md; if (b.title) t.title = b.title;
+    t.timeline.push({ seq: lastSeq(t) + 1, type: "brief_revised", revision: t.revision, by: sig || authorOf(me) });
+    return { revision: t.revision };
+  }
+
+  function request(world, cred, method, path, body) {
+    const w = clone(world);
+    const r = route(w, cred, method, path, body || {});
+    return { world: r.status < 400 ? w : world, status: r.status, body: r.body };
+  }
+  return { createWorld, request };
+})();
+// ==MODULE END==
+
+// ————— 页面（一次性外壳）—————
+const AG = { codex: { kind: "agent", token: 3 }, notebook: { kind: "agent", token: 4 }, liAgent: { kind: "agent", token: 5 } };
+const WEB = { chen: { kind: "web", member: 1 }, li: { kind: "web", member: 2 } };
+const NAME = (c) => c.kind === "web" ? (c.member === 1 ? "陈工（网页）" : "李工（网页）")
+  : ({ 3: "陈工的 Agent codex-1（必须走草稿）", 4: "陈工的 Agent 笔记本（可直接发）", 5: "李工的 Agent claude" })[c.token];
+
+const SCENARIOS = [
+  { name: "① 回复先成草稿", desc: "必须走草稿的 codex-1 回复工单：拿到 202 和 preview_url，工单时间线不变；陈工发出后署名「经陈工确认」。",
+    steps: [[AG.codex, "GET", "/session"], [AG.codex, "POST", "/tickets/20261021-001/replies", { body_md: "已复现，固件 1.2 的问题" }],
+            [AG.codex, "GET", "/tickets/20261021-001"], [WEB.chen, "POST", "/drafts/dft_1/send", { version: 1 }], [AG.codex, "GET", "/drafts/dft_1"]] },
+  { name: "② 原地修改与乐观锁", desc: "codex-1 写草稿 → 陈工在网页上手改（第 2 版）→ codex-1 拿旧版本号覆盖被拒 409 draft_version_conflict → 重读后在第 2 版上改成功。发出署名「经陈工修改并确认」。",
+    steps: [[AG.codex, "POST", "/tickets/20261021-001/replies", { body_md: "初稿" }],
+            [WEB.chen, "PUT", "/drafts/dft_1", { base_version: 1, request: { body_md: "初稿（陈工补了一句）" } }],
+            [AG.codex, "PUT", "/drafts/dft_1", { base_version: 1, request: { body_md: "Agent 重写" } }],
+            [AG.codex, "GET", "/drafts/dft_1"],
+            [AG.codex, "PUT", "/drafts/dft_1", { base_version: 2, request: { body_md: "初稿（陈工补了一句）+ Agent 补日志" } }],
+            [WEB.chen, "POST", "/drafts/dft_1/send", { version: 3 }]] },
+  { name: "③ 有草稿时一方都被挡", desc: "codex-1 留了草稿；可直接发的「笔记本」和陈工本人直接回复都得到 409 draft_pending（附草稿地址）；codex-1 再 POST 一次也一样被挡，hint 让它 PUT。李工不受影响。",
+    steps: [[AG.codex, "POST", "/tickets/20261021-001/replies", { body_md: "草稿" }],
+            [AG.notebook, "POST", "/tickets/20261021-001/replies", { body_md: "直接发" }],
+            [WEB.chen, "POST", "/tickets/20261021-001/replies", { body_md: "本人直接回" }],
+            [AG.codex, "POST", "/tickets/20261021-001/replies", { body_md: "再写一份" }],
+            [WEB.li, "POST", "/tickets/20261021-001/replies", { body_md: "李工照常回复" }]] },
+  { name: "④ 发出前工单有变化", desc: "草稿写成后李工回复了一条：陈工发出被 409 ticket_changed（2 条新变化之前先确认）；带 confirm_through_seq 再发出成功。",
+    steps: [[AG.codex, "POST", "/tickets/20261021-001/replies", { body_md: "草稿" }],
+            [WEB.li, "POST", "/tickets/20261021-001/replies", { body_md: "补充：E12 只在冷启动出现" }],
+            [WEB.chen, "POST", "/drafts/dft_1/send", { version: 1 }],
+            [WEB.chen, "POST", "/drafts/dft_1/send", { version: 1, confirm_through_seq: 2 }]] },
+  { name: "⑤ 关闭与说明冲突", desc: "回复草稿遇工单关闭不能发；草稿写好时已关闭的工单，必须走草稿的 Agent 当场被拒。李工的 Agent 写了说明修订草稿后，李工本人也不能直接改说明（draft_pending）；只有访客补全说明能让版本前进，此时草稿发不出（revision_conflict），Agent 基于新版本 PUT 重写后才能发。",
+    steps: [[AG.codex, "POST", "/tickets/20261021-001/replies", { body_md: "草稿" }],
+            [WEB.li, "POST", "/tickets/20261021-001/close"],
+            [WEB.chen, "POST", "/drafts/dft_1/send", { version: 1 }],
+            [WEB.chen, "DELETE", "/drafts/dft_1"],
+            [AG.codex, "POST", "/tickets/20261021-001/replies", { body_md: "关了也想说" }],
+            [AG.liAgent, "PATCH", "/tickets/20261021-001", { brief_md: "开机报 E12（冷启动）", base_revision: 1 }],
+            [WEB.li, "PATCH", "/tickets/20261021-001", { brief_md: "李工本人想直接改", base_revision: 1 }],
+            [WEB.li, "POST", "/_guest/tickets/20261021-001/brief", { brief_md: "开机报 E12，固件 1.2（访客补全）" }],
+            [WEB.li, "POST", "/drafts/dft_2/send", { version: 1 }],
+            [AG.liAgent, "PUT", "/drafts/dft_2", { base_version: 1, request: { brief_md: "开机报 E12，固件 1.2，冷启动", base_revision: 2 } }],
+            [WEB.li, "POST", "/drafts/dft_2/send", { version: 2, confirm_through_seq: 99 }]] },
+  { name: "⑥ 建单草稿与越权", desc: "建单草稿不占编号；Agent 自己发出、丢弃、改模式都被 403；李工看不到陈工的草稿（404）；陈工丢弃后 Agent 再读是 404。",
+    steps: [[AG.codex, "POST", "/tickets", { title: "仪器 B 打印乱码", brief_md: "…", labels: ["机型:B200"], guest_link: { note: "检验科-张三" } }],
+            [AG.codex, "POST", "/drafts/dft_1/send", { version: 1 }],
+            [AG.codex, "PATCH", "/me/agent-tokens/3", { draft_mode: "direct" }],
+            [AG.liAgent, "GET", "/drafts/dft_1"],
+            [WEB.chen, "GET", "/drafts"],
+            [WEB.chen, "DELETE", "/drafts/dft_1"],
+            [AG.codex, "GET", "/drafts/dft_1"]] },
+];
+
+let world = DraftAPI.createWorld(), cur = 0, stepIdx = 0;
+const $ = (id) => document.getElementById(id);
+function run(cred, method, path, body) {
+  const r = DraftAPI.request(world, cred, method, path, body);
+  world = r.world;
+  $("last").textContent = `${NAME(cred)}\n${method} /api/v1${path}\n${body ? JSON.stringify(body, null, 2) : ""}\n\n→ ${r.status}\n${JSON.stringify(r.body, null, 2)}`;
+  renderState();
+}
+function renderState() {
+  const t = Object.values(world.tickets).map((t) => ({ 编号: t.number, 状态: t.status, 说明版本: t.revision, 时间线: t.timeline }));
+  const d = Object.values(world.drafts).map((d) => ({ id: d.id, 类型: d.kind, 状态: d.status, 版本: d.versions.map((v) => `${v.version}:${v.author.agent ? v.author.agent : v.author.member}`) }));
+  const a = Object.values(world.tokens).map((x) => `${x.name} → ${x.draft_mode}`);
+  $("state").textContent = JSON.stringify({ 工单: t, 草稿: d, Agent模式: a }, null, 2);
+}
+function renderScenario() {
+  $("tabs").innerHTML = SCENARIOS.map((s, i) => `<button class="${i === cur ? "on" : ""}" onclick="pick(${i})">${s.name}</button>`).join("");
+  const s = SCENARIOS[cur];
+  $("scenario").innerHTML = `<p>${s.desc}</p>` + s.steps.map((st, i) =>
+    `<div><button class="${i < stepIdx ? "done" : i === stepIdx ? "next" : ""}" ${i !== stepIdx ? "disabled" : ""} onclick="step()">${i + 1}. ${NAME(st[0])}：${st[1]} ${st[2]}</button></div>`).join("");
+}
+function pick(i) { cur = i; stepIdx = 0; world = DraftAPI.createWorld(); $("last").textContent = ""; renderState(); renderScenario(); }
+function step() { const st = SCENARIOS[cur].steps[stepIdx++]; run(...st); renderScenario(); }
+if (typeof document !== "undefined") pick(0);
+</script>
+</body>
+</html>
