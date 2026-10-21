@@ -31,8 +31,9 @@ func (a *API) handleTicketAttachments(w http.ResponseWriter, r *http.Request, re
 	if !ok {
 		return
 	}
-	full, ok := a.loadTicketForViewer(w, r, viewer, ref)
-	if !ok {
+	full, err := a.tickets.ForViewer(r.Context(), viewer, ref)
+	if err != nil {
+		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
 		return
 	}
 	// 访客链接在关闭的工单上只读（上传同回复）；成员仍可上传（决策 2）。

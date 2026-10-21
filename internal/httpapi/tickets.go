@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -158,8 +159,9 @@ func (a *API) ticketAccessRecords(w http.ResponseWriter, r *http.Request, ref st
 	if !ok {
 		return
 	}
-	full, ok := a.loadTicketForViewer(w, r, viewer, ref)
-	if !ok {
+	full, err := a.tickets.ForViewer(r.Context(), viewer, ref)
+	if err != nil {
+		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
 		return
 	}
 	records, err := a.accessRecords.List(r.Context(), full.Seq)
@@ -316,8 +318,9 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if !ok {
 		return
 	}
-	full, ok := a.loadTicketForViewer(w, r, viewer, ref)
-	if !ok {
+	full, err := a.tickets.ForViewer(r.Context(), viewer, ref)
+	if err != nil {
+		a.writeTicketErrorForViewer(w, r, ref, viewer, err)
 		return
 	}
 	if err := a.accessRecords.RecordView(r.Context(), full.Seq, viewer); err != nil {
@@ -353,36 +356,6 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	}
 	v.Attachments, v.Usage = atts, usage
 	writeJSON(w, http.StatusOK, v)
-}
-
-// loadTicketForViewer 读取 ref 指向的工单并套上访客作用域：访客链接指向
-// 其他工单时写 404 ticket_not_found（与「不存在」不可区分）。
-func (a *API) loadTicketForViewer(w http.ResponseWriter, r *http.Request, viewer identity.Viewer, ref string) (tickets.Full, bool) {
-	full, err := a.tickets.ByRef(r.Context(), ref)
-	if err != nil {
-		a.writeTicketError(w, r, ref, err)
-		return tickets.Full{}, false
-	}
-	if viewer.Kind == identity.ViewerGuest && viewer.GuestLink.TicketSeq != full.Seq {
-		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
-			"访客链接只能访问它所指向的那张工单")
-		return tickets.Full{}, false
-	}
-	if viewer.Kind == identity.ViewerMember {
-		visible, err := a.tickets.CanSee(r.Context(), viewer, full)
-		if err != nil {
-			panic(err)
-		}
-		if !visible {
-			if err := a.accessRecords.RecordDenied(r.Context(), full.Seq, viewer); err != nil {
-				panic(err)
-			}
-			WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
-				"用工单编号（YYYYMMDD-NNN）或全局序号引用；编号按北京时间分配")
-			return tickets.Full{}, false
-		}
-	}
-	return full, true
 }
 
 // writeTicketError 把工单模块的错误映射成 HTTP 错误。ref 是请求里的工单引用
@@ -529,6 +502,12 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, ref strin
 	default:
 		panic(err)
 	}
+}
+
+// writeTicketErrorForViewer 先把 handler 已解析的凭证放进请求上下文，再复用
+// writeTicketError；普通网页会话与 Agent token 不经过会写上下文的中间件。
+func (a *API) writeTicketErrorForViewer(w http.ResponseWriter, r *http.Request, ref string, viewer identity.Viewer, err error) {
+	a.writeTicketError(w, r.WithContext(context.WithValue(r.Context(), viewerContextKey, viewer)), ref, err)
 }
 
 func isAttachmentCountExceeded(err error) bool {
