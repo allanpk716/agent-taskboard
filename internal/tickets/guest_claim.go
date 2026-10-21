@@ -193,7 +193,7 @@ func (m *Manager) verifyGuestAccessCode(ctx context.Context, link identity.Guest
 // ResetGuestAccessCode 让所有已记住设备失效并签发新的访问码；
 // 不重新开放链接给别人认领。
 func (m *Manager) ResetGuestAccessCode(ctx context.Context, viewer identity.Viewer, ref string, id int64) (string, error) {
-	full, err := m.ByRef(ctx, ref)
+	full, err := m.loadForViewer(ctx, viewer, ref)
 	if err != nil {
 		return "", err
 	}

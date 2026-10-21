@@ -7,8 +7,50 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 )
 
+// TicketInvisibleError 表示凭证指向的工单存在，但当前成员不可见。
+// HTTP 层用它记录被拒访问；对请求方仍按「不存在」返回。
+type TicketInvisibleError struct{ Seq int64 }
+
+func (e *TicketInvisibleError) Error() string {
+	return fmt.Sprintf("成员不能查看工单 %d", e.Seq)
+}
+
+// GuestLinkScopeError 表示访客链接指向另一张工单。它包住 ErrNotFound，
+// 对外仍是不可区分的 404，但 HTTP 层能保留访客链接的专用 hint。
+type GuestLinkScopeError struct{ Seq int64 }
+
+func (e *GuestLinkScopeError) Error() string { return ErrNotFound.Error() }
+
+func (e *GuestLinkScopeError) Unwrap() error { return ErrNotFound }
+
+// ForViewer 用请求凭证读取一张工单：先按 ref 找工单，再套访客链接作用域
+// 与成员可见范围。查不到、访客跨工单、成员不可见分别返回对应的错误。
+func (m *Manager) ForViewer(ctx context.Context, viewer identity.Viewer, ref string) (Full, error) {
+	return m.loadForViewer(ctx, viewer, ref)
+}
+
+func (m *Manager) loadForViewer(ctx context.Context, viewer identity.Viewer, ref string) (Full, error) {
+	full, err := m.ByRef(ctx, ref)
+	if err != nil {
+		return Full{}, err
+	}
+	if viewer.Kind == identity.ViewerGuest && viewer.GuestLink.TicketSeq != full.Seq {
+		return Full{}, &GuestLinkScopeError{Seq: full.Seq}
+	}
+	if viewer.Kind == identity.ViewerMember {
+		visible, err := m.CanSee(ctx, viewer, full)
+		if err != nil {
+			return Full{}, err
+		}
+		if !visible {
+			return Full{}, &TicketInvisibleError{Seq: full.Seq}
+		}
+	}
+	return full, nil
+}
+
 // CanSee 是成员、成员 Agent 与管理员的统一「能否看到」判断。访客不经过
-// 这里：访客链接始终只指向一张工单，由 HTTP 层按 ticket_seq 判定。
+// 这里：访客链接始终只指向一张工单，由 loadForViewer 按 ticket_seq 判定。
 func (m *Manager) CanSee(ctx context.Context, viewer identity.Viewer, full Full) (bool, error) {
 	if viewer.Kind != identity.ViewerMember {
 		return false, fmt.Errorf("可见范围只判断成员凭证")

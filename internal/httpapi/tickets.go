@@ -389,7 +389,20 @@ func (a *API) loadTicketForViewer(w http.ResponseWriter, r *http.Request, viewer
 // （错误 hint 里给 NAS 路径示例时用）。
 func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, ref string, err error) {
 	var conflict *tickets.RevisionConflictError
+	var invisible *tickets.TicketInvisibleError
+	var crossTicket *tickets.GuestLinkScopeError
 	switch {
+	case errors.As(err, &invisible):
+		if viewer, ok := viewerFromContext(r.Context()); ok {
+			if recordErr := a.accessRecords.RecordDenied(r.Context(), invisible.Seq, viewer); recordErr != nil {
+				panic(recordErr)
+			}
+		}
+		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
+			"用工单编号（YYYYMMDD-NNN）或全局序号引用；编号按北京时间分配")
+	case errors.As(err, &crossTicket):
+		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
+			"访客链接只能访问它所指向的那张工单")
 	case errors.Is(err, tickets.ErrTitleRequired):
 		WriteError(w, http.StatusUnprocessableEntity, CodeTitleRequired, "标题不能为空", "")
 	case errors.Is(err, tickets.ErrInvalidKind):

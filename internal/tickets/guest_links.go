@@ -97,7 +97,7 @@ type GuestLinkCreated struct {
 // CreateGuestLink 以 viewer（成员或成员 Agent）的身份为 ref 指向的工单创建一条
 // 访客链接，记一条 guest_link_created 事件（带备注）。
 func (m *Manager) CreateGuestLink(ctx context.Context, viewer identity.Viewer, ref string, spec GuestLinkSpec) (GuestLinkCreated, error) {
-	full, err := m.ByRef(ctx, ref)
+	full, err := m.loadForViewer(ctx, viewer, ref)
 	if err != nil {
 		return GuestLinkCreated{}, err
 	}
@@ -264,7 +264,7 @@ func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]Gue
 // RevokeGuestLink 撤销 ref 工单下的一条访客链接，立即生效，记一条
 // guest_link_revoked 事件。已撤销的再撤销是幂等成功，不重复记事件。
 func (m *Manager) RevokeGuestLink(ctx context.Context, viewer identity.Viewer, ref string, id int64) error {
-	full, err := m.ByRef(ctx, ref)
+	full, err := m.loadForViewer(ctx, viewer, ref)
 	if err != nil {
 		return err
 	}
@@ -296,7 +296,7 @@ func (m *Manager) RevokeGuestLink(ctx context.Context, viewer identity.Viewer, r
 // ExtendGuestLink 把 ref 工单下的一条访客链接延期到新的有效期，记一条
 // guest_link_extended 事件（带备注与新到期时刻）。已撤销或已过期的链接不能延期。
 func (m *Manager) ExtendGuestLink(ctx context.Context, viewer identity.Viewer, ref string, id int64, spec GuestLinkSpec) (GuestLinkInfo, error) {
-	full, err := m.ByRef(ctx, ref)
+	full, err := m.loadForViewer(ctx, viewer, ref)
 	if err != nil {
 		return GuestLinkInfo{}, err
 	}

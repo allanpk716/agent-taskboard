@@ -131,7 +131,7 @@ func (m *Manager) insertAssignedEvent(ctx context.Context, tx *sql.Tx, ticketSeq
 // Assign 以 viewer 的身份把 ref 指向的工单改派给 assignee（成员 id 或姓名），
 // 记一条 assigned{from,to} 事件；改派后原指派人的回复不再参与等待方推导。
 func (m *Manager) Assign(ctx context.Context, viewer identity.Viewer, ref, assigneeRef string) (AssignResult, error) {
-	full, err := m.ByRef(ctx, ref)
+	full, err := m.loadForViewer(ctx, viewer, ref)
 	if err != nil {
 		return AssignResult{}, err
 	}
