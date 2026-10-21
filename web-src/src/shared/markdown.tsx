@@ -1,6 +1,9 @@
-// 极简 Markdown 渲染（照 prototype/guest-web shared.js 的 md()，React 化）：
-// 段落、粗体、行内代码、有序/无序列表、正文中的 att: 引用（插图/附件）
-// 以及 UNC（NAS）路径文本块（带「复制路径」按钮，不做成链接）。
+// 共享 Markdown 渲染（成员端 / 访客端）：CommonMark + GFM + 单换行保留。
+import ReactMarkdown, { type Components, type UrlTransform } from 'react-markdown'
+import { unified } from 'unified'
+import remarkBreaks from 'remark-breaks'
+import remarkGfm from 'remark-gfm'
+import remarkParse from 'remark-parse'
 import { useEffect, useState, type ReactNode } from 'react'
 import type { Attachment } from './types'
 
@@ -13,19 +16,22 @@ export interface MarkdownProps {
 }
 
 // UNC 路径：\\server\share\…（反斜杠两道开头，后面至少一段 \xxx）。
-const UNC_RE = /\\\\[^\s\\]+(?:\\.+)+/g
+// 尾部可包含空格；遇到表格竖线或下一个 UNC 开头时结束。
+const UNC_CORE = String.raw`\\\\[^\s\\|]+(?:\\[^\s\\|]+)+`
+const UNC_TAIL = String.raw`(?:[^\n|\\]|\\(?!\\))*`
+const BARE_UNC_RE = new RegExp(`${UNC_CORE}${UNC_TAIL}`, 'g')
+const INLINE_UNC_RE = new RegExp(`^${UNC_CORE}${UNC_TAIL}$`)
 
-// 行内元素：插图 / 附件链接 / 粗体 / 行内代码 / UNC 路径。
-const INLINE_RE = new RegExp(
-  [
-    '!\\[([^\\]]*)\\]\\(att:([A-Za-z0-9_]+)\\)', // ![名字](att:att_N)
-    '\\[([^\\]]+)\\]\\(att:([A-Za-z0-9_]+)\\)', // [名字](att:att_N)
-    '\\*\\*([^*]+)\\*\\*', // **粗体**
-    '`([^`]+)`', // `代码`
-    `(${UNC_RE.source})`, // UNC 路径进第 7 组（UNC_RE 自身只有非捕获组）
-  ].join('|'),
-  'g',
-)
+interface PositionNode {
+  type: string
+  position?: { start: { offset?: number }; end: { offset?: number } }
+  children?: PositionNode[]
+}
+
+interface CodeRange {
+  start: number
+  end: number
+}
 
 function copyText(text: string) {
   const done = () => {}
@@ -98,101 +104,135 @@ function AuthorizedImage({
   )
 }
 
-function renderInline(text: string, props: MarkdownProps, keyPrefix: string): ReactNode[] {
-  const out: ReactNode[] = []
-  let last = 0
-  let m: RegExpExecArray | null
-  INLINE_RE.lastIndex = 0
-  for (let i = 0; (m = INLINE_RE.exec(text)) !== null; i++) {
-    if (m.index > last) out.push(text.slice(last, m.index))
-    const key = `${keyPrefix}-${i}`
-    if (m[2] !== undefined) {
-      // 插图：最宽 800px，点击查看大图。
-      const att = props.attachments.get(m[2])
-      if (att) {
-        out.push(
-          <AuthorizedImage
-            key={key}
-            url={att.url}
-            alt={m[1] || att.filename}
-            onClick={props.onImageClick}
-          />,
-        )
-      } else {
-        out.push(
-          <span key={key} className="att-missing">
-            🖼 {m[1] || m[2]}
-          </span>,
-        )
-      }
-    } else if (m[4] !== undefined) {
-      const att = props.attachments.get(m[4])
-      out.push(
-        att ? (
-          <a key={key} className="att-link" href={att.url} target="_blank" rel="noreferrer">
-            {m[3]}
-          </a>
-        ) : (
-          <span key={key}>{m[3]}</span>
-        ),
-      )
-    } else if (m[5] !== undefined) {
-      out.push(<b key={key}>{m[5]}</b>)
-    } else if (m[6] !== undefined) {
-      out.push(<code key={key}>{m[6]}</code>)
-    } else if (m[7] !== undefined) {
-      out.push(<UncBlock key={key} path={m[7]} />)
-    }
-    last = m.index + m[0].length
-  }
-  if (last < text.length) out.push(text.slice(last))
-  return out
+function textOf(children: ReactNode): string {
+  if (typeof children === 'string') return children
+  if (Array.isArray(children)) return children.map(textOf).join('')
+  return ''
 }
+
+function attIdOf(url: string | null | undefined) {
+  return typeof url === 'string' && url.startsWith('att:') ? url.slice(4) : null
+}
+
+function collectCodeRanges(node: PositionNode, ranges: CodeRange[]) {
+  const start = node.position?.start.offset
+  const end = node.position?.end.offset
+  if ((node.type === 'code' || node.type === 'inlineCode') && start !== undefined && end !== undefined) {
+    ranges.push({ start, end })
+  }
+  for (const child of node.children ?? []) collectCodeRanges(child, ranges)
+}
+
+// 裸 UNC 先包成行内代码，避免 CommonMark 把开头的反斜杠当转义吃掉。
+function wrapBareUnc(text: string) {
+  return text.replace(BARE_UNC_RE, (path) => {
+    const trailingWhitespace = path.match(/\s+$/)?.[0] ?? ''
+    const barePath = path.slice(0, path.length - trailingWhitespace.length)
+    return '`' + barePath + '`' + trailingWhitespace
+  })
+}
+
+function preprocessMarkdown(body: string) {
+  // 先用同一套 Markdown 语法识别代码区，避免靠行首缩进猜测代码块。
+  const tree = unified()
+    .use(remarkParse)
+    .use(remarkGfm)
+    .parse(body) as unknown as PositionNode
+  const ranges: CodeRange[] = []
+  collectCodeRanges(tree, ranges)
+  ranges.sort((a, b) => a.start - b.start)
+
+  // CommonMark 会把裸 UNC 开头的反斜杠当作转义；预处理必须避开代码原文。
+  let out = ''
+  let cursor = 0
+  for (const range of ranges) {
+    if (range.start < cursor) continue
+    out += wrapBareUnc(body.slice(cursor, range.start)) + body.slice(range.start, range.end)
+    cursor = range.end
+  }
+  return out + wrapBareUnc(body.slice(cursor))
+}
+
+const urlTransform: UrlTransform = (url) => (/^(?:https?|mailto|att):/i.test(url) ? url : '')
 
 /** 正文里的 att: 引用（插图语法）集合：这些附件不重复列在气泡底部的附件条里。 */
 export function inlineImageIds(body: string): Set<string> {
   const ids = new Set<string>()
   const re = /!\[[^\]]*\]\(att:([A-Za-z0-9_]+)\)/g
   let m: RegExpExecArray | null
-  while ((m = re.exec(body)) !== null) ids.add(m[1])
+  while ((m = re.exec(body)) !== null) {
+    const attId = attIdOf(`att:${m[1]}`)
+    if (attId) ids.add(attId)
+  }
   return ids
 }
 
 export function Markdown(props: MarkdownProps) {
-  const blocks = props.body.replace(/\s+$/, '').split(/\n{2,}/)
+  const components: Components = {
+    a({ children, href }) {
+      const attId = attIdOf(href)
+      if (attId) {
+        const att = props.attachments.get(attId)
+        if (!att) return <span>{children}</span>
+        return (
+          <a className="att-link" href={att.url} target="_blank" rel="noreferrer">
+            {children}
+          </a>
+        )
+      }
+      if (!href) return <span>{children}</span>
+      const external = /^https?:/i.test(href)
+      return (
+        <a href={href} {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}>
+          {children}
+        </a>
+      )
+    },
+    code({ children, className, node }) {
+      const text = textOf(children)
+      const inlineText = text.trim()
+      const blockCode = (node as { parent?: { tagName?: string } })?.parent?.tagName === 'pre'
+      if (!className && !blockCode && INLINE_UNC_RE.test(inlineText)) {
+        return <UncBlock path={inlineText} />
+      }
+      return <code className={className}>{children}</code>
+    },
+    img({ src, alt }) {
+      const attId = attIdOf(src)
+      if (attId) {
+        const att = props.attachments.get(attId)
+        if (att) {
+          return (
+            <AuthorizedImage
+              url={att.url}
+              alt={alt || att.filename}
+              onClick={props.onImageClick}
+            />
+          )
+        }
+        return <span className="att-missing">🖼 {alt || attId}</span>
+      }
+      // 不加载外部图片，保留替代文字。
+      return <span>{alt}</span>
+    },
+    table({ children }) {
+      return (
+        <div className="md-table-wrap">
+          <table>{children}</table>
+        </div>
+      )
+    },
+  }
+
   return (
     <div className="md">
-      {blocks.map((block, bi) => {
-        const lines = block.split('\n')
-        if (lines.every((l) => /^\d+\.\s/.test(l))) {
-          return (
-            <ol key={bi}>
-              {lines.map((l, li) => (
-                <li key={li}>{renderInline(l.replace(/^\d+\.\s/, ''), props, `${bi}-${li}`)}</li>
-              ))}
-            </ol>
-          )
-        }
-        if (lines.every((l) => /^[-*]\s/.test(l))) {
-          return (
-            <ul key={bi}>
-              {lines.map((l, li) => (
-                <li key={li}>{renderInline(l.replace(/^[-*]\s/, ''), props, `${bi}-${li}`)}</li>
-              ))}
-            </ul>
-          )
-        }
-        return (
-          <p key={bi}>
-            {lines.map((l, li) => (
-              <span key={li}>
-                {li > 0 && <br />}
-                {renderInline(l, props, `${bi}-${li}`)}
-              </span>
-            ))}
-          </p>
-        )
-      })}
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkBreaks]}
+        urlTransform={urlTransform}
+        components={components}
+      >
+        {preprocessMarkdown(props.body)}
+      </ReactMarkdown>
     </div>
   )
 }

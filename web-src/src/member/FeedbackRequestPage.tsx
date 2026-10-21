@@ -188,6 +188,7 @@ export function FeedbackRequestPage({
     <div className="bpage">
       <div className="crumb">
         <a
+          className="btn ghost back"
           href="/new"
           onClick={(e) => {
             e.preventDefault()

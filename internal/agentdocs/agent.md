@@ -45,4 +45,8 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
 - Windows 下请求体必须是 UTF-8。把 JSON 写入文件后用 `curl --data-binary @body.json` 发送；PowerShell 用 `[Text.Encoding]::UTF8.GetBytes(...)` 作为 `-Body`。
 - 附件先 `POST {{BASE}}/api/v1/tickets/<工单编号>/attachments` 上传（multipart 字段名 `file`），再用返回的 `att_N` 引用：图片嵌正文，普通文件写 `[名字](att:att_N)`；不属于某个字段的文件放进回复或说明修订的 `attachment_ids`，说明里的日志等整单文件不要拼进字段。
 
+## Markdown 约定
+
+工单说明、字段值和回复按 GFM 渲染，支持标题、表格、代码块、引用块、嵌套列表、任务列表、自动链接等语法；单个换行仍显示为换行。原始 HTML 不渲染，会按文本显示。附件一律用上传响应里的 `att:` 引用（图片 `![名字](att:att_N)`，普通文件 `[名字](att:att_N)`），不要写外部图片地址。NAS / UNC 路径可以直接写 `\\server\share\...`，也可以放在反引号里；网页会保留完整路径并提供「复制路径」按钮。
+
 完整接口参考见 `{{BASE}}/api.md`。
