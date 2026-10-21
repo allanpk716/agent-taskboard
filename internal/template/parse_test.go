@@ -80,6 +80,17 @@ func Test不写标记默认为多行文本选填(t *testing.T) {
 	}
 }
 
+// 适用场景是可选键：写成空值时视同没写。
+func Test适用场景空值视同没写(t *testing.T) {
+	def, err := Parse("---\n名称: 分配任务\n类型: 任务\n适用场景:\n---\n## 要达成什么目标？\n一句话说明。\n")
+	if err != nil {
+		t.Fatalf("解析失败：%v", err)
+	}
+	if def.Scenario != "" {
+		t.Errorf("空适用场景应视同没写，得到 %q", def.Scenario)
+	}
+}
+
 // 单选标记：`{单选: A | B 必填}` 解析出选项和必填。
 func Test解析单选标记(t *testing.T) {
 	def, err := Parse("---\n名称: 问题咨询\n类型: 任务\n---\n## 出现得频繁吗？ {单选: 每次 | 经常 | 偶尔 | 仅一次 必填}\n选一个。\n")

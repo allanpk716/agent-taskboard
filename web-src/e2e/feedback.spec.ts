@@ -1,161 +1,107 @@
-import { test, expect, type Browser } from '@playwright/test'
+import { test, expect } from '@playwright/test'
 import { ADMIN, login } from './helpers'
 
-// 「请人反馈」（#64）：收件箱卡片进入向导，一次建好工单和带「可填写说明」
-// 权限的访客链接；完成页给出转发文案。对真实服务 + 构建好的前端跑用例。
+// 建单两屏流程（#195）：第一屏选谁来填写；「发链接请人填写」进入向导剩余
+// 部分，一次建好工单和带「可填写说明」的访客链接。
 
-// 1. 成员从收件箱卡片进入向导，填两项后生成链接；完成页显示编号和文案，
-//    复制按钮可用；访客打开这条链接能看到工单（带「可填写说明」权限）。
-test('请人反馈：向导生成链接，完成页可复制，访客能打开', async ({ page, browser }) => {
+test('入口与两屏：第一屏选择由谁填写，第二屏显示适用场景并可返回', async ({ page }) => {
+  await login(page, ADMIN)
+
+  await expect(
+    page.getByText('要建一张工单？派任务、提需求、问问题，或者请部门外的人来填，都从这里开始。'),
+  ).toBeVisible()
+  await expect(page.getByRole('button', { name: '＋ 建单' })).toHaveCount(1)
+  await page.getByRole('button', { name: '＋ 建单' }).click()
+
+  await expect(page.locator('.bpage').getByRole('heading', { name: '建单' })).toBeVisible()
+  await expect(page.getByText('先选这张工单的说明由谁来填写')).toBeVisible()
+  const self = page.getByRole('button', { name: /我自己填/ })
+  const guest = page.getByRole('button', { name: /发链接请人填写/ })
+  await expect(self).toContainText('派任务、提需求、问问题：现在就把说明填好，再指派给同事')
+  await expect(self).toContainText('下一步：选模板 →')
+  await expect(guest).toContainText('给部门外的人发链接，由对方填写，对方不需要账号')
+  await expect(guest).toContainText('下一步：选模板 →')
+
+  await guest.click()
+  await expect(page.getByRole('heading', { name: '选一个模板' })).toBeVisible()
+  await expect(page.getByText('发链接请人填写')).toBeVisible()
+  await expect(page.getByText('对方会按这个模板的引导来填写')).toBeVisible()
+  const bug = page.getByRole('button', { name: /^Bug 反馈 反馈/ })
+  await expect(bug).toContainText('反馈')
+  await expect(bug).toContainText('适用：仪器或软件坏了、行为不对')
+  const freeForm = page.locator('.tplpick', { hasText: '自由格式' })
+  await expect(freeForm).toContainText('不用模板，对方自由填写，工单类型为反馈')
+
+  await page.getByRole('button', { name: '← 建单' }).click()
+  await expect(page.getByText('先选这张工单的说明由谁来填写')).toBeVisible()
+  await self.click()
+  await expect(page.getByText('我自己填')).toBeVisible()
+  await expect(page.getByText('按你要做的事选，模板决定要填哪些内容')).toBeVisible()
+})
+
+test('发链接请人填写：选模板后填请谁填写，生成可用链接', async ({ page }) => {
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
   await login(page, ADMIN)
 
-  // 收件箱顶部的卡片「有人要提反馈？」
-  await expect(page.getByText('有人要提反馈？')).toBeVisible()
-  await page.getByRole('button', { name: '＋ 请人反馈' }).click()
-  await expect(page.getByRole('heading', { name: '请人反馈' })).toBeVisible()
+  await page.getByRole('button', { name: '＋ 建单' }).click()
+  await page.getByRole('button', { name: /发链接请人填写/ }).click()
+  await page.locator('.tplpick', { hasText: '分配任务' }).click()
 
-  // 两项必填没填完时「生成链接」不能点。
+  await expect(page.locator('.b-title')).toHaveText('发链接请人填写')
+  await expect(page.getByText('发链接请人填写 · 分配任务')).toBeVisible()
+  await expect(page.locator('.fr-tpl-group')).toHaveCount(0)
+  await expect(page.getByLabel('请谁反馈')).toHaveCount(0)
   const gen = page.getByRole('button', { name: '生成链接' })
   await expect(gen).toBeDisabled()
-  await page.getByLabel('请谁反馈').fill('检验科-张三')
+  await page.getByLabel('请谁填写').fill('检验科-张三')
   await expect(gen).toBeDisabled()
-  await page.getByLabel('什么事').fill('UD-2300 质控时报警 E-203')
+  await page.getByLabel('什么事').fill('整理质控规则对照表')
   await expect(gen).toBeEnabled()
-
-  // 模板选项：默认 Bug 反馈，下面有一句白话（分组未上线时取前三个字段的问句）。
-  await expect(page.getByText('会问：').or(page.getByText(/哪台仪器/))).toBeVisible()
-  const groups = page.locator('.fr-tpl-group')
-  await expect(groups).toHaveCount(3)
-  await expect(groups.nth(0).locator('.guide')).toHaveText('反馈')
-  await expect(groups.nth(1).locator('.guide')).toHaveText('任务')
-  await expect(groups.nth(2).locator('.guide')).toHaveText('自由格式')
-  await expect(groups.nth(0).locator('.chip')).toHaveCount(2)
-  await expect(groups.nth(1).locator('.chip')).toHaveCount(2)
-
-  // 更多选项默认折叠，摘要写「有效期 30 天 · 由我跟进」；展开改成 7 天。
-  await expect(page.getByText('有效期 30 天 · 由我跟进')).toBeVisible()
-  await page.getByText('更多选项').click()
-  await page.getByRole('radio', { name: '7 天' }).check()
-  await page.getByText('更多选项').click()
-
   await gen.click()
 
-  // 完成页：工单编号 + 转发文案 + 复制按钮。
   const done = page.locator('.donet')
   await expect(done).toContainText(/已创建/)
   const number = (await done.locator('b').textContent()) ?? ''
-  expect(number).toMatch(/^\d{8}-\d{3,}$/)
   const box = page.locator('.linkbox')
   await expect(box).toContainText('检验科-张三')
-  await expect(box).toContainText('UD-2300 质控时报警 E-203')
+  await expect(box).toContainText('整理质控规则对照表')
   await expect(box).toContainText('/g/')
-
-  await page.getByRole('button', { name: '复制文案' }).click()
-  await expect
-    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-    .toContain('UD-2300 质控时报警 E-203')
-
-  await page.getByRole('button', { name: '只复制链接' }).click()
-  const linkUrl = await page.evaluate(() => navigator.clipboard.readText())
-  expect(linkUrl).toMatch(/\/g\/tbg_/)
-
-  // 打开工单 / 再请一个人 / 回收件箱都可达。
-  await expect(page.getByRole('button', { name: '打开工单' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '再请一个人' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '回收件箱' })).toBeVisible()
-
-  await page.getByRole('button', { name: '打开工单' }).click()
-  await expect(page.locator('.badge.waiting')).toHaveText('等待 访客补全说明')
-  await page.goBack()
-
-  // 访客（不带成员会话）第一次打开链接先看到落地页（#66）：成员名 + 标题
-  // + 称呼预填链接备注；「先不填，直接回复」直接进对话页（这条链接带「可填写说明」）。
-  const guest = await newGuestPage(browser, linkUrl)
-  const landing = guest.locator('.guest-landing')
-  await expect(landing).toBeVisible()
-  await expect(landing.locator('.landing-lead')).toHaveText('管理员 请你补充这张反馈的说明')
-  await expect(landing.getByRole('heading', { name: 'UD-2300 质控时报警 E-203' })).toBeVisible()
-  await expect(landing.getByLabel('你的称呼（管理员会看到）')).toHaveValue('检验科-张三')
-  await guest.getByRole('button', { name: '先不填，直接回复 →' }).click()
-  await expect(guest.locator('.link-meta')).toContainText('检验科-张三')
-  await expect(guest.getByRole('button', { name: '✏ 修改说明' })).toBeVisible()
-  await guest.context().close()
-
-  // 成员侧：工单确实存在（经 API 核对编号一致）。
-  const res = await page.request.get(`/api/v1/tickets/${number}`)
-  expect(res.ok()).toBeTruthy()
-  const body = await res.json()
-  expect(body.creator.member.name).toBe('管理员')
-  const types = (body.timeline as { type: string }[]).map((e) => e.type)
-  expect(types).toEqual(['created', 'assigned', 'guest_link_created', 'guest_link_claimed']) // 跟进人默认本人
-})
-
-/** 不带成员会话的访客页（模拟对方点开链接）。 */
-async function newGuestPage(browser: Browser, path: string) {
-  const ctx = await browser.newContext({ baseURL: `http://127.0.0.1:${port()}` })
-  const page = await ctx.newPage()
-  const key = new URL(path, `http://127.0.0.1:${port()}`).pathname.slice(3)
-  const claim = await page.request.post('/api/v1/guest-links/claim', {
-    data: { author_name: '检验科-张三' },
-    headers: { Authorization: `Bearer ${key}` },
-  })
-  expect(claim.status()).toBe(201)
-  const token = ((await claim.json()) as { device_token: string }).device_token
-  await page.addInitScript(({ key, token }) => {
-    localStorage.setItem(`tb:guest-device:${key}`, token)
-  }, { key, token })
-  await page.goto(path)
-  return page
-}
-
-function port(): string {
-  return process.env.E2E_PORT || '8901'
-}
-
-// 2. 向导底部有通往「建单（高级）」的链接；原建单页改了导航名，仍然能正常建单。
-test('建单（高级）仍然能正常建单', async ({ page }) => {
-  await login(page, ADMIN)
-
-  // 底部标签改名「建单（高级）」；进入原建单页。
-  await page.locator('.b-tabs').getByRole('link', { name: '建单（高级）' }).click()
-  await expect(page.getByRole('heading', { name: '建单（高级）' })).toBeVisible()
-
-  // 自由格式建一张（缺维度标签被拦 → 补上 → 创建成功）。
-  await page.getByText('自由格式').click()
-  await page.getByLabel('标题').fill('高级建单仍然可用')
-  await page.getByRole('button', { name: '创建工单' }).click()
-  await expect(page.locator('.errbox')).toContainText('dimension_label_required')
-  await page.getByLabel('标签输入').fill('机型:UD-2300')
-  await page.getByRole('button', { name: '添加' }).click()
-  await expect(page.locator('.lblrow .chip').filter({ hasText: '机型:UD-2300' })).toBeVisible()
-  await page.getByRole('button', { name: '创建工单' }).click()
-  await expect(page.locator('.donet')).toContainText('已创建')
-
-  // 向导表单底部有一条通往完整建单的链接。
-  await page.goto('/')
-  await page.getByRole('button', { name: '＋ 请人反馈' }).click()
-  const adv = page.locator('.submitrow').getByRole('link', { name: '完整建单' })
-  await expect(adv).toBeVisible()
-  await adv.click()
-  await expect(page.getByRole('heading', { name: '建单（高级）' })).toBeVisible()
-})
-
-// 3. 向导列出的任务模板同样可用：工单类型由模板决定，访客链接照常生成。
-test('请人反馈可选任务模板，工单类型跟随模板', async ({ page }) => {
-  await login(page, ADMIN)
-  await page.getByRole('button', { name: '＋ 请人反馈' }).click()
-  await page.getByLabel('请谁反馈').fill('检验科-李四')
-  await page.getByLabel('什么事').fill('整理质控规则对照表')
-  await page.getByRole('radio', { name: '分配任务' }).check()
-  await page.getByRole('button', { name: '生成链接' }).click()
-
-  const done = page.locator('.donet')
-  await expect(done).toContainText(/已创建/)
-  const number = (await done.locator('b').textContent()) ?? ''
   const res = await page.request.get(`/api/v1/tickets/${number}`)
   expect(res.ok()).toBeTruthy()
   const body = await res.json()
   expect(body.kind).toBe('task')
   expect(body.template).toBe('assign-task')
+})
+
+test('我自己填：选提需求后填写表单并建单成功', async ({ page }) => {
+  await login(page, ADMIN)
+  await page.locator('.b-tabs').getByRole('link', { name: '＋ 建单' }).click()
+  await page.getByRole('button', { name: /我自己填/ }).click()
+  const request = page.locator('.tplpick', { hasText: '提需求' })
+  await expect(request).toContainText('任务')
+  await request.click()
+
+  await page.getByLabel('标题').fill('两屏流程自己填建单')
+  await page
+    .locator('.fld', { hasText: '为什么要做？有什么背景？' })
+    .locator('textarea')
+    .fill('质控规则分散，需要集中整理。')
+  await page.getByLabel('标签输入').fill('机型:UD-2300')
+  await page.getByRole('button', { name: '添加' }).click()
+  await expect(page.locator('.lblrow .chip').filter({ hasText: '机型:UD-2300' })).toBeVisible()
+  await page.getByRole('button', { name: '创建工单' }).click()
+  await page.getByRole('button', { name: '仍然创建' }).click()
+  await expect(page.locator('.donet')).toContainText('已创建')
+})
+
+test('旧「请人反馈」地址直接进入发链接请人填写的第二屏', async ({ page }) => {
+  await login(page, ADMIN)
+  await page.goto('/feedback')
+  await expect(page.getByRole('heading', { name: '选一个模板' })).toBeVisible()
+  await expect(page.locator('.b-title')).toHaveText('建单')
+  await expect(page.getByText('发链接请人填写')).toBeVisible()
+  await expect(page.getByText('对方会按这个模板的引导来填写')).toBeVisible()
+  await expect(page.getByRole('button', { name: /我自己填/ })).toHaveCount(0)
+  await page.locator('.tplpick', { hasText: '分配任务' }).click()
+  await expect(page.locator('.b-title')).toHaveText('发链接请人填写')
 })

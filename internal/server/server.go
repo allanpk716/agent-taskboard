@@ -71,6 +71,12 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	if err := templateDict.ImportPresetBugReportData(context.Background()); err != nil {
 		return nil, fmt.Errorf("导入预置 Bug 反馈（带数据）模板失败：%w", err)
 	}
+	if err := templateDict.ImportPresetRequest(context.Background()); err != nil {
+		return nil, fmt.Errorf("导入预置提需求模板失败：%w", err)
+	}
+	if err := templateDict.UpgradePresetScenarios(context.Background()); err != nil {
+		return nil, fmt.Errorf("升级预置模板适用场景失败：%w", err)
+	}
 	backups, err := ops.NewBackups(st.DB, cfg.DataDir, cfg.Backup.BackupOptions(), c)
 	if err != nil {
 		return nil, err

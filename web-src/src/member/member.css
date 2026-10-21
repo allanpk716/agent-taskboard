@@ -1788,6 +1788,51 @@
 .tplpick:hover {
   border-color: #2a6fdb;
 }
+.create-choice,
+.template-screen {
+  padding: 16px;
+}
+.page-title {
+  margin: 0 0 4px;
+  font-size: 24px;
+}
+.template-screen .back {
+  padding: 0;
+  border: 0;
+  background: none;
+  margin-bottom: 10px;
+}
+.template-screen .filler {
+  display: inline-block;
+  margin: 2px 0 6px;
+}
+.create-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.create-card {
+  min-height: 150px;
+  border: 1px solid #dfe4ee;
+  border-radius: 8px;
+  padding: 16px;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.create-card:hover {
+  border-color: #2a6fdb;
+}
+.create-card .next {
+  margin-top: auto;
+  color: #2a6fdb;
+  font-size: 13px;
+  font-weight: 600;
+}
 .tp-name {
   font-weight: 700;
   margin-bottom: 2px;
@@ -2001,7 +2046,7 @@ textarea.src {
   background: #f2f4f8;
 }
 
-/* 请人反馈（#64）：收件箱顶部入口卡片 + 向导的可点选 chips（单选） */
+/* 收件箱顶部入口卡片 + 发链接请人填写向导（#195） */
 .fr-card {
   text-align: center;
   padding: 18px;

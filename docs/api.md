@@ -638,6 +638,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 ---
 名称: Bug 反馈
 类型: 反馈
+适用场景: 仪器或软件坏了、行为不对
 预设标签: [待初筛]
 ---
 # 哪台仪器
@@ -651,7 +652,8 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 > 示例：1. 开机自检完成 2. 进入质控界面 3. 点击“开始”
 ```
 
-- YAML 头（首尾 `---`）：键只认 `名称`、`类型`（任务/反馈）、`预设标签`（`[a, b]`），其余键报错。
+- YAML 头（首尾 `---`）：键只认 `名称`、`类型`（任务/反馈）、`适用场景`
+  （可选单行文本，说明什么情况下选这份模板）、`预设标签`（`[a, b]`），其余键报错。
 - 每个 `##` 小节是一个字段：标题写成问句（**问句原文就是 `fields` 的键**），小节正文是
   引导说明，`> 示例：` 起的引用行是占位示例。
 - 花括号标记写在标题行末尾：`{必填}`、`{选填}`、`{单选: A | B}`、`{维度:X 必填}`
@@ -673,10 +675,10 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 
 | 方法与路径 | 说明 |
 |---|---|
-| `GET /api/v1/templates` | 模板列表（含已停用，各项带 `active`），成员与成员 Agent 可读。 |
+| `GET /api/v1/templates` | 模板列表（含已停用，各项带 `active`、`scenario`），成员与成员 Agent 可读。 |
 | `POST /api/v1/templates` | 新建：`{"key": "check", "markdown": "模板原文"}`，成功 201。 |
-| `GET /api/v1/templates/{key}` | 读当前版本：字段定义、`agent_note`、分组 `groups`（带分组时，#63）、模板原文 `markdown`、`version`、`updated_by`。 |
-| `GET /api/v1/templates/{key}?format=markdown` | 给 Agent 的填写指南（`text/markdown`）：建单请求示例、逐字段问句/引导/示例/候选值、「给 Agent 的说明」。 |
+| `GET /api/v1/templates/{key}` | 读当前版本：字段定义、`scenario`、`agent_note`、分组 `groups`（带分组时，#63）、模板原文 `markdown`、`version`、`updated_by`。 |
+| `GET /api/v1/templates/{key}?format=markdown` | 给 Agent 的填写指南（`text/markdown`）：适用场景、建单请求示例、逐字段问句/引导/示例/候选值、「给 Agent 的说明」。 |
 | `PATCH /api/v1/templates/{key}` | 修改：`{"markdown": "新原文"}`，产生新版本（版本号 +1，记录修改人）。 |
 | `GET /api/v1/templates/{key}/versions` | 历史版本（新→旧），每版 `{version, name, markdown, updated_by, updated_at}`（#42 模板维护页）。 |
 | `POST /api/v1/templates/{key}/deactivate` | 停用（幂等 200；模板不能删除，停用后不能再用它建单，读取仍可见）。 |
@@ -719,13 +721,17 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   （组序号，从 0 起，#63）；不分组模板的工单两者都不出现（读取结果与升级前一致）。
 - `PATCH /api/v1/tickets/{id} {"fields": {改动的字段}, "base_revision": N}`：
   只改动传入的字段，其余保持不变；每次修订记一条 `brief_revised` 事件（见上）。
-- 预置四份模板（spec「初始数据」+ #154）：`bug-report`（Bug 反馈，预设 `待初筛`，
+- 预置五份模板（spec「初始数据」+ #154 + #194）：`bug-report`（Bug 反馈，预设 `待初筛`，
   分三组「哪台仪器 / 发生了什么 / 影响多大」）、`bug-report-data`（Bug 反馈（带数据），
   分三组「哪台仪器 / 正确和错误的例子 / 影响多大」，正常的例子必填）、`assign-task`
-  （分配任务）、`question`（问题咨询）；模板是运行时数据，上线后可随时修改。
+  （分配任务）、`request`（提需求，任务类型）、`question`（问题咨询）；模板是运行时
+  数据，上线后可随时修改。
   服务启动时做一次性迁移：`bug-report` 的当前版本与 #63 预置原文**完全一致**时，
   追加 #154 新版本（版本历史里可见）；改过的或全新的库都不动。`bug-report-data`
-  的 key 不存在时导入，已存在则不动。
+  与 `request` 的 key 不存在时导入，已存在则不动。
+  四份预置模板（`bug-report`、`bug-report-data`、`assign-task`、`question`）的
+  当前版本与 #193 前的预置原文**逐字节一致**时，追加带「适用场景」的新版本；
+  成员改过的不动，且版本链中已出现过目标原文时重复启动不再新增版本。
 
 
 ## 标签、字典与别名（#31）

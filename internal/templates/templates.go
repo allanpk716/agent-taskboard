@@ -163,7 +163,7 @@ func (m *Manager) Deactivate(ctx context.Context, key string) (bool, error) {
 // List 列出全部模板（含已停用，带 active 标记），按 key 排序。
 func (m *Manager) List(ctx context.Context) ([]Template, error) {
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT t.key, t.active, v.version, v.name, v.kind, v.preset_labels, v.agent_note,
+		SELECT t.key, t.active, v.version, v.name, v.kind, v.scenario, v.preset_labels, v.agent_note,
 		       v.fields, v.groups, v.markdown, v.updated_by_member_id, um.name, v.updated_by_agent_id, ua.name, v.updated_at
 		FROM templates t
 		JOIN template_versions v ON v.template_key = t.key AND v.version = t.current_version
@@ -188,7 +188,7 @@ func (m *Manager) List(ctx context.Context) ([]Template, error) {
 // Get 读一份模板的当前版本；不存在时返回 ErrNotFound。
 func (m *Manager) Get(ctx context.Context, key string) (Template, error) {
 	row := m.db.QueryRowContext(ctx, `
-		SELECT t.key, t.active, v.version, v.name, v.kind, v.preset_labels, v.agent_note,
+		SELECT t.key, t.active, v.version, v.name, v.kind, v.scenario, v.preset_labels, v.agent_note,
 		       v.fields, v.groups, v.markdown, v.updated_by_member_id, um.name, v.updated_by_agent_id, ua.name, v.updated_at
 		FROM templates t
 		JOIN template_versions v ON v.template_key = t.key AND v.version = t.current_version
@@ -270,7 +270,7 @@ func scanTemplate(row scanner) (Template, error) {
 		agent     sql.NullString
 		updatedAt string
 	)
-	if err := row.Scan(&t.Key, &active, &t.Version, &t.Name, &t.Kind, &presets, &t.AgentNote,
+	if err := row.Scan(&t.Key, &active, &t.Version, &t.Name, &t.Kind, &t.Scenario, &presets, &t.AgentNote,
 		&fields, &groups, &t.Markdown, &memberID, &member, &agentID, &agent, &updatedAt); err != nil {
 		return Template{}, err
 	}
@@ -314,10 +314,10 @@ func insertVersion(ctx context.Context, tx *sql.Tx, t Template, at time.Time) er
 		memberID = t.UpdatedBy.MemberID
 	}
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO template_versions (template_key, version, name, kind, preset_labels, agent_note,
+		INSERT INTO template_versions (template_key, version, name, kind, scenario, preset_labels, agent_note,
 		                               fields, groups, markdown, updated_by_member_id, updated_by_agent_id, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.Key, t.Version, t.Name, t.Kind, string(presets), t.AgentNote,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.Key, t.Version, t.Name, t.Kind, t.Scenario, string(presets), t.AgentNote,
 		string(fields), string(groups), t.Markdown, memberID, agentID, at.Format(time.RFC3339Nano))
 	return err
 }

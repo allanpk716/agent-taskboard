@@ -55,6 +55,7 @@ type Field struct {
 type Definition struct {
 	Name         string   `json:"name"`                    // 名称
 	Kind         string   `json:"kind"`                    // task | report
+	Scenario     string   `json:"scenario,omitempty"`      // 适用场景（一句话）
 	PresetLabels []string `json:"preset_labels,omitempty"` // 预设标签
 	AgentNote    string   `json:"agent_note,omitempty"`    // 给 Agent 的说明
 	Fields       []Field  `json:"fields"`
@@ -147,8 +148,10 @@ func parseHeader(lines []string) (Definition, error) {
 					def.PresetLabels = append(def.PresetLabels, p)
 				}
 			}
+		case "适用场景":
+			def.Scenario = val
 		default:
-			return Definition{}, parseErr(line, "YAML 头里没有 %q 这个键（可用：名称、类型、预设标签）", key)
+			return Definition{}, parseErr(line, "YAML 头里没有 %q 这个键（可用：名称、类型、适用场景、预设标签）", key)
 		}
 	}
 	if def.Name == "" {
@@ -438,6 +441,9 @@ func Guide(key string, def Definition, version int64, candidates map[string][]st
 	L = append(L,
 		"# 模板 "+def.Name+"（"+key+"）", "",
 		"- 类型："+kindText(def.Kind)+" · 版本："+fmt.Sprintf("%d", version))
+	if def.Scenario != "" {
+		L = append(L, "- 适用场景："+def.Scenario)
+	}
 	if len(def.PresetLabels) > 0 {
 		L = append(L, "- 预设标签："+strings.Join(def.PresetLabels, "、"))
 	}

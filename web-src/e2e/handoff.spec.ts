@@ -116,6 +116,7 @@ test('改派确认后直接弹出发给指派人的交接文案', async ({ page,
 test('建单指派给同事后完成区域有交接入口', async ({ page }) => {
   await login(page, ADMIN)
   await page.locator('.b-tabs').getByRole('link', { name: '建单' }).click()
+  await page.getByRole('button', { name: /我自己填/ }).click()
   await page.getByText('自由格式').click()
   await page.getByLabel('标题').fill('建单后交给王工Agent')
   await page.getByLabel(/说明/).fill('完成后把清单发回来。')
@@ -139,6 +140,7 @@ test('建单完成区域按是否指派显示未指派提示', async ({ page }) 
 
   const createFreeForm = async (assignee: string) => {
     await page.goto('/new')
+    await page.getByRole('button', { name: /我自己填/ }).click()
     await page.getByText('自由格式').click()
     await page.getByLabel('标题').fill(`建单指派状态 ${Date.now()} ${assignee || '暂不指派'}`)
     await page.getByLabel(/说明/).fill('检查完成区域的指派提示。')

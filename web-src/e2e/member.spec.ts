@@ -117,6 +117,7 @@ test('派活到验收：A建单指派B，B收件箱交付，A验收关闭', asyn
   // A（管理员）建单并指派给 B（王工），拿到 share_text 里的编号
   await login(page, ADMIN)
   await page.locator('.b-tabs').getByRole('link', { name: '建单' }).click()
+  await page.getByRole('button', { name: /我自己填/ }).click()
   await page.getByText('自由格式').click()
   await page.getByLabel('标题').fill('给王工的派活工单')
   await page.getByLabel('说明').fill('把对照表整理一份，周五前交。')
@@ -361,6 +362,7 @@ test('详情页打标签改派关闭与重开', async ({ page, request }) => {
 test('建单（自由格式）：缺维度标签被拦，指派后显示交接入口', async ({ page }) => {
   await login(page, ADMIN)
   await page.locator('.b-tabs').getByRole('link', { name: '建单' }).click()
+  await page.getByRole('button', { name: /我自己填/ }).click()
 
   // 第一步：选「自由格式」
   await page.getByText('自由格式').click()
@@ -403,9 +405,12 @@ test('建单（自由格式）：缺维度标签被拦，指派后显示交接�
 test('建单（模板）：缺必填项弹出确认，仍创建后逐项提示', async ({ page }) => {
   await login(page, ADMIN)
   await page.locator('.b-tabs').getByRole('link', { name: '建单' }).click()
+  await page.getByRole('button', { name: /我自己填/ }).click()
 
   // 第一步：选模板「Bug 反馈」
-  await page.getByRole('button', { name: /^Bug 反馈 report 预设 待初筛$/ }).click()
+  const bugTemplate = page.getByRole('button', { name: /^Bug 反馈 反馈/ })
+  await expect(bugTemplate).toContainText('适用：仪器或软件坏了、行为不对')
+  await bugTemplate.click()
   await expect(page.getByText('哪台仪器？')).toBeVisible()
 
   // 只填标题和一个维度字段，其余必填留空；统一附件区暂存一个文件
@@ -547,6 +552,7 @@ test('成员回复在服务中断时自动重试且只产生一条', async ({ pa
 test('建单在服务中断时自动重试且只建一张', async ({ page, request }) => {
   await login(page, ADMIN)
   await page.goto('/new')
+  await page.getByRole('button', { name: /我自己填/ }).click()
   await page.locator('.tplpick', { hasText: '自由格式' }).click()
   await page.getByLabel('标题').fill('网络抖动时建的单')
   await page.getByLabel('说明', { exact: true }).fill('内容。')

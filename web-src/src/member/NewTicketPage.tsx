@@ -7,20 +7,19 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, api } from '../api'
 import type { TemplateField } from '../shared/types'
-import { fetchMembers, fetchTicket, uploadMemberAttachment, type MemberRef } from './memberApi'
+import {
+  fetchMembers,
+  fetchTicket,
+  uploadMemberAttachment,
+  type MemberRef,
+  type Me,
+  type TemplateSummary,
+} from './memberApi'
+import { FeedbackRequestPage } from './FeedbackRequestPage'
 import { HandoffPanel } from './HandoffDialog'
 import { Confirm, invalidate, nav, toast } from './ui'
 import { chipClass } from './TicketsPage'
 import { FieldForm, appendRef, missingRequired, type StagedFile } from '../guest/FieldForm'
-
-interface TemplateSummary {
-  key: string
-  name: string
-  kind: string
-  version: number
-  active: boolean
-  preset_labels: string[]
-}
 
 interface TemplateDetail {
   key: string
@@ -38,8 +37,12 @@ interface Created {
   handoff_text?: string
 }
 
+type Filler = 'self' | 'guest'
+
 type Step =
-  | { phase: 'pick' }
+  | { phase: 'who' }
+  | { phase: 'pick'; filler: Filler }
+  | { phase: 'guest'; template: TemplateSummary | null }
   | { phase: 'form'; template: TemplateDetail | null }
   | { phase: 'done'; created: Created; title: string; assignee: string }
 
@@ -50,9 +53,23 @@ async function resolveLabel(q: string): Promise<{ label: string; via: string; al
   return first ? { label: first.label, via: first.via, alias: first.alias } : null
 }
 
-export function NewTicketPage() {
-  const [step, setStep] = useState<Step>({ phase: 'pick' })
+const KIND_TEXT: Record<string, string> = { task: '任务', report: '反馈' }
+
+export function NewTicketPage({
+  me,
+  initialFiller = 'self',
+  onPhaseTitleChange,
+}: {
+  me: Me
+  initialFiller?: Filler
+  onPhaseTitleChange?: (title: string) => void
+}) {
+  const [step, setStep] = useState<Step>(initialFiller === 'guest' ? { phase: 'pick', filler: 'guest' } : { phase: 'who' })
   const [templates, setTemplates] = useState<TemplateSummary[] | null>(null)
+
+  useEffect(() => {
+    onPhaseTitleChange?.(step.phase === 'guest' ? '发链接请人填写' : '建单')
+  }, [step.phase, onPhaseTitleChange])
 
   useEffect(() => {
     if (step.phase !== 'pick' || templates) return
@@ -61,7 +78,13 @@ export function NewTicketPage() {
       .catch(() => setTemplates([]))
   }, [step.phase, templates])
 
-  async function pickTemplate(key: string | null) {
+  async function pickTemplate(summary: TemplateSummary | null) {
+    if (step.phase !== 'pick') return
+    if (step.filler === 'guest') {
+      setStep({ phase: 'guest', template: summary })
+      return
+    }
+    const key = summary?.key ?? null
     if (key === null) {
       setStep({ phase: 'form', template: null })
       return
@@ -74,10 +97,44 @@ export function NewTicketPage() {
     }
   }
 
+  if (step.phase === 'who') {
+    return (
+      <div className="bpage">
+        <div className="mcard create-choice">
+          <h2 className="page-title">建单</h2>
+          <p className="guide">先选这张工单的说明由谁来填写</p>
+          <div className="create-cards">
+            <button type="button" className="create-card" onClick={() => setStep({ phase: 'pick', filler: 'self' })}>
+              <span className="tp-name">✍️ 我自己填</span>
+              <span className="hint">派任务、提需求、问问题：现在就把说明填好，再指派给同事</span>
+              <span className="next">下一步：选模板 →</span>
+            </button>
+            <button type="button" className="create-card" onClick={() => setStep({ phase: 'pick', filler: 'guest' })}>
+              <span className="tp-name">🔗 发链接请人填写</span>
+              <span className="hint">给部门外的人发链接，由对方填写，对方不需要账号</span>
+              <span className="next">下一步：选模板 →</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (step.phase === 'pick') {
     return (
       <div className="bpage">
-        <div className="sec-t">用模板创建（类型由模板决定，字段逐项填写）</div>
+        <div className="mcard template-screen">
+          <button type="button" className="btn ghost back" onClick={() => setStep({ phase: 'who' })}>
+            ← 建单
+          </button>
+          <h2 className="page-title">选一个模板</h2>
+          <span className="badge filler">{step.filler === 'self' ? '我自己填' : '发链接请人填写'}</span>
+          <p className="guide">
+            {step.filler === 'self'
+              ? '按你要做的事选，模板决定要填哪些内容'
+              : '对方会按这个模板的引导来填写'}
+          </p>
+        </div>
         {templates === null ? (
           <div className="ecard">加载中…</div>
         ) : templates.length === 0 ? (
@@ -89,12 +146,13 @@ export function NewTicketPage() {
               className="tplpick"
               role="button"
               tabIndex={0}
-              onClick={() => void pickTemplate(t.key)}
-              onKeyDown={(e) => e.key === 'Enter' && void pickTemplate(t.key)}
+              onClick={() => void pickTemplate(t)}
+              onKeyDown={(e) => e.key === 'Enter' && void pickTemplate(t)}
             >
               <div className="tp-name">
-                {t.name} <span className="badge kind">{t.kind}</span>
+                {t.name} <span className="badge kind">{KIND_TEXT[t.kind] ?? t.kind}</span>
               </div>
+              {t.scenario && <div className="hint">适用：{t.scenario}</div>}
               {t.preset_labels?.length > 0 && (
                 <div className="hint">预设 {t.preset_labels.join('、')}</div>
               )}
@@ -110,9 +168,23 @@ export function NewTicketPage() {
           onKeyDown={(e) => e.key === 'Enter' && void pickTemplate(null)}
         >
           <div className="tp-name">自由格式</div>
-          <div className="hint">适合简单的事：标题 + Markdown 说明，类型自己选（任务 / 反馈）</div>
+          <div className="hint">
+            {step.filler === 'self'
+              ? '适合简单的事：标题 + Markdown 说明，类型自己选（任务 / 反馈）'
+              : '不用模板，对方自由填写，工单类型为反馈'}
+          </div>
         </div>
       </div>
+    )
+  }
+
+  if (step.phase === 'guest') {
+    return (
+      <FeedbackRequestPage
+        me={me}
+        template={step.template}
+        onPickAnother={() => setStep({ phase: 'pick', filler: 'guest' })}
+      />
     )
   }
 
@@ -148,7 +220,7 @@ export function NewTicketPage() {
               <button
                 className="btn ghost"
                 onClick={() => {
-                  setStep({ phase: 'pick' })
+                  setStep({ phase: 'pick', filler: 'self' })
                   window.scrollTo(0, 0)
                 }}
               >

@@ -89,17 +89,12 @@ const BugReport63Markdown = `---
 // （版本历史里可见，修改人留空）；改过的、或不存在的都不动。升级判断自带
 // 幂等：升级后当前版本不再等于旧原文，再次启动不会重复升级。
 func (m *Manager) UpgradePresetBugReport(ctx context.Context) error {
-	var markdown string
-	err := m.db.QueryRowContext(ctx, `
-		SELECT v.markdown
-		FROM templates t
-		JOIN template_versions v ON v.template_key = t.key AND v.version = t.current_version
-		WHERE t.key = ?`, presetBugReportKey).Scan(&markdown)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
+	markdown, known, err := m.currentPresetMarkdown(ctx, presetBugReportKey)
 	if err != nil {
 		return err
+	}
+	if !known {
+		return nil
 	}
 	if markdown != LegacyBugReportMarkdown && markdown != BugReport63Markdown {
 		return nil
@@ -112,17 +107,92 @@ func (m *Manager) UpgradePresetBugReport(ctx context.Context) error {
 // 「Bug 反馈（带数据）」。key 已存在（无论当前内容或停用状态）都不动；
 // 导入后再次启动也不会产生新版本。
 func (m *Manager) ImportPresetBugReportData(ctx context.Context) error {
+	return m.importPresetIfMissing(ctx, "bug-report-data")
+}
+
+// ImportPresetRequest 在已有部署缺少 request 时导入预置的「提需求」（#194）。
+// key 已存在（无论当前内容或停用状态）都不动；导入后再次启动也不会产生新版本。
+func (m *Manager) ImportPresetRequest(ctx context.Context) error {
+	return m.importPresetIfMissing(ctx, "request")
+}
+
+func (m *Manager) importPresetIfMissing(ctx context.Context, key string) error {
 	var known int
 	if err := m.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM templates WHERE key = ?`, "bug-report-data").Scan(&known); err != nil {
+		`SELECT COUNT(*) FROM templates WHERE key = ?`, key).Scan(&known); err != nil {
 		return err
 	}
 	if known > 0 {
 		return nil
 	}
-	_, err := m.Create(ctx, "bug-report-data", seedTemplates["bug-report-data"], identity.Viewer{})
+	_, err := m.Create(ctx, key, seedTemplates[key], identity.Viewer{})
 	if errors.Is(err, ErrKeyTaken) {
 		return nil
 	}
 	return err
+}
+
+// presetScenarioUpgrade 描述一份预置模板的适用场景升级。From 是上线前最后
+// 一版预置原文；只有当前版本与它逐字节一致才升级到 To。
+type presetScenarioUpgrade struct {
+	Key  string
+	From string
+	To   string
+}
+
+// presetScenarioUpgrades 构造 #193 的四份升级：当时的预置原文与新版相比，
+// 只有 YAML 头里多出「适用场景」一行。后续预置模板升级可在同一结构里扩展。
+func presetScenarioUpgrades() []presetScenarioUpgrade {
+	return []presetScenarioUpgrade{
+		{Key: presetBugReportKey, From: LegacyScenarioBugReportMarkdown, To: seedTemplates[presetBugReportKey]},
+		{Key: "bug-report-data", From: LegacyScenarioBugReportDataMarkdown, To: seedTemplates["bug-report-data"]},
+		{Key: "assign-task", From: LegacyScenarioAssignTaskMarkdown, To: seedTemplates["assign-task"]},
+		{Key: "question", From: LegacyScenarioQuestionMarkdown, To: seedTemplates["question"]},
+	}
+}
+
+// UpgradePresetScenarios 给原样的预置模板补上适用场景（#193）。成员改过
+// 的模板与目标版本都不动；升级后当前版本不等于旧原文，重复启动幂等。
+func (m *Manager) UpgradePresetScenarios(ctx context.Context) error {
+	for _, up := range presetScenarioUpgrades() {
+		markdown, known, err := m.currentPresetMarkdown(ctx, up.Key)
+		if err != nil {
+			return err
+		}
+		if !known {
+			continue
+		}
+		if markdown != up.From {
+			continue
+		}
+		var migrated int
+		if err := m.db.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM template_versions WHERE template_key = ? AND markdown = ?`,
+			up.Key, up.To).Scan(&migrated); err != nil {
+			return err
+		}
+		if migrated > 0 {
+			continue
+		}
+		if _, err := m.Update(ctx, up.Key, up.To, identity.Viewer{}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Manager) currentPresetMarkdown(ctx context.Context, key string) (string, bool, error) {
+	var markdown string
+	err := m.db.QueryRowContext(ctx, `
+		SELECT v.markdown
+		FROM templates t
+		JOIN template_versions v ON v.template_key = t.key AND v.version = t.current_version
+		WHERE t.key = ?`, key).Scan(&markdown)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return markdown, true, nil
 }
