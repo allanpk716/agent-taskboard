@@ -27,8 +27,10 @@ test('wide viewport shows sidebar, version and centered main area', async ({ pag
   await sidebar.getByRole('link', { name: '工具' }).click()
   await expect(page).toHaveURL('/tools')
   await expect(page.getByText('标签字典与别名')).toBeVisible()
-  const box = await page.getByRole('main').boundingBox()
-  expect(box!.width).toBeLessThanOrEqual(960)
+  const main = await page.getByRole('main').boundingBox()
+  const centered = await page.locator('.pc-centered').boundingBox()
+  expect(main!.width).toBeGreaterThan(900)
+  expect(centered!.width).toBeLessThanOrEqual(960)
 
   await page.setViewportSize({ width: 900, height: 800 })
   await expect(page).toHaveURL('/tools')
