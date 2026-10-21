@@ -128,6 +128,24 @@ func (m *Manager) ImportPresetBugReportData(ctx context.Context) error {
 	return err
 }
 
+// ImportPresetRequest 在已有部署缺少 request 时导入预置的「提需求」（#194）。
+// key 已存在（无论当前内容或停用状态）都不动；导入后再次启动也不会产生新版本。
+func (m *Manager) ImportPresetRequest(ctx context.Context) error {
+	var known int
+	if err := m.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM templates WHERE key = ?`, "request").Scan(&known); err != nil {
+		return err
+	}
+	if known > 0 {
+		return nil
+	}
+	_, err := m.Create(ctx, "request", seedTemplates["request"], identity.Viewer{})
+	if errors.Is(err, ErrKeyTaken) {
+		return nil
+	}
+	return err
+}
+
 // presetScenarioUpgrade 描述一份预置模板的适用场景升级。From 是上线前最后
 // 一版预置原文；只有当前版本与它逐字节一致才升级到 To。
 type presetScenarioUpgrade struct {

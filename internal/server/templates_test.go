@@ -56,8 +56,8 @@ type templateBody struct {
 	UpdatedBy    *authorBody         `json:"updated_by"`
 }
 
-// 上线时预置四份模板（spec 用户故事 36 + #154）：两份 Bug 反馈（预设
-// 待初筛）、分配任务、问题咨询。列表对成员和成员 Agent 都开放。
+// 上线时预置五份模板（spec 用户故事 36 + #154 + #194）：两份 Bug 反馈（预设
+// 待初筛）、分配任务、提需求、问题咨询。列表对成员和成员 Agent 都开放。
 func Test预置模板(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")
@@ -70,8 +70,8 @@ func Test预置模板(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("列表状态码 = %d, 想 200", res.StatusCode)
 	}
-	if len(list.Templates) != 4 {
-		t.Fatalf("预置模板数 = %d, 想 4：%+v", len(list.Templates), list.Templates)
+	if len(list.Templates) != 5 {
+		t.Fatalf("预置模板数 = %d, 想 5：%+v", len(list.Templates), list.Templates)
 	}
 	byKey := map[string]templateSummary{}
 	for _, tpl := range list.Templates {
@@ -96,12 +96,15 @@ func Test预置模板(t *testing.T) {
 	if q := byKey["question"]; q.Name != "问题咨询" || q.Kind != "task" {
 		t.Errorf("question 不对：%+v", q)
 	}
+	if req := byKey["request"]; req.Name != "提需求" || req.Kind != "task" {
+		t.Errorf("request 不对：%+v", req)
+	}
 
 	// 成员 Agent 也能读模板（spec 用户故事 51）。
 	_, token := s.IssueAgentToken(t, web, "笔记本")
 	res = s.Do(t, s.AgentClient(token), http.MethodGet, "/api/v1/templates", nil, &list)
-	if res.StatusCode != http.StatusOK || len(list.Templates) != 4 {
-		t.Fatalf("Agent 读模板列表状态码 = %d, 数量 = %d, 想 200 / 4", res.StatusCode, len(list.Templates))
+	if res.StatusCode != http.StatusOK || len(list.Templates) != 5 {
+		t.Fatalf("Agent 读模板列表状态码 = %d, 数量 = %d, 想 200 / 5", res.StatusCode, len(list.Templates))
 	}
 }
 

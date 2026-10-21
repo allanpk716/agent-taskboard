@@ -106,6 +106,7 @@ func Test新库预置模板带适用场景(t *testing.T) {
 
 	want := map[string]string{
 		"assign-task":     "你已经想清楚要交付什么、怎么做，请对方照着完成",
+		"request":         "你清楚问题、手上的输入和想要的效果，怎么做交给对方决定",
 		"question":        "只想得到一个答案或结论，不需要交付物",
 		"bug-report":      "仪器或软件坏了、行为不对",
 		"bug-report-data": "仪器或软件坏了、行为不对；需要用成对的正确、错误例子复现",
@@ -125,6 +126,50 @@ func Test新库预置模板带适用场景(t *testing.T) {
 		if got[key] != scenario {
 			t.Errorf("%s 的适用场景 = %q, 想 %q", key, got[key], scenario)
 		}
+	}
+}
+
+func Test新库预置提需求模板(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+
+	var got templateBody
+	res := s.Do(t, web, http.MethodGet, "/api/v1/templates/request", nil, &got)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("读提需求模板状态码 = %d", res.StatusCode)
+	}
+	if got.Name != "提需求" || got.Kind != "task" {
+		t.Errorf("模板头不对：%+v", got)
+	}
+	if got.Scenario != "你清楚问题、手上的输入和想要的效果，怎么做交给对方决定" {
+		t.Errorf("适用场景 = %q", got.Scenario)
+	}
+	wantRequired := map[string]bool{
+		"为什么要做？有什么背景？":          true,
+		"输入是什么？":                true,
+		"期望得到什么输出？":             true,
+		"怎样算满足？验收标准或可参考的范例（竞品）": true,
+		"期望什么时候完成？":             false,
+		"补充":                    false,
+	}
+	if len(got.Fields) != len(wantRequired) {
+		t.Fatalf("字段数 = %d, 想 %d：%+v", len(got.Fields), len(wantRequired), got.Fields)
+	}
+	for _, field := range got.Fields {
+		want, ok := wantRequired[field.Key]
+		if !ok {
+			t.Fatalf("意外字段 %q：%+v", field.Key, got.Fields)
+		}
+		if field.Required != want {
+			t.Errorf("字段 %q required = %v, 想 %v", field.Key, field.Required, want)
+		}
+		if field.Guide == "" || field.Example == "" {
+			t.Errorf("字段 %q 应有引导和示例：%+v", field.Key, field)
+		}
+	}
+	if got.AgentNote == "" {
+		t.Error("提需求应预置「给 Agent 的说明」")
 	}
 }
 
@@ -204,6 +249,72 @@ func Test预置模板适用场景一次性升级(t *testing.T) {
 	}
 }
 
+func Test提需求模板一次性升级(t *testing.T) {
+	t.Run("缺 request 时导入且重复启动不新增版本", func(t *testing.T) {
+		s := tbtest.Start(t)
+		s.CreateAdmin("陈工", "secret-pass")
+		web := s.Login("陈工", "secret-pass")
+
+		oldMarkdown := map[string]string{}
+		for _, key := range []string{"assign-task", "question", "bug-report", "bug-report-data"} {
+			var current templateBody
+			res := s.Do(t, web, http.MethodGet, "/api/v1/templates/"+key, nil, &current)
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("读取种子模板 %s 状态码 = %d", key, res.StatusCode)
+			}
+			oldMarkdown[key] = removeScenarioLine(current.Markdown)
+		}
+		setPresetCurrentBeforeScenario(t, s, oldMarkdown)
+		if _, err := s.Store().DB.Exec(`DELETE FROM template_versions WHERE template_key = 'request'`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Store().DB.Exec(`DELETE FROM templates WHERE key = 'request'`); err != nil {
+			t.Fatal(err)
+		}
+
+		url := restartServer(t, s)
+		var request templateBody
+		res := doURL(t, web, http.MethodGet, url+"/api/v1/templates/request", nil, &request)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("升级后读 request 状态码 = %d", res.StatusCode)
+		}
+		if request.Version != 1 || request.Kind != "task" || request.Scenario != "你清楚问题、手上的输入和想要的效果，怎么做交给对方决定" {
+			t.Errorf("导入的 request 不对：%+v", request)
+		}
+
+		url2 := restartServer(t, s)
+		var versions struct {
+			Versions []struct{ Version int64 } `json:"versions"`
+		}
+		doURL(t, web, http.MethodGet, url2+"/api/v1/templates/request/versions", nil, &versions)
+		if len(versions.Versions) != 1 || versions.Versions[0].Version != 1 {
+			t.Errorf("重复启动后 request 版本链 = %+v, 想 [1]", versions.Versions)
+		}
+	})
+
+	t.Run("成员改过的 request 不动", func(t *testing.T) {
+		s := tbtest.Start(t)
+		s.CreateAdmin("陈工", "secret-pass")
+		web := s.Login("陈工", "secret-pass")
+
+		var current templateBody
+		s.Do(t, web, http.MethodGet, "/api/v1/templates/request", nil, &current)
+		modified := strings.Replace(current.Markdown, "## 补充\n", "## 其他补充\n", 1)
+		res := s.Do(t, web, http.MethodPatch, "/api/v1/templates/request",
+			map[string]string{"markdown": modified}, nil)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("修改 request 状态码 = %d", res.StatusCode)
+		}
+
+		url := restartServer(t, s)
+		var got templateBody
+		doURL(t, web, http.MethodGet, url+"/api/v1/templates/request", nil, &got)
+		if got.Version != 2 || !strings.Contains(got.Markdown, "## 其他补充\n") {
+			t.Errorf("成员改过的 request 不应升级：version=%d markdown=%s", got.Version, got.Markdown)
+		}
+	})
+}
+
 func TestAgent说明书说明怎么选模板(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")
@@ -221,6 +332,8 @@ func TestAgent说明书说明怎么选模板(t *testing.T) {
 		"先看各模板的适用场景",
 		"发起人自己想不想定怎么做？",
 		"已经想清楚交付物和做法的用分配任务",
+		"只清楚问题、输入和想要的效果，做法交给接收人的用提需求",
+		"提需求不要求发起人写怎么做，分配任务要求发起人写清交付物和做法",
 		"只想要答案的用问题咨询",
 		"东西坏了的用 Bug 反馈",
 		"拿不准时用回复问发起人",
@@ -228,9 +341,6 @@ func TestAgent说明书说明怎么选模板(t *testing.T) {
 		if !strings.Contains(string(guide), want) {
 			t.Errorf("Agent 说明书缺少 %q：\n%s", want, guide)
 		}
-	}
-	if strings.Contains(string(guide), "提需求") {
-		t.Error("提需求由 #194 补充，本票不应写进选模板规则")
 	}
 }
 

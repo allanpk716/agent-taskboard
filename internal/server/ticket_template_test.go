@@ -93,6 +93,62 @@ func Test用模板建单类型标签与说明(t *testing.T) {
 	}
 }
 
+// 「提需求」是任务类型下的一份模板：建单仍走模板工单规则，带访客链接时
+// 类型同样由模板决定，说明留给访客补。
+func Test提需求模板能建任务并支持访客链接(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+
+	res := createFromTemplate(t, s, web, map[string]any{
+		"template": "request",
+		"title":    "整理 Q3 质控规则对照表",
+		"fields": map[string]string{
+			"为什么要做？有什么背景？":          "Q3 新增规则散落在多份发布说明里，新人查规则容易漏看。",
+			"输入是什么？":                "Q3 两份发布说明和旧规则表。",
+			"期望得到什么输出？":             "一张可直接查询的规则对照表。",
+			"怎样算满足？验收标准或可参考的范例（竞品）": "覆盖 Q3 全部新规则，每条写清适用机型。",
+		},
+		"labels": []string{"机型:UD-2300"},
+	})
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("提需求建单状态码 = %d, 想 201", res.StatusCode)
+	}
+	var created createTicketResponse
+	tbtest.DecodeJSON(t, res, &created)
+	if len(created.Warnings) != 0 {
+		t.Errorf("必填全填时不应有 warnings：%+v", created.Warnings)
+	}
+	var got ticketResponseBody
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+created.Number, nil, &got)
+	if got.Kind != "task" || got.Template == nil || *got.Template != "request" {
+		t.Errorf("提需求建单应为 task/request：kind=%q template=%v", got.Kind, got.Template)
+	}
+
+	res = createWithGuestLink(t, s, web, map[string]any{
+		"template": "request",
+		"title":    "请检验科补充 Q3 规则需求",
+		"fields":   map[string]string{},
+		"labels":   []string{},
+		"guest_link": map[string]any{
+			"note":           "检验科-张三",
+			"can_edit_brief": true,
+		},
+	})
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("提需求带 guest_link 建单状态码 = %d, 想 201", res.StatusCode)
+	}
+	var guestCreated feedbackCreateResponse
+	tbtest.DecodeJSON(t, res, &guestCreated)
+	if guestCreated.GuestLink == nil || guestCreated.GuestLink.URL == "" {
+		t.Fatalf("响应缺少 guest_link：%+v", guestCreated.GuestLink)
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+guestCreated.Number, nil, &got)
+	if got.Kind != "task" || got.Template == nil || *got.Template != "request" {
+		t.Errorf("guest_link 建单应为 task/request：kind=%q template=%v", got.Kind, got.Template)
+	}
+}
+
 // 用模板建单时缺少必填项：工单照常创建，响应只带 warnings 逐项列出
 // （验收标准；「不确定」算已填）。
 func Test缺必填项只得到warnings工单照常创建(t *testing.T) {
