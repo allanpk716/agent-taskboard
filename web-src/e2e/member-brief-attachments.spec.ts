@@ -13,7 +13,7 @@ test('建单暂存的附件进入整单附件条，不写进说明', async ({ pa
   await login(page, ADMIN)
   await page.locator('.b-tabs').getByRole('link', { name: '建单' }).click()
   await page.getByRole('button', { name: /我自己填/ }).click()
-  await page.getByRole('button', { name: /^Bug 反馈 report/ }).click()
+  await page.getByRole('button', { name: /^Bug 反馈 反馈/ }).click()
 
   await page.getByLabel('标题').fill('建单暂存整单附件')
   const dim = page.getByRole('combobox', { name: '哪台仪器？' })
@@ -42,7 +42,7 @@ test('建单时字段内附件留在字段下，不进整张工单的附件', as
   await login(page, ADMIN)
   await page.locator('.b-tabs').getByRole('link', { name: '建单' }).click()
   await page.getByRole('button', { name: /我自己填/ }).click()
-  await page.getByRole('button', { name: /^Bug 反馈 report/ }).click()
+  await page.getByRole('button', { name: /^Bug 反馈 反馈/ }).click()
 
   await page.getByLabel('标题').fill('字段附件与整单附件各归各位')
   const dim = page.getByRole('combobox', { name: '哪台仪器？' })

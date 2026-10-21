@@ -229,7 +229,7 @@ async function runFullUseCase(
     : page.getByRole('navigation', { name: '侧栏' }).getByRole('link', { name: '＋ 建单' })
   await feedbackEntry.click()
   await page.getByRole('button', { name: /发链接请人填写/ }).click()
-  await page.locator('.tplpick', { hasText: 'Bug 反馈 report' }).click()
+  await page.getByRole('button', { name: /^Bug 反馈 反馈/ }).click()
   await expect(page.getByLabel('请谁填写')).toBeVisible()
   await page.getByLabel('请谁填写').fill('检验科-张三')
   await page.getByLabel('什么事').fill('完整用例：UD-2300 质控报 E-203')

@@ -149,9 +149,6 @@ func parseHeader(lines []string) (Definition, error) {
 				}
 			}
 		case "适用场景":
-			if val == "" {
-				return Definition{}, parseErr(line, "适用场景不能为空；不写就删掉这一行")
-			}
 			def.Scenario = val
 		default:
 			return Definition{}, parseErr(line, "YAML 头里没有 %q 这个键（可用：名称、类型、适用场景、预设标签）", key)

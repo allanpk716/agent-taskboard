@@ -9,6 +9,7 @@ import (
 
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
 	"github.com/allanpk716/agent-taskboard/internal/template"
+	templatespkg "github.com/allanpk716/agent-taskboard/internal/templates"
 )
 
 const scenarioTemplate = `---
@@ -178,14 +179,11 @@ func Test预置模板适用场景一次性升级(t *testing.T) {
 	s.CreateAdmin("陈工", "secret-pass")
 	web := s.Login("陈工", "secret-pass")
 
-	oldMarkdown := map[string]string{}
-	for _, key := range []string{"assign-task", "question", "bug-report", "bug-report-data"} {
-		var current templateBody
-		res := s.Do(t, web, http.MethodGet, "/api/v1/templates/"+key, nil, &current)
-		if res.StatusCode != http.StatusOK {
-			t.Fatalf("读取种子模板 %s 状态码 = %d", key, res.StatusCode)
-		}
-		oldMarkdown[key] = removeScenarioLine(current.Markdown)
+	oldMarkdown := map[string]string{
+		"assign-task":     templatespkg.LegacyScenarioAssignTaskMarkdown,
+		"question":        templatespkg.LegacyScenarioQuestionMarkdown,
+		"bug-report":      templatespkg.LegacyScenarioBugReportMarkdown,
+		"bug-report-data": templatespkg.LegacyScenarioBugReportDataMarkdown,
 	}
 	oldMarkdown["assign-task"] = strings.Replace(
 		oldMarkdown["assign-task"], "要达成什么目标？", "要达成目标？", 1)
@@ -249,20 +247,51 @@ func Test预置模板适用场景一次性升级(t *testing.T) {
 	}
 }
 
+func Test适用场景升级后成员删除不再补回(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+
+	setPresetCurrentBeforeScenario(t, s, map[string]string{
+		"assign-task":     templatespkg.LegacyScenarioAssignTaskMarkdown,
+		"question":        templatespkg.LegacyScenarioQuestionMarkdown,
+		"bug-report":      templatespkg.LegacyScenarioBugReportMarkdown,
+		"bug-report-data": templatespkg.LegacyScenarioBugReportDataMarkdown,
+	})
+	restartServer(t, s)
+
+	res := s.Do(t, web, http.MethodPatch, "/api/v1/templates/question",
+		map[string]string{"markdown": templatespkg.LegacyScenarioQuestionMarkdown}, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("成员删除适用场景后保存状态码 = %d", res.StatusCode)
+	}
+
+	url := restartServer(t, s)
+	var got templateBody
+	doURL(t, web, http.MethodGet, url+"/api/v1/templates/question", nil, &got)
+	if got.Version != 3 || got.Scenario != "" || got.Markdown != templatespkg.LegacyScenarioQuestionMarkdown {
+		t.Fatalf("重启后不应补回适用场景：version=%d scenario=%q markdown=%q", got.Version, got.Scenario, got.Markdown)
+	}
+	var versions struct {
+		Versions []struct{ Version int64 } `json:"versions"`
+	}
+	doURL(t, web, http.MethodGet, url+"/api/v1/templates/question/versions", nil, &versions)
+	if len(versions.Versions) != 3 {
+		t.Fatalf("重启后版本数 = %d, 想 3", len(versions.Versions))
+	}
+}
+
 func Test提需求模板一次性升级(t *testing.T) {
 	t.Run("缺 request 时导入且重复启动不新增版本", func(t *testing.T) {
 		s := tbtest.Start(t)
 		s.CreateAdmin("陈工", "secret-pass")
 		web := s.Login("陈工", "secret-pass")
 
-		oldMarkdown := map[string]string{}
-		for _, key := range []string{"assign-task", "question", "bug-report", "bug-report-data"} {
-			var current templateBody
-			res := s.Do(t, web, http.MethodGet, "/api/v1/templates/"+key, nil, &current)
-			if res.StatusCode != http.StatusOK {
-				t.Fatalf("读取种子模板 %s 状态码 = %d", key, res.StatusCode)
-			}
-			oldMarkdown[key] = removeScenarioLine(current.Markdown)
+		oldMarkdown := map[string]string{
+			"assign-task":     templatespkg.LegacyScenarioAssignTaskMarkdown,
+			"question":        templatespkg.LegacyScenarioQuestionMarkdown,
+			"bug-report":      templatespkg.LegacyScenarioBugReportMarkdown,
+			"bug-report-data": templatespkg.LegacyScenarioBugReportDataMarkdown,
 		}
 		setPresetCurrentBeforeScenario(t, s, oldMarkdown)
 		if _, err := s.Store().DB.Exec(`DELETE FROM template_versions WHERE template_key = 'request'`); err != nil {
@@ -342,20 +371,6 @@ func TestAgent说明书说明怎么选模板(t *testing.T) {
 			t.Errorf("Agent 说明书缺少 %q：\n%s", want, guide)
 		}
 	}
-}
-
-// removeScenarioLine 构造本功能上线前的预置原文：当前种子里只有 YAML 头多了
-// 一行「适用场景: …」，其余逐字节不变。
-func removeScenarioLine(markdown string) string {
-	lines := strings.Split(markdown, "\n")
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if strings.HasPrefix(line, "适用场景:") {
-			continue
-		}
-		out = append(out, line)
-	}
-	return strings.Join(out, "\n")
 }
 
 func setPresetCurrentBeforeScenario(t *testing.T, s *tbtest.Server, markdowns map[string]string) {

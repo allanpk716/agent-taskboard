@@ -37,9 +37,11 @@ interface Created {
   handoff_text?: string
 }
 
+type Filler = 'self' | 'guest'
+
 type Step =
   | { phase: 'who' }
-  | { phase: 'pick'; filler: 'self' | 'guest' }
+  | { phase: 'pick'; filler: Filler }
   | { phase: 'guest'; template: TemplateSummary | null }
   | { phase: 'form'; template: TemplateDetail | null }
   | { phase: 'done'; created: Created; title: string; assignee: string }
@@ -51,9 +53,23 @@ async function resolveLabel(q: string): Promise<{ label: string; via: string; al
   return first ? { label: first.label, via: first.via, alias: first.alias } : null
 }
 
-export function NewTicketPage({ me, initialFiller = 'self' }: { me: Me; initialFiller?: 'self' | 'guest' }) {
+const KIND_TEXT: Record<string, string> = { task: '任务', report: '反馈' }
+
+export function NewTicketPage({
+  me,
+  initialFiller = 'self',
+  onPhaseTitleChange,
+}: {
+  me: Me
+  initialFiller?: Filler
+  onPhaseTitleChange?: (title: string) => void
+}) {
   const [step, setStep] = useState<Step>(initialFiller === 'guest' ? { phase: 'pick', filler: 'guest' } : { phase: 'who' })
   const [templates, setTemplates] = useState<TemplateSummary[] | null>(null)
+
+  useEffect(() => {
+    onPhaseTitleChange?.(step.phase === 'guest' ? '发链接请人填写' : '建单')
+  }, [step.phase, onPhaseTitleChange])
 
   useEffect(() => {
     if (step.phase !== 'pick' || templates) return
@@ -134,7 +150,7 @@ export function NewTicketPage({ me, initialFiller = 'self' }: { me: Me; initialF
               onKeyDown={(e) => e.key === 'Enter' && void pickTemplate(t)}
             >
               <div className="tp-name">
-                {t.name} <span className="badge kind">{t.kind}</span>
+                {t.name} <span className="badge kind">{KIND_TEXT[t.kind] ?? t.kind}</span>
               </div>
               {t.scenario && <div className="hint">适用：{t.scenario}</div>}
               {t.preset_labels?.length > 0 && (
@@ -152,7 +168,11 @@ export function NewTicketPage({ me, initialFiller = 'self' }: { me: Me; initialF
           onKeyDown={(e) => e.key === 'Enter' && void pickTemplate(null)}
         >
           <div className="tp-name">自由格式</div>
-          <div className="hint">适合简单的事：标题 + Markdown 说明，类型自己选（任务 / 反馈）</div>
+          <div className="hint">
+            {step.filler === 'self'
+              ? '适合简单的事：标题 + Markdown 说明，类型自己选（任务 / 反馈）'
+              : '不用模板，对方自由填写，工单类型为反馈'}
+          </div>
         </div>
       </div>
     )

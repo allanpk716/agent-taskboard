@@ -39,6 +39,8 @@ export function FeedbackRequestPage({
   const [members, setMembers] = useState<MemberRef[]>([])
   const [submitErr, setSubmitErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // 同一次「生成链接」动作复用同一个 Idempotency-Key：网络失败/5xx 自动重试
+  // 不会建出第二张单（照 NewTicketPage 的做法，ADR 0002）。
   const idemKeyRef = useRef<string | undefined>(undefined)
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 

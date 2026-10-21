@@ -408,7 +408,7 @@ test('建单（模板）：缺必填项弹出确认，仍创建后逐项提示',
   await page.getByRole('button', { name: /我自己填/ }).click()
 
   // 第一步：选模板「Bug 反馈」
-  const bugTemplate = page.getByRole('button', { name: /Bug 反馈 report/ })
+  const bugTemplate = page.getByRole('button', { name: /^Bug 反馈 反馈/ })
   await expect(bugTemplate).toContainText('适用：仪器或软件坏了、行为不对')
   await bugTemplate.click()
   await expect(page.getByText('哪台仪器？')).toBeVisible()

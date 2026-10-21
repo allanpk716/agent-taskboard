@@ -19,16 +19,16 @@ import { detailListSource } from './listFilters'
 import { nav, useLocationSearch, useNavSeq, useRoute, type Route } from './ui'
 import { useLayoutTier } from './useLayoutTier'
 
-function pageTitle(route: Route): string {
+function pageTitle(route: Route, newTicketTitle: string): string {
   switch (route.page) {
     case 'inbox':
       return '收件箱'
     case 'tickets':
       return '工单'
     case 'new':
-      return '建单'
+      return newTicketTitle
     case 'feedback':
-      return '建单'
+      return newTicketTitle
     case 'detail':
       return '工单'
     case 'tools':
@@ -53,6 +53,7 @@ export function MemberApp() {
   const [denied, setDenied] = useState(false)
   const [inboxCount, setInboxCount] = useState(0)
   const [serverVersion, setServerVersion] = useState<string | undefined>()
+  const [newTicketTitle, setNewTicketTitle] = useState('建单')
 
   useEffect(() => {
     fetchSession()
@@ -115,7 +116,12 @@ export function MemberApp() {
       {route.page === 'inbox' && <InboxPage key={route.page} />}
       {route.page === 'tickets' && <TicketsPage key={route.page} me={me} />}
       {(route.page === 'new' || route.page === 'feedback') && (
-        <NewTicketPage key={navSeq} me={me} initialFiller={route.page === 'feedback' ? 'guest' : 'self'} />
+        <NewTicketPage
+          key={navSeq}
+          me={me}
+          initialFiller={route.page === 'feedback' ? 'guest' : 'self'}
+          onPhaseTitleChange={setNewTicketTitle}
+        />
       )}
       {route.page === 'detail' && (
         <TicketDetailPage key={navSeq} ticketRef={route.ref} me={me} returnTo={detailReturnTo} />
@@ -238,7 +244,7 @@ export function MemberApp() {
     <main className="member-root">
       <div className="b-app">
         <header className="b-top">
-          <h1 className="b-title">{pageTitle(route)}</h1>
+          <h1 className="b-title">{pageTitle(route, newTicketTitle)}</h1>
           {bell}
           <div className="b-me">
             {me.name}
