@@ -1,20 +1,14 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
-import { ADMIN, login, loginAdmin, openGuestPage } from './helpers'
+import { ADMIN, createTicket, login, loginAdmin, openGuestPage } from './helpers'
 
 async function seedGuestLink(
   request: APIRequestContext,
   opts: { canEditBrief?: boolean } = {},
 ): Promise<string> {
-  await loginAdmin(request)
-  const created = await request.post('/api/v1/tickets', {
-    data: {
-      title: '主区域布局检查工单',
-      brief_md: '用于检查访客端根元素布局。',
-      labels: ['机型:UD-2300'],
-    },
+  const number = await createTicket(request, {
+    title: '主区域布局检查工单',
+    brief: '用于检查访客端根元素布局。',
   })
-  expect(created.status(), `建访客工单失败：${await created.text()}`).toBe(201)
-  const number = (await created.json()).number as string
   const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
     data: {
       note: '检验科-张三',
@@ -40,15 +34,15 @@ async function seedIntakeSlug(request: APIRequestContext): Promise<string> {
   return (await created.json()).slug as string
 }
 
-async function expectPlainMain(page: Page): Promise<void> {
+async function expectPlainMain(page: Page, minWidth = 900): Promise<void> {
   const main = page.getByRole('main')
   const box = await main.boundingBox()
-  expect(box?.width).toBeGreaterThan(900)
+  expect(box?.width).toBeGreaterThan(minWidth)
   await expect(main).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
   await expect(main).toHaveCSS('box-shadow', 'none')
 }
 
-test('PC member pages do not inherit the login card', async ({ page }) => {
+test('PC 成员页不继承登录卡片', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await login(page, ADMIN)
 
@@ -79,7 +73,28 @@ test('PC member pages do not inherit the login card', async ({ page }) => {
   await expectPlainMain(page)
 })
 
-test('mobile guest roots fill the viewport', async ({ page, request }) => {
+test('PC 窄屏列表不变成 640px 卡片', async ({ page, request }) => {
+  await createTicket(request, { title: '窄屏主区域布局检查工单' })
+  await page.setViewportSize({ width: 1104, height: 900 })
+  await login(page, ADMIN)
+  await page.goto('/tickets')
+  await expect(page.getByRole('link', { name: '窄屏主区域布局检查工单' })).toBeVisible()
+  await expectPlainMain(page, 640)
+})
+
+test('1440 宽建单页没有多余的纵向滚动', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await login(page, ADMIN)
+  await page.goto('/new')
+  await expect(page.getByRole('heading', { name: '建单' })).toBeVisible()
+  const overflow = await page.evaluate(() => {
+    const el = document.documentElement
+    return el.scrollHeight - el.clientHeight
+  })
+  expect(overflow).toBeLessThanOrEqual(1)
+})
+
+test('手机访客根元素铺满屏幕', async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   const readonlyKey = await seedGuestLink(request)
   const editableKey = await seedGuestLink(request, { canEditBrief: true })
@@ -107,7 +122,7 @@ test('mobile guest roots fill the viewport', async ({ page, request }) => {
   }
 })
 
-test('login and client connect keep their centered card', async ({ page, request }) => {
+test('登录页和客户端连接页保留居中卡片', async ({ page, request }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await request.post('/api/v1/session', { data: ADMIN })
   const cookies = (await request.storageState()).cookies
@@ -124,7 +139,7 @@ test('login and client connect keep their centered card', async ({ page, request
   }
 })
 
-test('feedback template back link matches the create-flow back style', async ({ page }) => {
+test('反馈模板返回链接与建单返回样式一致', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await login(page, ADMIN)
 
@@ -132,16 +147,22 @@ test('feedback template back link matches the create-flow back style', async ({ 
   await page.getByRole('button', { name: /我自己填/ }).click()
   const pickStyle = await page.getByRole('button', { name: '← 建单' }).evaluate((el) => {
     const s = getComputedStyle(el)
-    return [s.color, s.textDecorationLine, s.fontSize, s.backgroundColor, s.borderWidth] as const
+    return {
+      color: s.color,
+      textDecorationLine: s.textDecorationLine,
+      fontSize: s.fontSize,
+      backgroundColor: s.backgroundColor,
+      borderWidth: s.borderWidth,
+    }
   })
   await page.goto('/feedback')
   await page.locator('.tplpick').first().click()
   await expect(page.getByRole('link', { name: '← 换一个模板' })).toBeVisible()
 
   const feedback = page.getByRole('link', { name: '← 换一个模板' })
-  await expect(feedback).toHaveCSS('color', pickStyle[0])
-  await expect(feedback).toHaveCSS('text-decoration-line', pickStyle[1])
-  await expect(feedback).toHaveCSS('font-size', pickStyle[2])
-  await expect(feedback).toHaveCSS('background-color', pickStyle[3])
-  await expect(feedback).toHaveCSS('border-width', pickStyle[4])
+  await expect(feedback).toHaveCSS('color', pickStyle.color)
+  await expect(feedback).toHaveCSS('text-decoration-line', pickStyle.textDecorationLine)
+  await expect(feedback).toHaveCSS('font-size', pickStyle.fontSize)
+  await expect(feedback).toHaveCSS('background-color', pickStyle.backgroundColor)
+  await expect(feedback).toHaveCSS('border-width', pickStyle.borderWidth)
 })

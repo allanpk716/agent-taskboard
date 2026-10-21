@@ -70,13 +70,13 @@ export async function openGuestPage(
 /** 用管理员会话建一张自由格式工单（可指派），返回编号。 */
 export async function createTicket(
   request: APIRequestContext,
-  opts: { title: string; labels?: string[]; assignee?: string } = { title: '测试工单' },
+  opts: { title: string; brief?: string; labels?: string[]; assignee?: string } = { title: '测试工单' },
 ): Promise<string> {
   await loginAdmin(request)
   const res = await request.post('/api/v1/tickets', {
     data: {
       title: opts.title,
-      brief_md: `${opts.title} 的说明。`,
+      brief_md: opts.brief ?? `${opts.title} 的说明。`,
       labels: opts.labels ?? ['机型:UD-2300'],
       ...(opts.assignee ? { assignee: opts.assignee } : {}),
     },

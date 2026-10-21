@@ -229,7 +229,7 @@
 .pc-detail {
   flex: 1;
   min-width: 0;
-  background: #fff;
+  background: transparent;
   height: 100vh;
   box-sizing: border-box;
   overflow-y: auto;

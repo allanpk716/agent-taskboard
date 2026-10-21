@@ -1,8 +1,11 @@
 import { expect, test, type APIRequestContext, type Locator } from '@playwright/test'
-import { ADMIN, login, loginAdmin, openGuestPage } from './helpers'
+import { ADMIN, createTicket, login, openGuestPage } from './helpers'
 
 const UNC_IN_TABLE = '\\\\fake-nas\\share\\交接资料.xlsx'
-const BARE_UNC = '\\\\fake-nas\\share\\现场日志'
+const BARE_UNC = '\\\\fake-nas\\share\\现场 日志'
+const NESTED_BARE_UNC = '\\\\fake-nas\\share\\缩进子列表 资料'
+const SECOND_BARE_UNC = '\\\\fake-nas\\share\\第二条路径'
+const INLINE_UNC_WITH_SPACE = '\\\\fake-nas\\共享 文件\\交接报告'
 const BRIEF = [
   '## 需要跟进的资料',
   '',
@@ -18,15 +21,21 @@ const BRIEF = [
   '处理顺序：',
   '1. 先核对交接报告',
   '   - 注意试剂批次',
+  `    - 交接资料：${NESTED_BARE_UNC}`,
   '   - 记录核对人',
   '2. 再联系值班同事',
+  '',
   '单个换行也保留。',
   '第二行仍在同一段落。',
   '',
   '[外部说明](https://example.com/gfm) 和 https://example.com/auto 都要打开。',
+  '自动链接：<https://example.com/angle>',
   '[危险链接](javascript:alert(1)) 不可点击。',
   '<script>window.markdownXss = true</script>',
   '<img src=x onerror="window.markdownXss = true">',
+  '',
+  `两个路径：${NESTED_BARE_UNC} 和 ${SECOND_BARE_UNC}`,
+  `反引号 UNC：\`${INLINE_UNC_WITH_SPACE}\`；普通行内代码：\`copy \\\\fake-nas\\share now\``,
 ].join('\n')
 
 async function upload(request: APIRequestContext, number: string) {
@@ -40,12 +49,10 @@ async function upload(request: APIRequestContext, number: string) {
 }
 
 async function seed(request: APIRequestContext) {
-  await loginAdmin(request)
-  const created = await request.post('/api/v1/tickets', {
-    data: { title: '按完整 GFM 渲染工单正文', brief_md: '占位', labels: ['机型:UD-2300'] },
+  const number = await createTicket(request, {
+    title: '按完整 GFM 渲染工单正文',
+    brief: '占位',
   })
-  expect(created.status(), `建单失败：${await created.text()}`).toBe(201)
-  const number = (await created.json()).number
   const att = await upload(request, number)
   const brief = await request.patch(`/api/v1/tickets/${number}`, {
     data: {
@@ -86,12 +93,17 @@ async function assertMarkdown(root: Locator, attachmentUrl: string) {
   await expect(table.locator('thead')).toContainText('路径')
   await expect(table.locator('tbody tr')).toHaveCount(2)
   await expect(root.locator('pre')).toContainText('Get-Content')
-  await expect(root.locator('ol > li').filter({ hasText: '先核对交接报告' }).locator('ul > li')).toHaveCount(2)
-  await expect(root.getByText('单个换行也保留。')).toBeVisible()
+  await expect(root.locator('ol > li').filter({ hasText: '先核对交接报告' }).locator('ul > li')).toHaveCount(3)
+  const paragraph = root
+    .locator('p', { hasText: '单个换行也保留。' })
+    .filter({ hasText: '第二行仍在同一段落。' })
+  await expect(paragraph).toContainText('第二行仍在同一段落。')
+  await expect(paragraph.locator('br')).toHaveCount(1)
   const external = root.getByRole('link', { name: '外部说明' })
   await expect(external).toHaveAttribute('target', '_blank')
   await expect(external).toHaveAttribute('rel', /noopener/)
   await expect(root.getByRole('link', { name: 'https://example.com/auto' })).toHaveAttribute('target', '_blank')
+  await expect(root.getByRole('link', { name: 'https://example.com/angle' })).toHaveAttribute('target', '_blank')
   const att = root.getByRole('link', { name: '附件资料' })
   await expect(att).toHaveAttribute('href', attachmentUrl)
   await expect(root.getByRole('link', { name: '危险链接' })).toHaveCount(0)
@@ -101,6 +113,11 @@ async function assertMarkdown(root: Locator, attachmentUrl: string) {
   await expect(root.getByText('<img src=x onerror="window.markdownXss = true">')).toBeVisible()
   await expect(root.locator('.unc', { hasText: UNC_IN_TABLE }).getByRole('button', { name: '复制路径' })).toBeVisible()
   await expect(root.locator('.unc', { hasText: BARE_UNC }).getByRole('button', { name: '复制路径' })).toBeVisible()
+  await expect(root.locator('.unc', { hasText: NESTED_BARE_UNC }).getByRole('button', { name: '复制路径' })).toHaveCount(2)
+  await expect(root.locator('.unc', { hasText: SECOND_BARE_UNC }).getByRole('button', { name: '复制路径' })).toBeVisible()
+  await expect(root.locator('.unc', { hasText: INLINE_UNC_WITH_SPACE }).getByRole('button', { name: '复制路径' })).toBeVisible()
+  await expect(root.locator('code', { hasText: 'copy \\\\fake-nas\\share now' })).toBeVisible()
+  await expect(root.locator('code', { hasText: 'copy \\\\fake-nas\\share now' }).locator('xpath=ancestor::span[@class="unc"][1]')).toHaveCount(0)
 }
 
 test('成员端和访客端都按完整 GFM 渲染说明与回复', async ({ page, browser, request }) => {
