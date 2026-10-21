@@ -79,7 +79,12 @@ test('PC 窄屏列表不变成 640px 卡片', async ({ page, request }) => {
   await login(page, ADMIN)
   await page.goto('/tickets')
   await expect(page.getByRole('link', { name: '窄屏主区域布局检查工单' })).toBeVisible()
-  await expectPlainMain(page, 640)
+  // 列表 + 详情布局下详情区本身是铺满右侧的白底（#137），只断言它不是登录页那张卡片。
+  const main = page.getByRole('main')
+  expect((await main.boundingBox())?.width).toBeGreaterThan(640)
+  await expect(main).toHaveCSS('box-shadow', 'none')
+  await expect(main).toHaveCSS('border-radius', '0px')
+  await expect(main).toHaveCSS('margin-top', '0px')
 })
 
 test('1440 宽建单页没有多余的纵向滚动', async ({ page }) => {
