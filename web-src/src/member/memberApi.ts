@@ -184,6 +184,7 @@ export interface TemplateSummary {
   key: string
   name: string
   kind: string
+  scenario: string
   version: number
   active: boolean
   preset_labels: string[]

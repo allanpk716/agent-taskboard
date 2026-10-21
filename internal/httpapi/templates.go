@@ -103,6 +103,7 @@ type templateSummaryView struct {
 	Key          string   `json:"key"`
 	Name         string   `json:"name"`
 	Kind         string   `json:"kind"`
+	Scenario     string   `json:"scenario"`
 	Version      int64    `json:"version"`
 	Active       bool     `json:"active"`
 	PresetLabels []string `json:"preset_labels"`
@@ -133,7 +134,7 @@ func (a *API) listTemplates(w http.ResponseWriter, r *http.Request) {
 	}{Templates: []templateSummaryView{}}
 	for _, t := range list {
 		out.Templates = append(out.Templates, templateSummaryView{
-			Key: t.Key, Name: t.Name, Kind: t.Kind, Version: t.Version, Active: t.Active,
+			Key: t.Key, Name: t.Name, Kind: t.Kind, Scenario: t.Scenario, Version: t.Version, Active: t.Active,
 			PresetLabels: nonNil(t.PresetLabels), URL: "/api/v1/templates/" + t.Key,
 		})
 	}
@@ -202,7 +203,7 @@ func (a *API) readTemplate(w http.ResponseWriter, r *http.Request, key string) {
 	}
 	view := templateDetailView{
 		templateSummaryView: templateSummaryView{
-			Key: t.Key, Name: t.Name, Kind: t.Kind, Version: t.Version, Active: t.Active,
+			Key: t.Key, Name: t.Name, Kind: t.Kind, Scenario: t.Scenario, Version: t.Version, Active: t.Active,
 			PresetLabels: nonNil(t.PresetLabels), URL: "/api/v1/templates/" + t.Key,
 		},
 		AgentNote: t.AgentNote,
@@ -308,7 +309,7 @@ func (a *API) createTemplate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusCreated, templateSummaryView{
-			Key: t.Key, Name: t.Name, Kind: t.Kind, Version: t.Version, Active: t.Active,
+			Key: t.Key, Name: t.Name, Kind: t.Kind, Scenario: t.Scenario, Version: t.Version, Active: t.Active,
 			PresetLabels: nonNil(t.PresetLabels), URL: "/api/v1/templates/" + t.Key,
 		})
 	})

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 )
@@ -125,4 +126,62 @@ func (m *Manager) ImportPresetBugReportData(ctx context.Context) error {
 		return nil
 	}
 	return err
+}
+
+// presetScenarioUpgrade 描述一份预置模板的适用场景升级。From 是上线前最后
+// 一版预置原文；只有当前版本与它逐字节一致才升级到 To。
+type presetScenarioUpgrade struct {
+	Key  string
+	From string
+	To   string
+}
+
+// presetScenarioUpgrades 构造 #193 的四份升级：当时的预置原文与新版相比，
+// 只有 YAML 头里多出「适用场景」一行。后续预置模板升级可在同一结构里扩展。
+func presetScenarioUpgrades() []presetScenarioUpgrade {
+	keys := []string{presetBugReportKey, "bug-report-data", "assign-task", "question"}
+	out := make([]presetScenarioUpgrade, 0, len(keys))
+	for _, key := range keys {
+		next := seedTemplates[key]
+		out = append(out, presetScenarioUpgrade{Key: key, From: withoutScenarioLine(next), To: next})
+	}
+	return out
+}
+
+func withoutScenarioLine(markdown string) string {
+	lines := strings.Split(markdown, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(line, "适用场景:") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
+
+// UpgradePresetScenarios 给原样的预置模板补上适用场景（#193）。成员改过
+// 的模板与目标版本都不动；升级后当前版本不等于旧原文，重复启动幂等。
+func (m *Manager) UpgradePresetScenarios(ctx context.Context) error {
+	for _, up := range presetScenarioUpgrades() {
+		var markdown string
+		err := m.db.QueryRowContext(ctx, `
+			SELECT v.markdown
+			FROM templates t
+			JOIN template_versions v ON v.template_key = t.key AND v.version = t.current_version
+			WHERE t.key = ?`, up.Key).Scan(&markdown)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if markdown != up.From {
+			continue
+		}
+		if _, err := m.Update(ctx, up.Key, up.To, identity.Viewer{}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

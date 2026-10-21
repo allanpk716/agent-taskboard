@@ -38,6 +38,7 @@ var seedTemplates = map[string]string{
 	presetBugReportKey: `---
 名称: Bug 反馈
 类型: 反馈
+适用场景: 仪器或软件坏了、行为不对
 预设标签: [待初筛]
 ---
 # 哪台仪器
@@ -75,6 +76,7 @@ var seedTemplates = map[string]string{
 	"bug-report-data": `---
 名称: Bug 反馈（带数据）
 类型: 反馈
+适用场景: 仪器或软件坏了、行为不对；需要用成对的正确、错误例子复现
 预设标签: [待初筛]
 ---
 # 哪台仪器
@@ -112,6 +114,7 @@ var seedTemplates = map[string]string{
 	"assign-task": `---
 名称: 分配任务
 类型: 任务
+适用场景: 你已经想清楚要交付什么、怎么做，请对方照着完成
 ---
 ## 要达成什么目标？ {必填}
 一句话说明要做成什么。
@@ -134,6 +137,7 @@ var seedTemplates = map[string]string{
 	"question": `---
 名称: 问题咨询
 类型: 任务
+适用场景: 只想得到一个答案或结论，不需要交付物
 ---
 ## 想问什么？ {必填}
 一句话说明想了解什么。

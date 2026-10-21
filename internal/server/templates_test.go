@@ -14,6 +14,7 @@ type templateSummary struct {
 	Key          string   `json:"key"`
 	Name         string   `json:"name"`
 	Kind         string   `json:"kind"`
+	Scenario     string   `json:"scenario"`
 	Version      int64    `json:"version"`
 	Active       bool     `json:"active"`
 	PresetLabels []string `json:"preset_labels"`
@@ -47,6 +48,7 @@ type templateBody struct {
 	Version      int64               `json:"version"`
 	Active       bool                `json:"active"`
 	PresetLabels []string            `json:"preset_labels"`
+	Scenario     string              `json:"scenario"`
 	AgentNote    string              `json:"agent_note"`
 	Fields       []templateFieldBody `json:"fields"`
 	Groups       []groupBody         `json:"groups"`

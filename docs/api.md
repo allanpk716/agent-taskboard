@@ -638,6 +638,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 ---
 名称: Bug 反馈
 类型: 反馈
+适用场景: 仪器或软件坏了、行为不对
 预设标签: [待初筛]
 ---
 # 哪台仪器
@@ -651,7 +652,8 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 > 示例：1. 开机自检完成 2. 进入质控界面 3. 点击“开始”
 ```
 
-- YAML 头（首尾 `---`）：键只认 `名称`、`类型`（任务/反馈）、`预设标签`（`[a, b]`），其余键报错。
+- YAML 头（首尾 `---`）：键只认 `名称`、`类型`（任务/反馈）、`适用场景`
+  （可选单行文本，说明什么情况下选这份模板）、`预设标签`（`[a, b]`），其余键报错。
 - 每个 `##` 小节是一个字段：标题写成问句（**问句原文就是 `fields` 的键**），小节正文是
   引导说明，`> 示例：` 起的引用行是占位示例。
 - 花括号标记写在标题行末尾：`{必填}`、`{选填}`、`{单选: A | B}`、`{维度:X 必填}`
@@ -673,10 +675,10 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 
 | 方法与路径 | 说明 |
 |---|---|
-| `GET /api/v1/templates` | 模板列表（含已停用，各项带 `active`），成员与成员 Agent 可读。 |
+| `GET /api/v1/templates` | 模板列表（含已停用，各项带 `active`、`scenario`），成员与成员 Agent 可读。 |
 | `POST /api/v1/templates` | 新建：`{"key": "check", "markdown": "模板原文"}`，成功 201。 |
-| `GET /api/v1/templates/{key}` | 读当前版本：字段定义、`agent_note`、分组 `groups`（带分组时，#63）、模板原文 `markdown`、`version`、`updated_by`。 |
-| `GET /api/v1/templates/{key}?format=markdown` | 给 Agent 的填写指南（`text/markdown`）：建单请求示例、逐字段问句/引导/示例/候选值、「给 Agent 的说明」。 |
+| `GET /api/v1/templates/{key}` | 读当前版本：字段定义、`scenario`、`agent_note`、分组 `groups`（带分组时，#63）、模板原文 `markdown`、`version`、`updated_by`。 |
+| `GET /api/v1/templates/{key}?format=markdown` | 给 Agent 的填写指南（`text/markdown`）：适用场景、建单请求示例、逐字段问句/引导/示例/候选值、「给 Agent 的说明」。 |
 | `PATCH /api/v1/templates/{key}` | 修改：`{"markdown": "新原文"}`，产生新版本（版本号 +1，记录修改人）。 |
 | `GET /api/v1/templates/{key}/versions` | 历史版本（新→旧），每版 `{version, name, markdown, updated_by, updated_at}`（#42 模板维护页）。 |
 | `POST /api/v1/templates/{key}/deactivate` | 停用（幂等 200；模板不能删除，停用后不能再用它建单，读取仍可见）。 |

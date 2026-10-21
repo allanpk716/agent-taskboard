@@ -405,7 +405,9 @@ test('建单（模板）：缺必填项弹出确认，仍创建后逐项提示',
   await page.locator('.b-tabs').getByRole('link', { name: '建单' }).click()
 
   // 第一步：选模板「Bug 反馈」
-  await page.getByRole('button', { name: /^Bug 反馈 report 预设 待初筛$/ }).click()
+  const bugTemplate = page.getByRole('button', { name: /Bug 反馈 report/ })
+  await expect(bugTemplate).toContainText('适用：仪器或软件坏了、行为不对')
+  await bugTemplate.click()
   await expect(page.getByText('哪台仪器？')).toBeVisible()
 
   // 只填标题和一个维度字段，其余必填留空；统一附件区暂存一个文件

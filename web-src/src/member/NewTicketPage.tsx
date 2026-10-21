@@ -17,6 +17,7 @@ interface TemplateSummary {
   key: string
   name: string
   kind: string
+  scenario?: string
   version: number
   active: boolean
   preset_labels: string[]
@@ -95,6 +96,7 @@ export function NewTicketPage() {
               <div className="tp-name">
                 {t.name} <span className="badge kind">{t.kind}</span>
               </div>
+              {t.scenario && <div className="hint">适用：{t.scenario}</div>}
               {t.preset_labels?.length > 0 && (
                 <div className="hint">预设 {t.preset_labels.join('、')}</div>
               )}
