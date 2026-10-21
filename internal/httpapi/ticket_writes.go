@@ -34,7 +34,8 @@ func (a *API) replyTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if !ok {
 		return
 	}
-	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	var req replyRequest
@@ -82,7 +83,8 @@ func (a *API) reviseTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if !ok {
 		return
 	}
-	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	var req reviseTicketRequest
@@ -136,7 +138,8 @@ func (a *API) closeTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if !ok {
 		return
 	}
-	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	var req closeTicketRequest
@@ -181,7 +184,8 @@ func (a *API) reopenTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if !ok {
 		return
 	}
-	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	full, err := a.tickets.Reopen(r.Context(), viewer, ref)
@@ -227,8 +231,9 @@ func (a *API) ticketTimeline(w http.ResponseWriter, r *http.Request, ref string)
 			"actor_kind 只能是 member（本人或访客真人署名）或 agent（成员 Agent 或访客自报由 Agent 写成）", "")
 		return
 	}
-	full, ok := a.loadTicketForViewer(w, r, viewer, ref)
-	if !ok {
+	full, err := a.tickets.ForViewer(r.Context(), viewer, ref)
+	if err != nil {
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	if err := a.accessRecords.RecordView(r.Context(), full.Seq, viewer); err != nil {
@@ -332,7 +337,8 @@ func (a *API) assignTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if !ok {
 		return
 	}
-	if _, ok = a.loadTicketForViewer(w, r, viewer, ref); !ok {
+	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
+		a.writeTicketError(w, r, ref, err)
 		return
 	}
 	if viewer.Kind != identity.ViewerMember {

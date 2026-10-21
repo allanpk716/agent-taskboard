@@ -116,7 +116,7 @@ func (m *Manager) insertCollaboratorEvent(ctx context.Context, tx *sql.Tx, full 
 
 // AddCollaborator 把成员加入工单协作者名单，并记录 collaborator_added 事件。
 func (m *Manager) AddCollaborator(ctx context.Context, viewer identity.Viewer, ref, memberRef string) (CollaboratorResult, error) {
-	full, err := m.ByRef(ctx, ref)
+	full, err := m.ForViewer(ctx, viewer, ref)
 	if err != nil {
 		return CollaboratorResult{}, err
 	}
@@ -182,7 +182,7 @@ func (m *Manager) notifyCollaboratorEvent(ctx context.Context, tx *sql.Tx, befor
 
 func (m *Manager) removeCollaborator(ctx context.Context, viewer identity.Viewer, ref string,
 	target Collaborator, eventType string) (CollaboratorResult, error) {
-	full, err := m.ByRef(ctx, ref)
+	full, err := m.ForViewer(ctx, viewer, ref)
 	if err != nil {
 		return CollaboratorResult{}, err
 	}
@@ -238,7 +238,7 @@ func (m *Manager) removeCollaborator(ctx context.Context, viewer identity.Viewer
 
 // RemoveCollaborator 由有管理权限的人移除协作者，并记录 collaborator_removed 事件。
 func (m *Manager) RemoveCollaborator(ctx context.Context, viewer identity.Viewer, ref string, memberID int64) (CollaboratorResult, error) {
-	full, err := m.ByRef(ctx, ref)
+	full, err := m.ForViewer(ctx, viewer, ref)
 	if err != nil {
 		return CollaboratorResult{}, err
 	}
