@@ -14,10 +14,12 @@ type draftBody struct {
 	Status  string `json:"status"`
 	Version int64  `json:"version"`
 	Request struct {
-		BodyMD  string `json:"body_md"`
-		Deliver bool   `json:"deliver"`
+		BodyMD        string   `json:"body_md"`
+		AttachmentIDs []string `json:"attachment_ids"`
+		Deliver       bool     `json:"deliver"`
 	} `json:"request"`
-	Author struct {
+	Attachments []attachmentViewBody `json:"attachments"`
+	Author      struct {
 		Member struct {
 			Name string `json:"name"`
 		} `json:"member"`

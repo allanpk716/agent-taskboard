@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
@@ -56,6 +57,7 @@ type Draft struct {
 	MemberEdited    bool
 	SentTimelineSeq int64
 	Versions        []Version
+	Attachments     []attachments.AttachmentInfo
 }
 
 type Version struct {
@@ -68,13 +70,14 @@ type Version struct {
 }
 
 type Manager struct {
-	db  *sql.DB
-	clk clock.Clock
-	tk  *tickets.Manager
+	db   *sql.DB
+	clk  clock.Clock
+	tk   *tickets.Manager
+	atts *attachments.Manager
 }
 
-func NewManager(db *sql.DB, clk clock.Clock, tk *tickets.Manager) *Manager {
-	return &Manager{db: db, clk: clk, tk: tk}
+func NewManager(db *sql.DB, clk clock.Clock, tk *tickets.Manager, atts *attachments.Manager) *Manager {
+	return &Manager{db: db, clk: clk, tk: tk, atts: atts}
 }
 
 func (m *Manager) Pending(ctx context.Context, memberID, ticketSeq int64) (Draft, error) {
@@ -95,6 +98,9 @@ func (m *Manager) Pending(ctx context.Context, memberID, ticketSeq int64) (Draft
 	d.ID = "dft_" + fmt.Sprint(id)
 	d.TicketURL = "/t/" + d.TicketNumber
 	_ = json.Unmarshal([]byte(request), &d.Request)
+	if d.Attachments, err = m.atts.ByDraft(ctx, id); err != nil {
+		return Draft{}, err
+	}
 	return d, nil
 }
 
@@ -141,7 +147,15 @@ func (m *Manager) SaveReply(ctx context.Context, viewer identity.Viewer, number 
 	if err = insertVersion(ctx, tx, id, 1, req, viewer, now); err != nil {
 		return Draft{}, err
 	}
+	if err = m.atts.ReserveDraftTx(ctx, tx, id, full.Seq, attachments.PrincipalOf(viewer),
+		attachments.ParsePostRefs(req.BodyMD, req.AttachmentIDs)); err != nil {
+		return Draft{}, err
+	}
 	if err = tx.Commit(); err != nil {
+		return Draft{}, err
+	}
+	d.Attachments, err = m.atts.ByDraft(ctx, id)
+	if err != nil {
 		return Draft{}, err
 	}
 	d.ID = "dft_" + fmt.Sprint(id)
@@ -288,6 +302,9 @@ func (m *Manager) Get(ctx context.Context, viewer identity.Viewer, id int64) (Dr
 			d.NewEvents++
 		}
 	}
+	if d.Attachments, err = m.atts.ByDraft(ctx, id); err != nil {
+		return Draft{}, err
+	}
 	return d, nil
 }
 
@@ -362,6 +379,13 @@ func (m *Manager) Update(ctx context.Context, viewer identity.Viewer, id string,
 	if err = insertVersion(ctx, tx, num, d.Version+1, req, viewer, now); err != nil {
 		return Draft{}, err
 	}
+	if err = m.atts.ReleaseDraftTx(ctx, tx, num); err != nil {
+		return Draft{}, err
+	}
+	if err = m.atts.ReserveDraftTx(ctx, tx, num, full.Seq, attachments.PrincipalOf(viewer),
+		attachments.ParsePostRefs(req.BodyMD, req.AttachmentIDs)); err != nil {
+		return Draft{}, err
+	}
 	if err = tx.Commit(); err != nil {
 		return Draft{}, err
 	}
@@ -373,13 +397,26 @@ func (m *Manager) Delete(ctx context.Context, viewer identity.Viewer, id string)
 	if err != nil {
 		return ErrNotFound
 	}
-	res, err := m.db.ExecContext(ctx, `DELETE FROM drafts WHERE id = ? AND member_id = ? AND status = 'pending'`, num, viewer.Member.ID)
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	fileIDs, err := m.atts.DeleteDraftTx(ctx, tx, num)
+	if err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM drafts WHERE id = ? AND member_id = ? AND status = 'pending'`, num, viewer.Member.ID)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	m.atts.RemoveFiles(fileIDs)
 	return nil
 }
 
