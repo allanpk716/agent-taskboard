@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Attachment, BriefVersion, TicketView } from './types'
+import type { BriefVersion, TicketView } from './types'
 import { authorName, fmtDateCN, fmtSize } from './format'
 import { Markdown } from './markdown'
 
@@ -38,17 +38,19 @@ function inlineParts(a: string, b: string): InlinePart[] {
   return out.filter((p) => p.text !== '')
 }
 
-function splitVersion(v: BriefVersion, ticket: TicketView): string[] {
+function splitVersion(v: BriefVersion, ticket: TicketView, drafting = false): string[] {
   const fields = ticket.brief.template_fields ?? []
   const values = v.fields ?? {}
-  const lines = [`标题：${v.title}`]
-  if (fields.length > 0) {
+  const lines = drafting ? [] : [`标题：${v.title}`]
+  if (!drafting && fields.length > 0) {
     for (const f of fields) lines.push(`${f.title}：${values[f.key] ?? ''}`)
-  } else {
+  } else if (!drafting) {
     lines.push(...v.markdown.split(/\r?\n/))
   }
+  if (drafting) lines.push(...v.markdown.split(/\r?\n/))
   for (const id of v.attachment_ids) {
-    lines.push(`附件：${ticket.attachments.find((a) => a.id === id)?.filename ?? id}`)
+    const attachment = ticket.attachments.find((a) => a.id === id)
+    lines.push(drafting && !attachment ? `附件已清除：${id}` : `附件：${attachment?.filename ?? id}`)
   }
   return lines
 }
@@ -129,27 +131,43 @@ function collapsedGroups(rows: DiffLine[]): (DiffLine | { kind: 'gap'; count: nu
   return out
 }
 
-function attachmentsOf(v: BriefVersion, ticket: TicketView): Attachment[] {
-  return v.attachment_ids
-    .map((id) => ticket.attachments.find((a) => a.id === id))
-    .filter((a): a is Attachment => !!a)
+function fmtExact(iso: string): string {
+  return `${fmtDateCN(iso)} ${iso.slice(11, 19)}`
 }
 
-function VersionFull({ version, ticket }: { version: BriefVersion; ticket: TicketView }) {
+function VersionFull({
+  version,
+  ticket,
+  drafting = false,
+}: {
+  version: BriefVersion
+  ticket: TicketView
+  drafting?: boolean
+}) {
   const currentIDs = new Set(ticket.brief.attachment_ids)
-  const isCurrent = version.revision === ticket.brief.revision
+  const isCurrent = !drafting && version.revision === ticket.brief.revision
+  const attachments = version.attachment_ids.map((id) => ({
+    id,
+    attachment: ticket.attachments.find((a) => a.id === id),
+  }))
   return (
     <div className="version-full">
       {!isCurrent && <div className="archived-warning">历史版本 · 不是当前内容</div>}
       <Markdown body={version.markdown} attachments={new Map(ticket.attachments.map((a) => [a.id, a]))} />
-      {attachmentsOf(version, ticket).length > 0 && (
+      {attachments.length > 0 && (
         <div className="atts">
-          {attachmentsOf(version, ticket).map((a) => (
-            <a key={a.id} className="att" href={a.url} target="_blank" rel="noreferrer">
-              📎 {a.filename} · {fmtSize(a.size)}
-              {!currentIDs.has(a.id) && <span className="att-removed">后来的版本中已移除</span>}
-            </a>
-          ))}
+          {attachments.map(({ id, attachment }) =>
+            attachment ? (
+              <a key={id} className="att" href={attachment.url} target="_blank" rel="noreferrer">
+                📎 {attachment.filename} · {fmtSize(attachment.size)}
+                {!currentIDs.has(id) && <span className="att-removed">后来的版本中已移除</span>}
+              </a>
+            ) : (
+              <span key={id} className="att removed">
+                📎 附件已清除 · {id}
+              </span>
+            ),
+          )}
         </div>
       )}
     </div>
@@ -161,11 +179,13 @@ export function BriefVersions({
   loadVersions,
   selected,
   onSelect,
+  drafting,
 }: {
   ticket: TicketView
   loadVersions: VersionLoader
   selected: number | null
   onSelect: (revision: number, shift: boolean) => void
+  drafting?: { replyNo: number; author: string; sentAt: string }
 }) {
   const [versions, setVersions] = useState<BriefVersion[]>([])
   const [rangeOld, setRangeOld] = useState<number | null>(null)
@@ -240,15 +260,20 @@ export function BriefVersions({
     )
   }
   const rows = useMemo(
-    () => (oldVersion && current ? diffLines(splitVersion(oldVersion, ticket), splitVersion(current, ticket)) : []),
-    [oldVersion, current, ticket],
+    () =>
+      oldVersion && current
+        ? diffLines(splitVersion(oldVersion, ticket, !!drafting), splitVersion(current, ticket, !!drafting))
+        : [],
+    [oldVersion, current, ticket, drafting],
   )
-  const allRevisions = Array.from({ length: ticket.brief.revision }, (_, i) => i + 1)
+  const allRevisions = drafting
+    ? versions.map((v) => v.revision)
+    : Array.from({ length: ticket.brief.revision }, (_, i) => i + 1)
 
   return (
     <div className="brief-versions">
-      {ticket.brief.revision > 1 && (
-        <div className="version-bar" role="group" aria-label="说明版本">
+      {(drafting ? versions.length > 0 : ticket.brief.revision > 1) && (
+        <div className="version-bar" role="group" aria-label={drafting ? '起草过程版本' : '说明版本'}>
           {allRevisions.map((revision) => {
             const saved = byRevision.has(revision)
             return (
@@ -257,7 +282,7 @@ export function BriefVersions({
                 type="button"
                 className={`version-pill${saved ? '' : ' missing'}${rangeOld === revision ? ' old' : ''}${selected === revision ? ' new' : ''}`}
                 data-role={rangeOld === revision ? '旧' : selected === revision ? '新' : ''}
-                title={saved ? `${authorName(byRevision.get(revision)!.author)} · ${fmtDateCN(byRevision.get(revision)!.at)}` : '上线前未存档'}
+                title={saved ? `${authorName(byRevision.get(revision)!.author)} · ${fmtExact(byRevision.get(revision)!.at)}` : '上线前未存档'}
                 disabled={!saved}
                 onClick={(e) => {
                   if (!e.shiftKey) anchorRef.current = Math.max(anchorRef.current ?? 0, revision)
@@ -278,9 +303,11 @@ export function BriefVersions({
         </div>
       )}
       {selected !== null && current && (
-        <div className="brief-compare">
+        <div className={`brief-compare${drafting ? ' drafting' : ''}`}>
           <div className="diff-context">
-            <span className="object">📄 工单说明</span>
+            <span className={`object${drafting ? ' drafting' : ''}`}>
+              {drafting ? `💬 回复 #${drafting.replyNo} 的起草过程 · ${drafting.author} · ${fmtExact(drafting.sentAt)}` : '📄 工单说明'}
+            </span>
             <strong>{firstOnly ? '第 1 版全文' : `第 ${oldVersion ? rangeOld : current.revision - 1} 版 → 第 ${current.revision} 版`}</strong>
             <span className="actions">
               <button type="button" className={view === 'full' || firstOnly ? 'on' : ''} onClick={() => setView('full')}>只看这一版全文</button>
@@ -293,14 +320,15 @@ export function BriefVersions({
               <button type="button" onClick={() => onSelect(-1, false)}>✕ 退出对比</button>
             </span>
           </div>
+          {drafting && <div className="drafting-note">回复发出后不可修改；这里是发出前的草稿各版</div>}
           {message && <div className="archived-warning">{message}</div>}
           {view === 'full' || firstOnly ? (
-            <VersionFull version={current} ticket={ticket} />
+            <VersionFull version={current} ticket={ticket} drafting={!!drafting} />
           ) : oldVersion ? (
             <div className={`diff-table ${layout}`}>
               <div className="diff-heads">
-                <span>{oldVersion.revision} · {authorName(oldVersion.author)} · {fmtDateCN(oldVersion.at)}</span>
-                <span>{current.revision} · {authorName(current.author)} · {fmtDateCN(current.at)}</span>
+                <span>{oldVersion.revision} · {authorName(oldVersion.author)} · {fmtExact(oldVersion.at)}</span>
+                <span>{current.revision} · {authorName(current.author)} · {fmtExact(current.at)}</span>
               </div>
               {collapsedGroups(rows).map((row, i) =>
                 row.kind === 'gap' ? (

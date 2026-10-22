@@ -17,6 +17,7 @@ import {
   extendGuestLink,
   fetchAccessRecords,
   fetchGuestLinks,
+  fetchReplyDrafting,
   fetchMembers,
   fetchTicket,
   leaveCollaborators,
@@ -1010,6 +1011,7 @@ export function TicketDetailPage({
   const [knownLinkUrls, setKnownLinkUrls] = useState<Record<number, string>>({})
   const [accessRecords, setAccessRecords] = useState<AccessRecordsResponse | null>(null)
   const [allInfoOpen, setAllInfoOpen] = useState(false)
+  const [draftingSeq, setDraftingSeq] = useState<number | null>(null)
   const load = useCallback(async () => {
     try {
       const got = await fetchTicket(ticketRef)
@@ -1157,7 +1159,15 @@ export function TicketDetailPage({
         {ticket.timeline.map((e) =>
           e.type === 'reply' ? (
             (actor === 'all' || (actor === 'agent') === (!!e.actor.agent || !!e.actor.via_agent) ? (
-              <ReplyBubble key={e.seq} event={e} ticket={ticket} onImageClick={setLightbox} />
+              <ReplyBubble
+                key={e.seq}
+                event={e}
+                ticket={ticket}
+                onImageClick={setLightbox}
+                draftingOpen={draftingSeq === e.seq}
+                onToggleDrafting={() => setDraftingSeq((current) => (current === e.seq ? null : e.seq))}
+                fetchDrafting={() => fetchReplyDrafting(ticket.number, e.reply_no ?? 0)}
+              />
             ) : null)
           ) : (
             <EventLine

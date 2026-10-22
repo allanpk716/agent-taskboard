@@ -138,6 +138,8 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 		a.handleTicketAttachments(w, r, ref)
 	case "brief-versions":
 		a.handleBriefVersions(w, r, ref, rest)
+	case "drafting":
+		a.handleReplyDrafting(w, r, ref, rest)
 	case "access-records":
 		if len(rest) != 0 {
 			WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "读取访问记录用 GET /api/v1/tickets/{id}/access-records")
@@ -819,6 +821,7 @@ type eventView struct {
 
 	AttachmentIDs []string `json:"attachment_ids,omitempty"` // reply 引用的附件（#33）
 	Signature     string   `json:"signature,omitempty"`      // 从草稿发出的回复带确认署名
+	DraftingCount int64    `json:"drafting_count,omitempty"` // 起草过程版本数（#214）
 	From          string   `json:"from,omitempty"`           // assigned 事件的改派前指派人；空 = 创建时指派（#36）
 	To            string   `json:"to,omitempty"`             // assigned 事件的指派对象（#36）
 	Collaborator  string   `json:"collaborator,omitempty"`   // 协作者事件的对象（#158）
@@ -987,8 +990,13 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 	}
 	v.Viewer = tv
 	signatures := map[int64]string{}
+	draftingCounts := map[int64]int64{}
 	if !isGuest {
 		signatures, err = a.drafts.Signatures(r.Context(), full.Seq)
+		if err != nil {
+			panic(err)
+		}
+		draftingCounts, err = a.drafts.Counts(r.Context(), full.Seq)
 		if err != nil {
 			panic(err)
 		}
@@ -1011,6 +1019,7 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 		}
 		ev := newEventView(e, !isGuest)
 		ev.Signature = signatures[e.Seq]
+		ev.DraftingCount = draftingCounts[e.Seq]
 		v.Timeline = append(v.Timeline, ev)
 	}
 	return v

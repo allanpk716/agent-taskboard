@@ -508,6 +508,39 @@
   background: #f4f5f7;
 }
 
+/* 回复起草过程（#214）：复用说明对比表，语境换成琥珀色。 */
+.brief-compare.drafting {
+  border-color: #f2c48d;
+}
+.diff-context .object.drafting {
+  color: #92400e;
+}
+.brief-compare.drafting .diff-context {
+  background: #fff7e6;
+  border-bottom: 1px solid #f2c48d;
+  color: #78350f;
+}
+.brief-compare.drafting .diff-context strong,
+.brief-compare.drafting .diff-context .actions button {
+  color: #92400e;
+}
+.drafting-note {
+  padding: 5px 9px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12px;
+}
+.drafting-toggle {
+  margin-top: 6px;
+}
+.att.removed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #8d312b;
+  font-size: 12px;
+}
+
 /* 系统事件：居中灰色小字 */
 .event {
   text-align: center;

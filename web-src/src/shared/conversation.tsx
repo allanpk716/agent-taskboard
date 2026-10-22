@@ -2,7 +2,7 @@
 // 说明 = 第一条气泡（按字段显示问句和回答）、回复气泡（头像 + 署名 + Markdown
 // + 附件条）、居中灰色系统事件行。成员视角比访客多看到标签事件。
 import { useCallback, useState } from 'react'
-import type { Author, TicketView, TimelineEvent } from './types'
+import type { Author, BriefVersion, DraftHistoryVersion, TicketView, TimelineEvent } from './types'
 import { authorName, closeReasonText, fmtDateCN, fmtShort } from './format'
 import { Markdown, inlineImageIds } from './markdown'
 import { AttachmentChips, Avatar, DeactivatedBadge } from './widgets'
@@ -200,12 +200,19 @@ export function ReplyBubble({
   event,
   ticket,
   onImageClick,
+  draftingOpen = false,
+  onToggleDrafting,
+  fetchDrafting,
 }: {
   event: TimelineEvent
   ticket: TicketView
   onImageClick: (url: string) => void
+  draftingOpen?: boolean
+  onToggleDrafting?: () => void
+  fetchDrafting?: () => Promise<{ versions: DraftHistoryVersion[] }>
 }) {
   const atts = attachmentsOf(ticket)
+  const [selectedVersion, setSelectedVersion] = useState<number | null>(null)
   const inline = inlineImageIds(event.body_md ?? '')
   const chips = (event.attachment_ids ?? [])
     .filter((id) => !inline.has(id))
@@ -223,6 +230,40 @@ export function ReplyBubble({
         </div>
         <Markdown body={event.body_md ?? ''} attachments={atts} onImageClick={onImageClick} />
         <AttachmentChips attachments={chips} />
+        {event.signature && !!event.drafting_count && onToggleDrafting && fetchDrafting && (
+          <button
+            type="button"
+            className="linkish sm drafting-toggle"
+            aria-expanded={draftingOpen}
+            onClick={onToggleDrafting}
+          >
+            查看起草过程（{event.drafting_count} 版）
+          </button>
+        )}
+        {draftingOpen && fetchDrafting && (
+          <BriefVersions
+            ticket={ticket}
+            loadVersions={async () => {
+              const body = await fetchDrafting()
+              const versions: BriefVersion[] = body.versions.map((v) => ({
+                revision: v.version,
+                title: '',
+                markdown: v.body_md,
+                attachment_ids: v.attachment_ids,
+                author: { author_name: v.author },
+                at: v.at,
+              }))
+              return { versions }
+            }}
+            selected={selectedVersion}
+            onSelect={(revision) => setSelectedVersion(revision === -1 ? null : revision)}
+            drafting={{
+              replyNo: event.reply_no ?? 0,
+              author: authorName(event.actor),
+              sentAt: event.at,
+            }}
+          />
+        )}
       </div>
     </div>
   )

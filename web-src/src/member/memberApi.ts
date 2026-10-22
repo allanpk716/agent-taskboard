@@ -2,7 +2,7 @@
 import { api, ApiError } from '../api'
 import { compressImage } from '../shared/compress'
 import { fetchServerVersion } from '../shared/health'
-import type { Author, Collaborator, TicketView } from '../shared/types'
+import type { Author, Collaborator, DraftHistoryVersion, TicketView } from '../shared/types'
 
 export type { Collaborator } from '../shared/types'
 
@@ -526,6 +526,15 @@ export async function sendDraft(
 
 export async function discardDraft(id: string): Promise<void> {
   await api(`/api/v1/drafts/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export async function fetchReplyDrafting(
+  ticketNumber: string,
+  replyNo: number,
+): Promise<{ versions: DraftHistoryVersion[] }> {
+  return api(
+    `/api/v1/tickets/${encodeURIComponent(ticketNumber)}/drafting/${replyNo}`,
+  )
 }
 
 export interface LabelChangeResult {

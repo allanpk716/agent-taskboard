@@ -71,6 +71,7 @@ export interface TimelineEvent {
   collaborator?: string
   label?: string
   signature?: string
+  drafting_count?: number
 }
 
 export interface DraftView {
@@ -86,6 +87,15 @@ export interface DraftView {
   new_events: number
   preview_url: string
   url: string
+}
+
+export interface DraftHistoryVersion {
+  version: number
+  body_md: string
+  attachment_ids: string[]
+  author: string
+  author_kind: 'member' | 'agent'
+  at: string
 }
 
 export interface Collaborator {
