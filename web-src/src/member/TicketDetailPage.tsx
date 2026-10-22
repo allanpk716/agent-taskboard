@@ -23,6 +23,7 @@ import {
   reopenTicket,
   replyTicket,
   sendDraft,
+  updateDraft,
   removeCollaborator,
   resetGuestAccessCode,
   revokeGuestLink,
@@ -34,7 +35,7 @@ import {
   type MemberRef,
   type Collaborator,
 } from './memberApi'
-import { BriefBubble, EventLine, ReplyBubble } from '../shared/conversation'
+import { BriefBubble, EventLine, ReplyBubble, eventText } from '../shared/conversation'
 import { DimensionSelect } from '../guest/DimensionSelect'
 import { DeactivatedBadge, Lightbox } from '../shared/widgets'
 import { absoluteUrl, authorName, closeReasonText, fmtBeijing, fmtLinkExpiry, fmtShort, linkExpired } from '../shared/format'
@@ -1163,12 +1164,13 @@ export function TicketDetailPage({
             <EventLine key={e.seq} event={e} />
           ),
         )}
-        {ticket.my_draft && <DraftCard draft={ticket.my_draft} onChanged={changed} />}
+        {ticket.my_draft && <DraftCard draft={ticket.my_draft} ticket={ticket} onChanged={changed} />}
       </div>
 
       {ticket.my_draft ? (
         <div className="composer ro draft-lock">
           <span>你在这张工单上有一份草稿，发出或丢弃后才能直接回复或修订说明。</span>
+          <a className="btn sm ghost" href={`#draft`}>↑ 跳到草稿</a>
         </div>
       ) : open ? (
         <>
@@ -1223,6 +1225,11 @@ export function TicketDetailPage({
         <h1>{ticket.title}</h1>
         <div className="tc-top">
           <StatusBadge />
+          {ticket.my_draft && (
+            <span className="draft-pill">
+              ✎ 有{ticket.my_draft.kind === 'brief_revision' ? '说明修订' : '回复'}草稿待你确认
+            </span>
+          )}
         </div>
         <button
           type="button"
@@ -1470,17 +1477,34 @@ export function TicketDetailPage({
 }
 
 /* ---------------- 回复输入区（带交付标记与附件） ---------------- */
-function DraftCard({ draft, onChanged }: { draft: DraftView; onChanged: () => void }) {
+function DraftCard({
+  draft,
+  ticket,
+  onChanged,
+}: {
+  draft: DraftView
+  ticket: MemberTicket
+  onChanged: () => void
+}) {
   const [confirmDiscard, setConfirmDiscard] = useState(false)
   const [changed, setChanged] = useState<{ throughSeq: number; count: number } | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [body, setBody] = useState(draft.request.body_md)
+  const [deliver, setDeliver] = useState(!!draft.request.deliver)
+  const [showInstruction, setShowInstruction] = useState(false)
   const [busy, setBusy] = useState(false)
   const agent = draft.author.agent?.name ?? 'Agent'
   const member = draft.author.member?.name ?? ''
+  const closed = ticket.status === 'closed'
+  const newEvents = ticket.timeline.filter((e) => e.seq > draft.base.timeline_seq)
 
   async function send(confirmThroughSeq?: number) {
     setBusy(true)
     try {
-      await sendDraft(draft.id, draft.version, confirmThroughSeq === undefined ? {} : { confirmThroughSeq })
+      await sendDraft(draft.id, draft.version, {
+        ...(confirmThroughSeq === undefined ? {} : { confirmThroughSeq }),
+        ...(deliver !== !!draft.request.deliver ? { deliver } : {}),
+      })
       toast('草稿已发出')
       onChanged()
     } catch (e) {
@@ -1496,23 +1520,112 @@ function DraftCard({ draft, onChanged }: { draft: DraftView; onChanged: () => vo
     }
   }
 
+  async function save() {
+    if (!body.trim() && !/att:[A-Za-z0-9_]+/.test(body)) {
+      toast('422 empty_reply：空回复会被拒绝，请写内容或保留附件。')
+      return
+    }
+    setBusy(true)
+    try {
+      await updateDraft(draft.id, draft.version, {
+        body_md: body,
+        attachment_ids: draft.request.attachment_ids ?? [],
+        deliver,
+      })
+      setEditing(false)
+      toast('草稿已保存为新一版')
+      onChanged()
+    } catch (e) {
+      if (e instanceof ApiError) {
+        toast(`${e.code}：${e.message}`)
+        if (e.code === 'draft_version_conflict') onChanged()
+      } else {
+        toast('保存失败，请重试')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function instructionText() {
+    const base = window.location.origin
+    return `请修改我在 agent-taskboard 工单 ${ticket.number}「${ticket.title}」上的回复草稿 ${draft.id}（当前第 ${draft.version} 版）。
+1. 凭证：用环境变量 TASKBOARD_TOKEN；读不到或返回 401 就停下来告诉我，不要用密码登录。
+2. 先读当前草稿：curl -H "Authorization: Bearer $TASKBOARD_TOKEN" "${base}/api/v1/drafts/${draft.id}"
+   我可能亲手改过，以最新一版为准，不要把我的改动改回去。需要上下文时再读工单：${base}/api/v1/tickets/${ticket.number}?format=markdown
+3. 按我下面的意见修改，然后整份写回：PUT ${base}/api/v1/drafts/${draft.id}，请求体 {"base_version": <刚读到的 version>, "request": {…完整内容…}}。
+   返回 409 draft_version_conflict，说明你读完之后草稿又被改过；重新读，在最新版上改。
+4. 改完把查看地址 ${absoluteUrl(draft.preview_url)} 发给我，说明这一版改了什么。发出或丢弃由我在网页上做，你做不了。
+
+我的修改意见：`
+  }
+
+  async function copyInstruction() {
+    const ok = await copyText(instructionText())
+    toast(ok ? '修改指令已复制' : '复制失败，请手动选择文字复制')
+    setShowInstruction(true)
+  }
+
   return (
-    <article className="draft-card" aria-label="回复草稿">
+    <article id="draft" className="draft-card" aria-label="回复草稿">
       <div className="draft-label">草稿 · 未发出 · 只有你能看到</div>
       <div className="draft-meta">
         {agent}（{member}的 Agent）写的回复草稿 · 第 {draft.version} 版
-        {draft.request.deliver ? ' · 将作为交付' : ''}
+        {deliver && <span className="draft-deliver-pill">将作为交付</span>}
       </div>
-      <div className="draft-body">{draft.request.body_md}</div>
-      <div className="draft-actions">
-        <button type="button" className="btn danger ghost" disabled={busy} onClick={() => setConfirmDiscard(true)}>
-          丢弃
-        </button>
-        <span className="sp" />
-        <button type="button" className="btn" disabled={busy} onClick={() => void send()}>
-          发出
-        </button>
-      </div>
+      {newEvents.length > 0 && (
+        <div className="draft-new-events">
+          ↓ 草稿写成（{fmtBeijing(draft.versions[draft.versions.length - 1].at)}）之后的新变化
+        </div>
+      )}
+      {closed && <div className="draft-blocked">工单已关闭，不能发出回复草稿；请先重新开启，或丢弃草稿。</div>}
+      {editing ? (
+        <>
+          <textarea aria-label="草稿正文" value={body} onChange={(e) => setBody(e.target.value)} />
+          <div className="draft-actions">
+            <button type="button" className="btn ghost" disabled={busy} onClick={() => setEditing(false)}>
+              取消
+            </button>
+            <span className="sp" />
+            <button type="button" className="btn" disabled={busy} onClick={() => void save()}>
+              保存草稿
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="draft-body">{draft.request.body_md}</div>
+          <div className="draft-actions">
+            <button type="button" className="btn ghost" onClick={() => void copyInstruction()}>
+              复制修改指令
+            </button>
+            <button type="button" className="btn ghost" onClick={() => setEditing(true)}>
+              直接修改
+            </button>
+            <button
+              type="button"
+              className={`btn ghost${deliver ? ' on' : ''}`}
+              aria-pressed={deliver}
+              onClick={() => setDeliver((v) => !v)}
+            >
+              {deliver ? '✓ 作为交付发出' : '作为交付发出'}
+            </button>
+            <span className="sp" />
+            <button type="button" className="btn danger ghost" disabled={busy} onClick={() => setConfirmDiscard(true)}>
+              丢弃
+            </button>
+            <button type="button" className="btn" disabled={busy || closed} onClick={() => void send()}>
+              发出
+            </button>
+          </div>
+          {showInstruction && (
+            <details className="instruction-preview">
+              <summary>指令预览</summary>
+              <pre>{instructionText()}</pre>
+            </details>
+          )}
+        </>
+      )}
       {confirmDiscard && (
         <Confirm
           title="丢弃草稿？"
@@ -1530,17 +1643,35 @@ function DraftCard({ draft, onChanged }: { draft: DraftView; onChanged: () => vo
         />
       )}
       {changed && (
-        <Confirm
-          title={`草稿写成后工单有 ${changed.count} 条新变化`}
-          body={<div>仍然发出会把这些变化视为已知。</div>}
-          yesLabel="仍然发出"
-          onYes={() => {
-            const seq = changed.throughSeq
-            setChanged(null)
-            void send(seq)
-          }}
-          onCancel={() => setChanged(null)}
-        />
+        <Modal title={`草稿写成后工单有 ${changed.count} 条新变化`} onClose={() => setChanged(null)}>
+          <ul className="draft-change-list">
+            {newEvents.map((e) => (
+              <li key={e.seq}>
+                <b>{authorName(e.actor)}</b> {eventText(e)} · {fmtShort(e.at)}
+                {e.body_md ? `：${e.body_md}` : ''}
+              </li>
+            ))}
+          </ul>
+          <div className="mrow">
+            <button className="btn ghost" onClick={() => void copyInstruction().then(() => setChanged(null))}>
+              先不发，复制修改指令给 Agent
+            </button>
+            <button className="btn ghost" onClick={() => setChanged(null)}>
+              回去看看
+            </button>
+            <span className="sp" />
+            <button
+              className="btn"
+              onClick={() => {
+                const seq = changed.throughSeq
+                setChanged(null)
+                void send(seq)
+              }}
+            >
+              仍然发出
+            </button>
+          </div>
+        </Modal>
       )}
     </article>
   )

@@ -78,24 +78,16 @@ func NewManager(db *sql.DB, clk clock.Clock, tk *tickets.Manager) *Manager {
 }
 
 func (m *Manager) Pending(ctx context.Context, memberID, ticketSeq int64) (Draft, error) {
-	var d Draft
 	var id int64
-	var request string
 	err := m.db.QueryRowContext(ctx, `
-		SELECT d.id, d.version, d.request_json, d.kind, t.number FROM drafts d
-		JOIN tickets t ON t.seq = d.ticket_seq
-		WHERE d.ticket_seq = ? AND d.member_id = ? AND d.status = 'pending'`, ticketSeq, memberID).
-		Scan(&id, &d.Version, &request, &d.Kind, &d.TicketNumber)
+		SELECT id FROM drafts WHERE ticket_seq = ? AND member_id = ? AND status = 'pending'`, ticketSeq, memberID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Draft{}, ErrNotFound
 	}
 	if err != nil {
 		return Draft{}, err
 	}
-	d.ID = "dft_" + fmt.Sprint(id)
-	d.TicketURL = "/t/" + d.TicketNumber
-	_ = json.Unmarshal([]byte(request), &d.Request)
-	return d, nil
+	return m.Get(ctx, identity.Viewer{Kind: identity.ViewerMember, Member: identity.Member{ID: memberID}}, id)
 }
 
 func (m *Manager) SaveReply(ctx context.Context, viewer identity.Viewer, number string, req Request) (Draft, error) {
@@ -252,7 +244,7 @@ func (m *Manager) Get(ctx context.Context, viewer identity.Viewer, id int64) (Dr
 	err := m.db.QueryRowContext(ctx, `
 		SELECT d.id, d.kind, d.status, d.ticket_seq, d.member_id, d.request_json, d.version,
 		       d.base_timeline_seq, d.member_edited, d.created_at, d.updated_at, d.sent_at, d.sent_timeline_seq,
-		       m.name, a.id, a.name, t.number
+		       m.name, a.id, COALESCE(a.name, ''), t.number
 		FROM drafts d
 		JOIN members m ON m.id = d.member_id
 		LEFT JOIN agent_tokens a ON a.id = (
@@ -410,8 +402,10 @@ func (m *Manager) Send(ctx context.Context, viewer identity.Viewer, id string, v
 		return
 	}
 	req := d.Request
+	memberEdited := d.MemberEdited
 	if deliver != nil {
 		req.Deliver = *deliver
+		memberEdited = memberEdited || *deliver != d.Request.Deliver
 	}
 	actor := tickets.Author{MemberID: d.MemberID, MemberName: d.MemberName}
 	for i := len(d.Versions) - 1; i >= 0; i-- {
@@ -428,13 +422,13 @@ func (m *Manager) Send(ctx context.Context, viewer identity.Viewer, id string, v
 	}
 	num, _ := parseID(id)
 	_, err = m.db.ExecContext(ctx, `
-		UPDATE drafts SET status = 'sent', sent_at = ?, sent_timeline_seq = ? WHERE id = ? AND version = ? AND status = 'pending'`,
-		m.clk.Now().Format(time.RFC3339Nano), result.TimelineSeq, num, d.Version)
+		UPDATE drafts SET status = 'sent', member_edited = ?, sent_at = ?, sent_timeline_seq = ? WHERE id = ? AND version = ? AND status = 'pending'`,
+		boolInt(memberEdited), m.clk.Now().Format(time.RFC3339Nano), result.TimelineSeq, num, d.Version)
 	if err != nil {
 		return
 	}
 	signature = "经" + d.MemberName + "确认"
-	if d.MemberEdited {
+	if memberEdited {
 		signature = "经" + d.MemberName + "修改并确认"
 	}
 	drafting = d.Versions

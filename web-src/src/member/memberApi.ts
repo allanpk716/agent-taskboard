@@ -2,7 +2,7 @@
 import { api, ApiError } from '../api'
 import { compressImage } from '../shared/compress'
 import { fetchServerVersion } from '../shared/health'
-import type { Author, Collaborator, TicketView } from '../shared/types'
+import type { Author, Collaborator, DraftView, TicketView } from '../shared/types'
 
 export type { Collaborator } from '../shared/types'
 
@@ -520,7 +520,22 @@ export async function sendDraft(
 ): Promise<{ signature: string }> {
   return api(`/api/v1/drafts/${encodeURIComponent(id)}/send`, {
     method: 'POST',
-    body: JSON.stringify({ version, ...opts }),
+    body: JSON.stringify({
+      version,
+      ...(opts.confirmThroughSeq === undefined ? {} : { confirm_through_seq: opts.confirmThroughSeq }),
+      ...(opts.deliver === undefined ? {} : { deliver: opts.deliver }),
+    }),
+  })
+}
+
+export async function updateDraft(
+  id: string,
+  baseVersion: number,
+  request: { body_md: string; attachment_ids?: string[]; deliver?: boolean },
+): Promise<DraftView> {
+  return api(`/api/v1/drafts/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ base_version: baseVersion, request }),
   })
 }
 
