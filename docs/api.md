@@ -467,8 +467,10 @@ spec 用户故事 84），没有 `inbox`：
   `ticket_changed`。草稿写成后工单有新事件且 `confirm_through_seq` 小于当前最后
   事件 seq 时返回 `409 ticket_changed`（附 `new_events`、`through_seq`）；带足够新的
   `confirm_through_seq` 重发即可。建单草稿此时才分配编号、创建访客链接。
-- 发出成功返回 `{result, signature, drafting}`；`result` 与原建单/回复/修订响应同形，
-  Agent 再 GET 草稿也能读到。署名为「经某成员确认」；任意一版由成员本人修改过则为
+- 发出成功返回 `{result, signature, drafting}`；`result` 与原建单/回复/修订响应同形。
+  Agent 之后 GET 已发出的草稿，`result` 只给摘要：回复为 `{reply_no, timeline_seq, deliver}`，
+  说明修订为 `{revision, timeline_seq}`，建单为 `{number}`。访客链接地址只在发出那一次
+  返回给网页会话，不会再给 Agent 读到。署名为「经某成员确认」；任意一版由成员本人修改过则为
   「经某成员修改并确认」。
 - Agent 调用 send/delete/改 `draft_mode`/标记 `drafts_intro` 已读返回
   `403 web_session_required`。草稿不存在或已丢弃返回 `404 draft_not_found`。

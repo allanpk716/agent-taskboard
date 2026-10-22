@@ -216,6 +216,10 @@ export function BriefVersions({
   const byRevision = useMemo(() => new Map(versions.map((v) => [v.revision, v])), [versions])
   const current = selected ? byRevision.get(selected) : undefined
   useEffect(() => {
+    if (!drafting || selected !== null || versions.length === 0) return
+    onSelect(Math.max(...versions.map((v) => v.revision)), false)
+  }, [drafting, selected, versions, onSelect])
+  useEffect(() => {
     if (selected === null) {
       setRangeOld(null)
       anchorRef.current = null
@@ -293,7 +297,7 @@ export function BriefVersions({
                     setRangeOld(Math.min(anchorRef.current, revision))
                   } else if (!e.shiftKey) {
                     defaultRangeRef.current = true
-                    setRangeOld(null)
+                    setRangeOld(revision > 1 ? revision - 1 : null)
                   }
                   onSelect(revision, e.shiftKey)
                 }}

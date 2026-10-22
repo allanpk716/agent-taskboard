@@ -92,8 +92,8 @@ test('上线前未存档的时间线版本不提供查看入口', async ({ page,
     route.fulfill({ json: ticket }),
   )
   await page.goto(`/t/${number}`)
-  await expect(page.locator('.event', { hasText: '创建了工单' })).toContainText('此版本上线前未存档')
-  await expect(page.locator('.event', { hasText: '修订了说明' })).toContainText('此版本上线前未存档')
+  await expect(page.locator('.event', { hasText: '创建了工单' })).toContainText(/ · 此版本上线前未存档$/)
+  await expect(page.locator('.event', { hasText: '修订了说明' })).toContainText(/ · 此版本上线前未存档$/)
   await expect(page.getByRole('button', { name: '查看第 1 版' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '查看差异' })).toHaveCount(0)
 })

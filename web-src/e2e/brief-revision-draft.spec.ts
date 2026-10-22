@@ -40,9 +40,14 @@ test('Agent 说明修订草稿按字段确认并保留起草过程', async ({ pa
   const brief = page.locator('[data-bubble="brief"]')
   await expect(brief).toContainText('修订后的说明。')
   await expect(brief.getByRole('button', { name: /v1/ })).toBeVisible()
+  const v2 = brief.getByRole('button', { name: 'v2', exact: true })
+  await expect(v2).toBeEnabled()
+  await v2.click()
+  await expect(brief.locator('.brief-compare:not(.drafting) .diff-context'))
+    .toContainText('第 1 版 → 第 2 版')
+  await brief.getByRole('button', { name: '✕ 退出对比' }).first().click()
   await expect(brief).toContainText('查看起草过程（1 版）')
   await brief.getByRole('button', { name: '查看起草过程（1 版）' }).click()
-  await brief.getByRole('button', { name: 'v1', exact: true }).last().click()
   await expect(brief.locator('.brief-compare.drafting')).toContainText(/说明修订 #2 的起草过程/)
 
   await loginAdmin(request)
@@ -57,4 +62,35 @@ test('Agent 说明修订草稿按字段确认并保留起草过程', async ({ pa
   })
   expect(guestView.status()).toBe(200)
   expect((await guestView.json()).timeline.some((e: { drafting_count?: number }) => e.drafting_count)).toBe(false)
+})
+
+test('后续说明修订不影响查看原说明起草过程', async ({ page, request }) => {
+  const token = await issueRequiredAgent(request)
+  const created = await request.post('/api/v1/tickets', {
+    data: { title: '原说明起草过程', brief_md: '第一版说明。', labels: ['机型:UD-2300'] },
+  })
+  expect(created.status()).toBe(201)
+  const number = ((await created.json()) as { number: string }).number
+  const drafted = await request.patch(`/api/v1/tickets/${number}`, {
+    data: { brief_md: 'Agent 修订后的说明。', base_revision: 1 },
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  expect(drafted.status()).toBe(202)
+
+  await login(page, await wang())
+  await page.goto(`/t/${number}#draft`)
+  await page.getByLabel('说明修订草稿')
+    .getByRole('button', { name: '发出修订', exact: true }).click()
+  await expect(page.locator('[data-bubble="brief"]')).toContainText('Agent 修订后的说明。')
+  const revised = await request.patch(`/api/v1/tickets/${number}`, {
+    data: { brief_md: '后来直接修订的说明。', base_revision: 2 },
+  })
+  expect(revised.status()).toBe(200)
+  await page.reload()
+
+  const brief = page.locator('[data-bubble="brief"]')
+  await brief.getByRole('button', { name: '查看起草过程（1 版）' }).click()
+  await expect(brief.locator('.brief-compare.drafting')).toContainText('说明修订 #2 的起草过程')
+  await expect(brief.locator('.brief-compare.drafting .version-full'))
+    .toContainText('Agent 修订后的说明。')
 })

@@ -64,7 +64,7 @@ export function EventLine({
       {' '}{eventText(event)} · {fmtShort(event.at)}
       {event.signature && <span className="draft-confirm">{event.signature}</span>}
       {onShowBriefVersion && (event.type === 'brief_revised' || event.type === 'created') &&
-        event.brief_version_saved === false && <span className="hint">此版本上线前未存档</span>}
+        event.brief_version_saved === false && <span className="hint">{' · 此版本上线前未存档'}</span>}
       {onShowBriefVersion && event.type === 'brief_revised' && event.brief_version_saved !== false && (
         <button type="button" className="linkish sm" onClick={() => onShowBriefVersion(event.revision ?? 0)}>
           查看差异
@@ -102,7 +102,7 @@ export function BriefBubble({
   fetchVersions?: () => Promise<{ versions: import('./types').BriefVersion[] }>
   briefDraftingOpen?: boolean
   onToggleBriefDrafting?: () => void
-  fetchBriefDrafting?: () => Promise<{ versions: import('./types').BriefVersion[] }>
+  fetchBriefDrafting?: (revision: number) => Promise<{ versions: import('./types').BriefVersion[] }>
 }) {
   const [emptyFieldsOpen, setEmptyFieldsOpen] = useState(false)
   const atts = attachmentsOf(ticket)
@@ -126,12 +126,23 @@ export function BriefBubble({
             ticket.creator.member ?? { id: 0, name: reviser.display_name },
         }
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null)
+  const [selectedDraftVersion, setSelectedDraftVersion] = useState<number | null>(null)
+  const draftRevision = draftEvent?.revision
+  const loadDrafting = useCallback(
+    async () => {
+      if (draftRevision === undefined || !fetchBriefDrafting) throw new Error('brief drafting unavailable')
+      return fetchBriefDrafting(draftRevision)
+    },
+    [fetchBriefDrafting, draftRevision],
+  )
   const loadVersions = useCallback(async () => {
     if (fetchVersions) return fetchVersions()
-    const res = await fetch(`/api/v1/tickets/${encodeURIComponent(ticket.number)}/brief-versions`)
+    const res = await fetch(`/api/v1/tickets/${encodeURIComponent(ticket.number)}/brief-versions`, {
+      cache: 'no-store',
+    })
     if (!res.ok) throw new Error('brief versions unavailable')
     return (await res.json()) as { versions: import('./types').BriefVersion[] }
-  }, [fetchVersions, ticket.number])
+  }, [fetchVersions, ticket.number, ticket.brief.revision])
   const selectVersion = (revision: number, _shift: boolean) => {
     if (revision === -1) {
       setSelectedVersion(null)
@@ -213,9 +224,9 @@ export function BriefBubble({
         {briefDraftingOpen && fetchBriefDrafting && (
           <BriefVersions
             ticket={ticket}
-            loadVersions={fetchBriefDrafting}
-            selected={selectedVersion}
-            onSelect={selectVersion}
+            loadVersions={loadDrafting}
+            selected={selectedDraftVersion}
+            onSelect={(revision) => setSelectedDraftVersion(revision === -1 ? null : revision)}
             drafting={{
               replyNo: draftEvent?.revision ?? 0,
               author: draftEvent ? authorName(draftEvent.actor) : '',

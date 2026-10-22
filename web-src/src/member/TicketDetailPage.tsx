@@ -1160,7 +1160,7 @@ export function TicketDetailPage({
           collapseEmpty
           briefDraftingOpen={briefDraftingOpen}
           onToggleBriefDrafting={() => setBriefDraftingOpen((current) => !current)}
-          fetchBriefDrafting={async () => fetchBriefDrafting(ticket.number, ticket.brief.revision)}
+          fetchBriefDrafting={(revision) => fetchBriefDrafting(ticket.number, revision)}
         />
         {ticket.timeline.map((e) =>
           e.type === 'reply' ? (
