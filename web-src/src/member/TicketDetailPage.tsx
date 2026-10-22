@@ -1156,8 +1156,14 @@ export function TicketDetailPage({
             (actor === 'all' || (actor === 'agent') === (!!e.actor.agent || !!e.actor.via_agent) ? (
               <ReplyBubble key={e.seq} event={e} ticket={ticket} onImageClick={setLightbox} />
             ) : null)
-          ) : e.type === 'created' ? null : (
-            <EventLine key={e.seq} event={e} />
+          ) : (
+            <EventLine
+              key={e.seq}
+              event={e}
+              onShowBriefVersion={(revision) =>
+                window.dispatchEvent(new CustomEvent('tb:show-brief-version', { detail: revision }))
+              }
+            />
           ),
         )}
       </div>

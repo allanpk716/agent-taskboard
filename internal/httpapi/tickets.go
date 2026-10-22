@@ -135,6 +135,8 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 		a.handleGuestLinks(w, r, ref, rest)
 	case "attachments":
 		a.handleTicketAttachments(w, r, ref)
+	case "brief-versions":
+		a.handleBriefVersions(w, r, ref, rest)
 	case "access-records":
 		if len(rest) != 0 {
 			WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "读取访问记录用 GET /api/v1/tickets/{id}/access-records")
@@ -145,6 +147,79 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
 			"读工单用 /api/v1/tickets/{编号或序号}；回复、关闭、时间线等子资源见 docs/api.md")
 	}
+}
+
+func (a *API) handleBriefVersions(w http.ResponseWriter, r *http.Request, ref string, rest []string) {
+	if r.Method != http.MethodGet {
+		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "读取说明版本用 GET")
+		return
+	}
+	if len(rest) > 1 {
+		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "读取说明版本列表用 GET /api/v1/tickets/{id}/brief-versions")
+		return
+	}
+	viewer, ok := a.viewerFromRequest(w, r)
+	if !ok {
+		return
+	}
+	full, err := a.tickets.ForViewer(r.Context(), viewer, ref)
+	if err != nil {
+		a.writeTicketError(w, r, ref, err)
+		return
+	}
+	if len(rest) == 1 {
+		revision, err := strconv.ParseInt(rest[0], 10, 64)
+		if err != nil || revision < 1 {
+			WriteError(w, http.StatusUnprocessableEntity, CodeInvalidCursor, "版本号必须是正整数", "")
+			return
+		}
+		v, err := a.tickets.BriefVersion(r.Context(), full.Seq, revision)
+		if err != nil {
+			a.writeBriefVersionError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, newBriefVersionView(v, full, viewer, r))
+		return
+	}
+	versions, err := a.tickets.BriefVersions(r.Context(), full.Seq)
+	if err != nil {
+		panic(err)
+	}
+	views := make([]briefVersionView, 0, len(versions))
+	for _, v := range versions {
+		views = append(views, newBriefVersionView(v, full, viewer, r))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"versions": views})
+}
+
+type briefVersionView struct {
+	Revision      int64              `json:"revision"`
+	Title         string             `json:"title"`
+	Markdown      string             `json:"markdown"`
+	Fields        *map[string]string `json:"fields"`
+	AttachmentIDs []string           `json:"attachment_ids"`
+	Author        authorView         `json:"author"`
+	At            string             `json:"at"`
+}
+
+func newBriefVersionView(v tickets.BriefVersion, _ tickets.Full, viewer identity.Viewer, _ *http.Request) briefVersionView {
+	out := briefVersionView{
+		Revision: v.Revision, Title: v.Title, Markdown: v.BriefMD,
+		AttachmentIDs: v.AttachmentIDs, Author: newAuthorView(v.Author, viewer.Kind != identity.ViewerGuest),
+		At: v.At.Format(time.RFC3339Nano),
+	}
+	if v.Fields != nil {
+		out.Fields = &v.Fields
+	}
+	return out
+}
+
+func (a *API) writeBriefVersionError(w http.ResponseWriter, err error) {
+	if errors.Is(err, tickets.ErrBriefVersionNotFound) {
+		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "这个说明版本上线前未存档", "没有可查看的历史内容")
+		return
+	}
+	panic(err)
 }
 
 // ticketAccessRecords 处理 GET /api/v1/tickets/{id}/access-records。

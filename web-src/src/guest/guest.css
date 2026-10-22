@@ -363,6 +363,143 @@
   color: #2a5db0;
 }
 
+/* 说明版本条与原位对比（#211） */
+.version-bar {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.version-pill {
+  border: 1px solid #c8d8ee;
+  background: #eef5fd;
+  color: #25589e;
+  border-radius: 999px;
+  min-width: 30px;
+  padding: 2px 7px;
+  font-size: 12px;
+}
+.version-pill.old::after,
+.version-pill.new::after {
+  content: attr(data-role);
+  margin-left: 3px;
+  font-size: 10px;
+}
+.version-pill.missing {
+  border-style: dashed;
+  background: transparent;
+  color: #98a1ab;
+}
+.brief-compare {
+  margin-top: 8px;
+  border: 1px solid #b9d3f2;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.diff-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 7px 9px;
+  background: #eaf3fd;
+  color: #224f83;
+}
+.diff-context .object {
+  font-size: 12px;
+}
+.diff-context strong {
+  font-size: 15px;
+}
+.diff-context .actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.diff-context .actions button,
+.diff-gap,
+.linkish.sm {
+  border: 0;
+  background: transparent;
+  color: #25589e;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 3px;
+}
+.diff-context .actions button.on {
+  color: #153f70;
+  text-decoration: underline;
+}
+.archived-warning,
+.diff-gap {
+  background: #f6f7f9;
+  color: #77808a;
+  padding: 5px 9px;
+  text-align: center;
+}
+.att-removed {
+  margin-left: 4px;
+  color: #8d312b;
+  font-size: 11px;
+}
+.diff-heads {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  font-size: 11px;
+  color: #67707a;
+  background: #f9fafb;
+}
+.diff-heads span {
+  padding: 5px 8px;
+}
+.diff-table {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  overflow-x: auto;
+}
+.diff-row {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  min-width: 100%;
+}
+.diff-table.split .diff-row {
+  grid-template-columns: 22px 1fr 1fr;
+}
+.diff-row .mark {
+  text-align: center;
+  color: #66707a;
+  background: #f5f6f8;
+}
+.diff-cell {
+  padding: 2px 7px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.diff-cell.old,
+.diff-row.delete {
+  background: #ffebe9;
+}
+.diff-cell.new,
+.diff-row.add {
+  background: #e6ffec;
+}
+.diff-row.delete .diff-cell,
+.diff-row.add .diff-cell {
+  background: transparent;
+}
+.diff-row.delete {
+  text-decoration: line-through;
+  color: #8d312b;
+}
+.diff-row.add {
+  color: #1d6735;
+}
+.version-full {
+  padding: 8px;
+  background: #f4f5f7;
+}
+
 /* 系统事件：居中灰色小字 */
 .event {
   text-align: center;

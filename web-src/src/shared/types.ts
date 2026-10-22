@@ -94,6 +94,16 @@ export interface Brief {
   template_groups?: TemplateGroup[]
 }
 
+export interface BriefVersion {
+  revision: number
+  title: string
+  markdown: string
+  fields?: Record<string, string> | null
+  attachment_ids: string[]
+  author: Author
+  at: string
+}
+
 export interface TicketView {
   number: string
   seq: number
