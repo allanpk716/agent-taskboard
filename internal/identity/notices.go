@@ -14,7 +14,8 @@ func (m *Manager) UnseenWebNotices(ctx context.Context, member Member) ([]string
 	)
 	err := m.db.QueryRowContext(ctx, `
 		SELECT
-			EXISTS (SELECT 1 FROM agent_tokens WHERE member_id = ?),
+			EXISTS (SELECT 1 FROM agent_tokens
+			        WHERE member_id = ? AND revoked_at IS NULL AND draft_mode_switched_by_launch = 1),
 			EXISTS (SELECT 1 FROM member_notice_seen WHERE member_id = ? AND notice = 'drafts_intro')`,
 		member.ID, member.ID).Scan(&hasAgent, &seen)
 	if err != nil {

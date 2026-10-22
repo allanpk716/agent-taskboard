@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"net/http"
+	"strconv"
 	"testing"
 
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
@@ -34,6 +35,9 @@ func Test草稿上线提示只给有名下Agent的网页成员一次(t *testing.
 	webLi := s.Login("li", "secret-pass")
 	webZhao := s.Login("zhao", "secret-pass")
 	s.IssueAgentToken(t, webChen, "笔记本")
+	if _, err := s.Store().DB.Exec(`UPDATE agent_tokens SET draft_mode_switched_by_launch = 1 WHERE name = '笔记本'`); err != nil {
+		t.Fatal(err)
+	}
 
 	var withAgent struct {
 		Notices []string `json:"notices"`
@@ -77,7 +81,27 @@ func Test草稿上线提示只给有名下Agent的网页成员一次(t *testing.
 		Notices []string `json:"notices"`
 	}
 	s.Do(t, webZhao, http.MethodGet, "/api/v1/session", nil, &zhao)
-	if len(zhao.Notices) != 1 || zhao.Notices[0] != "drafts_intro" {
-		t.Fatalf("新签发 Agent 后 session notices = %#v, 想 [drafts_intro]", zhao.Notices)
+	if len(zhao.Notices) != 0 {
+		t.Fatalf("新签发 Agent 后 session notices = %#v, 想为空", zhao.Notices)
+	}
+}
+
+func Test已撤销的上线切换Agent不触发草稿提示(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("chen", "secret-pass")
+	web := s.Login("chen", "secret-pass")
+	id, _ := s.IssueAgentToken(t, web, "旧工位")
+	if _, err := s.Store().DB.Exec(`UPDATE agent_tokens SET draft_mode_switched_by_launch = 1 WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if res := s.Do(t, web, http.MethodDelete, "/api/v1/me/agent-tokens/"+strconv.FormatInt(id, 10), nil, nil); res.StatusCode != http.StatusNoContent {
+		t.Fatalf("撤销 Agent 状态码 = %d, 想 204", res.StatusCode)
+	}
+	var got struct {
+		Notices []string `json:"notices"`
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/session", nil, &got)
+	if len(got.Notices) != 0 {
+		t.Fatalf("已撤销 Agent 的 session notices = %#v, 想为空", got.Notices)
 	}
 }

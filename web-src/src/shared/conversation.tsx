@@ -63,12 +63,14 @@ export function EventLine({
       {event.actor.member?.deactivated && <DeactivatedBadge />}
       {' '}{eventText(event)} · {fmtShort(event.at)}
       {event.signature && <span className="draft-confirm">{event.signature}</span>}
-      {onShowBriefVersion && event.type === 'brief_revised' && (
+      {onShowBriefVersion && (event.type === 'brief_revised' || event.type === 'created') &&
+        event.brief_version_saved === false && <span className="hint">此版本上线前未存档</span>}
+      {onShowBriefVersion && event.type === 'brief_revised' && event.brief_version_saved !== false && (
         <button type="button" className="linkish sm" onClick={() => onShowBriefVersion(event.revision ?? 0)}>
           查看差异
         </button>
       )}
-      {onShowBriefVersion && event.type === 'created' && (
+      {onShowBriefVersion && event.type === 'created' && event.brief_version_saved !== false && (
         <button type="button" className="linkish sm" onClick={() => onShowBriefVersion(1)}>
           查看第 1 版
         </button>

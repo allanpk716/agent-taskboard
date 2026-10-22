@@ -66,7 +66,7 @@ function DraftsIntroDialog({ onDone }: { onDone: () => void }) {
       .then((tokens) =>
         setAgents(
           tokens
-            .filter((token) => !token.revoked_at && token.draft_mode === 'required')
+            .filter((token) => !token.revoked_at && token.draft_mode_switched_by_launch)
             .map((token) => token.name),
         ),
       )

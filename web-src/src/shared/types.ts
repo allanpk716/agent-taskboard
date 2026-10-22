@@ -72,6 +72,7 @@ export interface TimelineEvent {
   label?: string
   signature?: string
   drafting_count?: number
+  brief_version_saved?: boolean
 }
 
 export interface DraftView {

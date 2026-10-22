@@ -76,6 +76,28 @@ test('成员可查看第 1 版全文并下载后来移除的附件', async ({ pa
   expect(await downloaded.text()).toContain('old-log')
 })
 
+test('上线前未存档的时间线版本不提供查看入口', async ({ page, request }) => {
+  const number = await createTicket(request, { title: '上线前历史' })
+  await revise(request, number, 1, '上线后的当前版')
+  await login(page, ADMIN)
+  const res = await request.get(`/api/v1/tickets/${number}`)
+  expect(res.ok()).toBeTruthy()
+  const ticket = (await res.json()) as { timeline: Array<Record<string, unknown>> }
+  ticket.timeline = ticket.timeline.map((event) =>
+    event.type === 'created' || event.type === 'brief_revised'
+      ? { ...event, brief_version_saved: false }
+      : event,
+  )
+  await page.route(`**/api/v1/tickets/${number}`, (route) =>
+    route.fulfill({ json: ticket }),
+  )
+  await page.goto(`/t/${number}`)
+  await expect(page.locator('.event', { hasText: '创建了工单' })).toContainText('此版本上线前未存档')
+  await expect(page.locator('.event', { hasText: '修订了说明' })).toContainText('此版本上线前未存档')
+  await expect(page.getByRole('button', { name: '查看第 1 版' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '查看差异' })).toHaveCount(0)
+})
+
 test('访客页能看到说明版本并对比', async ({ page, request }) => {
   const number = await createTicket(request, { title: '访客说明版本' })
   await revise(request, number, 1, '旧说明\n共同')

@@ -896,12 +896,13 @@ type eventView struct {
 	DuplicateOf string `json:"duplicate_of,omitempty"`
 	ExpiresAt   string `json:"expires_at,omitempty"` // guest_link_extended 的新到期时刻（#32）
 
-	AttachmentIDs []string `json:"attachment_ids,omitempty"` // reply 引用的附件（#33）
-	Signature     string   `json:"signature,omitempty"`      // 从草稿发出的回复带确认署名
-	DraftingCount int64    `json:"drafting_count,omitempty"` // 起草过程版本数（#214）
-	From          string   `json:"from,omitempty"`           // assigned 事件的改派前指派人；空 = 创建时指派（#36）
-	To            string   `json:"to,omitempty"`             // assigned 事件的指派对象（#36）
-	Collaborator  string   `json:"collaborator,omitempty"`   // 协作者事件的对象（#158）
+	AttachmentIDs     []string `json:"attachment_ids,omitempty"` // reply 引用的附件（#33）
+	Signature         string   `json:"signature,omitempty"`      // 从草稿发出的回复带确认署名
+	DraftingCount     int64    `json:"drafting_count,omitempty"` // 起草过程版本数（#214）
+	BriefVersionSaved *bool    `json:"brief_version_saved,omitempty"`
+	From              string   `json:"from,omitempty"`         // assigned 事件的改派前指派人；空 = 创建时指派（#36）
+	To                string   `json:"to,omitempty"`           // assigned 事件的指派对象（#36）
+	Collaborator      string   `json:"collaborator,omitempty"` // 协作者事件的对象（#158）
 }
 
 // newEventView 把时间线事件转成对外结构。
@@ -1086,6 +1087,14 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 			panic(err)
 		}
 	}
+	briefVersions, err := a.tickets.BriefVersions(r.Context(), full.Seq)
+	if err != nil {
+		panic(err)
+	}
+	savedBriefs := make(map[int64]bool, len(briefVersions))
+	for _, version := range briefVersions {
+		savedBriefs[version.Revision] = true
+	}
 	for _, e := range full.Timeline {
 		if isGuest && !visibleToGuest(e) {
 			continue
@@ -1094,6 +1103,14 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 		ev.Signature = signatures[e.Seq]
 		if !isGuest {
 			ev.DraftingCount = draftingCounts[e.Seq]
+		}
+		if e.Type == "created" || e.Type == "brief_revised" {
+			revision := int64(1)
+			if e.Type == "brief_revised" {
+				revision = e.Revision
+			}
+			saved := savedBriefs[revision]
+			ev.BriefVersionSaved = &saved
 		}
 		v.Timeline = append(v.Timeline, ev)
 	}

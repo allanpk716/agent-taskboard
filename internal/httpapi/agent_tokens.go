@@ -27,11 +27,12 @@ func (a *API) handleAgentTokens(w http.ResponseWriter, r *http.Request) {
 // agentTokenRow 是 Agent token 列表的条目；明文 token 不回显（只在签发响应里
 // 出现一次）。撤销的保留在列表里，页面标注「已停用」。
 type agentTokenRow struct {
-	ID        int64   `json:"id"`
-	Name      string  `json:"name"`
-	CreatedAt string  `json:"created_at"`
-	RevokedAt *string `json:"revoked_at"`
-	DraftMode string  `json:"draft_mode"`
+	ID             int64   `json:"id"`
+	Name           string  `json:"name"`
+	CreatedAt      string  `json:"created_at"`
+	RevokedAt      *string `json:"revoked_at"`
+	DraftMode      string  `json:"draft_mode"`
+	LaunchSwitched bool    `json:"draft_mode_switched_by_launch"`
 }
 
 func (a *API) listAgentTokens(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +46,8 @@ func (a *API) listAgentTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	rows := make([]agentTokenRow, 0, len(list))
 	for _, tk := range list {
-		row := agentTokenRow{ID: tk.ID, Name: tk.Name, DraftMode: tk.DraftMode, CreatedAt: tk.CreatedAt.Format("2006-01-02T15:04:05Z07:00")}
+		row := agentTokenRow{ID: tk.ID, Name: tk.Name, DraftMode: tk.DraftMode,
+			CreatedAt: tk.CreatedAt.Format("2006-01-02T15:04:05Z07:00"), LaunchSwitched: tk.DraftModeLaunchSwitched}
 		if tk.Revoked {
 			at := tk.RevokedAt.Format("2006-01-02T15:04:05Z07:00")
 			row.RevokedAt = &at

@@ -48,7 +48,7 @@ func (a *API) replyTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
 		if viewer.Kind == identity.ViewerMember {
 			if pending, err := a.drafts.Pending(r.Context(), viewer.Member.ID, full.Seq); err == nil {
-				a.writeDraftPending(w, pending)
+				a.writeDraftPending(w, viewer, pending)
 				return
 			} else if !errors.Is(err, drafts.ErrNotFound) {
 				panic(err)
@@ -94,9 +94,14 @@ func (a *API) replyTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	})
 }
 
-func (a *API) writeDraftPending(w http.ResponseWriter, pending drafts.Draft) {
+func (a *API) writeDraftPending(w http.ResponseWriter, viewer identity.Viewer, pending drafts.Draft) {
+	hint := "先在草稿处发出或丢弃"
+	if viewer.Agent != nil {
+		hint = "要改内容就在这份草稿上改：PUT /api/v1/drafts/" + pending.ID +
+			"（带 base_version）；要直接发出或丢弃，请成员打开 /t/" + pending.TicketNumber + "#draft"
+	}
 	WriteErrorExtra(w, http.StatusConflict, CodeDraftPending,
-		"这一方在这张工单上已有一份草稿", "先处理草稿，再直接回复或修订说明",
+		"这一方在这张工单上已有一份草稿", hint,
 		map[string]any{"draft": map[string]any{
 			"id": pending.ID, "kind": pending.Kind, "version": pending.Version,
 			"preview_url": "/t/" + pending.TicketNumber + "#draft", "url": "/api/v1/drafts/" + pending.ID,
@@ -129,7 +134,7 @@ func (a *API) reviseTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	}
 	if viewer.Kind == identity.ViewerMember && (viewer.Member.ID == full.Creator.MemberID) {
 		if pending, err := a.drafts.Pending(r.Context(), viewer.Member.ID, full.Seq); err == nil {
-			a.writeDraftPending(w, pending)
+			a.writeDraftPending(w, viewer, pending)
 			return
 		} else if !errors.Is(err, drafts.ErrNotFound) {
 			panic(err)

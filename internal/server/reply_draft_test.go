@@ -66,6 +66,7 @@ type draftPendingError struct {
 			PreviewURL string `json:"preview_url"`
 			URL        string `json:"url"`
 		} `json:"draft"`
+		Hint string `json:"hint"`
 	} `json:"error"`
 }
 
@@ -184,6 +185,14 @@ func Test草稿校验版本乐观锁与三种调用者pending(t *testing.T) {
 			pending.Error.Draft.PreviewURL != "/t/"+number+"#draft" ||
 			pending.Error.Draft.URL != "/api/v1/drafts/"+accepted.Draft.ID {
 			t.Fatalf("%s draft_pending 附带草稿 = %+v", name, pending.Error.Draft)
+		}
+		wantHint := "先在草稿处发出或丢弃"
+		if name != "本人网页" {
+			wantHint = "要改内容就在这份草稿上改：PUT /api/v1/drafts/" + accepted.Draft.ID +
+				"（带 base_version）；要直接发出或丢弃，请成员打开 /t/" + number + "#draft"
+		}
+		if pending.Error.Hint != wantHint {
+			t.Fatalf("%s draft_pending hint = %q, 想 %q", name, pending.Error.Hint, wantHint)
 		}
 	}
 	res = s.Do(t, web, http.MethodPatch, "/api/v1/tickets/"+number,

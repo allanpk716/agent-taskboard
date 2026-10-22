@@ -7,4 +7,7 @@ CREATE TABLE member_notice_seen (
     PRIMARY KEY (member_id, notice)
 );
 
-UPDATE agent_tokens SET draft_mode = 'required';
+ALTER TABLE agent_tokens ADD COLUMN draft_mode_switched_by_launch INTEGER NOT NULL DEFAULT 0;
+
+UPDATE agent_tokens
+SET draft_mode = 'required', draft_mode_switched_by_launch = 1;

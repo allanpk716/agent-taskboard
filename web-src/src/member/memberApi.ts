@@ -382,6 +382,7 @@ export interface AgentTokenRow {
   draft_mode: 'required' | 'direct'
   created_at: string
   revoked_at?: string | null
+  draft_mode_switched_by_launch?: boolean
 }
 
 export interface IssuedToken {
