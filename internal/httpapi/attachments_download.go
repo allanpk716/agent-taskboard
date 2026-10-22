@@ -59,7 +59,9 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	if att.State != "attached" {
+	draftOwner := att.State == "pending" && att.DraftID != 0 &&
+		viewer.Member.ID != 0 && att.Uploader.MemberID == viewer.Member.ID
+	if att.State != "attached" && !draftOwner {
 		WriteError(w, http.StatusNotFound, CodeAttachmentNotFound, "附件还在待用状态，不能下载",
 			"先在说明或回复里引用它（attachment_ids 或正文 att: 引用）")
 		return

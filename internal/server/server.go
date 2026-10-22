@@ -89,7 +89,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	accessRecords := accessrecords.NewManager(st.DB, c)
 	ticketStore := tickets.NewManager(st.DB, c, labelDict, templateDict, atts)
 	ticketStore.SetNotifier(notificationStore)
-	draftStore := drafts.NewManager(st.DB, c, ticketStore)
+	draftStore := drafts.NewManager(st.DB, c, ticketStore, atts)
 	draftStore.SetNotifier(notificationStore.DraftNotifier())
 	api := httpapi.NewAPI(ident, ticketStore,
 		templateDict, idem, atts, backups, accessRecords, draftStore, cfg, c)

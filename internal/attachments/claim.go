@@ -122,7 +122,7 @@ func (m *Manager) ClaimTx(ctx context.Context, tx *sql.Tx, ticketSeq int64,
 			return notUsable(ref.ID)
 		}
 		if _, err := tx.ExecContext(ctx, `
-			UPDATE attachments SET state = 'attached', attached_to = ?, claimed_at = ?
+			UPDATE attachments SET state = 'attached', attached_to = ?, claimed_at = ?, draft_id = NULL
 			WHERE id = ? AND state = 'pending'`,
 			attachedTo, at.Format(time.RFC3339Nano), a.ID); err != nil {
 			return fmt.Errorf("认领附件 %s 失败：%w", ref.ID, err)
@@ -250,7 +250,7 @@ func notUsable(id string) error {
 func (m *Manager) CleanupUnreferenced(ctx context.Context) (int, error) {
 	cutoff := m.clk.Now().Add(-24 * time.Hour)
 	rows, err := m.db.QueryContext(ctx,
-		`SELECT id, uploaded_at FROM attachments WHERE state = 'pending'`)
+		`SELECT id, uploaded_at FROM attachments WHERE state = 'pending' AND draft_id IS NULL`)
 	if err != nil {
 		return 0, err
 	}

@@ -3,8 +3,10 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/drafts"
 )
 
@@ -169,18 +171,30 @@ func (a *API) writeDraftSendError(w http.ResponseWriter, r *http.Request, err er
 }
 
 type draftView struct {
-	ID         string             `json:"id"`
-	Kind       string             `json:"kind"`
-	Status     string             `json:"status"`
-	Version    int64              `json:"version"`
-	Ticket     *draftTicketView   `json:"ticket"`
-	Request    drafts.Request     `json:"request"`
-	Author     authorView         `json:"author"`
-	Versions   []draftVersionView `json:"versions"`
-	Base       draftBaseView      `json:"base"`
-	NewEvents  int64              `json:"new_events"`
-	PreviewURL string             `json:"preview_url"`
-	URL        string             `json:"url"`
+	ID          string             `json:"id"`
+	Kind        string             `json:"kind"`
+	Status      string             `json:"status"`
+	Version     int64              `json:"version"`
+	Ticket      *draftTicketView   `json:"ticket"`
+	Request     drafts.Request     `json:"request"`
+	Attachments []attachmentView   `json:"attachments"`
+	Author      authorView         `json:"author"`
+	Versions    []draftVersionView `json:"versions"`
+	Base        draftBaseView      `json:"base"`
+	NewEvents   int64              `json:"new_events"`
+	PreviewURL  string             `json:"preview_url"`
+	URL         string             `json:"url"`
+}
+
+func draftAttachmentViews(atts []attachments.AttachmentInfo) []attachmentView {
+	out := make([]attachmentView, 0, len(atts))
+	for _, att := range atts {
+		out = append(out, attachmentView{
+			ID: att.Ref(), Filename: att.Filename, Size: att.Size,
+			URL: attachmentBasePath(att.Ref()) + url.PathEscape(att.Filename),
+		})
+	}
+	return out
 }
 
 type draftTicketView struct {
@@ -207,7 +221,8 @@ func newDraftView(a *API, r *http.Request, d drafts.Draft) draftView {
 	return draftView{
 		ID: d.ID, Kind: d.Kind, Status: d.Status, Version: d.Version,
 		Ticket:  &draftTicketView{Number: d.TicketNumber, Seq: d.TicketSeq, URL: d.TicketURL},
-		Request: d.Request, Author: author, Versions: newDraftVersions(d.Versions),
+		Request: d.Request, Attachments: draftAttachmentViews(d.Attachments),
+		Author: author, Versions: newDraftVersions(d.Versions),
 		Base: draftBaseView{TimelineSeq: d.BaseTimelineSeq}, NewEvents: d.NewEvents,
 		PreviewURL: d.TicketURL + "#draft", URL: "/api/v1/drafts/" + d.ID,
 	}
