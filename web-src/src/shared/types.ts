@@ -79,7 +79,7 @@ export interface DraftView {
   kind: string
   status: string
   version: number
-  ticket?: { number: string; seq: number; url: string } | null
+  ticket?: { number: string; seq: number; title: string; url: string } | null
   request: {
     body_md: string
     title?: string | null

@@ -26,7 +26,7 @@ func (m *Manager) SaveBriefRevision(ctx context.Context, viewer identity.Viewer,
 	now := m.clk.Now().Format(time.RFC3339Nano)
 	buf, _ := json.Marshal(req)
 	d := Draft{Kind: "brief_revision", Status: "pending", TicketSeq: full.Seq,
-		TicketNumber: full.Number, TicketURL: "/t/" + full.Number,
+		TicketNumber: full.Number, TicketTitle: full.Title, TicketURL: "/t/" + full.Number,
 		MemberID: viewer.Member.ID, MemberName: viewer.Member.Name, Request: req,
 		BaseTimelineSeq: lastSeq(full), BaseBriefRevision: full.BriefRevision}
 	if viewer.Agent != nil {
