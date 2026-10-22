@@ -88,12 +88,18 @@ export function BriefBubble({
   onEditBrief,
   collapseEmpty = false,
   fetchVersions,
+  briefDraftingOpen = false,
+  onToggleBriefDrafting,
+  fetchBriefDrafting,
 }: {
   ticket: TicketView
   onImageClick: (url: string) => void
   onEditBrief?: () => void
   collapseEmpty?: boolean
   fetchVersions?: () => Promise<{ versions: import('./types').BriefVersion[] }>
+  briefDraftingOpen?: boolean
+  onToggleBriefDrafting?: () => void
+  fetchBriefDrafting?: () => Promise<{ versions: import('./types').BriefVersion[] }>
 }) {
   const [emptyFieldsOpen, setEmptyFieldsOpen] = useState(false)
   const atts = attachmentsOf(ticket)
@@ -105,6 +111,7 @@ export function BriefBubble({
   const emptyCount = fields.filter((f) => !(values[f.key] ?? '').trim()).length
   const reviser = ticket.brief.last_revised
   const revisedEvent = [...ticket.timeline].reverse().find((e) => e.type === 'brief_revised')
+  const draftEvent = [...ticket.timeline].reverse().find((e) => e.type === 'brief_revised' && e.signature && e.drafting_count)
   const reviserName =
     reviser.type === 'guest' ? `${reviser.display_name}（访客）` : reviser.display_name
   const reviserAvatar: Author =
@@ -184,12 +191,36 @@ export function BriefBubble({
           <Markdown body={ticket.brief.markdown} attachments={atts} onImageClick={onImageClick} />
         )}
         <AttachmentChips attachments={briefAtts} />
+        {draftEvent && onToggleBriefDrafting && fetchBriefDrafting && (
+          <button
+            type="button"
+            className="linkish sm drafting-toggle"
+            aria-expanded={briefDraftingOpen}
+            onClick={onToggleBriefDrafting}
+          >
+            查看起草过程（{draftEvent.drafting_count} 版）
+          </button>
+        )}
         <BriefVersions
           ticket={ticket}
           loadVersions={loadVersions}
           selected={selectedVersion}
           onSelect={selectVersion}
         />
+        {briefDraftingOpen && fetchBriefDrafting && (
+          <BriefVersions
+            ticket={ticket}
+            loadVersions={fetchBriefDrafting}
+            selected={selectedVersion}
+            onSelect={selectVersion}
+            drafting={{
+              replyNo: draftEvent?.revision ?? 0,
+              author: draftEvent ? authorName(draftEvent.actor) : '',
+              sentAt: draftEvent?.at ?? '',
+            }}
+            draftingKind="brief"
+          />
+        )}
       </div>
     </div>
   )
@@ -262,6 +293,7 @@ export function ReplyBubble({
               author: authorName(event.actor),
               sentAt: event.at,
             }}
+            draftingKind="reply"
           />
         )}
       </div>

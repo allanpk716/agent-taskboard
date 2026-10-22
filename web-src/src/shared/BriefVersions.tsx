@@ -38,19 +38,19 @@ function inlineParts(a: string, b: string): InlinePart[] {
   return out.filter((p) => p.text !== '')
 }
 
-function splitVersion(v: BriefVersion, ticket: TicketView, drafting = false): string[] {
+function splitVersion(v: BriefVersion, ticket: TicketView, draftingKind: 'reply' | 'brief' | null = null): string[] {
   const fields = ticket.brief.template_fields ?? []
   const values = v.fields ?? {}
-  const lines = drafting ? [] : [`标题：${v.title}`]
-  if (!drafting && fields.length > 0) {
+  const lines = draftingKind === 'reply' ? [] : [`标题：${v.title}`]
+  if (draftingKind !== 'reply' && fields.length > 0) {
     for (const f of fields) lines.push(`${f.title}：${values[f.key] ?? ''}`)
-  } else if (!drafting) {
+  } else if (draftingKind !== 'reply') {
     lines.push(...v.markdown.split(/\r?\n/))
   }
-  if (drafting) lines.push(...v.markdown.split(/\r?\n/))
+  if (draftingKind === 'reply') lines.push(...v.markdown.split(/\r?\n/))
   for (const id of v.attachment_ids) {
     const attachment = ticket.attachments.find((a) => a.id === id)
-    lines.push(drafting && !attachment ? `附件已清除：${id}` : `附件：${attachment?.filename ?? id}`)
+    lines.push(draftingKind === 'reply' && !attachment ? `附件已清除：${id}` : `附件：${attachment?.filename ?? id}`)
   }
   return lines
 }
@@ -180,12 +180,14 @@ export function BriefVersions({
   selected,
   onSelect,
   drafting,
+  draftingKind,
 }: {
   ticket: TicketView
   loadVersions: VersionLoader
   selected: number | null
   onSelect: (revision: number, shift: boolean) => void
   drafting?: { replyNo: number; author: string; sentAt: string }
+  draftingKind?: 'reply' | 'brief'
 }) {
   const [versions, setVersions] = useState<BriefVersion[]>([])
   const [rangeOld, setRangeOld] = useState<number | null>(null)
@@ -262,9 +264,9 @@ export function BriefVersions({
   const rows = useMemo(
     () =>
       oldVersion && current
-        ? diffLines(splitVersion(oldVersion, ticket, !!drafting), splitVersion(current, ticket, !!drafting))
+      ? diffLines(splitVersion(oldVersion, ticket, draftingKind ?? null), splitVersion(current, ticket, draftingKind ?? null))
         : [],
-    [oldVersion, current, ticket, drafting],
+    [oldVersion, current, ticket, draftingKind],
   )
   const allRevisions = drafting
     ? versions.map((v) => v.revision)
@@ -306,7 +308,11 @@ export function BriefVersions({
         <div className={`brief-compare${drafting ? ' drafting' : ''}`}>
           <div className="diff-context">
             <span className={`object${drafting ? ' drafting' : ''}`}>
-              {drafting ? `💬 回复 #${drafting.replyNo} 的起草过程 · ${drafting.author} · ${fmtExact(drafting.sentAt)}` : '📄 工单说明'}
+              {draftingKind === 'brief'
+                ? `📄 说明修订 #${drafting?.replyNo ?? 0} 的起草过程 · ${drafting?.author ?? ''} · ${drafting ? fmtExact(drafting.sentAt) : ''}`
+                : drafting
+                  ? `💬 回复 #${drafting.replyNo} 的起草过程 · ${drafting.author} · ${fmtExact(drafting.sentAt)}`
+                  : '📄 工单说明'}
             </span>
             <strong>{firstOnly ? '第 1 版全文' : `第 ${oldVersion ? rangeOld : current.revision - 1} 版 → 第 ${current.revision} 版`}</strong>
             <span className="actions">
@@ -320,7 +326,11 @@ export function BriefVersions({
               <button type="button" onClick={() => onSelect(-1, false)}>✕ 退出对比</button>
             </span>
           </div>
-          {drafting && <div className="drafting-note">回复发出后不可修改；这里是发出前的草稿各版</div>}
+          {drafting && (
+            <div className="drafting-note">
+              {draftingKind === 'brief' ? '发出后不可修改；这里是发出前的草稿各版' : '回复发出后不可修改；这里是发出前的草稿各版'}
+            </div>
+          )}
           {message && <div className="archived-warning">{message}</div>}
           {view === 'full' || firstOnly ? (
             <VersionFull version={current} ticket={ticket} drafting={!!drafting} />

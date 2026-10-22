@@ -14,9 +14,13 @@ type draftBody struct {
 	Status  string `json:"status"`
 	Version int64  `json:"version"`
 	Request struct {
-		BodyMD        string   `json:"body_md"`
-		AttachmentIDs []string `json:"attachment_ids"`
-		Deliver       bool     `json:"deliver"`
+		BodyMD        string            `json:"body_md"`
+		Title         *string           `json:"title"`
+		BriefMD       *string           `json:"brief_md"`
+		Fields        map[string]string `json:"fields"`
+		AttachmentIDs []string          `json:"attachment_ids"`
+		Deliver       bool              `json:"deliver"`
+		BaseRevision  int64             `json:"base_revision"`
 	} `json:"request"`
 	Attachments []attachmentViewBody `json:"attachments"`
 	Author      struct {
@@ -32,7 +36,8 @@ type draftBody struct {
 		Author  string `json:"author"`
 	} `json:"versions"`
 	Base struct {
-		TimelineSeq int64 `json:"timeline_seq"`
+		TimelineSeq   int64 `json:"timeline_seq"`
+		BriefRevision int64 `json:"brief_revision"`
 	} `json:"base"`
 	NewEvents  int64  `json:"new_events"`
 	PreviewURL string `json:"preview_url"`

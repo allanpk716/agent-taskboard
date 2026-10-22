@@ -140,6 +140,8 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 		a.handleBriefVersions(w, r, ref, rest)
 	case "drafting":
 		a.handleReplyDrafting(w, r, ref, rest)
+	case "brief-drafting":
+		a.handleBriefDrafting(w, r, ref, rest)
 	case "access-records":
 		if len(rest) != 0 {
 			WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "读取访问记录用 GET /api/v1/tickets/{id}/access-records")
@@ -150,6 +152,50 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
 			"读工单用 /api/v1/tickets/{编号或序号}；回复、关闭、时间线等子资源见 docs/api.md")
 	}
+}
+
+func (a *API) handleBriefDrafting(w http.ResponseWriter, r *http.Request, ref string, rest []string) {
+	if r.Method != http.MethodGet {
+		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "读取起草过程用 GET", "")
+		return
+	}
+	if len(rest) != 1 {
+		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "读取起草过程用 GET /api/v1/tickets/{id}/brief-drafting/{revision}")
+		return
+	}
+	revision, err := strconv.ParseInt(rest[0], 10, 64)
+	if err != nil || revision < 2 {
+		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidCursor, "说明版本号必须是大于 1 的整数", "")
+		return
+	}
+	viewer, ok := a.viewerFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if viewer.Kind == identity.ViewerGuest {
+		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单", "")
+		return
+	}
+	full, err := a.tickets.ForViewer(r.Context(), viewer, ref)
+	if err != nil {
+		a.writeTicketError(w, r, ref, err)
+		return
+	}
+	versions, err := a.drafts.BriefHistory(r.Context(), full.Seq, revision)
+	if err != nil {
+		if errors.Is(err, drafts.ErrNotFound) {
+			WriteError(w, http.StatusNotFound, CodeNotFound, "没有这份起草过程", "只有从草稿发出的说明修订才有起草过程")
+			return
+		}
+		panic(err)
+	}
+	views := make([]briefVersionView, 0, len(versions))
+	for _, v := range versions {
+		views = append(views, newBriefVersionView(v.Snapshot, full, viewer, r))
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Versions []briefVersionView `json:"versions"`
+	}{Versions: views})
 }
 
 func (a *API) handleBriefVersions(w http.ResponseWriter, r *http.Request, ref string, rest []string) {
@@ -1019,7 +1065,9 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 		}
 		ev := newEventView(e, !isGuest)
 		ev.Signature = signatures[e.Seq]
-		ev.DraftingCount = draftingCounts[e.Seq]
+		if !isGuest {
+			ev.DraftingCount = draftingCounts[e.Seq]
+		}
 		v.Timeline = append(v.Timeline, ev)
 	}
 	return v

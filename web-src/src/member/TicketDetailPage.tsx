@@ -15,6 +15,7 @@ import {
   createGuestLink,
   discardDraft,
   extendGuestLink,
+  fetchBriefDrafting,
   fetchAccessRecords,
   fetchGuestLinks,
   fetchReplyDrafting,
@@ -1013,6 +1014,7 @@ export function TicketDetailPage({
   const [accessRecords, setAccessRecords] = useState<AccessRecordsResponse | null>(null)
   const [allInfoOpen, setAllInfoOpen] = useState(false)
   const [draftingSeq, setDraftingSeq] = useState<number | null>(null)
+  const [briefDraftingOpen, setBriefDraftingOpen] = useState(false)
   const load = useCallback(async () => {
     try {
       const got = await fetchTicket(ticketRef)
@@ -1156,6 +1158,9 @@ export function TicketDetailPage({
           onImageClick={setLightbox}
           onEditBrief={open && can.edit_brief ? () => setDialog('brief') : undefined}
           collapseEmpty
+          briefDraftingOpen={briefDraftingOpen}
+          onToggleBriefDrafting={() => setBriefDraftingOpen((current) => !current)}
+          fetchBriefDrafting={async () => fetchBriefDrafting(ticket.number, ticket.brief.revision)}
         />
         {ticket.timeline.map((e) =>
           e.type === 'reply' ? (
@@ -1505,13 +1510,23 @@ function DraftCard({
   const [confirmDiscard, setConfirmDiscard] = useState(false)
   const [changed, setChanged] = useState<{ throughSeq: number; count: number } | null>(null)
   const [editing, setEditing] = useState(false)
-  const [body, setBody] = useState(draft.request.body_md)
+  const [body, setBody] = useState(draft.request.body_md || draft.request.brief_md || '')
+  const [title, setTitle] = useState(draft.request.title ?? '')
+  const [fields, setFields] = useState<Record<string, string>>(() => {
+    const initial = { ...(draft.request.fields ?? {}) }
+    for (const field of ticket.brief.template_fields ?? []) {
+      if (!(field.key in initial)) initial[field.key] = ticket.brief.fields?.[field.key] ?? ''
+    }
+    return initial
+  })
   const [deliver, setDeliver] = useState(!!draft.request.deliver)
   const [showInstruction, setShowInstruction] = useState(false)
   const [busy, setBusy] = useState(false)
   const agent = draft.author.agent?.name ?? 'Agent'
   const member = draft.author.member?.name ?? ''
   const closed = ticket.status === 'closed'
+  const brief = draft.kind === 'brief_revision'
+  const revisionStale = brief && ticket.brief.revision !== draft.base.brief_revision
   const newEvents = ticket.timeline.filter((e) => e.seq > draft.base.timeline_seq)
 
   async function send(confirmThroughSeq?: number) {
@@ -1543,11 +1558,21 @@ function DraftCard({
     }
     setBusy(true)
     try {
-      await updateDraft(draft.id, draft.version, {
-        body_md: body,
-        attachment_ids: draft.request.attachment_ids ?? [],
-        deliver,
-      })
+      if (brief) {
+        await updateDraft(draft.id, draft.version, {
+          ...(draft.request.title != null ? { title } : {}),
+          ...(ticket.brief.template_fields?.length
+            ? { fields, attachment_ids: draft.request.attachment_ids ?? ticket.brief.attachment_ids }
+            : { brief_md: body, attachment_ids: draft.request.attachment_ids ?? ticket.brief.attachment_ids }),
+          base_revision: draft.request.base_revision,
+        })
+      } else {
+        await updateDraft(draft.id, draft.version, {
+          body_md: body,
+          attachment_ids: draft.request.attachment_ids ?? [],
+          deliver,
+        })
+      }
       setEditing(false)
       toast('草稿已保存为新一版')
       onChanged()
@@ -1565,10 +1590,10 @@ function DraftCard({
 
   function instructionText() {
     const base = window.location.origin
-    return `请修改我在 agent-taskboard 工单 ${ticket.number}「${ticket.title}」上的回复草稿 ${draft.id}（当前第 ${draft.version} 版）。
+    return `请修改我在 agent-taskboard 工单 ${ticket.number}「${ticket.title}」上的${brief ? '说明修订' : '回复'}草稿 ${draft.id}（当前第 ${draft.version} 版）。
 1. 凭证：用环境变量 TASKBOARD_TOKEN；读不到或返回 401 就停下来告诉我，不要用密码登录。
 2. 先读当前草稿：curl -H "Authorization: Bearer $TASKBOARD_TOKEN" "${base}/api/v1/drafts/${draft.id}"
-   我可能亲手改过，以最新一版为准，不要把我的改动改回去。需要上下文时再读工单：${base}/api/v1/tickets/${ticket.number}?format=markdown
+   我可能亲手改过，以最新一版为准，不要把我的改动改回去。${brief ? '说明当前以第 ' + ticket.brief.revision + ' 版为准。' : `需要上下文时再读工单：${base}/api/v1/tickets/${ticket.number}?format=markdown`}
 3. 按我下面的意见修改，然后整份写回：PUT ${base}/api/v1/drafts/${draft.id}，请求体 {"base_version": <刚读到的 version>, "request": {…完整内容…}}。
    返回 409 draft_version_conflict，说明你读完之后草稿又被改过；重新读，在最新版上改。
 4. 改完把查看地址 ${absoluteUrl(draft.preview_url)} 发给我，说明这一版改了什么。发出或丢弃由我在网页上做，你做不了。
@@ -1583,10 +1608,10 @@ function DraftCard({
   }
 
   return (
-    <article id="draft" className="draft-card" aria-label="回复草稿">
+    <article id="draft" className="draft-card" aria-label={brief ? '说明修订草稿' : '回复草稿'}>
       <div className="draft-label">草稿 · 未发出 · 只有你能看到</div>
       <div className="draft-meta">
-        {agent}（{member}的 Agent）写的回复草稿 · 第 {draft.version} 版
+        {agent}（{member}的 Agent）写的{brief ? '说明修订' : '回复'}草稿 · 第 {draft.version} 版
         {deliver && <span className="draft-deliver-pill">将作为交付</span>}
       </div>
       {newEvents.length > 0 && (
@@ -1595,9 +1620,24 @@ function DraftCard({
         </div>
       )}
       {closed && <div className="draft-blocked">工单已关闭，不能发出回复草稿；请先重新开启，或丢弃草稿。</div>}
+      {revisionStale && (
+        <div className="draft-blocked">说明已被访客修订到第 {ticket.brief.revision} 版，这份草稿基于第 {draft.base.brief_revision} 版；请让 Agent 重写修订。</div>
+      )}
       {editing ? (
         <>
-          <textarea aria-label="草稿正文" value={body} onChange={(e) => setBody(e.target.value)} />
+          {brief && draft.request.title != null && (
+            <input aria-label="草稿标题" value={title} onChange={(e) => setTitle(e.target.value)} />
+          )}
+          {brief && (ticket.brief.template_fields?.length ?? 0) > 0 ? (
+            (ticket.brief.template_fields ?? []).map((field) => (
+              <label className="draft-edit-field" key={field.key}>
+                <span>{field.title}</span>
+                <textarea aria-label={field.title} value={fields[field.key] ?? ''} onChange={(e) => setFields({ ...fields, [field.key]: e.target.value })} />
+              </label>
+            ))
+          ) : (
+            <textarea aria-label="草稿正文" value={brief ? draft.request.brief_md ?? body : body} onChange={(e) => setBody(e.target.value)} />
+          )}
           <AttachmentChips attachments={draft.attachments} />
           <div className="draft-actions">
             <button type="button" className="btn ghost" disabled={busy} onClick={() => setEditing(false)}>
@@ -1611,8 +1651,14 @@ function DraftCard({
         </>
       ) : (
         <>
-          <div className="draft-body">{draft.request.body_md}</div>
-          <AttachmentChips attachments={draft.attachments} />
+          {brief ? (
+            <DraftBriefChanges draft={draft} ticket={ticket} />
+          ) : (
+            <>
+              <div className="draft-body">{draft.request.body_md}</div>
+              <AttachmentChips attachments={draft.attachments} />
+            </>
+          )}
           <div className="draft-actions">
             <button type="button" className="btn ghost" onClick={() => void copyInstruction()}>
               复制修改指令
@@ -1620,20 +1666,22 @@ function DraftCard({
             <button type="button" className="btn ghost" onClick={() => setEditing(true)}>
               直接修改
             </button>
-            <button
-              type="button"
-              className={`btn ghost${deliver ? ' on' : ''}`}
-              aria-pressed={deliver}
-              onClick={() => setDeliver((v) => !v)}
-            >
-              {deliver ? '✓ 作为交付发出' : '作为交付发出'}
-            </button>
+            {!brief && (
+              <button
+                type="button"
+                className={`btn ghost${deliver ? ' on' : ''}`}
+                aria-pressed={deliver}
+                onClick={() => setDeliver((v) => !v)}
+              >
+                {deliver ? '✓ 作为交付发出' : '作为交付发出'}
+              </button>
+            )}
             <span className="sp" />
             <button type="button" className="btn danger ghost" disabled={busy} onClick={() => setConfirmDiscard(true)}>
               丢弃
             </button>
-            <button type="button" className="btn" disabled={busy || closed} onClick={() => void send()}>
-              发出
+            <button type="button" className="btn" disabled={busy || closed || revisionStale} onClick={() => void send()}>
+              {brief ? '发出修订' : '发出'}
             </button>
           </div>
           {showInstruction && (
@@ -1692,6 +1740,42 @@ function DraftCard({
         </Modal>
       )}
     </article>
+  )
+}
+
+function DraftBriefChanges({ draft, ticket }: { draft: DraftView; ticket: MemberTicket }) {
+  const oldFields = ticket.brief.fields ?? {}
+  const newFields = { ...oldFields, ...(draft.request.fields ?? {}) }
+  const oldIDs = new Set(ticket.brief.attachment_ids)
+  const newIDs = new Set(draft.request.attachment_ids ?? ticket.brief.attachment_ids)
+  const attachmentName = (id: string) =>
+    ticket.attachments.find((a) => a.id === id)?.filename ??
+    draft.attachments.find((a) => a.id === id)?.filename ?? id
+  const row = (label: string, oldText: string, newText: string) => (
+    <div className="draft-field-change" key={label}>
+      <span className="name">{label}</span>
+      {oldText === newText ? (
+        <span className="unchanged">（未改）</span>
+      ) : (
+        <>
+          <span className="old">{oldText || '（空）'}</span>
+          <span className="new">{newText || '（空）'}</span>
+        </>
+      )}
+    </div>
+  )
+  return (
+    <div className="draft-brief-changes">
+      {row('标题', ticket.title, draft.request.title ?? ticket.title)}
+      {(ticket.brief.template_fields ?? []).length > 0
+        ? (ticket.brief.template_fields ?? []).map((field) =>
+            row(field.title, oldFields[field.key] ?? '', newFields[field.key] ?? ''),
+          )
+        : row('说明', ticket.brief.markdown, draft.request.brief_md ?? ticket.brief.markdown)}
+      {[...new Set([...oldIDs, ...newIDs])].map((id) =>
+        row(`附件：${attachmentName(id)}`, oldIDs.has(id) ? '有' : '无', newIDs.has(id) ? '有' : '无'),
+      )}
+    </div>
   )
 }
 

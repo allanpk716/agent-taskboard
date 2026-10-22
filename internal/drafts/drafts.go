@@ -34,30 +34,35 @@ func (e *TicketChangedError) Error() string {
 }
 
 type Request struct {
-	BodyMD        string   `json:"body_md"`
-	AttachmentIDs []string `json:"attachment_ids"`
-	Deliver       bool     `json:"deliver"`
+	BodyMD        string            `json:"body_md"`
+	Title         *string           `json:"title,omitempty"`
+	BriefMD       *string           `json:"brief_md,omitempty"`
+	Fields        map[string]string `json:"fields,omitempty"`
+	AttachmentIDs []string          `json:"attachment_ids"`
+	Deliver       bool              `json:"deliver"`
+	BaseRevision  int64             `json:"base_revision,omitempty"`
 }
 
 type Draft struct {
-	ID              string
-	Kind            string
-	Status          string
-	TicketSeq       int64
-	TicketNumber    string
-	TicketURL       string
-	MemberID        int64
-	MemberName      string
-	AgentID         int64
-	AgentName       string
-	Request         Request
-	Version         int64
-	BaseTimelineSeq int64
-	NewEvents       int64
-	MemberEdited    bool
-	SentTimelineSeq int64
-	Versions        []Version
-	Attachments     []attachments.AttachmentInfo
+	ID                string
+	Kind              string
+	Status            string
+	TicketSeq         int64
+	TicketNumber      string
+	TicketURL         string
+	MemberID          int64
+	MemberName        string
+	AgentID           int64
+	AgentName         string
+	Request           Request
+	Version           int64
+	BaseTimelineSeq   int64
+	BaseBriefRevision int64
+	NewEvents         int64
+	MemberEdited      bool
+	SentTimelineSeq   int64
+	Versions          []Version
+	Attachments       []attachments.AttachmentInfo
 }
 
 type Version struct {
@@ -297,6 +302,7 @@ func (m *Manager) Get(ctx context.Context, viewer identity.Viewer, id int64) (Dr
 	d.SentTimelineSeq = sentSeq.Int64
 	d.MemberEdited = memberEdited == 1
 	_ = json.Unmarshal([]byte(request), &d.Request)
+	d.BaseBriefRevision = d.Request.BaseRevision
 	d.Versions, err = m.versions(ctx, id)
 	if err != nil {
 		return Draft{}, err
@@ -361,7 +367,14 @@ func (m *Manager) Update(ctx context.Context, viewer identity.Viewer, id string,
 	if full.Status != "open" {
 		return Draft{}, tickets.ErrTicketClosed
 	}
-	if err = m.tk.ValidateReply(ctx, viewer, d.TicketNumber, tickets.ReplyInput{
+	if d.Kind == "brief_revision" {
+		if _, err = m.tk.ValidateRevise(ctx, viewer, d.TicketNumber, tickets.ReviseInput{
+			Title: req.Title, BriefMD: req.BriefMD, Fields: req.Fields,
+			AttachmentIDs: req.AttachmentIDs, BaseRevision: req.BaseRevision,
+		}); err != nil {
+			return Draft{}, err
+		}
+	} else if err = m.tk.ValidateReply(ctx, viewer, d.TicketNumber, tickets.ReplyInput{
 		BodyMD: req.BodyMD, AttachmentIDs: req.AttachmentIDs, Deliver: req.Deliver,
 	}); err != nil {
 		return Draft{}, err
@@ -390,7 +403,11 @@ func (m *Manager) Update(ctx context.Context, viewer identity.Viewer, id string,
 	if err = m.atts.ReleaseDraftTx(ctx, tx, num); err != nil {
 		return Draft{}, err
 	}
-	if err = m.atts.ReserveDraftTx(ctx, tx, num, full.Seq, attachments.PrincipalOf(viewer),
+	if d.Kind == "brief_revision" {
+		if err = m.reserveBriefDraft(ctx, tx, num, full, viewer, req); err != nil {
+			return Draft{}, err
+		}
+	} else if err = m.atts.ReserveDraftTx(ctx, tx, num, full.Seq, attachments.PrincipalOf(viewer),
 		attachments.ParsePostRefs(req.BodyMD, req.AttachmentIDs)); err != nil {
 		return Draft{}, err
 	}
@@ -482,6 +499,71 @@ func (m *Manager) Send(ctx context.Context, viewer identity.Viewer, id string, v
 	}
 	signature = "经" + d.MemberName + "确认"
 	if memberEdited {
+		signature = "经" + d.MemberName + "修改并确认"
+	}
+	drafting = d.Versions
+	return
+}
+
+func (m *Manager) SendBriefRevision(ctx context.Context, viewer identity.Viewer, id string, version int64) (t tickets.Ticket, signature string, drafting []Version, err error) {
+	d, err := m.ByViewer(ctx, viewer, id)
+	if err != nil {
+		return
+	}
+	if version != d.Version {
+		err = &VersionConflictError{Current: d.Version, Base: version}
+		return
+	}
+	if d.Status == "sent" {
+		err = &AlreadySentError{}
+		return
+	}
+	full, err := m.tk.ForViewer(ctx, viewer, d.TicketNumber)
+	if err != nil {
+		return
+	}
+	if full.BriefRevision != d.BaseBriefRevision {
+		err = &tickets.RevisionConflictError{BaseRevision: d.BaseBriefRevision, CurrentRevision: full.BriefRevision}
+		return
+	}
+	last := lastSeq(full)
+	if d.NewEvents > 0 {
+		err = &TicketChangedError{NewEvents: d.NewEvents, ThroughSeq: last}
+		return
+	}
+	actor := tickets.Author{MemberID: d.MemberID, MemberName: d.MemberName}
+	for i := len(d.Versions) - 1; i >= 0; i-- {
+		if d.Versions[i].AgentID != 0 {
+			actor.AgentID, actor.AgentName = d.Versions[i].AgentID, d.Versions[i].AgentName
+			break
+		}
+	}
+	t, err = m.tk.Revise(ctx, viewer, d.TicketNumber, tickets.ReviseInput{
+		Title: d.Request.Title, BriefMD: d.Request.BriefMD, Fields: d.Request.Fields,
+		AttachmentIDs: d.Request.AttachmentIDs, BaseRevision: d.Request.BaseRevision, Actor: &actor,
+	})
+	if err != nil {
+		return
+	}
+	num, _ := parseID(id)
+	after, err := m.tk.ByRef(ctx, d.TicketNumber)
+	if err != nil {
+		return
+	}
+	sentSeq := int64(0)
+	for _, event := range after.Timeline {
+		if event.Type == "brief_revised" && event.Revision == t.BriefRevision {
+			sentSeq = event.Seq
+		}
+	}
+	_, err = m.db.ExecContext(ctx, `
+		UPDATE drafts SET status = 'sent', sent_at = ?, sent_timeline_seq = ? WHERE id = ? AND version = ? AND status = 'pending'`,
+		m.clk.Now().Format(time.RFC3339Nano), sentSeq, num, d.Version)
+	if err != nil {
+		return
+	}
+	signature = "经" + d.MemberName + "确认"
+	if d.MemberEdited {
 		signature = "经" + d.MemberName + "修改并确认"
 	}
 	drafting = d.Versions
