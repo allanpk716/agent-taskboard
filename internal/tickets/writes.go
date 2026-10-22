@@ -202,9 +202,10 @@ type ReviseInput struct {
 	BriefMD       *string
 	Fields        map[string]string // 模板工单：只需传改动的字段
 	AttachmentIDs []string
-	BaseRevision  int64  // 缺省时为 0，视为没带
-	AuthorName    string // 访客自报的署名（仅访客凭证采纳）
-	ViaAgent      bool   // 访客自报「由其 Agent 写成」
+	BaseRevision  int64   // 缺省时为 0，视为没带
+	AuthorName    string  // 访客自报的署名（仅访客凭证采纳）
+	ViaAgent      bool    // 访客自报「由其 Agent 写成」
+	Actor         *Author // 发出草稿时用草稿最后执笔的 Agent 署名
 }
 
 // Revise 以 viewer 的身份修订标题/说明：校验 base_revision 乐观锁、推进版本号、
@@ -217,6 +218,9 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 		return Ticket{}, err
 	}
 	author := authorOf(viewer)
+	if in.Actor != nil {
+		author = *in.Actor
+	}
 	if viewer.Kind == identity.ViewerGuest {
 		if full.Status != "open" {
 			return Ticket{}, ErrTicketClosed

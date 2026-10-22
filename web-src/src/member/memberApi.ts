@@ -583,12 +583,29 @@ export async function updateCreateDraft(
 export async function updateDraft(
   id: string,
   baseVersion: number,
-  request: { body_md: string; attachment_ids?: string[]; deliver?: boolean },
+  request: {
+    body_md?: string
+    title?: string | null
+    brief_md?: string | null
+    fields?: Record<string, string> | null
+    attachment_ids?: string[]
+    deliver?: boolean
+    base_revision?: number
+  },
 ): Promise<DraftView> {
   return api(`/api/v1/drafts/${encodeURIComponent(id)}`, {
     method: 'PUT',
     body: JSON.stringify({ base_version: baseVersion, request }),
   })
+}
+
+export async function fetchBriefDrafting(
+  ticketNumber: string,
+  revision: number,
+): Promise<{ versions: import('../shared/types').BriefVersion[] }> {
+  return api(
+    `/api/v1/tickets/${encodeURIComponent(ticketNumber)}/brief-drafting/${revision}`,
+  )
 }
 
 export async function discardDraft(id: string): Promise<void> {

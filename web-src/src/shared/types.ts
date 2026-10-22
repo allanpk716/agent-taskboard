@@ -80,11 +80,19 @@ export interface DraftView {
   status: string
   version: number
   ticket?: { number: string; seq: number; title: string; url: string } | null
-  request: { body_md: string; attachment_ids?: string[]; deliver?: boolean }
+  request: {
+    body_md: string
+    title?: string | null
+    brief_md?: string | null
+    fields?: Record<string, string> | null
+    attachment_ids?: string[]
+    deliver?: boolean
+    base_revision?: number
+  }
   attachments: Attachment[]
   author: Author
   versions: { version: number; author: string; at: string }[]
-  base: { timeline_seq: number }
+  base: { timeline_seq: number; brief_revision?: number }
   new_events: number
   preview_url: string
   url: string

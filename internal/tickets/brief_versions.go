@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/template"
 )
 
 // BriefVersion 是说明某一版的完整快照。模板定义仍用工单上的模板快照。
@@ -95,6 +96,33 @@ func (m *Manager) BriefVersion(ctx context.Context, seq, revision int64) (BriefV
 		return BriefVersion{}, ErrBriefVersionNotFound
 	}
 	return v, err
+}
+
+// ApplyDraftSnapshot 把一版说明修订草稿套在它基于的说明快照上，得到起草过程里的完整版本。
+func ApplyDraftSnapshot(base BriefVersion, in ReviseInput, def *template.Snapshot, a Author, revision int64, at time.Time) BriefVersion {
+	out := base
+	out.Revision = revision
+	if in.Title != nil {
+		out.Title = *in.Title
+	}
+	if in.Fields != nil && def != nil {
+		out.Fields = map[string]string{}
+		for key, value := range base.Fields {
+			out.Fields[key] = value
+		}
+		for key, value := range in.Fields {
+			out.Fields[key] = value
+		}
+		out.BriefMD = template.RenderBrief(out.Fields, def.Fields)
+	} else if in.BriefMD != nil {
+		out.BriefMD = *in.BriefMD
+	}
+	if in.AttachmentIDs != nil {
+		out.AttachmentIDs = append([]string{}, in.AttachmentIDs...)
+	}
+	out.Author = a
+	out.At = at
+	return out
 }
 
 type briefVersionScanner interface {

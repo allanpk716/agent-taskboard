@@ -128,6 +128,20 @@ func (a *API) sendDraft(w http.ResponseWriter, r *http.Request, id string) {
 	if !decodeJSON(w, r, &req, `{"version": 1}`) {
 		return
 	}
+	if d, lookupErr := a.drafts.ByViewer(r.Context(), viewer, id); lookupErr == nil && d.Kind == "brief_revision" {
+		t, signature, drafting, err := a.drafts.SendBriefRevision(r.Context(), viewer, id, req.Version)
+		if !a.writeDraftSendError(w, r, err) {
+			return
+		}
+		writeJSON(w, http.StatusCreated, struct {
+			Result    reviseTicketView   `json:"result"`
+			Signature string             `json:"signature"`
+			Drafting  []draftVersionView `json:"drafting"`
+		}{Result: reviseTicketView{Revision: t.BriefRevision}, Signature: signature, Drafting: newDraftVersions(drafting)})
+		return
+	} else if lookupErr != nil && !errors.Is(lookupErr, drafts.ErrNotFound) {
+		panic(lookupErr)
+	}
 	sent, err := a.drafts.Send(r.Context(), viewer, id, req.Version, req.ConfirmThroughSeq, req.Deliver)
 	if !a.writeDraftSendError(w, r, err) {
 		return
@@ -266,7 +280,8 @@ type draftTicketView struct {
 }
 
 type draftBaseView struct {
-	TimelineSeq int64 `json:"timeline_seq"`
+	TimelineSeq   int64 `json:"timeline_seq"`
+	BriefRevision int64 `json:"brief_revision,omitempty"`
 }
 
 type draftVersionView struct {
@@ -298,7 +313,7 @@ func newDraftView(a *API, r *http.Request, d drafts.Draft) draftView {
 		ID: d.ID, Kind: d.Kind, Status: d.Status, Version: d.Version,
 		Ticket: ticket, Request: request, Attachments: draftAttachmentViews(d.Attachments),
 		Author: author, Versions: newDraftVersions(d.Versions),
-		Base: draftBaseView{TimelineSeq: d.BaseTimelineSeq}, NewEvents: d.NewEvents,
+		Base: draftBaseView{TimelineSeq: d.BaseTimelineSeq, BriefRevision: d.BaseBriefRevision}, NewEvents: d.NewEvents,
 		PreviewURL: previewURL, URL: "/api/v1/drafts/" + d.ID, Result: result,
 		Warnings: d.Warnings,
 	}

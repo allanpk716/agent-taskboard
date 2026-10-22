@@ -1671,6 +1671,50 @@
   margin-bottom: 10px;
 }
 
+.draft-brief-changes {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.draft-field-change {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 6px 10px;
+  align-items: start;
+  font-size: 13px;
+}
+
+.draft-field-change .name,
+.draft-field-change .unchanged {
+  color: #6b7280;
+}
+
+.draft-field-change .old,
+.draft-field-change .new {
+  white-space: pre-wrap;
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+
+.draft-field-change .old {
+  background: #ffebe9;
+  color: #7f1d1d;
+  text-decoration: line-through;
+}
+
+.draft-field-change .new {
+  background: #e6ffec;
+  color: #14532d;
+}
+
+.draft-edit-field {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: #4b5563;
+}
+
 .draft-actions,
 .draft-confirm {
   display: flex;

@@ -5,7 +5,7 @@ UPDATE attachments SET draft_id = NULL WHERE draft_id IS NOT NULL;
 
 CREATE TABLE drafts_new (
     id                INTEGER PRIMARY KEY,
-    kind              TEXT NOT NULL CHECK (kind IN ('create', 'reply')),
+    kind              TEXT NOT NULL CHECK (kind IN ('create', 'reply', 'brief_revision')),
     status            TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent')),
     ticket_seq        INTEGER REFERENCES tickets(seq),
     member_id         INTEGER NOT NULL REFERENCES members(id),
