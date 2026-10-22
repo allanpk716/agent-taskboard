@@ -463,6 +463,9 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, err
 	if err != nil {
 		return CreateResult{}, err
 	}
+	if err := m.insertBriefVersionTx(ctx, tx, t, creator, now); err != nil {
+		return CreateResult{}, err
+	}
 	t.LastChange = change
 	if _, err := tx.ExecContext(ctx, `UPDATE tickets SET last_change = ? WHERE seq = ?`, change, t.Seq); err != nil {
 		return CreateResult{}, err

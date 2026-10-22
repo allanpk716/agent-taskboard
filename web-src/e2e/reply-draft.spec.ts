@@ -78,3 +78,58 @@ test('草稿通知出现在铃铛并定位到草稿处', async ({ page, request 
   await expect(page).toHaveURL(new RegExp(`/t/${number}#draft$`))
   await expect(page.getByLabel('回复草稿')).toContainText('待确认的草稿。')
 })
+
+test('成员可以查看已发出回复的起草过程', async ({ page, request }) => {
+  const number = await createTicket(request, { title: '查看起草过程', assignee: '王工' })
+  const token = await issueRequiredAgent(request)
+  const auth = { Authorization: `Bearer ${token}` }
+  const drafted = await request.post(`/api/v1/tickets/${number}/replies`, {
+    data: { body_md: '第一版结论。' },
+    headers: auth,
+  })
+  expect(drafted.status(), `Agent 写草稿失败：${await drafted.text()}`).toBe(202)
+  const draft = ((await drafted.json()) as { draft: { id: string; version: number } }).draft
+  const uploaded = await request.post(`/api/v1/tickets/${number}/attachments`, {
+    multipart: { file: { name: '旧版日志.log', mimeType: 'text/plain', buffer: Buffer.from('old log') } },
+    headers: auth,
+  })
+  expect(uploaded.status(), `上传草稿附件失败：${await uploaded.text()}`).toBe(201)
+  const attachment = ((await uploaded.json()) as { id: string }).id
+  const second = await request.put(`/api/v1/drafts/${draft.id}`, {
+    data: {
+      base_version: draft.version,
+      request: { body_md: '第二版补充了原因。', attachment_ids: [attachment] },
+    },
+    headers: auth,
+  })
+  expect(second.status(), `Agent 改草稿失败：${await second.text()}`).toBe(200)
+  const version2 = ((await second.json()) as { version: number }).version
+
+  await login(page, await wang())
+  const third = await page.request.put(`/api/v1/drafts/${draft.id}`, {
+    data: { base_version: version2, request: { body_md: '第三版由成员确认发出。' } },
+  })
+  expect(third.status(), `成员改草稿失败：${await third.text()}`).toBe(200)
+  const version3 = ((await third.json()) as { version: number }).version
+  const sent = await page.request.post(`/api/v1/drafts/${draft.id}/send`, {
+    data: { version: version3 },
+  })
+  expect(sent.status(), `发出草稿失败：${await sent.text()}`).toBe(201)
+
+  await page.goto(`/t/${number}`)
+  const reply = page.locator('[data-bubble="reply"]').filter({ hasText: '第三版由成员确认发出。' })
+  await expect(reply).toBeVisible()
+  await expect(reply).toContainText('查看起草过程（3 版）')
+  await reply.getByRole('button', { name: '查看起草过程（3 版）' }).click()
+  await expect(reply.getByRole('group', { name: '起草过程版本' })).toBeVisible()
+  await reply.getByRole('button', { name: 'v3' }).click()
+  const compare = reply.locator('.brief-compare.drafting')
+  await expect(compare).toBeVisible()
+  await expect(compare).toContainText('💬 回复 #1 的起草过程')
+  await expect(compare).toContainText('第 2 版 → 第 3 版')
+  await expect(compare).toContainText('回复发出后不可修改；这里是发出前的草稿各版')
+  await expect(compare.locator('.diff-context .object')).toHaveCSS('color', 'rgb(146, 64, 14)')
+  await expect(compare.locator('.diff-table')).toContainText('第二版补充了原因。')
+  await expect(compare.locator('.diff-table')).toContainText('第三版由成员确认发出。')
+  await expect(compare.locator('.diff-table')).toContainText(`附件已清除：${attachment}`)
+})

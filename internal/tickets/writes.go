@@ -299,6 +299,7 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 	revision := full.BriefRevision + 1
 	var fieldsJSON any
 	var attachmentIDsJSON any
+	var result sql.Result
 	if attachmentIDs != nil {
 		buf, err := json.Marshal(attachmentIDs)
 		if err != nil {
@@ -312,15 +313,27 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 			return Ticket{}, fmt.Errorf("序列化字段值失败：%w", err)
 		}
 		fieldsJSON = string(buf)
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE tickets SET title = ?, brief_md = ?, fields_json = ?, brief_revision = ?, brief_attachment_ids = ? WHERE seq = ?`,
-			title, brief, fieldsJSON, revision, attachmentIDsJSON, full.Seq); err != nil {
+		result, err = tx.ExecContext(ctx,
+			`UPDATE tickets SET title = ?, brief_md = ?, fields_json = ?, brief_revision = ?, brief_attachment_ids = ?
+			 WHERE seq = ? AND brief_revision = ?`,
+			title, brief, fieldsJSON, revision, attachmentIDsJSON, full.Seq, in.BaseRevision)
+		if err != nil {
 			return Ticket{}, fmt.Errorf("写入修订失败：%w", err)
 		}
-	} else if _, err := tx.ExecContext(ctx,
-		`UPDATE tickets SET title = ?, brief_md = ?, brief_revision = ?, brief_attachment_ids = ? WHERE seq = ?`,
-		title, brief, revision, attachmentIDsJSON, full.Seq); err != nil {
-		return Ticket{}, fmt.Errorf("写入修订失败：%w", err)
+	} else {
+		result, err = tx.ExecContext(ctx,
+			`UPDATE tickets SET title = ?, brief_md = ?, brief_revision = ?, brief_attachment_ids = ?
+			 WHERE seq = ? AND brief_revision = ?`,
+			title, brief, revision, attachmentIDsJSON, full.Seq, in.BaseRevision)
+		if err != nil {
+			return Ticket{}, fmt.Errorf("写入修订失败：%w", err)
+		}
+		if n, _ := result.RowsAffected(); n == 0 {
+			return Ticket{}, &RevisionConflictError{BaseRevision: in.BaseRevision, CurrentRevision: revision}
+		}
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return Ticket{}, &RevisionConflictError{BaseRevision: in.BaseRevision, CurrentRevision: revision}
 	}
 	if err := m.atts.ClaimTx(ctx, tx, full.Seq, attachments.PrincipalOf(viewer), briefRefs,
 		attachments.ClaimOnlyPending, "说明", now); err != nil {
@@ -339,6 +352,12 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 		return Ticket{}, fmt.Errorf("写入修订事件失败：%w", err)
 	}
 	if err := touchLastChange(ctx, tx, full.Seq, change); err != nil {
+		return Ticket{}, err
+	}
+	snapshot := full.Ticket
+	snapshot.Title, snapshot.BriefMD, snapshot.Fields = title, brief, fields
+	snapshot.BriefRevision, snapshot.BriefAttachmentIDs = revision, attachmentIDs
+	if err := m.insertBriefVersionTx(ctx, tx, snapshot, author, now); err != nil {
 		return Ticket{}, err
 	}
 	if m.notifier != nil {

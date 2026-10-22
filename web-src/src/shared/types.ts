@@ -71,6 +71,7 @@ export interface TimelineEvent {
   collaborator?: string
   label?: string
   signature?: string
+  drafting_count?: number
 }
 
 export interface DraftView {
@@ -86,6 +87,15 @@ export interface DraftView {
   new_events: number
   preview_url: string
   url: string
+}
+
+export interface DraftHistoryVersion {
+  version: number
+  body_md: string
+  attachment_ids: string[]
+  author: string
+  author_kind: 'member' | 'agent'
+  at: string
 }
 
 export interface Collaborator {
@@ -108,6 +118,16 @@ export interface Brief {
   template_fields?: TemplateField[]
   /** 创建时模板版本的分组（#63）；不分组时省略，由前端合成一组「填写说明」 */
   template_groups?: TemplateGroup[]
+}
+
+export interface BriefVersion {
+  revision: number
+  title: string
+  markdown: string
+  fields?: Record<string, string> | null
+  attachment_ids: string[]
+  author: Author
+  at: string
 }
 
 export interface TicketView {
