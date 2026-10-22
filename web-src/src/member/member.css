@@ -1451,11 +1451,75 @@
     repeating-linear-gradient(135deg, rgba(217, 119, 6, 0.08) 0 12px, rgba(255, 251, 235, 0.9) 12px 24px);
 }
 
+.draft-pill {
+  border: 1px dashed #d97706;
+  color: #92400e;
+  background: rgba(217, 119, 6, 0.08);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
 .draft-label {
   color: #92400e;
   font-size: 13px;
   font-weight: 700;
   margin-bottom: 6px;
+}
+
+.draft-deliver-pill {
+  display: inline-block;
+  margin-left: 6px;
+  border: 1px solid #d97706;
+  border-radius: 999px;
+  color: #92400e;
+  padding: 1px 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.draft-new-events {
+  border-left: 4px solid #d97706;
+  background: rgba(217, 119, 6, 0.09);
+  color: #92400e;
+  padding: 8px 10px;
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+.draft-blocked {
+  border: 1px solid #f1b8b4;
+  background: #fff2f1;
+  color: #a12d23;
+  padding: 8px 10px;
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+.draft-card textarea {
+  width: 100%;
+  min-height: 120px;
+  margin-bottom: 8px;
+}
+
+.instruction-preview {
+  margin-top: 10px;
+  color: #78350f;
+  font-size: 12px;
+}
+
+.instruction-preview pre {
+  white-space: pre-wrap;
+  max-height: 180px;
+  overflow: auto;
+  background: rgba(255, 251, 235, 0.85);
+  border: 1px dashed #d97706;
+  padding: 8px;
+}
+
+.draft-change-list {
+  margin: 0;
+  padding-left: 18px;
 }
 
 .draft-meta {

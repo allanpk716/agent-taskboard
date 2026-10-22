@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
-import { createTicket, login, wang } from './helpers'
+import { createTicket, login, loginAdmin, wang } from './helpers'
 
 async function issueRequiredAgent(request: APIRequestContext): Promise<string> {
   const member = await wang()
@@ -32,21 +32,31 @@ async function uploadAgentAttachment(
   return ((await res.json()) as { id: string }).id
 }
 
-test('Agent 回复存成草稿，成员确认后正式发出', async ({ page, request }) => {
-  const number = await createTicket(request, { title: 'Agent 起草回复', assignee: '王工' })
-  const token = await issueRequiredAgent(request)
+async function replyDraft(
+  request: APIRequestContext,
+  token: string,
+  number: string,
+  body = '这是 Agent 起草的回复。',
+): Promise<{ id: string; version: number; preview_url: string }> {
   const drafted = await request.post(`/api/v1/tickets/${number}/replies`, {
-    data: { body_md: '这是 Agent 起草的回复。' },
+    data: { body_md: body },
     headers: { Authorization: `Bearer ${token}` },
   })
   expect(drafted.status(), `Agent 回复失败：${await drafted.text()}`).toBe(202)
+  return ((await drafted.json()) as { draft: { id: string; version: number; preview_url: string } }).draft
+}
+
+test('Agent 回复存成草稿，成员确认后正式发出', async ({ page, request }) => {
+  const number = await createTicket(request, { title: 'Agent 起草回复', assignee: '王工' })
+  const token = await issueRequiredAgent(request)
+  await replyDraft(request, token, number)
 
   await login(page, await wang())
   await page.goto(`/t/${number}#draft`)
   await expect(page.getByLabel('回复草稿')).toContainText('草稿 · 未发出 · 只有你能看到')
   await expect(page.getByLabel('回复草稿')).toContainText('这是 Agent 起草的回复。')
   await expect(page.locator('.draft-lock')).toContainText('你在这张工单上有一份草稿')
-  await page.getByRole('button', { name: '发出' }).click()
+  await page.getByRole('button', { name: '发出', exact: true }).click()
   await expect(page.getByLabel('回复草稿')).toHaveCount(0)
   await expect(page.locator('.draft-lock')).toHaveCount(0)
   await expect(page.locator('.draft-confirm')).toContainText('经王工确认')
@@ -98,6 +108,119 @@ test('草稿通知出现在铃铛并定位到草稿处', async ({ page, request 
   await expect(page.getByLabel('回复草稿')).toContainText('待确认的草稿。')
 })
 
+test('成员直接修改回复草稿并发出后署名注明修改', async ({ page, request }) => {
+  const number = await createTicket(request, { title: '成员手改草稿', assignee: '王工' })
+  const token = await issueRequiredAgent(request)
+  await replyDraft(request, token, number)
+
+  await login(page, await wang())
+  await page.goto(`/t/${number}#draft`)
+  await page.getByRole('button', { name: '直接修改' }).click()
+  await page.getByLabel('草稿正文').fill('这是成员修改后的回复。')
+  await page.getByRole('button', { name: '保存草稿' }).click()
+  await expect(page.getByLabel('回复草稿')).toContainText('第 2 版')
+  await page.getByRole('button', { name: '发出', exact: true }).click()
+  await expect(page.getByLabel('回复草稿')).toHaveCount(0)
+  await expect(page.locator('[data-bubble="reply"]')).toContainText('这是成员修改后的回复。')
+  await expect(page.locator('[data-bubble="reply"] .draft-confirm')).toHaveText('经王工修改并确认')
+})
+
+test('成员手改后 Agent 用旧版本改草稿得到 409', async ({ page, request }) => {
+  const number = await createTicket(request, { title: '草稿版本冲突', assignee: '王工' })
+  const token = await issueRequiredAgent(request)
+  const draft = await replyDraft(request, token, number)
+
+  await login(page, await wang())
+  await page.goto(`/t/${number}#draft`)
+  await page.getByRole('button', { name: '直接修改' }).click()
+  await page.getByLabel('草稿正文').fill('成员先改了一版。')
+  await page.getByRole('button', { name: '保存草稿' }).click()
+  await expect(page.getByLabel('回复草稿')).toContainText('第 2 版')
+
+  const stale = await request.put(`/api/v1/drafts/${draft.id}`, {
+    data: { base_version: draft.version, request: { body_md: 'Agent 晚到的版本。' } },
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  expect(stale.status()).toBe(409)
+  expect(((await stale.json()) as { error: { code: string } }).error.code).toBe('draft_version_conflict')
+})
+
+test('复制修改指令时代入工单和草稿信息', async ({ page, request }) => {
+  const title = '复制草稿修改指令'
+  const number = await createTicket(request, { title, assignee: '王工' })
+  const token = await issueRequiredAgent(request)
+  const draft = await replyDraft(request, token, number)
+
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await login(page, await wang())
+  await page.goto(`/t/${number}#draft`)
+  await page.getByRole('button', { name: '复制修改指令' }).click()
+  await expect(page.locator('.toast, #toast')).toContainText('修改指令已复制')
+  const base = new URL(page.url()).origin
+  const expected = `请修改我在 agent-taskboard 工单 ${number}「${title}」上的回复草稿 ${draft.id}（当前第 ${draft.version} 版）。
+1. 凭证：用环境变量 TASKBOARD_TOKEN；读不到或返回 401 就停下来告诉我，不要用密码登录。
+2. 先读当前草稿：curl -H "Authorization: Bearer $TASKBOARD_TOKEN" "${base}/api/v1/drafts/${draft.id}"
+   我可能亲手改过，以最新一版为准，不要把我的改动改回去。需要上下文时再读工单：${base}/api/v1/tickets/${number}?format=markdown
+3. 按我下面的意见修改，然后整份写回：PUT ${base}/api/v1/drafts/${draft.id}，请求体 {"base_version": <刚读到的 version>, "request": {…完整内容…}}。
+   返回 409 draft_version_conflict，说明你读完之后草稿又被改过；重新读，在最新版上改。
+4. 改完把查看地址 ${base}${draft.preview_url} 发给我，说明这一版改了什么。发出或丢弃由我在网页上做，你做不了。
+
+我的修改意见：`
+  await expect
+    .poll(async () => page.evaluate(() => navigator.clipboard.readText().then((s) => s.replace(/\r\n/g, '\n'))))
+    .toBe(expected)
+  await expect(page.locator('.instruction-preview')).toContainText(
+    `请修改我在 agent-taskboard 工单 ${number}「${title}」上的回复草稿 ${draft.id}`,
+  )
+})
+
+test('草稿写成后工单有新变化时确认后仍可发出', async ({ page, request }) => {
+  const number = await createTicket(request, { title: '草稿后的新变化', assignee: '王工' })
+  const token = await issueRequiredAgent(request)
+  await replyDraft(request, token, number)
+  await loginAdmin(request)
+  const changed = await request.post(`/api/v1/tickets/${number}/replies`, { data: { body_md: '创建者补充了一条回复。' } })
+  expect(changed.status(), `创建者回复失败：${await changed.text()}`).toBe(201)
+
+  await login(page, await wang())
+  await page.goto(`/t/${number}#draft`)
+  await expect(page.locator('.draft-new-events')).toContainText(/草稿写成（.*）之后的新变化/)
+  await page.getByRole('button', { name: '发出', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: /草稿写成后工单有 1 条新变化/ })
+  await expect(dialog).toContainText('创建者补充了一条回复。')
+  await dialog.getByRole('button', { name: '仍然发出' }).click()
+  await expect(page.getByLabel('回复草稿')).toHaveCount(0)
+  await expect(page.locator('[data-bubble="reply"]')).toHaveCount(2)
+})
+
+test('工单已关闭后发出按钮禁用并显示原因', async ({ page, request }) => {
+  const number = await createTicket(request, { title: '关闭后的草稿', assignee: '王工' })
+  const token = await issueRequiredAgent(request)
+  await replyDraft(request, token, number)
+  await loginAdmin(request)
+  const closed = await request.post(`/api/v1/tickets/${number}/close`, { data: { reason: 'done' } })
+  expect(closed.status(), `关闭失败：${await closed.text()}`).toBe(200)
+
+  await login(page, await wang())
+  await page.goto(`/t/${number}#draft`)
+  await expect(page.locator('.draft-blocked')).toContainText('工单已关闭，不能发出回复草稿')
+  await expect(page.getByRole('button', { name: '发出', exact: true })).toBeDisabled()
+})
+
+test('成员切换作为交付发出后工单进入交付状态', async ({ page, request }) => {
+  const number = await createTicket(request, { title: '交付草稿', assignee: '王工' })
+  const token = await issueRequiredAgent(request)
+  await replyDraft(request, token, number, '这份回复会作为交付。')
+
+  await login(page, await wang())
+  await page.goto(`/t/${number}#draft`)
+  await page.getByRole('button', { name: '作为交付发出' }).click()
+  await page.getByRole('button', { name: '发出', exact: true }).click()
+  await expect(page.getByLabel('回复草稿')).toHaveCount(0)
+  await expect(page.locator('[data-bubble="reply"] .deliver-tag')).toHaveText('交付')
+  await expect(page.locator('.tc-top')).toContainText('等待')
+})
+
 test('回复草稿显示附件并在发出后挂到回复', async ({ page, request }) => {
   const number = await createTicket(request, { title: '带附件的回复草稿', assignee: '王工' })
   const token = await issueRequiredAgent(request)
@@ -120,7 +243,7 @@ test('回复草稿显示附件并在发出后挂到回复', async ({ page, reque
   expect(downloaded.status(), `草稿附件下载失败：${await downloaded.text()}`).toBe(200)
   expect(await downloaded.text()).toBe('attachment from agent')
 
-  await card.getByRole('button', { name: '发出' }).click()
+  await card.getByRole('button', { name: '发出', exact: true }).click()
   await expect(card).toHaveCount(0)
   await expect(page.locator('[data-bubble="reply"]')).toContainText('Agent结果.txt')
 })

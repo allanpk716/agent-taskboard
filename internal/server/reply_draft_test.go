@@ -269,7 +269,7 @@ func Test草稿发出丢弃与Agent禁区(t *testing.T) {
 	if res.StatusCode != http.StatusCreated || sent.Result.ReplyNo != 2 || !sent.Result.Deliver {
 		t.Fatalf("发出 = %d/%+v", res.StatusCode, sent)
 	}
-	if sent.Signature != "经陈工确认" || len(sent.Drafting) != 2 {
+	if sent.Signature != "经陈工修改并确认" || len(sent.Drafting) != 2 {
 		t.Fatalf("署名/起草过程 = %q/%+v", sent.Signature, sent.Drafting)
 	}
 	var got ticketResponseBody
