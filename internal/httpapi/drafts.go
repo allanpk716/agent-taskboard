@@ -200,6 +200,7 @@ func draftAttachmentViews(atts []attachments.AttachmentInfo) []attachmentView {
 type draftTicketView struct {
 	Number string `json:"number"`
 	Seq    int64  `json:"seq"`
+	Title  string `json:"title"`
 	URL    string `json:"url"`
 }
 
@@ -220,7 +221,7 @@ func newDraftView(a *API, r *http.Request, d drafts.Draft) draftView {
 	}
 	return draftView{
 		ID: d.ID, Kind: d.Kind, Status: d.Status, Version: d.Version,
-		Ticket:  &draftTicketView{Number: d.TicketNumber, Seq: d.TicketSeq, URL: d.TicketURL},
+		Ticket:  &draftTicketView{Number: d.TicketNumber, Seq: d.TicketSeq, Title: d.TicketTitle, URL: d.TicketURL},
 		Request: d.Request, Attachments: draftAttachmentViews(d.Attachments),
 		Author: author, Versions: newDraftVersions(d.Versions),
 		Base: draftBaseView{TimelineSeq: d.BaseTimelineSeq}, NewEvents: d.NewEvents,

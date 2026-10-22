@@ -45,6 +45,7 @@ type Draft struct {
 	Status          string
 	TicketSeq       int64
 	TicketNumber    string
+	TicketTitle     string
 	TicketURL       string
 	MemberID        int64
 	MemberName      string
@@ -266,7 +267,7 @@ func (m *Manager) Get(ctx context.Context, viewer identity.Viewer, id int64) (Dr
 	err := m.db.QueryRowContext(ctx, `
 		SELECT d.id, d.kind, d.status, d.ticket_seq, d.member_id, d.request_json, d.version,
 		       d.base_timeline_seq, d.member_edited, d.created_at, d.updated_at, d.sent_at, d.sent_timeline_seq,
-		       m.name, a.id, COALESCE(a.name, ''), t.number
+		       m.name, a.id, COALESCE(a.name, ''), t.number, t.title
 		FROM drafts d
 		JOIN members m ON m.id = d.member_id
 		LEFT JOIN agent_tokens a ON a.id = (
@@ -276,7 +277,7 @@ func (m *Manager) Get(ctx context.Context, viewer identity.Viewer, id int64) (Dr
 		WHERE d.id = ?`, id).
 		Scan(new(int64), &d.Kind, &d.Status, &d.TicketSeq, &d.MemberID, &request, &d.Version,
 			&d.BaseTimelineSeq, &memberEdited, &createdAt, &updatedAt, &sentAt, &sentSeq,
-			&d.MemberName, &agentID, &d.AgentName, &d.TicketNumber)
+			&d.MemberName, &agentID, &d.AgentName, &d.TicketNumber, &d.TicketTitle)
 	if errors.Is(err, sql.ErrNoRows) || d.MemberID != viewer.Member.ID {
 		return Draft{}, ErrNotFound
 	}

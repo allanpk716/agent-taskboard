@@ -2,7 +2,7 @@
 import { api, ApiError } from '../api'
 import { compressImage } from '../shared/compress'
 import { fetchServerVersion } from '../shared/health'
-import type { Author, Collaborator, DraftHistoryVersion, TicketView } from '../shared/types'
+import type { Author, Collaborator, DraftHistoryVersion, DraftView, TicketView } from '../shared/types'
 
 export type { Collaborator } from '../shared/types'
 
@@ -120,6 +120,10 @@ export async function fetchSession(): Promise<{ viewer: { kind: string; member: 
 
 export async function fetchInbox(): Promise<InboxResponse> {
   return api('/api/v1/inbox')
+}
+
+export async function fetchDrafts(): Promise<{ count: number; drafts: DraftView[] }> {
+  return api('/api/v1/drafts')
 }
 
 export { fetchServerVersion }
