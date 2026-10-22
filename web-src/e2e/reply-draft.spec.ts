@@ -51,3 +51,30 @@ test('成员丢弃回复草稿后工单不留痕迹', async ({ page, request }) 
   const replies = await page.locator('[data-bubble="reply"]').count()
   expect(replies).toBe(0)
 })
+
+test('草稿通知出现在铃铛并定位到草稿处', async ({ page, request }) => {
+  const number = await createTicket(request, { title: '草稿通知', assignee: '王工' })
+  const session = await request.post('/api/v1/session', { data: await wang() })
+  expect(session.status()).toBe(200)
+  await login(page, await wang())
+  const issued = await request.post('/api/v1/me/agent-tokens', {
+    data: { name: `通知笔记本-${Date.now()}`, draft_mode: 'required' },
+  })
+  expect(issued.status(), `签发 Agent 失败：${await issued.text()}`).toBe(201)
+  const token = ((await issued.json()) as { token: string }).token
+  const drafted = await request.post(`/api/v1/tickets/${number}/replies`, {
+    data: { body_md: '待确认的草稿。' },
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  expect(drafted.status()).toBe(202)
+
+  const badge = page.locator('.bellbtn b')
+  const unreadBefore = Number(await badge.textContent() ?? '0')
+  await page.getByRole('button', { name: '通知' }).click()
+  const row = page.locator('.nrow', { hasText: '写了回复草稿待确认' }).filter({ hasText: '通知笔记本-' })
+  await expect(row).toBeVisible()
+  await expect(badge).toHaveText(String(unreadBefore))
+  await row.click()
+  await expect(page).toHaveURL(new RegExp(`/t/${number}#draft$`))
+  await expect(page.getByLabel('回复草稿')).toContainText('待确认的草稿。')
+})

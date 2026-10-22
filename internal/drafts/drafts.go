@@ -68,13 +68,22 @@ type Version struct {
 }
 
 type Manager struct {
-	db  *sql.DB
-	clk clock.Clock
-	tk  *tickets.Manager
+	db    *sql.DB
+	clk   clock.Clock
+	tk    *tickets.Manager
+	notes Notifier
 }
 
 func NewManager(db *sql.DB, clk clock.Clock, tk *tickets.Manager) *Manager {
 	return &Manager{db: db, clk: clk, tk: tk}
+}
+
+func (m *Manager) SetNotifier(n Notifier) { m.notes = n }
+
+type Notifier interface {
+	NotifyDraftTx(ctx context.Context, tx *sql.Tx, memberID, ticketSeq int64, number, title, text string,
+		baseTimelineSeq, agentID int64, agentName, url string) error
+	Wake(memberIDs []int64)
 }
 
 func (m *Manager) Pending(ctx context.Context, memberID, ticketSeq int64) (Draft, error) {
@@ -141,8 +150,18 @@ func (m *Manager) SaveReply(ctx context.Context, viewer identity.Viewer, number 
 	if err = insertVersion(ctx, tx, id, 1, req, viewer, now); err != nil {
 		return Draft{}, err
 	}
+	if m.notes != nil {
+		if err = m.notes.NotifyDraftTx(ctx, tx, viewer.Member.ID, full.Seq, full.Number, full.Title,
+			"你的 Agent · "+viewer.Agent.Name+" 写了回复草稿待确认", d.BaseTimelineSeq,
+			viewer.Agent.ID, viewer.Agent.Name, "/t/"+full.Number+"#draft"); err != nil {
+			return Draft{}, err
+		}
+	}
 	if err = tx.Commit(); err != nil {
 		return Draft{}, err
+	}
+	if m.notes != nil {
+		m.notes.Wake([]int64{viewer.Member.ID})
 	}
 	d.ID = "dft_" + fmt.Sprint(id)
 	d.Version = 1

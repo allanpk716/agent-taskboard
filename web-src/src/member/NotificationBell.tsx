@@ -34,6 +34,7 @@ const reasonText: Record<string, string> = {
   collaborator_replied: '协作者回复了',
   backup_failing: '备份失败',
   backup_recovered: '备份已恢复',
+  draft_pending: '草稿待确认',
 }
 
 function badgeText(n: number) {
@@ -132,7 +133,7 @@ export function NotificationBell({ tier, onNavigate }: { tier: LayoutTier; onNav
     })
     sourceRef.addEventListener('notification', (ev) => {
       const data = JSON.parse((ev as MessageEvent).data) as NotificationItem
-      setUnread((n) => n + 1)
+      if (data.kind !== 'draft') setUnread((n) => n + 1)
       if (data.id > latestID.current) latestID.current = data.id
       if (openRef.current) void loadPage('replace')
       if (
@@ -183,11 +184,12 @@ export function NotificationBell({ tier, onNavigate }: { tier: LayoutTier; onNav
   }
 
   const openItem = async (n: NotificationItem) => {
-    if (n.ticket) await markNotificationsRead({ ticket: n.ticket.number })
+    if (n.kind === 'draft') await markNotificationsRead({ ids: [n.id] })
+    else if (n.ticket) await markNotificationsRead({ ticket: n.ticket.number })
     else await markNotificationsRead({ ids: [n.id] })
     setItems((old) => old.map((x) => (x.id === n.id ? { ...x, read_at: x.read_at ?? new Date().toISOString() } : x)))
     setOpen(false)
-    nav(n.ticket ? n.ticket.url : n.url)
+    nav(n.kind === 'draft' ? n.url : n.ticket ? n.ticket.url : n.url)
     onNavigate()
   }
 
@@ -223,11 +225,13 @@ export function NotificationBell({ tier, onNavigate }: { tier: LayoutTier; onNav
         <div>
           <span className={`nkind${n.kind === 'turn' ? ' action' : ''}`}>
             {n.ticket ? null : '🛡 '}
-            {n.kind === 'turn' ? '轮到你' : '知会'}
+            {n.kind === 'draft' ? '草稿' : n.kind === 'turn' ? '轮到你' : '知会'}
           </span>
           <span className="nreason">{reasonText[n.reason] ?? n.reason}</span>
         </div>
-        <div className="ntitle">{n.ticket ? `${n.ticket.number} ${n.ticket.title}` : `🛡 ${n.text}`}</div>
+        <div className="ntitle">
+          {n.kind === 'draft' ? `${n.ticket?.number ?? ''} ${n.text}` : n.ticket ? `${n.ticket.number} ${n.ticket.title}` : `🛡 ${n.text}`}
+        </div>
         <div className="nmeta">
           <span>{n.ticket ? actorText(n) : '工单板'}</span>
           <span>{relativeTime(n.created_at)}</span>
