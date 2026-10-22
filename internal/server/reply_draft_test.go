@@ -47,6 +47,7 @@ type draftBody struct {
 	NewEvents  int64           `json:"new_events"`
 	PreviewURL string          `json:"preview_url"`
 	URL        string          `json:"url"`
+	Result     any             `json:"result"`
 	Warnings   []ticketWarning `json:"warnings"`
 }
 

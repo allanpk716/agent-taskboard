@@ -129,7 +129,7 @@ func (a *API) sendDraft(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	if d, lookupErr := a.drafts.ByViewer(r.Context(), viewer, id); lookupErr == nil && d.Kind == "brief_revision" {
-		t, signature, drafting, err := a.drafts.SendBriefRevision(r.Context(), viewer, id, req.Version)
+		t, signature, drafting, err := a.drafts.SendBriefRevision(r.Context(), viewer, id, req.Version, req.ConfirmThroughSeq)
 		if !a.writeDraftSendError(w, r, err) {
 			return
 		}
@@ -199,7 +199,7 @@ func (a *API) writeDraftValidation(w http.ResponseWriter, err error) (error, boo
 	switch {
 	case errors.As(err, &conflict):
 		WriteErrorExtra(w, http.StatusConflict, CodeDraftVersionConflict, conflict.Error(), "重新读取草稿后基于最新版修改",
-			map[string]any{"current_version": conflict.Current})
+			map[string]any{"current_version": conflict.Current, "last_author": conflict.LastAuthor})
 		return err, true
 	case errors.As(err, &sent):
 		WriteError(w, http.StatusConflict, CodeDraftAlreadySent, sent.Error(), "")
@@ -306,8 +306,22 @@ func newDraftView(a *API, r *http.Request, d drafts.Draft) draftView {
 		ticket = &draftTicketView{Number: d.TicketNumber, Seq: d.TicketSeq, Title: d.TicketTitle, URL: d.TicketURL}
 	}
 	var result any
-	if d.Kind == "create" && d.Status == "sent" {
+	if d.Status == "pending" {
+		result = nil
+	} else if d.Kind == "create" {
 		result = map[string]any{"number": d.TicketNumber}
+	} else if full, err := a.tickets.ByRef(r.Context(), d.TicketNumber); err == nil {
+		for _, event := range full.Timeline {
+			if event.Seq != d.SentTimelineSeq {
+				continue
+			}
+			if event.Type == "reply" {
+				result = map[string]any{"reply_no": event.ReplyNo, "timeline_seq": event.Seq, "deliver": event.Deliver}
+			} else if event.Type == "brief_revised" {
+				result = map[string]any{"revision": event.Revision, "timeline_seq": event.Seq}
+			}
+			break
+		}
 	}
 	return draftView{
 		ID: d.ID, Kind: d.Kind, Status: d.Status, Version: d.Version,

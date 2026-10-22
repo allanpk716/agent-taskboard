@@ -23,13 +23,13 @@ INSERT INTO brief_versions (
     actor_author_name, actor_via_agent, at
 )
 SELECT t.seq, t.brief_revision, t.title, t.brief_md, t.fields_json, t.brief_attachment_ids,
-       COALESCE(r.actor_member_id, c.actor_member_id),
-       COALESCE(r.actor_agent_id, c.actor_agent_id),
-       COALESCE(r.actor_link_id, c.actor_link_id),
-       COALESCE(r.actor_link_note, c.actor_link_note),
-       COALESCE(r.actor_author_name, c.actor_author_name),
-       COALESCE(r.actor_via_agent, c.actor_via_agent, 0),
-       COALESCE(r.at, c.at, t.created_at)
+       CASE WHEN r.seq IS NOT NULL THEN r.actor_member_id ELSE c.actor_member_id END,
+       CASE WHEN r.seq IS NOT NULL THEN r.actor_agent_id ELSE c.actor_agent_id END,
+       CASE WHEN r.seq IS NOT NULL THEN r.actor_link_id ELSE c.actor_link_id END,
+       CASE WHEN r.seq IS NOT NULL THEN r.actor_link_note ELSE c.actor_link_note END,
+       CASE WHEN r.seq IS NOT NULL THEN r.actor_author_name ELSE c.actor_author_name END,
+       CASE WHEN r.seq IS NOT NULL THEN r.actor_via_agent ELSE COALESCE(c.actor_via_agent, 0) END,
+       CASE WHEN r.seq IS NOT NULL THEN r.at ELSE COALESCE(c.at, t.created_at) END
 FROM tickets t
 LEFT JOIN timeline_events r
   ON r.ticket_seq = t.seq AND r.type = 'brief_revised' AND r.revision = t.brief_revision

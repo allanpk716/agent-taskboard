@@ -376,7 +376,8 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 			var guestDraft *drafts.CreateGuestLinkRequest
 			if guestSpec != nil {
 				guestDraft = &drafts.CreateGuestLinkRequest{
-					Note: guestSpec.Note, ValidDays: guestSpec.ValidDays, CanEditBrief: guestSpec.CanEditBrief,
+					Note: guestSpec.Note, ValidDays: guestSpec.ValidDays, ExpiresAt: req.GuestLink.ExpiresAt,
+					CanEditBrief: guestSpec.CanEditBrief,
 				}
 			}
 			d, err := a.drafts.SaveCreate(r.Context(), viewer, drafts.CreateRequest{
@@ -491,8 +492,12 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	var myDraft *markdownview.MyDraft
 	if viewer.Kind == identity.ViewerMember {
 		if pending, err := a.drafts.Pending(r.Context(), viewer.Member.ID, full.Seq); err == nil {
+			kindText := pending.Kind
+			if kindText == "brief_revision" {
+				kindText = "说明修订草稿"
+			}
 			myDraft = &markdownview.MyDraft{
-				ID: pending.ID, Kind: "reply", Version: pending.Version, BodyMD: pending.Request.BodyMD,
+				ID: pending.ID, Kind: kindText, Version: pending.Version, BodyMD: pending.Request.BodyMD,
 				URL: "/api/v1/drafts/" + pending.ID,
 			}
 		} else if !errors.Is(err, drafts.ErrNotFound) {
@@ -1075,10 +1080,6 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 	}
 	if viewer.Kind == identity.ViewerMember {
 		if pending, err := a.drafts.Pending(r.Context(), viewer.Member.ID, full.Seq); err == nil {
-			pending.MemberName = viewer.Member.Name
-			if viewer.Agent != nil {
-				pending.AgentID, pending.AgentName = viewer.Agent.ID, viewer.Agent.Name
-			}
 			view := newDraftView(a, r, pending)
 			v.MyDraft = &view
 		} else if !errors.Is(err, drafts.ErrNotFound) {

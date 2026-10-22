@@ -17,7 +17,11 @@ import (
 
 var ErrNotFound = errors.New("没有这份草稿")
 
-type VersionConflictError struct{ Current, Base int64 }
+type VersionConflictError struct {
+	Current    int64
+	Base       int64
+	LastAuthor string
+}
 
 func (e *VersionConflictError) Error() string {
 	return fmt.Sprintf("草稿已被改到第 %d 版，你基于的是第 %d 版", e.Current, e.Base)
@@ -181,8 +185,12 @@ func (m *Manager) SaveReply(ctx context.Context, viewer identity.Viewer, number 
 		return Draft{}, err
 	}
 	if m.notes != nil {
+		text := "回复草稿"
+		if req.Deliver {
+			text = "交付草稿"
+		}
 		if err = m.notes.NotifyDraftTx(ctx, tx, viewer.Member.ID, full.Seq, full.Number, full.Title,
-			"你的 Agent · "+viewer.Agent.Name+" 写了回复草稿待确认", d.BaseTimelineSeq,
+			"你的 Agent · "+viewer.Agent.Name+" 写了"+text+"待确认", d.BaseTimelineSeq,
 			viewer.Agent.ID, viewer.Agent.Name, "/t/"+full.Number+"#draft"); err != nil {
 			return Draft{}, err
 		}
@@ -298,11 +306,25 @@ func (m *Manager) List(ctx context.Context, viewer identity.Viewer) ([]Draft, er
 	for _, id := range ids {
 		d, err := m.Get(ctx, viewer, id)
 		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				continue
+			}
 			return nil, err
 		}
 		out = append(out, d)
 	}
 	return out, nil
+}
+
+func lastAuthor(vs []Version) string {
+	if len(vs) == 0 {
+		return ""
+	}
+	v := vs[len(vs)-1]
+	if v.AgentID != 0 {
+		return v.MemberName + " 的 Agent · " + v.AgentName
+	}
+	return v.MemberName
 }
 
 func (m *Manager) Signatures(ctx context.Context, ticketSeq int64) (map[int64]string, error) {
@@ -454,7 +476,7 @@ func (m *Manager) UpdateCreate(ctx context.Context, viewer identity.Viewer, id s
 		return Draft{}, &AlreadySentError{}
 	}
 	if base != d.Version {
-		return Draft{}, &VersionConflictError{Current: d.Version, Base: base}
+		return Draft{}, &VersionConflictError{Current: d.Version, Base: base, LastAuthor: lastAuthor(d.Versions)}
 	}
 	validated, warnings, err := m.tk.ValidateCreate(ctx, createInputOf(req, viewer))
 	if err != nil {
@@ -471,7 +493,7 @@ func (m *Manager) UpdateCreate(ctx context.Context, viewer identity.Viewer, id s
 	defer tx.Rollback()
 	num, _ := parseID(id)
 	res, err := tx.ExecContext(ctx, `
-		UPDATE drafts SET request_json = ?, version = version + 1, member_edited = ?, updated_at = ?
+		UPDATE drafts SET request_json = ?, version = version + 1, member_edited = member_edited | ?, updated_at = ?
 		WHERE id = ? AND version = ? AND status = 'pending'`,
 		string(buf), boolInt(viewer.Agent == nil), now, num, base)
 	if err != nil {
@@ -522,7 +544,7 @@ func (m *Manager) Update(ctx context.Context, viewer identity.Viewer, id string,
 		return Draft{}, &AlreadySentError{}
 	}
 	if base != d.Version {
-		return Draft{}, &VersionConflictError{Current: d.Version, Base: base}
+		return Draft{}, &VersionConflictError{Current: d.Version, Base: base, LastAuthor: lastAuthor(d.Versions)}
 	}
 	full, err := m.tk.ForViewer(ctx, viewer, d.TicketNumber)
 	if err != nil {
@@ -552,7 +574,7 @@ func (m *Manager) Update(ctx context.Context, viewer identity.Viewer, id string,
 	defer tx.Rollback()
 	num, _ := parseID(id)
 	res, err := tx.ExecContext(ctx, `
-		UPDATE drafts SET request_json = ?, version = version + 1, member_edited = ?, updated_at = ?
+		UPDATE drafts SET request_json = ?, version = version + 1, member_edited = member_edited | ?, updated_at = ?
 		WHERE id = ? AND version = ? AND status = 'pending'`,
 		string(buf), boolInt(viewer.Agent == nil), now, num, base)
 	if err != nil {
@@ -697,7 +719,7 @@ func (m *Manager) sendCreate(ctx context.Context, viewer identity.Viewer, d Draf
 	return SendResult{Create: &created, Signature: signature, Drafting: d.Versions}, nil
 }
 
-func (m *Manager) SendBriefRevision(ctx context.Context, viewer identity.Viewer, id string, version int64) (t tickets.Ticket, signature string, drafting []Version, err error) {
+func (m *Manager) SendBriefRevision(ctx context.Context, viewer identity.Viewer, id string, version, throughSeq int64) (t tickets.Ticket, signature string, drafting []Version, err error) {
 	d, err := m.ByViewer(ctx, viewer, id)
 	if err != nil {
 		return
@@ -719,7 +741,7 @@ func (m *Manager) SendBriefRevision(ctx context.Context, viewer identity.Viewer,
 		return
 	}
 	last := lastSeq(full)
-	if d.NewEvents > 0 {
+	if d.NewEvents > 0 && throughSeq < last {
 		err = &TicketChangedError{NewEvents: d.NewEvents, ThroughSeq: last}
 		return
 	}
