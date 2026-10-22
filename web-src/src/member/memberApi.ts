@@ -130,6 +130,10 @@ export async function fetchInbox(): Promise<InboxResponse> {
   return api('/api/v1/inbox')
 }
 
+export async function fetchDrafts(): Promise<{ count: number; drafts: DraftView[] }> {
+  return api('/api/v1/drafts')
+}
+
 export { fetchServerVersion }
 
 export async function fetchMembers(): Promise<MemberRef[]> {

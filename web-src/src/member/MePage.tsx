@@ -8,6 +8,7 @@ import {
   fetchAgentTokens,
   fetchClients,
   fetchClientLatest,
+  fetchDrafts,
   issueAgentToken,
   setAgentTokenDraftMode,
   logout,
@@ -33,6 +34,7 @@ export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }
   const [switchingToDirect, setSwitchingToDirect] = useState<AgentTokenRow | null>(null)
   const [clients, setClients] = useState<ClientCredentialRow[] | null>(null)
   const [clientLatest, setClientLatest] = useState<ClientLatest | null | undefined>(undefined)
+  const [draftCount, setDraftCount] = useState<number | null>(null)
   const [revokingClient, setRevokingClient] = useState<ClientCredentialRow | null>(null)
   const [changingPassword, setChangingPassword] = useState(false)
 
@@ -41,6 +43,8 @@ export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }
       setTokens(await fetchAgentTokens())
       setClients(await fetchClients())
       setClientLatest(await fetchClientLatest())
+      const drafts = await fetchDrafts()
+      setDraftCount(drafts.count)
       setError(null)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : '读取 Agent 列表失败')
@@ -110,6 +114,21 @@ export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }
 
   return (
     <div className="bpage">
+      {draftCount !== null && (
+        <a
+          className="drafts-card"
+          href="/drafts"
+          aria-label={`我的草稿（${draftCount}）`}
+          onClick={(e) => {
+            e.preventDefault()
+            nav('/drafts')
+          }}
+        >
+          <span>✎ 我的草稿（{draftCount}）</span>
+          <small>只有你能看到</small>
+          <b>›</b>
+        </a>
+      )}
       <div className="mcard" style={{ marginTop: 12 }}>
         <div className="kv">
           <span>账号</span>

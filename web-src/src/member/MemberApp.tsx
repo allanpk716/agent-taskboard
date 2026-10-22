@@ -4,8 +4,9 @@
 // 与管理页入口（仅管理员，#42）；收件箱顶部是两屏建单流程入口（#195）。
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '../api'
-import { fetchInbox, fetchServerVersion, fetchSession, type Me } from './memberApi'
+import { fetchDrafts, fetchInbox, fetchServerVersion, fetchSession, type Me } from './memberApi'
 import { InboxPage } from './InboxPage'
+import { DraftsPage } from './DraftsPage'
 import { TicketsPage } from './TicketsPage'
 import { TicketDetailPage } from './TicketDetailPage'
 import { NewTicketPage } from './NewTicketPage'
@@ -26,6 +27,8 @@ function pageTitle(route: Route, newTicketTitle: string): string {
       return '收件箱'
     case 'tickets':
       return '工单'
+    case 'drafts':
+      return '我的草稿'
     case 'new':
       return newTicketTitle
     case 'feedback':
@@ -55,6 +58,7 @@ export function MemberApp() {
   const [me, setMe] = useState<Me | null>(null)
   const [denied, setDenied] = useState(false)
   const [inboxCount, setInboxCount] = useState(0)
+  const [draftCount, setDraftCount] = useState(0)
   const [serverVersion, setServerVersion] = useState<string | undefined>()
   const [newTicketTitle, setNewTicketTitle] = useState('建单')
 
@@ -79,11 +83,19 @@ export function MemberApp() {
       .then((d) => setInboxCount(d.count))
       .catch(() => {})
   }, [])
+  const refreshDrafts = useCallback(() => {
+    fetchDrafts().then((d) => setDraftCount(d.count)).catch(() => {})
+  }, [])
   useEffect(() => {
     refreshInbox()
-    window.addEventListener('tb:invalidate', refreshInbox)
-    return () => window.removeEventListener('tb:invalidate', refreshInbox)
-  }, [refreshInbox, route])
+    refreshDrafts()
+    const invalidate = () => {
+      refreshInbox()
+      refreshDrafts()
+    }
+    window.addEventListener('tb:invalidate', invalidate)
+    return () => window.removeEventListener('tb:invalidate', invalidate)
+  }, [refreshInbox, refreshDrafts, route])
 
   if (denied) {
     return (
@@ -118,6 +130,7 @@ export function MemberApp() {
     <>
       {route.page === 'inbox' && <InboxPage key={route.page} />}
       {route.page === 'tickets' && <TicketsPage key={route.page} me={me} />}
+      {route.page === 'drafts' && <DraftsPage key={navSeq} />}
       {(route.page === 'new' || route.page === 'feedback') && (
         <NewTicketPage
           key={navSeq}
@@ -137,9 +150,16 @@ export function MemberApp() {
       {route.page === 'admin' && <AdminPage key={navSeq} me={me} />}
     </>
   )
-  const tab = (k: Route['page'], icon: string, name: string, badge?: number, on?: boolean) => (
+  const tab = (
+    k: Route['page'],
+    icon: string,
+    name: string,
+    badge?: number,
+    on?: boolean,
+    badgeTone?: 'red' | 'amber',
+  ) => (
     <a
-      className={`tabbtn${(on ?? h.page === k) ? ' on' : ''}`}
+      className={`tabbtn${(on ?? h.page === k) ? ' on' : ''}${badgeTone ? ` ${badgeTone}-badge` : ''}`}
       href={k === 'inbox' ? '/' : `/${k}`}
       onClick={(e) => {
         e.preventDefault()
@@ -162,9 +182,10 @@ export function MemberApp() {
       on: boolean,
       badge?: number,
       primary?: boolean,
+      badgeTone?: 'red' | 'amber',
     ) => (
       <a
-        className={`pc-nav-item${primary ? ' primary' : ''}${on ? ' on' : ''}`}
+        className={`pc-nav-item${primary ? ' primary' : ''}${on ? ' on' : ''}${badgeTone ? ` ${badgeTone}-badge` : ''}`}
         href={href}
         aria-current={on ? 'page' : undefined}
         onClick={(e) => {
@@ -184,6 +205,7 @@ export function MemberApp() {
         </a>
         {item('/new', '✚', '＋ 建单', '建单', h.page === 'new' || h.page === 'feedback', undefined, true)}
         {item('/', '📥', '收件箱', '收件箱', h.page === 'inbox' || (h.page === 'detail' && fromInbox), inboxCount)}
+        {item('/drafts', '✎', '✎ 草稿', '草稿', h.page === 'drafts', draftCount, false, 'amber')}
         {item('/tickets', '🗂', '工单', '工单', h.page === 'tickets' || (h.page === 'detail' && !fromInbox))}
         {item('/tools', '🧰', '工具', '工具', toolsOn)}
         {item('/me', '👤', '我的', '我的', meOn)}
@@ -271,7 +293,7 @@ export function MemberApp() {
             <span>建单</span>
           </a>
           {tab('tools', '🧰', '工具', undefined, toolsOn)}
-          {tab('me', '👤', '我的', undefined, meOn)}
+          {tab('me', '👤', '我的', draftCount, meOn, 'amber')}
         </nav>
       </div>
     </main>

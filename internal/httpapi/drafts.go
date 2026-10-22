@@ -261,6 +261,7 @@ func draftAttachmentViews(atts []attachments.AttachmentInfo) []attachmentView {
 type draftTicketView struct {
 	Number string `json:"number"`
 	Seq    int64  `json:"seq"`
+	Title  string `json:"title"`
 	URL    string `json:"url"`
 }
 
@@ -287,7 +288,7 @@ func newDraftView(a *API, r *http.Request, d drafts.Draft) draftView {
 		previewURL = "/drafts/" + d.ID
 	}
 	if d.TicketNumber != "" {
-		ticket = &draftTicketView{Number: d.TicketNumber, Seq: d.TicketSeq, URL: d.TicketURL}
+		ticket = &draftTicketView{Number: d.TicketNumber, Seq: d.TicketSeq, Title: d.TicketTitle, URL: d.TicketURL}
 	}
 	var result any
 	if d.Kind == "create" && d.Status == "sent" {

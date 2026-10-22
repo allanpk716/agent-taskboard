@@ -14,6 +14,7 @@ test('wide viewport shows sidebar, version and centered main area', async ({ pag
   expect(await nav.evaluateAll((els) => els.map((e) => e.textContent))).toEqual([
     expect.stringMatching(/^✚＋ 建单$/),
     expect.stringMatching(/^📥收件箱[1-9]\d*$/),
+    '✎✎ 草稿',
     '🗂工单',
     '🧰工具',
     '👤我的',
