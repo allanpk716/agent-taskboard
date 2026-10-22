@@ -15,6 +15,7 @@ type notificationBody struct {
 	Kind      string  `json:"kind"`
 	Reason    string  `json:"reason"`
 	Text      string  `json:"text"`
+	URL       string  `json:"url"`
 	Summary   string  `json:"summary"`
 	ReadNew   string  `json:"read_new"`
 	ReadFull  string  `json:"read_full"`

@@ -1009,10 +1009,51 @@
 .switch.on i {
   left: 20px;
 }
+.switch.draft.on {
+  background: #f59e0b;
+  border-color: #d97706;
+}
 .switchsub {
   margin: 5px 0 0;
   color: #98a1b3;
   font-size: 11.5px;
+}
+.draft-mode-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+}
+.draft-mode-card {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #d7dde8;
+  border-radius: 8px;
+  padding: 9px 10px;
+  cursor: pointer;
+  font-size: 12.5px;
+  color: #55607a;
+  background: #fff;
+}
+.draft-mode-card.selected {
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 1px #f59e0b inset;
+}
+.draft-mode-card input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+}
+.draft-mode-title {
+  color: #222;
+  font-weight: 600;
+}
+@media (max-width: 520px) {
+  .draft-mode-options {
+    grid-template-columns: 1fr;
+  }
 }
 .notice-sheet {
   position: fixed;

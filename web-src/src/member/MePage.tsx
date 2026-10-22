@@ -10,6 +10,7 @@ import {
   fetchClientLatest,
   fetchDrafts,
   issueAgentToken,
+  setAgentTokenDraftMode,
   logout,
   rotateAgentToken,
   revokeAgentToken,
@@ -30,6 +31,7 @@ export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }
   const [issuing, setIssuing] = useState(false)
   const [issued, setIssued] = useState<IssuedToken | null>(null)
   const [revoking, setRevoking] = useState<AgentTokenRow | null>(null)
+  const [switchingToDirect, setSwitchingToDirect] = useState<AgentTokenRow | null>(null)
   const [clients, setClients] = useState<ClientCredentialRow[] | null>(null)
   const [clientLatest, setClientLatest] = useState<ClientLatest | null | undefined>(undefined)
   const [draftCount, setDraftCount] = useState<number | null>(null)
@@ -73,6 +75,27 @@ export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }
       await refresh()
     } catch (e) {
       setError(e instanceof ApiError ? e.message : '换新失败')
+    }
+  }
+
+  async function switchToDirect() {
+    if (!switchingToDirect) return
+    try {
+      await setAgentTokenDraftMode(switchingToDirect.id, 'direct')
+      setSwitchingToDirect(null)
+      await refresh()
+    } catch (e) {
+      setSwitchingToDirect(null)
+      setError(e instanceof ApiError ? `${e.message}（${e.code}）` : '切换草稿模式失败')
+    }
+  }
+
+  async function switchToRequired(tk: AgentTokenRow) {
+    try {
+      await setAgentTokenDraftMode(tk.id, 'required')
+      await refresh()
+    } catch (e) {
+      setError(e instanceof ApiError ? `${e.message}（${e.code}）` : '切换草稿模式失败')
     }
   }
 
@@ -240,6 +263,30 @@ export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }
                   )}
                 </td>
                 <td>
+                  {tk.revoked_at ? (
+                    <span className="hint">—</span>
+                  ) : (
+                    <button
+                      type="button"
+                      className={`switch draft${tk.draft_mode === 'required' ? ' on' : ''}`}
+                      role="switch"
+                      aria-checked={tk.draft_mode === 'required'}
+                      aria-label="草稿模式"
+                      title={tk.draft_mode === 'required' ? '必须走草稿' : '可直接发'}
+                      onClick={() =>
+                        tk.draft_mode === 'required'
+                          ? setSwitchingToDirect(tk)
+                          : void switchToRequired(tk)
+                      }
+                    >
+                      <i />
+                    </button>
+                  )}
+                  <div className="switchsub">
+                    {tk.revoked_at ? '' : tk.draft_mode === 'required' ? '必须走草稿' : '可直接发'}
+                  </div>
+                </td>
+                <td>
                   {tk.revoked_at ? null : (
                     <>
                       <button className="btn sm ghost" onClick={() => void rotate(tk)}>
@@ -255,7 +302,7 @@ export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }
             ))}
             {tokens !== null && tokens.length === 0 && (
               <tr>
-                <td className="hint" colSpan={3}>
+                <td className="hint" colSpan={4}>
                   还没有 Agent token。
                 </td>
               </tr>
@@ -298,6 +345,16 @@ export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }
           danger
           onYes={() => void revoke()}
           onCancel={() => setRevoking(null)}
+        />
+      )}
+      {switchingToDirect && (
+        <Confirm
+          title="改为可直接发？"
+          body={<>它写的内容将立刻对外可见，署名里不注明「经你确认」。</>}
+          yesLabel="改为可直接发"
+          danger
+          onYes={() => void switchToDirect()}
+          onCancel={() => setSwitchingToDirect(null)}
         />
       )}
       {revokingClient && (
@@ -426,6 +483,7 @@ function IssueTokenDialog({
   onIssued: (tok: IssuedToken) => void
 }) {
   const [name, setName] = useState('')
+  const [draftMode, setDraftMode] = useState<'required' | 'direct'>('direct')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -436,7 +494,7 @@ function IssueTokenDialog({
     }
     setBusy(true)
     try {
-      onIssued(await issueAgentToken(name.trim()))
+      onIssued(await issueAgentToken(name.trim(), draftMode))
     } catch (e) {
       setError(e instanceof ApiError ? `${e.message}（${e.code}）` : '生成失败')
     } finally {
@@ -456,6 +514,31 @@ function IssueTokenDialog({
         onChange={(e) => setName(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && void issue()}
       />
+      <div className="draft-mode-options" role="radiogroup" aria-label="草稿模式">
+        <label className={`draft-mode-card${draftMode === 'required' ? ' selected' : ''}`}>
+          <input
+            type="radio"
+            name="draft-mode"
+            value="required"
+            checked={draftMode === 'required'}
+            onChange={() => setDraftMode('required')}
+          />
+          <span className="draft-mode-title">必须走草稿（推荐）</span>
+          <span>它写的建单、回复和说明修订先存为草稿，由你确认后发出。</span>
+        </label>
+        <label className={`draft-mode-card${draftMode === 'direct' ? ' selected' : ''}`}>
+          <input
+            type="radio"
+            name="draft-mode"
+            value="direct"
+            checked={draftMode === 'direct'}
+            onChange={() => setDraftMode('direct')}
+          />
+          <span className="draft-mode-title">可直接发</span>
+          <span>它写的内容立刻对外可见，署名里不注明「经你确认」。</span>
+        </label>
+      </div>
+      <div className="hint">两种模式下，打标签、指派、加协作者、关闭或重开都直接生效，不走草稿。</div>
       <div className="hint">token 会写进接入文案，只在生成后显示一次，请整段贴给这个 Agent。</div>
       {error && <div className="errbox">{error}</div>}
       <div className="mrow">

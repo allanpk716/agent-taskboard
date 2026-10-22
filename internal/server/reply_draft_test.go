@@ -115,8 +115,8 @@ func TestRequiredAgent回复保存为草稿且发出前零影响(t *testing.T) {
 	}
 	var afterNotes notificationsBody
 	s.Do(t, web, http.MethodGet, "/api/v1/notifications", nil, &afterNotes)
-	if len(afterNotes.Items) != len(beforeNotes.Items) || afterNotes.UnreadCount != beforeNotes.UnreadCount {
-		t.Fatalf("草稿改变通知：%d/%d → %d/%d", len(beforeNotes.Items), beforeNotes.UnreadCount,
+	if len(afterNotes.Items) != len(beforeNotes.Items)+1 || afterNotes.UnreadCount != beforeNotes.UnreadCount {
+		t.Fatalf("草稿通知/未读：%d/%d → %d/%d", len(beforeNotes.Items), beforeNotes.UnreadCount,
 			len(afterNotes.Items), afterNotes.UnreadCount)
 	}
 
@@ -320,6 +320,55 @@ func Test关闭后的回复草稿不能修改或发出(t *testing.T) {
 		map[string]any{"version": accepted.Draft.Version}, &errBody)
 	if res.StatusCode != http.StatusConflict || errBody.Error.Code != "ticket_closed" {
 		t.Fatalf("关闭后发出草稿 = %d/%+v, 想 409 ticket_closed", res.StatusCode, errBody)
+	}
+}
+
+func Test草稿首次写成时只通知主人一次(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	s.CreateAdmin("李工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	li := s.Login("李工", "secret-pass")
+	number := mustCreateTicket(t, s, web, "草稿通知")
+	_, agent := issueRequiredAgent(t, s, web, "笔记本")
+
+	var before notificationsBody
+	s.Do(t, web, http.MethodGet, "/api/v1/notifications", nil, &before)
+	accepted := mustReplyDraft(t, s, agent, number)
+	var first draftBody
+	s.Do(t, agent, http.MethodPut, "/api/v1/drafts/"+accepted.Draft.ID,
+		map[string]any{"base_version": 1, "request": map[string]any{"body_md": "第二版。"}}, &first)
+	var second draftBody
+	s.Do(t, agent, http.MethodPut, "/api/v1/drafts/"+accepted.Draft.ID,
+		map[string]any{"base_version": first.Version, "request": map[string]any{"body_md": "第三版。"}}, &second)
+
+	var got notificationsBody
+	s.Do(t, web, http.MethodGet, "/api/v1/notifications", nil, &got)
+	if len(got.Items) != len(before.Items)+1 {
+		t.Fatalf("通知数 %d → %d，想只新增 1 条", len(before.Items), len(got.Items))
+	}
+	note := got.Items[0]
+	if note.Kind != "draft" || note.Reason != "draft_pending" ||
+		note.Text != "你的 Agent · 笔记本 写了回复草稿待确认" {
+		t.Fatalf("草稿通知 = %+v", note)
+	}
+	if note.Ticket.Number != number || note.URL != "/t/"+number+"#draft" {
+		t.Fatalf("草稿通知工单/地址 = %+v", note)
+	}
+	if got.UnreadCount != before.UnreadCount {
+		t.Fatalf("未读数 %d → %d，想不变", before.UnreadCount, got.UnreadCount)
+	}
+	var liNotes notificationsBody
+	s.Do(t, li, http.MethodGet, "/api/v1/notifications", nil, &liNotes)
+	for _, note := range liNotes.Items {
+		if note.Kind == "draft" {
+			t.Fatalf("其他参与者也收到草稿通知：%+v", note)
+		}
+	}
+	var agentNotes notificationsBody
+	s.Do(t, agent, http.MethodGet, "/api/v1/notifications", nil, &agentNotes)
+	if len(agentNotes.Items) != 0 {
+		t.Fatalf("Agent 读到草稿通知：%+v", agentNotes.Items)
 	}
 }
 

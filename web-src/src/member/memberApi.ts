@@ -362,6 +362,7 @@ export async function repointAlias(alias: string, label: string): Promise<void> 
 export interface AgentTokenRow {
   id: number
   name: string
+  draft_mode: 'required' | 'direct'
   created_at: string
   revoked_at?: string | null
 }
@@ -379,10 +380,23 @@ export async function fetchAgentTokens(): Promise<AgentTokenRow[]> {
   return (body.tokens ?? []) as AgentTokenRow[]
 }
 
-export async function issueAgentToken(name: string): Promise<IssuedToken> {
+export async function issueAgentToken(
+  name: string,
+  draftMode: 'required' | 'direct',
+): Promise<IssuedToken> {
   return api('/api/v1/me/agent-tokens', {
     method: 'POST',
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, draft_mode: draftMode }),
+  })
+}
+
+export async function setAgentTokenDraftMode(
+  id: number,
+  draftMode: 'required' | 'direct',
+): Promise<void> {
+  await api(`/api/v1/me/agent-tokens/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ draft_mode: draftMode }),
   })
 }
 
