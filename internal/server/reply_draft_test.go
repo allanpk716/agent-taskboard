@@ -322,3 +322,56 @@ func Test关闭后的回复草稿不能修改或发出(t *testing.T) {
 		t.Fatalf("关闭后发出草稿 = %d/%+v, 想 409 ticket_closed", res.StatusCode, errBody)
 	}
 }
+
+func Test成员读取已发出回复的起草过程(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	s.CreateMember("李工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	outsider := s.Login("李工", "secret-pass")
+	number := mustCreateTicket(t, s, web, "起草过程可见性")
+	s.Do(t, web, http.MethodPost, "/api/v1/tickets/"+number+"/assign", map[string]any{"assignee": "陈工"}, nil)
+	_, agent := issueRequiredAgent(t, s, web, "笔记本")
+	accepted := mustReplyDraft(t, s, agent, number)
+	var second draftBody
+	s.Do(t, agent, http.MethodPut, "/api/v1/drafts/"+accepted.Draft.ID,
+		map[string]any{"base_version": accepted.Draft.Version, "request": map[string]any{"body_md": "Agent 的第二版。"}}, &second)
+	var third draftBody
+	s.Do(t, web, http.MethodPut, "/api/v1/drafts/"+accepted.Draft.ID,
+		map[string]any{"base_version": second.Version, "request": map[string]any{"body_md": "成员确认前的第三版。"}}, &third)
+	var sent struct {
+		Result replyBody `json:"result"`
+	}
+	s.Do(t, web, http.MethodPost, "/api/v1/drafts/"+accepted.Draft.ID+"/send",
+		map[string]any{"version": third.Version}, &sent)
+
+	var got struct {
+		Versions []struct {
+			Version    int64  `json:"version"`
+			BodyMD     string `json:"body_md"`
+			Author     string `json:"author"`
+			At         string `json:"at"`
+			AuthorKind string `json:"author_kind"`
+		} `json:"versions"`
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number+"/drafting/1", nil, &got)
+	if len(got.Versions) != 3 {
+		t.Fatalf("起草过程版本数 = %d, 想 3", len(got.Versions))
+	}
+	wantBodies := []string{"Agent 起草的回复。", "Agent 的第二版。", "成员确认前的第三版。"}
+	wantAuthors := []string{"陈工 的 Agent · 笔记本", "陈工 的 Agent · 笔记本", "陈工"}
+	for i, v := range got.Versions {
+		if v.Version != int64(i+1) || v.BodyMD != wantBodies[i] || v.Author != wantAuthors[i] || v.At == "" {
+			t.Fatalf("第 %d 版 = %+v, 想 %q/%q", i+1, v, wantAuthors[i], wantBodies[i])
+		}
+	}
+
+	link := s.CreateGuestLink(t, web, number, map[string]any{"note": "检验科-张三"})
+	guest := s.GuestClient(link.Key(t))
+	if res := s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+number+"/drafting/1", nil, nil); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("访客读取起草过程状态码 = %d, 想 404", res.StatusCode)
+	}
+	if res := s.Do(t, outsider, http.MethodGet, "/api/v1/tickets/"+number+"/drafting/1", nil, nil); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("可见范围外成员读取状态码 = %d, 想 404", res.StatusCode)
+	}
+}
