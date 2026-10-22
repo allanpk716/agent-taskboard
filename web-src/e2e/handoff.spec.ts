@@ -11,6 +11,23 @@ async function issueToken(request: APIRequestContext, who: { username: string; p
   return (await res.json()) as { id: number; token: string; onboarding_text: string }
 }
 
+async function createMemberWithoutAgentToken(
+  request: APIRequestContext,
+): Promise<{ memberID: number; credentials: { username: string; password: string } }> {
+  const session = await request.post('/api/v1/session', { data: ADMIN })
+  expect(session.ok()).toBeTruthy()
+  const username = `handoff-notoken-${Date.now().toString(36)}`
+  const created = await request.post('/api/v1/members', {
+    data: { username, name: '无token成员' },
+  })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const body = (await created.json()) as { member: { id: number }, initial_password: string }
+  return {
+    memberID: body.member.id,
+    credentials: { username, password: body.initial_password },
+  }
+}
+
 test('发起人看到两个按钮，分别复制工单指令和交接文案', async ({ page, request }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
   const number = await createTicket(request, { title: '要交给王工Agent的工单', assignee: '王工' })
@@ -61,8 +78,8 @@ test('指派人只看到让我的Agent处理', async ({ page, request }) => {
 
 test('没有Agent token时顶部两步引导但不阻止复制', async ({ page, request }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
-  const number = await createTicket(request, { title: '还没签发token的成员工单', assignee: '王工' })
-  const worker = await wang()
+  const { memberID, credentials: worker } = await createMemberWithoutAgentToken(request)
+  const number = await createTicket(request, { title: '还没签发token的成员工单', assignee: String(memberID) })
   await login(page, worker)
   await page.goto(`/t/${number}`)
   await page.locator('.actrow').getByRole('button', { name: '🤖 让我的 Agent 处理' }).click()
