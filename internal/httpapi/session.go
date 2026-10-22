@@ -63,6 +63,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/guest-links/enter", a.handleGuestLinkClaim)
 	mux.HandleFunc("/api/v1/me/agent-tokens", a.handleAgentTokens)
 	mux.HandleFunc("/api/v1/me/agent-tokens/", a.handleAgentToken)
+	mux.HandleFunc("/api/v1/me/notices/", a.handleMemberNotice)
 	mux.HandleFunc("/api/v1/me/password", a.handleOwnPassword)
 	mux.HandleFunc("/api/v1/tickets", a.handleTicketsRoot)
 	mux.HandleFunc("/api/v1/tickets/", a.handleTicketRef)
@@ -312,6 +313,7 @@ type sessionView struct {
 	Ticket           *sessionTicketView `json:"ticket,omitempty"`
 	MinClientVersion string             `json:"min_client_version"`
 	Drafts           *draftsSummaryView `json:"drafts,omitempty"`
+	Notices          []string           `json:"notices,omitempty"`
 }
 
 func (a *API) newSessionView(v identity.Viewer) sessionView {
@@ -337,8 +339,15 @@ func (a *API) newSessionView(v identity.Viewer) sessionView {
 	if list, err := a.drafts.List(context.Background(), v); err == nil {
 		count = len(list)
 	}
-	return sessionView{Viewer: vv, Inbox: "/api/v1/inbox", MinClientVersion: a.cfg.Server.MinClientVersion,
-		Drafts: &draftsSummaryView{Count: count, URL: "/api/v1/drafts"}}
+	view := sessionView{Viewer: vv, Inbox: "/api/v1/inbox", MinClientVersion: a.cfg.Server.MinClientVersion,
+		Drafts: &draftsSummaryView{Count: count, URL: "/api/v1/drafts"}, Notices: []string{}}
+	if v.IsWebSession() {
+		notices, err := a.ident.UnseenWebNotices(context.Background(), v.Member)
+		if err == nil {
+			view.Notices = notices
+		}
+	}
+	return view
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

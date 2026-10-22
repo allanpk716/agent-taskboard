@@ -483,7 +483,7 @@ function IssueTokenDialog({
   onIssued: (tok: IssuedToken) => void
 }) {
   const [name, setName] = useState('')
-  const [draftMode, setDraftMode] = useState<'required' | 'direct'>('direct')
+  const [draftMode, setDraftMode] = useState<'required' | 'direct'>('required')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 

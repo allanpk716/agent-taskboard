@@ -39,7 +39,9 @@ func Test读工单返回交接文案且与建单shareText一致(t *testing.T) {
 1. 凭证：用环境变量 TASKBOARD_TOKEN，请求头 Authorization: Bearer $TASKBOARD_TOKEN；读不到或返回 401 就停下来，让我去「我的 → Agent」生成 token 并把接入文案贴给你，不要用密码登录。
 2. 不熟悉平台先读说明书：%s/agent.md
 3. 读工单：curl -H "Authorization: Bearer $TASKBOARD_TOKEN" "%s/api/v1/tickets/%s?format=markdown"
-4. 照工单末尾「下一步」做；之后的待办看 %s/api/v1/inbox。`,
+4. 照工单末尾「下一步」做；之后的待办看 %s/api/v1/inbox。
+5. 你写的建单、回复、交付或说明修订，可能会先存成草稿（响应是 202，带 draft 和 preview_url），我确认后才发出；不要当作已经发出。
+6. 写完把 preview_url 发给我，用一两句话说明写了什么。之后要改，就在这份草稿上改（PUT /api/v1/drafts/<id>，带 base_version），不要另起一份。`,
 		created.Number, s.URL(), s.URL(), created.Number, s.URL())
 	if read.HandoffText != wantAgent {
 		t.Fatalf("handoff_text = %q\n想 %q", read.HandoffText, wantAgent)

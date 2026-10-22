@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
-import { createTicket, login, loginAdmin, wang } from './helpers'
+import { createTicket, login, loginAdmin, markDraftIntroSeen, wang } from './helpers'
 
 async function issueRequiredAgent(request: APIRequestContext): Promise<string> {
   const member = await wang()
@@ -10,6 +10,7 @@ async function issueRequiredAgent(request: APIRequestContext): Promise<string> {
     data: { name: `笔记本-${Date.now()}`, draft_mode: 'required' },
   })
   expect(res.status(), `签发 Agent 失败：${await res.text()}`).toBe(201)
+  await markDraftIntroSeen(request)
   return ((await res.json()) as { token: string }).token
 }
 
@@ -90,6 +91,7 @@ test('草稿通知出现在铃铛并定位到草稿处', async ({ page, request 
     data: { name: `通知笔记本-${Date.now()}`, draft_mode: 'required' },
   })
   expect(issued.status(), `签发 Agent 失败：${await issued.text()}`).toBe(201)
+  await markDraftIntroSeen(request)
   const token = ((await issued.json()) as { token: string }).token
   const drafted = await request.post(`/api/v1/tickets/${number}/replies`, {
     data: { body_md: '待确认的草稿。' },

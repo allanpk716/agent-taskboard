@@ -122,8 +122,17 @@ export interface AccessRecordsResponse {
   since: string
 }
 
-export async function fetchSession(): Promise<{ viewer: { kind: string; member: Me } }> {
+export interface SessionView {
+  viewer: { kind: string; member: Me }
+  notices?: string[]
+}
+
+export async function fetchSession(): Promise<SessionView> {
   return api('/api/v1/session')
+}
+
+export async function markDraftsIntroSeen(): Promise<void> {
+  await api('/api/v1/me/notices/drafts_intro/seen', { method: 'POST' })
 }
 
 export async function fetchInbox(): Promise<InboxResponse> {

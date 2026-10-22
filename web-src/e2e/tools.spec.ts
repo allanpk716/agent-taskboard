@@ -118,11 +118,13 @@ test('个人设置：签发 Agent token，署名正确，撤销后失效', async
   const agentName = `巡检${RUN}`
   await page.getByRole('button', { name: '＋ 生成新 token' }).click()
   await page.locator('#tk-name').fill(agentName)
+  await page.getByRole('radio', { name: '可直接发' }).check()
   await page.getByRole('button', { name: '生成', exact: true }).click()
   const onboardingBox = page.locator('[data-onboarding-preview]')
   await expect(onboardingBox).toContainText('setx TASKBOARD_TOKEN')
   const token = (((await onboardingBox.textContent()) ?? '').match(/tbag_[A-Za-z0-9_-]+/) ?? [])[0]
   expect(token).toMatch(/^tbag_/)
+  await request.post('/api/v1/me/notices/drafts_intro/seen')
   await page.locator('.modal').getByRole('button', { name: '关闭', exact: true }).click()
 
   // 列表里出现这个 Agent（使用中）

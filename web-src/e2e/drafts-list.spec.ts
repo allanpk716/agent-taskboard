@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
-import { createTicket, login, loginAdmin, wang } from './helpers'
+import { createTicket, login, loginAdmin, markDraftIntroSeen, wang } from './helpers'
 
 test.use({ viewport: { width: 1280, height: 800 } })
 
@@ -12,6 +12,7 @@ async function issueRequiredAgent(request: APIRequestContext): Promise<string> {
     data: { name: `草稿列表-${Date.now()}`, draft_mode: 'required' },
   })
   expect(res.status(), `签发 Agent 失败：${await res.text()}`).toBe(201)
+  await markDraftIntroSeen(request)
   return ((await res.json()) as { token: string }).token
 }
 

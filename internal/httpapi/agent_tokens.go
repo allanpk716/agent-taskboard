@@ -105,7 +105,7 @@ func (a *API) issueAgentToken(w http.ResponseWriter, r *http.Request) {
 	}
 	draftMode := req.DraftMode
 	if draftMode == "" {
-		draftMode = "direct"
+		draftMode = "required"
 	}
 	if draftMode != "required" && draftMode != "direct" {
 		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidDraftMode, "draft_mode 只能是 required 或 direct", "")

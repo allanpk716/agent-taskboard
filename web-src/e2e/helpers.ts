@@ -40,6 +40,10 @@ export async function loginAdmin(request: APIRequestContext) {
   expect(res.ok(), '管理员登录失败').toBeTruthy()
 }
 
+export async function markDraftIntroSeen(request: APIRequestContext) {
+  await request.post('/api/v1/me/notices/drafts_intro/seen')
+}
+
 const guestTokens = new Map<string, string>()
 
 export async function claimGuestLink(request: APIRequestContext, linkKey: string): Promise<string> {

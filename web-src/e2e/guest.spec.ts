@@ -42,8 +42,11 @@ async function seedGuestTicket(
   const number: string = (await created.json()).number
 
   if (opts.agentReply) {
-    const tokenRes = await request.post('/api/v1/me/agent-tokens', { data: { name: '初筛' } })
+    const tokenRes = await request.post('/api/v1/me/agent-tokens', {
+      data: { name: '初筛', draft_mode: 'direct' },
+    })
     expect(tokenRes.ok()).toBeTruthy()
+    await request.post('/api/v1/me/notices/drafts_intro/seen')
     const token: string = (await tokenRes.json()).token
     const reply = await request.post(`/api/v1/tickets/${number}/replies`, {
       data: { body_md: '感谢反馈，已转给仪器组。请补充软件版本：在「设置 → 关于本机」里，例如 `V3.2.1`。' },

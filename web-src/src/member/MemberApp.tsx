@@ -4,7 +4,15 @@
 // 与管理页入口（仅管理员，#42）；收件箱顶部是两屏建单流程入口（#195）。
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '../api'
-import { fetchDrafts, fetchInbox, fetchServerVersion, fetchSession, type Me } from './memberApi'
+import {
+  fetchAgentTokens,
+  fetchDrafts,
+  fetchInbox,
+  fetchServerVersion,
+  fetchSession,
+  markDraftsIntroSeen,
+  type Me,
+} from './memberApi'
 import { InboxPage } from './InboxPage'
 import { DraftsPage } from './DraftsPage'
 import { TicketsPage } from './TicketsPage'
@@ -18,7 +26,7 @@ import { MePage } from './MePage'
 import { AdminPage } from './AdminPage'
 import { NotificationBell } from './NotificationBell'
 import { detailListSource } from './listFilters'
-import { nav, useLocationSearch, useNavSeq, useRoute, type Route } from './ui'
+import { Modal, nav, useLocationSearch, useNavSeq, useRoute, type Route } from './ui'
 import { useLayoutTier } from './useLayoutTier'
 
 function pageTitle(route: Route, newTicketTitle: string): string {
@@ -50,6 +58,57 @@ function pageTitle(route: Route, newTicketTitle: string): string {
   }
 }
 
+function DraftsIntroDialog({ onDone }: { onDone: () => void }) {
+  const [agents, setAgents] = useState<string[] | null>(null)
+
+  useEffect(() => {
+    fetchAgentTokens()
+      .then((tokens) =>
+        setAgents(
+          tokens
+            .filter((token) => !token.revoked_at && token.draft_mode === 'required')
+            .map((token) => token.name),
+        ),
+      )
+      .catch(() => setAgents([]))
+  }, [])
+
+  async function close(goSettings: boolean) {
+    try {
+      await markDraftsIntroSeen()
+    } finally {
+      onDone()
+      if (goSettings) nav('/me')
+    }
+  }
+
+  return (
+    <Modal title="工单板已更新" onClose={() => void close(false)}>
+      <div className="hint">
+        你的下列 Agent 已改为必须走草稿，它们写的建单、回复和说明修订会先存成草稿，等你确认后发出。
+      </div>
+      <div className="draft-agent-list">
+        {(agents ?? []).map((name) => (
+          <span key={name} className="badge open">
+            {name}
+          </span>
+        ))}
+        {agents !== null && agents.length === 0 && <span className="hint">没有启用的 Agent</span>}
+      </div>
+      <div className="hint">要改回可直接发，去「我的 → Agent」的草稿开关。</div>
+      <div className="mrow">
+        <button className="btn ghost" onClick={() => void close(true)}>
+          去看 Agent 设置
+        </button>
+        <span className="sp" />
+        <button className="btn" onClick={() => void close(false)}>
+          知道了
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
 export function MemberApp() {
   const route = useRoute()
   const search = useLocationSearch()
@@ -61,10 +120,14 @@ export function MemberApp() {
   const [draftCount, setDraftCount] = useState(0)
   const [serverVersion, setServerVersion] = useState<string | undefined>()
   const [newTicketTitle, setNewTicketTitle] = useState('建单')
+  const [draftIntro, setDraftIntro] = useState(false)
 
   useEffect(() => {
     fetchSession()
-      .then((s) => setMe(s.viewer.member))
+      .then((s) => {
+        setMe(s.viewer.member)
+        setDraftIntro(s.notices?.includes('drafts_intro') ?? false)
+      })
       .catch((err) => {
         if (err instanceof ApiError && err.status === 401) {
           window.location.replace('/login')
@@ -126,6 +189,14 @@ export function MemberApp() {
     ? `/${detailQuery ? '?' + detailQuery : ''}`
     : `/tickets${detailQuery ? '?' + detailQuery : ''}`
   const bell = <NotificationBell tier={tier} onNavigate={() => window.dispatchEvent(new Event('tb:invalidate'))} />
+  const intro = draftIntro && (
+    <DraftsIntroDialog
+      onDone={() => {
+        setDraftIntro(false)
+        window.dispatchEvent(new Event('tb:invalidate'))
+      }}
+    />
+  )
   const page = (
     <>
       {route.page === 'inbox' && <InboxPage key={route.page} />}
@@ -225,6 +296,7 @@ export function MemberApp() {
       return (
         <>
           {bell}
+          {intro}
           <div className={`pc-shell${compact ? ' compact' : ''}`}>
             {sidebar}
             <div className="pc-split">
@@ -248,6 +320,7 @@ export function MemberApp() {
     return (
       <>
         {bell}
+        {intro}
         <div className={`pc-shell${compact ? ' compact' : ''}`}>
           {sidebar}
           <main className="pc-main">
@@ -268,6 +341,7 @@ export function MemberApp() {
 
   return (
     <main className="member-root">
+      {intro}
       <div className="b-app">
         <header className="b-top">
           <h1 className="b-title">{pageTitle(route, newTicketTitle)}</h1>

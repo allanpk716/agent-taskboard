@@ -1050,6 +1050,12 @@
   color: #222;
   font-weight: 600;
 }
+.draft-agent-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0;
+}
 @media (max-width: 520px) {
   .draft-mode-options {
     grid-template-columns: 1fr;

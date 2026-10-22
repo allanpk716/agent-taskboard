@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext } from '@playwright/test'
-import { ADMIN, createTicket, login, wang } from './helpers'
+import { ADMIN, createTicket, login, markDraftIntroSeen, wang } from './helpers'
 
 // Agent 接入、工单指令与交接文案：只从浏览器可见行为与剪贴板断言。
 
@@ -8,6 +8,7 @@ async function issueToken(request: APIRequestContext, who: { username: string; p
   expect(session.ok()).toBeTruthy()
   const res = await request.post('/api/v1/me/agent-tokens', { data: { name } })
   expect(res.ok(), await res.text()).toBeTruthy()
+  await markDraftIntroSeen(request)
   return (await res.json()) as { id: number; token: string; onboarding_text: string }
 }
 

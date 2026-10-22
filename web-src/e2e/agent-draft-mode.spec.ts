@@ -11,6 +11,7 @@ async function issueAgent(
     data: { name, draft_mode: draftMode },
   })
   expect(res.status(), `签发 Agent 失败：${await res.text()}`).toBe(201)
+  await request.post('/api/v1/me/notices/drafts_intro/seen')
   return ((await res.json()) as { token: string }).token
 }
 
@@ -42,13 +43,14 @@ test('Agent 表格显示草稿模式，切到可直接发前需要确认', async
   expect(((await session.json()) as { viewer: { agent: { draft_mode: string } } }).viewer.agent.draft_mode).toBe('direct')
 })
 
-test('签发 Agent 时可以选择必须走草稿', async ({ page, request }) => {
+test('签发 Agent 时默认必须走草稿', async ({ page, request }) => {
   const run = Date.now()
   await login(page, ADMIN)
   await page.goto('/me')
   await page.getByRole('button', { name: '＋ 生成新 token' }).click()
   await page.locator('#tk-name').fill(`必须草稿${run}`)
-  await page.getByRole('radio', { name: /必须走草稿（推荐）/ }).check()
+  await expect(page.getByRole('radio', { name: /必须走草稿（推荐）/ })).toBeChecked()
+  await expect(page.getByRole('radio', { name: '可直接发' })).not.toBeChecked()
   await page.getByRole('button', { name: '生成', exact: true }).click()
   const onboarding = page.locator('[data-onboarding-preview]')
   await expect(onboarding).toContainText('setx TASKBOARD_TOKEN')
@@ -57,6 +59,34 @@ test('签发 Agent 时可以选择必须走草稿', async ({ page, request }) =>
     headers: { Authorization: `Bearer ${token}` },
   })
   expect(((await session.json()) as { viewer: { agent: { draft_mode: string } } }).viewer.agent.draft_mode).toBe('required')
+})
+
+test('草稿上线提示列出必须走草稿的Agent且只出现一次', async ({ page, request }) => {
+  const suffix = Date.now().toString(36)
+  await request.post('/api/v1/session', { data: ADMIN })
+  const member = {
+    username: `draft-notice-${suffix}`,
+    password: `pass-${suffix}`,
+  }
+  const created = await request.post('/api/v1/members', {
+    data: { username: member.username, name: '草稿提示成员' },
+  })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const initialPassword = (((await created.json()) as { initial_password: string }).initial_password)
+  await request.post('/api/v1/session', { data: { username: member.username, password: initialPassword } })
+  const issued = await request.post('/api/v1/me/agent-tokens', {
+    data: { name: `提示Agent${suffix}`, draft_mode: 'required' },
+  })
+  expect(issued.ok(), await issued.text()).toBeTruthy()
+
+  await login(page, { username: member.username, password: initialPassword })
+  const dialog = page.getByRole('dialog', { name: '工单板已更新' })
+  await expect(dialog).toContainText('已改为必须走草稿')
+  await expect(dialog).toContainText(`提示Agent${suffix}`)
+  await dialog.getByRole('button', { name: '知道了' }).click()
+  await expect(dialog).toHaveCount(0)
+  await page.reload()
+  await expect(page.getByRole('dialog', { name: '工单板已更新' })).toHaveCount(0)
 })
 
 test('已停用的 Agent 不显示草稿开关', async ({ page, request }) => {
