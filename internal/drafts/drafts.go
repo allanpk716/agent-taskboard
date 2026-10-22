@@ -18,6 +18,14 @@ import (
 
 var ErrNotFound = errors.New("没有这份草稿")
 
+type Kind string
+
+const (
+	KindCreate        Kind = "create"
+	KindReply         Kind = "reply"
+	KindBriefRevision Kind = "brief_revision"
+)
+
 type VersionConflictError struct {
 	Current    int64
 	Base       int64
@@ -68,7 +76,7 @@ type CreateGuestLinkRequest struct {
 
 type Draft struct {
 	ID                string
-	Kind              string
+	Kind              Kind
 	Status            string
 	TicketSeq         int64
 	TicketNumber      string
@@ -162,7 +170,7 @@ func (m *Manager) SaveReply(ctx context.Context, viewer identity.Viewer, number 
 
 	now := m.clk.Now().Format(time.RFC3339Nano)
 	buf, _ := json.Marshal(req)
-	d := Draft{Kind: "reply", Status: "pending", TicketSeq: full.Seq, TicketNumber: full.Number, TicketURL: "/t/" + full.Number,
+	d := Draft{Kind: KindReply, Status: "pending", TicketSeq: full.Seq, TicketNumber: full.Number, TicketURL: "/t/" + full.Number,
 		MemberID: viewer.Member.ID, MemberName: viewer.Member.Name, Request: req, BaseTimelineSeq: lastSeq(full)}
 	if viewer.Agent != nil {
 		d.AgentID, d.AgentName = viewer.Agent.ID, viewer.Agent.Name
@@ -175,8 +183,8 @@ func (m *Manager) SaveReply(ctx context.Context, viewer identity.Viewer, number 
 	var id int64
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO drafts(kind, ticket_seq, member_id, request_json, version, base_timeline_seq, created_at, updated_at)
-		VALUES ('reply', ?, ?, ?, 1, ?, ?, ?) RETURNING id`,
-		full.Seq, viewer.Member.ID, string(buf), d.BaseTimelineSeq, now, now).Scan(&id)
+		VALUES (?, ?, ?, ?, 1, ?, ?, ?) RETURNING id`,
+		KindReply, full.Seq, viewer.Member.ID, string(buf), d.BaseTimelineSeq, now, now).Scan(&id)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return Draft{}, &VersionConflictError{Current: 1, Base: 1}
@@ -229,7 +237,7 @@ func (m *Manager) SaveCreate(ctx context.Context, viewer identity.Viewer, req Cr
 	req.Kind, req.Title, req.BriefMD, req.Labels = validated.Kind, validated.Title, validated.BriefMD, validated.Labels
 	now := m.clk.Now().Format(time.RFC3339Nano)
 	buf, _ := json.Marshal(req)
-	d := Draft{Kind: "create", Status: "pending", Request: Request{}, CreateRequest: req,
+	d := Draft{Kind: KindCreate, Status: "pending", Request: Request{}, CreateRequest: req,
 		MemberID: viewer.Member.ID, MemberName: viewer.Member.Name,
 		AgentID: viewer.Agent.ID, AgentName: viewer.Agent.Name}
 	d.Warnings = warnings
@@ -241,8 +249,8 @@ func (m *Manager) SaveCreate(ctx context.Context, viewer identity.Viewer, req Cr
 	var id int64
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO drafts(kind, ticket_seq, member_id, request_json, version, base_timeline_seq, created_at, updated_at)
-		VALUES ('create', NULL, ?, ?, 1, 0, ?, ?) RETURNING id`,
-		viewer.Member.ID, string(buf), now, now).Scan(&id)
+		VALUES (?, NULL, ?, ?, 1, 0, ?, ?) RETURNING id`,
+		KindCreate, viewer.Member.ID, string(buf), now, now).Scan(&id)
 	if err != nil {
 		return Draft{}, err
 	}
@@ -347,9 +355,9 @@ func (m *Manager) Signatures(ctx context.Context, ticketSeq int64) (map[int64]st
 			return nil, err
 		}
 		if edited == 1 {
-			out[seq] = "经" + name + "修改并确认"
+			out[seq] = signatureOf(name, true)
 		} else {
-			out[seq] = "经" + name + "确认"
+			out[seq] = signatureOf(name, false)
 		}
 	}
 	return out, rows.Err()
@@ -412,7 +420,7 @@ func (m *Manager) Get(ctx context.Context, viewer identity.Viewer, id int64) (Dr
 	d.AgentID = agentID.Int64
 	d.SentTimelineSeq = sentSeq.Int64
 	d.MemberEdited = memberEdited == 1
-	if d.Kind == "create" {
+	if d.Kind == KindCreate {
 		_ = json.Unmarshal([]byte(request), &d.CreateRequest)
 		if _, warnings, err := m.tk.ValidateCreate(ctx, createInputOf(d.CreateRequest, viewer)); err == nil {
 			d.Warnings = warnings
@@ -555,7 +563,7 @@ func (m *Manager) Update(ctx context.Context, viewer identity.Viewer, id string,
 	if full.Status != "open" {
 		return Draft{}, tickets.ErrTicketClosed
 	}
-	if d.Kind == "brief_revision" {
+	if d.Kind == KindBriefRevision {
 		if _, err = m.tk.ValidateRevise(ctx, viewer, d.TicketNumber, tickets.ReviseInput{
 			Title: req.Title, BriefMD: req.BriefMD, Fields: req.Fields,
 			AttachmentIDs: req.AttachmentIDs, BaseRevision: req.BaseRevision,
@@ -591,7 +599,7 @@ func (m *Manager) Update(ctx context.Context, viewer identity.Viewer, id string,
 	if err = m.atts.ReleaseDraftTx(ctx, tx, num); err != nil {
 		return Draft{}, err
 	}
-	if d.Kind == "brief_revision" {
+	if d.Kind == KindBriefRevision {
 		if err = m.reserveBriefDraft(ctx, tx, num, full, viewer, req); err != nil {
 			return Draft{}, err
 		}
@@ -646,7 +654,7 @@ func (m *Manager) Send(ctx context.Context, viewer identity.Viewer, id string, v
 	if d.Status == "sent" {
 		return SendResult{}, &AlreadySentError{}
 	}
-	if d.Kind == "create" {
+	if d.Kind == KindCreate {
 		return m.sendCreate(ctx, viewer, d)
 	}
 	full, err := m.tk.ForViewer(ctx, viewer, d.TicketNumber)
@@ -687,13 +695,7 @@ func (m *Manager) Send(ctx context.Context, viewer identity.Viewer, id string, v
 	if n, _ := claimed.RowsAffected(); n == 0 {
 		return SendResult{}, &AlreadySentError{}
 	}
-	actor := tickets.Author{MemberID: d.MemberID, MemberName: d.MemberName}
-	for i := len(d.Versions) - 1; i >= 0; i-- {
-		if d.Versions[i].AgentID != 0 {
-			actor.AgentID, actor.AgentName = d.Versions[i].AgentID, d.Versions[i].AgentName
-			break
-		}
-	}
+	actor := authorOfDraft(d)
 	result, notified, err := m.tk.ReplyTx(ctx, tx, full, viewer, tickets.ReplyInput{
 		BodyMD: req.BodyMD, AttachmentIDs: req.AttachmentIDs, Deliver: req.Deliver, Actor: &actor,
 	})
@@ -720,13 +722,7 @@ func (m *Manager) Send(ctx context.Context, viewer identity.Viewer, id string, v
 
 func (m *Manager) sendCreate(ctx context.Context, viewer identity.Viewer, d Draft) (SendResult, error) {
 	memberEdited := d.MemberEdited
-	actor := tickets.Author{MemberID: d.MemberID, MemberName: d.MemberName}
-	for i := len(d.Versions) - 1; i >= 0; i-- {
-		if d.Versions[i].AgentID != 0 {
-			actor.AgentID, actor.AgentName = d.Versions[i].AgentID, d.Versions[i].AgentName
-			break
-		}
-	}
+	actor := authorOfDraft(d)
 	in := createInputOf(d.CreateRequest, viewer)
 	in.Actor = &actor
 	prepared, err := m.tk.PrepareCreate(ctx, in)
@@ -805,13 +801,7 @@ func (m *Manager) SendBriefRevision(ctx context.Context, viewer identity.Viewer,
 		err = &TicketChangedError{NewEvents: d.NewEvents, ThroughSeq: last}
 		return
 	}
-	actor := tickets.Author{MemberID: d.MemberID, MemberName: d.MemberName}
-	for i := len(d.Versions) - 1; i >= 0; i-- {
-		if d.Versions[i].AgentID != 0 {
-			actor.AgentID, actor.AgentName = d.Versions[i].AgentID, d.Versions[i].AgentName
-			break
-		}
-	}
+	actor := authorOfDraft(d)
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return
@@ -865,6 +855,17 @@ func signatureOf(name string, memberEdited bool) string {
 		return "经" + name + "修改并确认"
 	}
 	return "经" + name + "确认"
+}
+
+func authorOfDraft(d Draft) tickets.Author {
+	actor := tickets.Author{MemberID: d.MemberID, MemberName: d.MemberName}
+	for i := len(d.Versions) - 1; i >= 0; i-- {
+		if d.Versions[i].AgentID != 0 {
+			actor.AgentID, actor.AgentName = d.Versions[i].AgentID, d.Versions[i].AgentName
+			break
+		}
+	}
+	return actor
 }
 
 func lastSeq(full tickets.Full) int64 {

@@ -1636,7 +1636,7 @@ function DraftCard({
               </label>
             ))
           ) : (
-            <textarea aria-label="草稿正文" value={brief ? draft.request.brief_md ?? body : body} onChange={(e) => setBody(e.target.value)} />
+            <textarea aria-label="草稿内容" value={brief ? draft.request.brief_md ?? body : body} onChange={(e) => setBody(e.target.value)} />
           )}
           <AttachmentChips attachments={draft.attachments} />
           <div className="draft-actions">

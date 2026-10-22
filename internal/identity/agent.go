@@ -189,6 +189,7 @@ type AgentTokenInfo struct {
 func (m *Manager) ListAgentTokens(ctx context.Context, member Member) ([]AgentTokenInfo, error) {
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT id, name, draft_mode, created_at, revoked_at, draft_mode_switched_by_launch
+		FROM agent_tokens
 		WHERE member_id = ? ORDER BY id DESC`, member.ID)
 	if err != nil {
 		return nil, err

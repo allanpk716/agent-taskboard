@@ -25,7 +25,7 @@ func (m *Manager) SaveBriefRevision(ctx context.Context, viewer identity.Viewer,
 	}
 	now := m.clk.Now().Format(time.RFC3339Nano)
 	buf, _ := json.Marshal(req)
-	d := Draft{Kind: "brief_revision", Status: "pending", TicketSeq: full.Seq,
+	d := Draft{Kind: KindBriefRevision, Status: "pending", TicketSeq: full.Seq,
 		TicketNumber: full.Number, TicketTitle: full.Title, TicketURL: "/t/" + full.Number,
 		MemberID: viewer.Member.ID, MemberName: viewer.Member.Name, Request: req,
 		BaseTimelineSeq: lastSeq(full), BaseBriefRevision: full.BriefRevision}
@@ -40,8 +40,8 @@ func (m *Manager) SaveBriefRevision(ctx context.Context, viewer identity.Viewer,
 	var id int64
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO drafts(kind, ticket_seq, member_id, request_json, version, base_timeline_seq, created_at, updated_at)
-		VALUES ('brief_revision', ?, ?, ?, 1, ?, ?, ?) RETURNING id`,
-		full.Seq, viewer.Member.ID, string(buf), d.BaseTimelineSeq, now, now).Scan(&id)
+		VALUES (?, ?, ?, ?, 1, ?, ?, ?) RETURNING id`,
+		KindBriefRevision, full.Seq, viewer.Member.ID, string(buf), d.BaseTimelineSeq, now, now).Scan(&id)
 	if err != nil {
 		return Draft{}, err
 	}

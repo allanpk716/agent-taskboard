@@ -64,11 +64,14 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
     "client": {"id": 8, "hostname": "WORKSTATION-01"}
   },
   "inbox": "/api/v1/inbox",
+  "drafts": {"count": 2, "url": "/api/v1/drafts"},
   "min_client_version": ""
 }
 ```
 
-网页会话没有 `viewer.client`；客户端凭证必带。`min_client_version` 来自 `[server]` 配置，空串表示不限制。
+网页会话没有 `viewer.client`；客户端凭证必带。成员 Agent 的 `viewer.agent` 另有
+`draft_mode: "required"|"direct"`。网页会话另有 `notices`（如 `drafts_intro`）。
+`min_client_version` 来自 `[server]` 配置，空串表示不限制。
 
 ## 通知（#74）
 
@@ -147,22 +150,24 @@ spec 用户故事 84），没有 `inbox`：
 |---|---|
 | `POST /api/v1/me/agent-tokens` | 签发一个具名 Agent token。**只接受网页会话**。 |
 | `GET /api/v1/me/agent-tokens` | 列出成员名下的全部 Agent（含已撤销，新→旧；#42 个人设置页）。**只接受网页会话**，不回显明文 token。 |
+| `PATCH /api/v1/me/agent-tokens/{id}` | 改草稿模式：`{"draft_mode":"required"|"direct"}`。**只接受网页会话**。 |
 | `DELETE /api/v1/me/agent-tokens/{id}` | 撤销（立即生效，幂等 204）。**只接受网页会话**。 |
 
-- 签发请求体 `{"name":"笔记本"}`；成功 `201`：
+- 签发请求体 `{"name":"笔记本","draft_mode?":"required"|"direct"}`；缺省 `required`。成功 `201`：
 
   ```json
-  {"id": 3, "name": "笔记本", "token": "tbag_…", "created_at": "2026-10-16T09:00:00+08:00"}
+  {"id": 3, "name": "笔记本", "draft_mode": "required", "token": "tbag_…", "created_at": "2026-10-16T09:00:00+08:00"}
   ```
 
   明文 `token` 只在签发响应里出现一次，之后任何接口都不回显（库中只存 SHA-256 哈希）。
-- 列表响应 `{tokens: [{id, name, created_at, revoked_at?}]}`（新→旧）；撤销的保留在列表里，
+- 列表响应 `{tokens: [{id, name, draft_mode, draft_mode_switched_by_launch, created_at, revoked_at?}]}`（新→旧）；撤销的保留在列表里，
   页面标注「已停用」（历史署名不受影响）。
 - 撤销 Agent 后它的历史署名保留并标注「已停用」（时间线渲染见后续工单）；未撤销的同名不能重复，撤销后名字可复用。
 - 错误码：
   - `401 unauthenticated` / `401 invalid_token`：凭证缺失或失效（撤销后的 token 再用就是 401）。
   - `403 web_session_required`：用 Agent token（或将来其他非网页会话凭证）发起签发/撤销。ADR 0003：Agent 不能给自己或别人签发凭证。
   - `422 name_required`：名字为空。
+  - `422 invalid_draft_mode`：`draft_mode` 不是 `required` / `direct`。
   - `409 agent_name_taken`：该成员名下已有同名、未撤销的 Agent。
   - `404 agent_token_not_found`：id 不存在、不属于当前成员，或路径不是数字（`/me/` 下只看自己的资源，防枚举）。
 
@@ -226,12 +231,21 @@ spec 用户故事 84），没有 `inbox`：
 | `DELETE /api/v1/tickets/{id}/collaborators/{成员id}` | 移除协作者（#158；返回最新名单；支持 `Idempotency-Key`）。 |
 | `POST /api/v1/tickets/{id}/collaborators/leave` | 本人退出协作（#158；返回最新名单；支持 `Idempotency-Key`）。 |
 | `GET /api/v1/tickets/{id}/timeline?after=N` | 时间线增量读取（仅可见范围内的成员与成员 Agent）。 |
+| `GET /api/v1/tickets/{id}/brief-versions` / `…/{revision}` | 读取说明版本列表或某版完整快照（成员与访客；访客仍受链接指向工单约束）。 |
+| `GET /api/v1/tickets/{id}/drafting/{reply_no}` | 读取一条回复的起草过程（仅可见范围内的成员；访客 404）。 |
+| `GET /api/v1/tickets/{id}/brief-drafting/{revision}` | 读取一次说明修订的起草过程（仅可见范围内的成员；访客 404）。 |
 | `GET /api/v1/tickets/{id}/access-records` | 读取访问记录（仅可见范围内的成员与成员 Agent；只读，无删改接口）。 |
 | `POST /api/v1/tickets/{id}/attachments` | 上传一个待用附件（multipart；见「附件（#33）」）。 |
 | `GET /api/v1/attachments/{att_N}/{filename}` | 附件下载（与工单相同的凭证，或访客链接的签名地址）。 |
 | `GET /api/v1/inbox` | 收件箱（#36，仅成员）：轮到我且在我可见范围内的开启工单 + 原因 + `read_new`。 |
 
 （labels 在 #31；guest-links 见下。）
+
+`draft_mode` 为 `required` 的成员 Agent 调用 `POST /tickets`、`POST /tickets/{id}/replies`、
+`PATCH /tickets/{id}` 时，平台按原接口完整校验后不产生正式内容，而是保存草稿并返回
+`202`：`{draft, preview_url, message, next}`。`draft.id` 形如 `dft_N`；`preview_url`
+指向工单 `#draft` 或建单草稿页。原接口的 4xx 校验错误照常在保存时返回；已关闭工单上的
+回复草稿保存/发出均返回 `409 ticket_closed`。
 
 - 建单请求体 `{"kind", "title", "brief_md", "labels", "assignee?"}`（不用模板）或
   `{"template", "title", "fields", "labels", "assignee?"}`（用模板，见下面的「模板（#34）」），
@@ -427,6 +441,40 @@ spec 用户故事 84），没有 `inbox`：
   也不发通知。访问记录只随工单保留，平台不提供修改或删除接口。
 - `since` 是本功能第一批上线日期。上线前的旧工单没有历史记录可倒推，面板显示
   「自 since 起记录」。
+
+## 草稿与说明版本（#211）
+
+| 方法与路径 | 说明 |
+|---|---|
+| `GET /api/v1/drafts` | 成员一方读取自己全部 pending 草稿：`{count, drafts}`。 |
+| `GET /api/v1/drafts/{id}` | 读取一份草稿；已发出返回 `status:"sent"` 和 `result`，已丢弃 404。 |
+| `PUT /api/v1/drafts/{id}` | 整体替换最新请求：`{"base_version":N,"request":{…}}`，成功版本号 +1。 |
+| `DELETE /api/v1/drafts/{id}` | 网页会话丢弃 pending 草稿（物理删除，204）。 |
+| `POST /api/v1/drafts/{id}/send` | 网页会话发出：`{"version":N,"confirm_through_seq?":S,"deliver?":bool}`，成功 201。 |
+
+- 草稿对象含 `id, kind(create|reply|brief_revision), status(pending|sent), version,
+  ticket, request, author, versions, base, new_events, warnings, preview_url, url, result?`。
+  `author` 是最后一版执笔者；`versions` 是起草过程元数据；`base.brief_revision`
+  只在说明修订草稿上出现。同一成员一方在同一张工单上只有一个 pending 草稿位，
+  回复与说明修订共用。
+- `PUT` 缺 `base_version` 返回 `422 base_version_required`；版本过期返回
+  `409 draft_version_conflict`（附 `current_version`、`last_author`）；已发出返回
+  `409 draft_already_sent`。成员本人 PUT 记为一版「某成员 修改」。
+- 同一方已有 pending 草稿时，本人网页、required Agent、direct Agent 直接回复或修订
+  均返回 `409 draft_pending`，附 `draft{id,kind,version,preview_url,url}`；Agent 与
+  网页会话的 `hint` 不同。打标签、指派、协作者、关闭/重开、上传附件不受影响。
+- `send` 检查顺序：版本 → 工单可见性 → 回复草稿工单关闭 → 说明版本冲突 →
+  `ticket_changed`。草稿写成后工单有新事件且 `confirm_through_seq` 小于当前最后
+  事件 seq 时返回 `409 ticket_changed`（附 `new_events`、`through_seq`）；带足够新的
+  `confirm_through_seq` 重发即可。建单草稿此时才分配编号、创建访客链接。
+- 发出成功返回 `{result, signature, drafting}`；`result` 与原建单/回复/修订响应同形，
+  Agent 再 GET 草稿也能读到。署名为「经某成员确认」；任意一版由成员本人修改过则为
+  「经某成员修改并确认」。
+- Agent 调用 send/delete/改 `draft_mode`/标记 `drafts_intro` 已读返回
+  `403 web_session_required`。草稿不存在或已丢弃返回 `404 draft_not_found`。
+- 说明版本接口返回 `{versions:[{revision,title,markdown,fields?,attachment_ids,author,at}]}`
+  或单个版本；缺失的旧版本按上线前未存档返回 404 `ticket_not_found`。说明时间线事件的
+  `brief_version_saved:false` 表示该版本无查看入口。
 
 ## 指派与改派（#36）
 

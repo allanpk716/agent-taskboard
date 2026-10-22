@@ -74,7 +74,7 @@ func (a *API) handleDraft(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var d drafts.Draft
-		if existing.Kind == "create" {
+		if existing.Kind == drafts.KindCreate {
 			var createReq drafts.CreateRequest
 			if err := json.Unmarshal(req.Request, &createReq); err != nil {
 				WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "请求体不是合法的 JSON", "")
@@ -128,7 +128,7 @@ func (a *API) sendDraft(w http.ResponseWriter, r *http.Request, id string) {
 	if !decodeJSON(w, r, &req, `{"version": 1}`) {
 		return
 	}
-	if d, lookupErr := a.drafts.ByViewer(r.Context(), viewer, id); lookupErr == nil && d.Kind == "brief_revision" {
+	if d, lookupErr := a.drafts.ByViewer(r.Context(), viewer, id); lookupErr == nil && d.Kind == drafts.KindBriefRevision {
 		t, signature, drafting, err := a.drafts.SendBriefRevision(r.Context(), viewer, id, req.Version, req.ConfirmThroughSeq)
 		if !a.writeDraftSendError(w, r, err) {
 			return
@@ -232,20 +232,12 @@ func (a *API) writeDraftSendError(w http.ResponseWriter, r *http.Request, err er
 			map[string]any{"new_events": changed.NewEvents, "through_seq": changed.ThroughSeq})
 		return false
 	}
-	if errors.Is(err, drafts.ErrNotFound) {
-		WriteError(w, http.StatusNotFound, CodeDraftNotFound, "没有这份草稿", "它可能已被成员丢弃")
-		return false
-	}
-	if err == nil {
-		return true
-	}
-	a.writeTicketError(w, r, "", err)
-	return false
+	return a.writeDraftError(w, r, err)
 }
 
 type draftView struct {
 	ID          string                 `json:"id"`
-	Kind        string                 `json:"kind"`
+	Kind        drafts.Kind            `json:"kind"`
 	Status      string                 `json:"status"`
 	Version     int64                  `json:"version"`
 	Ticket      *draftTicketView       `json:"ticket"`
@@ -298,7 +290,7 @@ func newDraftView(a *API, r *http.Request, d drafts.Draft) draftView {
 	request := any(d.Request)
 	var ticket *draftTicketView
 	previewURL := d.TicketURL + "#draft"
-	if d.Kind == "create" {
+	if d.Kind == drafts.KindCreate {
 		request = d.CreateRequest
 		previewURL = "/drafts/" + d.ID
 	}
@@ -308,7 +300,7 @@ func newDraftView(a *API, r *http.Request, d drafts.Draft) draftView {
 	var result any
 	if d.Status == "pending" {
 		result = nil
-	} else if d.Kind == "create" {
+	} else if d.Kind == drafts.KindCreate {
 		result = map[string]any{"number": d.TicketNumber}
 	} else if full, err := a.tickets.ByRef(r.Context(), d.TicketNumber); err == nil {
 		for _, event := range full.Timeline {

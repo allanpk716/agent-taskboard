@@ -118,7 +118,7 @@ test('成员直接修改回复草稿并发出后署名注明修改', async ({ pa
   await login(page, await wang())
   await page.goto(`/t/${number}#draft`)
   await page.getByRole('button', { name: '直接修改' }).click()
-  await page.getByLabel('草稿正文').fill('这是成员修改后的回复。')
+  await page.getByLabel('草稿内容').fill('这是成员修改后的回复。')
   await page.getByRole('button', { name: '保存草稿' }).click()
   await expect(page.getByLabel('回复草稿')).toContainText('第 2 版')
   await page.getByRole('button', { name: '发出', exact: true }).click()
@@ -135,7 +135,7 @@ test('成员手改后 Agent 用旧版本改草稿得到 409', async ({ page, req
   await login(page, await wang())
   await page.goto(`/t/${number}#draft`)
   await page.getByRole('button', { name: '直接修改' }).click()
-  await page.getByLabel('草稿正文').fill('成员先改了一版。')
+  await page.getByLabel('草稿内容').fill('成员先改了一版。')
   await page.getByRole('button', { name: '保存草稿' }).click()
   await expect(page.getByLabel('回复草稿')).toContainText('第 2 版')
 

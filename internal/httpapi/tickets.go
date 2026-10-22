@@ -497,7 +497,7 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 				kindText = "说明修订草稿"
 			}
 			myDraft = &markdownview.MyDraft{
-				ID: pending.ID, Kind: kindText, Version: pending.Version, BodyMD: pending.Request.BodyMD,
+				ID: pending.ID, Kind: string(kindText), Version: pending.Version, BodyMD: pending.Request.BodyMD,
 				URL: "/api/v1/drafts/" + pending.ID,
 			}
 		} else if !errors.Is(err, drafts.ErrNotFound) {
