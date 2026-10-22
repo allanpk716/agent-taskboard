@@ -326,6 +326,32 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 		guestSpec = &spec
 	}
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
+		if viewer.Agent != nil && viewer.Agent.DraftMode == "required" {
+			var guestDraft *drafts.CreateGuestLinkRequest
+			if guestSpec != nil {
+				guestDraft = &drafts.CreateGuestLinkRequest{
+					Note: guestSpec.Note, ValidDays: guestSpec.ValidDays, CanEditBrief: guestSpec.CanEditBrief,
+				}
+			}
+			d, err := a.drafts.SaveCreate(r.Context(), viewer, drafts.CreateRequest{
+				Kind: req.Kind, Template: req.Template, Title: req.Title, BriefMD: req.BriefMD,
+				Fields: req.Fields, Labels: req.Labels, Assignee: req.Assignee.ref, GuestLink: guestDraft,
+			})
+			if err != nil {
+				a.writeTicketError(w, r, "", err)
+				return
+			}
+			view := newDraftView(a, r, d)
+			writeJSON(w, http.StatusAccepted, struct {
+				Draft      draftView `json:"draft"`
+				PreviewURL string    `json:"preview_url"`
+				Message    string    `json:"message"`
+				Next       string    `json:"next"`
+			}{Draft: view, PreviewURL: view.PreviewURL,
+				Message: "内容已保存为建单草稿，等待成员确认；它还没有发出。",
+				Next:    "把 preview_url 告诉成员；要改就在 " + view.URL + " 上 PUT，并带 base_version。"})
+			return
+		}
 		result, err := a.tickets.Create(r.Context(), tickets.CreateInput{
 			Kind:        req.Kind,
 			Title:       req.Title,

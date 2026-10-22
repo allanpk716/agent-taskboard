@@ -88,6 +88,30 @@ export interface DraftView {
   new_events: number
   preview_url: string
   url: string
+  result?: { number: string } | null
+}
+
+export interface CreateDraftView extends Omit<DraftView, 'request'> {
+  request: CreateDraftRequest
+  warnings?: { field: string; message: string }[]
+}
+
+export type AnyDraftView = DraftView | CreateDraftView
+
+export interface CreateDraftRequest {
+  kind: string
+  template?: string
+  title: string
+  brief_md: string
+  fields?: Record<string, string>
+  labels: string[]
+  assignee: string
+  guest_link?: {
+    note: string
+    valid_days?: number
+    expires_at?: string
+    can_edit_brief: boolean
+  } | null
 }
 
 export interface DraftHistoryVersion {

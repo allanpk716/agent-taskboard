@@ -286,6 +286,73 @@ type CreateInput struct {
 	Assignee    string // 成员 id 或姓名；空 = 不指派（#36）
 	Creator     identity.Viewer
 	GuestLink   *GuestLinkSpec // 带 can_edit_brief 权限时免「至少一个维度标签」（#64）
+	Actor       *Author        // 建单草稿发出时，把最后一个执笔 Agent 作为正式作者
+}
+
+// ValidateCreate 执行建单的保存前校验并规范化输入。建单草稿保存与发出共用
+// 这里，保证草稿阶段得到与直接建单一致的错误和 warnings。
+func (m *Manager) ValidateCreate(ctx context.Context, in CreateInput) (CreateInput, []FieldWarning, error) {
+	in.Title = strings.TrimSpace(in.Title)
+	if in.Title == "" {
+		return CreateInput{}, nil, ErrTitleRequired
+	}
+	if in.GuestLink != nil {
+		if _, err := in.GuestLink.validateCreate(m.clk.Now()); err != nil {
+			return CreateInput{}, nil, err
+		}
+	}
+	warnings := []FieldWarning{}
+	if in.TemplateKey != "" {
+		tmpl, err := m.templates.Get(ctx, in.TemplateKey)
+		if err != nil {
+			return CreateInput{}, nil, err
+		}
+		if !tmpl.Active {
+			return CreateInput{}, nil, ErrTemplateInactive
+		}
+		if err := validateFieldsAgainst(tmpl.Fields, in.Fields); err != nil {
+			return CreateInput{}, nil, err
+		}
+		in.Kind = tmpl.Kind
+		for _, f := range tmpl.Fields {
+			v := strings.TrimSpace(in.Fields[f.Key])
+			if f.Type == template.TypeDimension && v != "" && v != template.UnsureOption {
+				in.Labels = append(in.Labels, f.Dimension+":"+v)
+			}
+		}
+		for _, key := range template.MissingRequired(in.Fields, tmpl.Fields) {
+			warnings = append(warnings, FieldWarning{Field: key, Message: "必填项未填写"})
+		}
+		in.Labels = append(in.Labels, tmpl.PresetLabels...)
+	} else {
+		switch in.Kind {
+		case "":
+			in.Kind = "task"
+		case "task", "report":
+		default:
+			return CreateInput{}, nil, ErrInvalidKind
+		}
+	}
+	if strings.TrimSpace(in.Assignee) != "" {
+		if _, _, err := m.resolveAssignee(ctx, in.Assignee); err != nil {
+			return CreateInput{}, nil, err
+		}
+	}
+	in.Labels = dedupe(in.Labels)
+	hasDimension := false
+	for _, l := range in.Labels {
+		if strings.Contains(l, ":") {
+			hasDimension = true
+			break
+		}
+	}
+	if !hasDimension && !(in.GuestLink != nil && in.GuestLink.CanEditBrief) {
+		return CreateInput{}, nil, ErrDimensionLabelRequired
+	}
+	if err := m.labels.Validate(ctx, in.Labels); err != nil {
+		return CreateInput{}, nil, err
+	}
+	return in, warnings, nil
 }
 
 // Create 校验并创建一张工单。工单编号（北京时间每天从 001 起，超 999 自动 4 位）
@@ -301,53 +368,19 @@ type CreateInput struct {
 // 依次是 created、assigned（有指派人时）、guest_link_created；链接带
 // 「可填写说明」权限时免「至少一个维度标签」的校验，其余校验照常。
 func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, error) {
-	in.Title = strings.TrimSpace(in.Title)
-	if in.Title == "" {
-		return CreateResult{}, ErrTitleRequired
+	validated, warnings, err := m.ValidateCreate(ctx, in)
+	if err != nil {
+		return CreateResult{}, err
 	}
-	// 「请人反馈」的访客链接先校验（备注、有效期，validateCreate），任何校验
-	// 失败都不动工单；写入事务里的另一半校验是同一份逻辑。
-	if in.GuestLink != nil {
-		if _, err := in.GuestLink.validateCreate(m.clk.Now()); err != nil {
-			return CreateResult{}, err
-		}
-	}
-	warnings := []FieldWarning{}
+	in = validated
 	var snapshot *template.Snapshot
 	if in.TemplateKey != "" {
 		tmpl, err := m.templates.Get(ctx, in.TemplateKey)
 		if err != nil {
 			return CreateResult{}, err
 		}
-		if !tmpl.Active {
-			return CreateResult{}, ErrTemplateInactive
-		}
-		if err := validateFieldsAgainst(tmpl.Fields, in.Fields); err != nil {
-			return CreateResult{}, err
-		}
 		in.Kind = tmpl.Kind
 		snapshot = &template.Snapshot{Key: tmpl.Key, Version: tmpl.Version, Definition: tmpl.Definition}
-		for _, f := range tmpl.Fields {
-			v := strings.TrimSpace(in.Fields[f.Key])
-			// 维度字段选中的值同时成为标签；「不确定」不打标签（决议 6）。
-			if f.Type == template.TypeDimension && v != "" && v != template.UnsureOption {
-				in.Labels = append(in.Labels, f.Dimension+":"+v)
-			}
-		}
-		// 必填校验是模板模块的纯逻辑（「不确定」非空、算已填）。
-		for _, key := range template.MissingRequired(in.Fields, tmpl.Fields) {
-			warnings = append(warnings, FieldWarning{Field: key, Message: "必填项未填写"})
-		}
-		// 模板的预设标签自动打上。
-		in.Labels = append(in.Labels, tmpl.PresetLabels...)
-	} else {
-		switch in.Kind {
-		case "":
-			in.Kind = "task"
-		case "task", "report":
-		default:
-			return CreateResult{}, ErrInvalidKind
-		}
 	}
 	// 指派（#36）：成员 id 或姓名；写成成员 Agent → 422 assignee_must_be_member。
 	var (
@@ -360,22 +393,6 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, err
 		if err != nil {
 			return CreateResult{}, err
 		}
-	}
-	in.Labels = dedupe(in.Labels)
-	hasDimension := false
-	for _, l := range in.Labels {
-		if strings.Contains(l, ":") {
-			hasDimension = true
-			break
-		}
-	}
-	// 免维度标签（#64）：只有带 guest_link 且 can_edit_brief 为真时才免
-	//（成员这时不知道机型，等访客补全）；其余建单规则不变。
-	if !hasDimension && !(in.GuestLink != nil && in.GuestLink.CanEditBrief) {
-		return CreateResult{}, ErrDimensionLabelRequired
-	}
-	if err := m.labels.Validate(ctx, in.Labels); err != nil {
-		return CreateResult{}, err
 	}
 
 	now := m.clk.Now()
@@ -403,16 +420,18 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, err
 	}
 
 	var agentID any
-	if in.Creator.Agent != nil {
-		agentID = in.Creator.Agent.ID
-	}
 	creator := Author{
 		MemberID:   in.Creator.Member.ID,
 		MemberName: in.Creator.Member.Name,
 	}
-	if in.Creator.Agent != nil {
+	if in.Actor != nil {
+		creator = *in.Actor
+	} else if in.Creator.Agent != nil {
 		creator.AgentID = in.Creator.Agent.ID
 		creator.AgentName = in.Creator.Agent.Name
+	}
+	if creator.AgentID != 0 {
+		agentID = creator.AgentID
 	}
 	t := Ticket{
 		Number:        number,

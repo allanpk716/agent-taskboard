@@ -1,13 +1,16 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/drafts"
+	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
 
 func (a *API) handleDrafts(w http.ResponseWriter, r *http.Request) {
@@ -56,8 +59,8 @@ func (a *API) handleDraft(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, newDraftView(a, r, d))
 	case http.MethodPut:
 		var req struct {
-			BaseVersion *int64         `json:"base_version"`
-			Request     drafts.Request `json:"request"`
+			BaseVersion *int64          `json:"base_version"`
+			Request     json.RawMessage `json:"request"`
 		}
 		if !decodeJSON(w, r, &req, `{"base_version": 1, "request": {"body_md": "…"}}`) {
 			return
@@ -66,7 +69,26 @@ func (a *API) handleDraft(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusUnprocessableEntity, CodeBaseVersionRequired, "改草稿需要带上 base_version", "先 GET 草稿，取 version 作 base_version")
 			return
 		}
-		d, err := a.drafts.Update(r.Context(), viewer, id, *req.BaseVersion, req.Request)
+		existing, err := a.drafts.ByViewer(r.Context(), viewer, id)
+		if !a.writeDraftError(w, r, err) {
+			return
+		}
+		var d drafts.Draft
+		if existing.Kind == "create" {
+			var createReq drafts.CreateRequest
+			if err := json.Unmarshal(req.Request, &createReq); err != nil {
+				WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "请求体不是合法的 JSON", "")
+				return
+			}
+			d, err = a.drafts.UpdateCreate(r.Context(), viewer, id, *req.BaseVersion, createReq)
+		} else {
+			var replyReq drafts.Request
+			if err := json.Unmarshal(req.Request, &replyReq); err != nil {
+				WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "请求体不是合法的 JSON", "")
+				return
+			}
+			d, err = a.drafts.Update(r.Context(), viewer, id, *req.BaseVersion, replyReq)
+		}
 		if _, ok := a.writeDraftValidation(w, err); ok {
 			return
 		}
@@ -106,8 +128,45 @@ func (a *API) sendDraft(w http.ResponseWriter, r *http.Request, id string) {
 	if !decodeJSON(w, r, &req, `{"version": 1}`) {
 		return
 	}
-	result, signature, drafting, err := a.drafts.Send(r.Context(), viewer, id, req.Version, req.ConfirmThroughSeq, req.Deliver)
+	sent, err := a.drafts.Send(r.Context(), viewer, id, req.Version, req.ConfirmThroughSeq, req.Deliver)
 	if !a.writeDraftSendError(w, r, err) {
+		return
+	}
+	if sent.Create != nil {
+		created := sent.Create
+		full := created.Full
+		waitingOn, err := a.tickets.WaitingOn(r.Context(), full)
+		if err != nil {
+			panic(err)
+		}
+		res := createTicketResponse{
+			Number: full.Number, Seq: full.Seq, URL: "/t/" + full.Number,
+			Warnings: created.Warnings, WaitingOn: newWaitingOnView(waitingOn),
+		}
+		if full.AssigneeID != 0 {
+			res.Assignee = &memberRef{ID: full.AssigneeID, Name: full.AssigneeName}
+			if full.AssigneeID != full.Creator.MemberID {
+				share := newHandoffText(a.requestBaseURL(r)).share(false, full.AssigneeName, full.Number, full.Title)
+				res.ShareText = &share
+			}
+		}
+		if created.GuestLink != nil {
+			link := created.GuestLink
+			url := a.absURL("/g/" + link.Key)
+			res.GuestLink = &createGuestLinkView{
+				guestLinkBase: guestLinkBase{
+					ID: link.ID, URL: url, Note: link.Note,
+					ExpiresAt:    link.ExpiresAt.Format(time.RFC3339Nano),
+					CanEditBrief: link.CanEditBrief,
+				},
+				ShareText: a.guestShareText(link.Note, full.Title, url, link.ExpiresAt),
+			}
+		}
+		writeJSON(w, http.StatusCreated, struct {
+			Result    createTicketResponse `json:"result"`
+			Signature string               `json:"signature"`
+			Drafting  []draftVersionView   `json:"drafting"`
+		}{Result: res, Signature: sent.Signature, Drafting: newDraftVersions(sent.Drafting)})
 		return
 	}
 	writeJSON(w, http.StatusCreated, struct {
@@ -115,9 +174,9 @@ func (a *API) sendDraft(w http.ResponseWriter, r *http.Request, id string) {
 		Signature string             `json:"signature"`
 		Drafting  []draftVersionView `json:"drafting"`
 	}{Result: replyTicketView{
-		ReplyNo: result.ReplyNo, TimelineSeq: result.TimelineSeq, Deliver: result.Deliver, Author: result.AuthorName,
-		WaitingOn: newWaitingOnView(result.WaitingOn),
-	}, Signature: signature, Drafting: newDraftVersions(drafting)})
+		ReplyNo: sent.Reply.ReplyNo, TimelineSeq: sent.Reply.TimelineSeq, Deliver: sent.Reply.Deliver, Author: sent.Reply.AuthorName,
+		WaitingOn: newWaitingOnView(sent.Reply.WaitingOn),
+	}, Signature: sent.Signature, Drafting: newDraftVersions(sent.Drafting)})
 }
 
 func (a *API) writeDraftValidation(w http.ResponseWriter, err error) (error, bool) {
@@ -171,19 +230,21 @@ func (a *API) writeDraftSendError(w http.ResponseWriter, r *http.Request, err er
 }
 
 type draftView struct {
-	ID          string             `json:"id"`
-	Kind        string             `json:"kind"`
-	Status      string             `json:"status"`
-	Version     int64              `json:"version"`
-	Ticket      *draftTicketView   `json:"ticket"`
-	Request     drafts.Request     `json:"request"`
-	Attachments []attachmentView   `json:"attachments"`
-	Author      authorView         `json:"author"`
-	Versions    []draftVersionView `json:"versions"`
-	Base        draftBaseView      `json:"base"`
-	NewEvents   int64              `json:"new_events"`
-	PreviewURL  string             `json:"preview_url"`
-	URL         string             `json:"url"`
+	ID          string                 `json:"id"`
+	Kind        string                 `json:"kind"`
+	Status      string                 `json:"status"`
+	Version     int64                  `json:"version"`
+	Ticket      *draftTicketView       `json:"ticket"`
+	Request     any                    `json:"request"`
+	Attachments []attachmentView       `json:"attachments"`
+	Author      authorView             `json:"author"`
+	Versions    []draftVersionView     `json:"versions"`
+	Base        draftBaseView          `json:"base"`
+	NewEvents   int64                  `json:"new_events"`
+	PreviewURL  string                 `json:"preview_url"`
+	URL         string                 `json:"url"`
+	Result      any                    `json:"result,omitempty"`
+	Warnings    []tickets.FieldWarning `json:"warnings,omitempty"`
 }
 
 func draftAttachmentViews(atts []attachments.AttachmentInfo) []attachmentView {
@@ -218,13 +279,27 @@ func newDraftView(a *API, r *http.Request, d drafts.Draft) draftView {
 	if d.AgentID != 0 {
 		author.Agent = &agentRef{ID: d.AgentID, Name: d.AgentName}
 	}
+	request := any(d.Request)
+	var ticket *draftTicketView
+	previewURL := d.TicketURL + "#draft"
+	if d.Kind == "create" {
+		request = d.CreateRequest
+		previewURL = "/drafts/" + d.ID
+	}
+	if d.TicketNumber != "" {
+		ticket = &draftTicketView{Number: d.TicketNumber, Seq: d.TicketSeq, URL: d.TicketURL}
+	}
+	var result any
+	if d.Kind == "create" && d.Status == "sent" {
+		result = map[string]any{"number": d.TicketNumber}
+	}
 	return draftView{
 		ID: d.ID, Kind: d.Kind, Status: d.Status, Version: d.Version,
-		Ticket:  &draftTicketView{Number: d.TicketNumber, Seq: d.TicketSeq, URL: d.TicketURL},
-		Request: d.Request, Attachments: draftAttachmentViews(d.Attachments),
+		Ticket: ticket, Request: request, Attachments: draftAttachmentViews(d.Attachments),
 		Author: author, Versions: newDraftVersions(d.Versions),
 		Base: draftBaseView{TimelineSeq: d.BaseTimelineSeq}, NewEvents: d.NewEvents,
-		PreviewURL: d.TicketURL + "#draft", URL: "/api/v1/drafts/" + d.ID,
+		PreviewURL: previewURL, URL: "/api/v1/drafts/" + d.ID, Result: result,
+		Warnings: d.Warnings,
 	}
 }
 

@@ -19,7 +19,12 @@ type draftBody struct {
 		Deliver       bool     `json:"deliver"`
 	} `json:"request"`
 	Attachments []attachmentViewBody `json:"attachments"`
-	Author      struct {
+	Ticket      *struct {
+		Number string `json:"number"`
+		Seq    int64  `json:"seq"`
+		URL    string `json:"url"`
+	} `json:"ticket"`
+	Author struct {
 		Member struct {
 			Name string `json:"name"`
 		} `json:"member"`
@@ -34,9 +39,10 @@ type draftBody struct {
 	Base struct {
 		TimelineSeq int64 `json:"timeline_seq"`
 	} `json:"base"`
-	NewEvents  int64  `json:"new_events"`
-	PreviewURL string `json:"preview_url"`
-	URL        string `json:"url"`
+	NewEvents  int64           `json:"new_events"`
+	PreviewURL string          `json:"preview_url"`
+	URL        string          `json:"url"`
+	Warnings   []ticketWarning `json:"warnings"`
 }
 
 type draftAcceptedBody struct {

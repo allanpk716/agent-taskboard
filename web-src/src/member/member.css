@@ -1517,6 +1517,138 @@
   padding: 8px;
 }
 
+/* 建单草稿预览（#216）：发出前与工单详情同形，右侧是发出时可编辑的动作。 */
+.create-draft-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.create-draft-banner {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 calc(50% - 50vw) 14px;
+  padding: 12px max(16px, calc(50vw - 720px));
+  color: #78350f;
+  background: repeating-linear-gradient(135deg, rgba(217, 119, 6, 0.12) 0 14px, #fffbeb 14px 28px);
+  border-bottom: 2px dashed #d97706;
+}
+
+.create-draft-banner span {
+  font-size: 12.5px;
+}
+
+.create-draft-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 14px;
+  align-items: start;
+}
+
+.create-draft-main {
+  background: #fff;
+  border: 1px solid #dfe4ec;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.create-draft-main header {
+  margin-bottom: 12px;
+}
+
+.create-draft-main .dmeta {
+  color: #68738a;
+  font-size: 12.5px;
+  margin-bottom: 4px;
+}
+
+.create-draft-main h2 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.create-draft-main textarea {
+  width: 100%;
+  min-height: 220px;
+}
+
+.create-draft-actions {
+  margin-top: 12px;
+}
+
+.create-action-card {
+  background: #fff;
+  border: 1px solid #dfe4ec;
+  border-left: 4px solid #d97706;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+.create-action-card label {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.create-action-card input[type='text'],
+.create-action-card input:not([type]),
+.create-action-card select {
+  width: 100%;
+}
+
+.create-action-card .hint {
+  display: block;
+  margin-top: 5px;
+}
+
+.inrow-check {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+  font-weight: 400 !important;
+  margin: 6px 0 !important;
+}
+
+.create-draft-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  margin-top: auto;
+  background: #fff;
+  border-top: 1px solid #dfe4ec;
+  color: #68738a;
+  font-size: 13px;
+}
+
+.draft-fallback {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  padding: 40px 16px;
+  background: #fff;
+  border: 1px solid #dfe4ec;
+  border-radius: 8px;
+}
+
+@media (max-width: 900px) {
+  .create-draft-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .create-draft-banner {
+    margin-bottom: 10px;
+  }
+}
+
 .draft-change-list {
   margin: 0;
   padding-left: 18px;

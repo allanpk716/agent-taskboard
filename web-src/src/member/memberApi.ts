@@ -2,7 +2,15 @@
 import { api, ApiError } from '../api'
 import { compressImage } from '../shared/compress'
 import { fetchServerVersion } from '../shared/health'
-import type { Author, Collaborator, DraftHistoryVersion, DraftView, TicketView } from '../shared/types'
+import type {
+  Author,
+  Collaborator,
+  CreateDraftRequest,
+  CreateDraftView,
+  DraftHistoryVersion,
+  DraftView,
+  TicketView,
+} from '../shared/types'
 
 export type { Collaborator } from '../shared/types'
 
@@ -531,7 +539,18 @@ export async function sendDraft(
   id: string,
   version: number,
   opts: { confirmThroughSeq?: number; deliver?: boolean } = {},
-): Promise<{ signature: string }> {
+): Promise<{
+  signature: string
+  result: {
+    number: string
+    seq: number
+    url: string
+    warnings: { field: string; message: string }[]
+    assignee?: { id: number; name: string } | null
+    guest_link?: { url: string; note: string; expires_at: string; can_edit_brief: boolean; share_text: string }
+    share_text?: string | null
+  }
+}> {
   return api(`/api/v1/drafts/${encodeURIComponent(id)}/send`, {
     method: 'POST',
     body: JSON.stringify({
@@ -539,6 +558,21 @@ export async function sendDraft(
       ...(opts.confirmThroughSeq === undefined ? {} : { confirm_through_seq: opts.confirmThroughSeq }),
       ...(opts.deliver === undefined ? {} : { deliver: opts.deliver }),
     }),
+  })
+}
+
+export async function fetchDraft(id: string): Promise<DraftView | CreateDraftView> {
+  return api(`/api/v1/drafts/${encodeURIComponent(id)}`)
+}
+
+export async function updateCreateDraft(
+  id: string,
+  baseVersion: number,
+  request: CreateDraftRequest,
+): Promise<CreateDraftView> {
+  return api(`/api/v1/drafts/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ base_version: baseVersion, request }),
   })
 }
 

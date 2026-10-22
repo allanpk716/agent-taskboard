@@ -62,6 +62,7 @@ export function EventLine({
       {authorName(event.actor)}
       {event.actor.member?.deactivated && <DeactivatedBadge />}
       {' '}{eventText(event)} · {fmtShort(event.at)}
+      {event.signature && <span className="draft-confirm">{event.signature}</span>}
       {onShowBriefVersion && event.type === 'brief_revised' && (
         <button type="button" className="linkish sm" onClick={() => onShowBriefVersion(event.revision ?? 0)}>
           查看差异

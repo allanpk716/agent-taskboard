@@ -355,6 +355,8 @@ func (m *Manager) DraftNotifier() DraftSink { return draftSink{m} }
 type DraftSink interface {
 	NotifyDraftTx(ctx context.Context, tx *sql.Tx, memberID, ticketSeq int64, number, title, text string,
 		baseTimelineSeq, agentID int64, agentName, url string) error
+	NotifyCreateDraftTx(ctx context.Context, tx *sql.Tx, memberID, agentID int64,
+		memberName, agentName, title, url string) error
 	Wake(memberIDs []int64)
 }
 
@@ -369,6 +371,20 @@ func (s draftSink) NotifyDraftTx(ctx context.Context, tx *sql.Tx, memberID, tick
 }
 
 func (s draftSink) Wake(memberIDs []int64) { s.m.Wake(memberIDs) }
+
+func (s draftSink) NotifyCreateDraftTx(ctx context.Context, tx *sql.Tx,
+	memberID, agentID int64, memberName, agentName, title, url string) error {
+	now := s.m.clk.Now().Format(time.RFC3339Nano)
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO notifications (
+			member_id, kind, reason, text, trigger_type, actor_kind, actor_name,
+			actor_member_id, actor_agent_id, url, created_at, read_at
+		) VALUES (?, 'draft', ?, ?, 'draft', 'agent', ?, ?, ?, ?, ?, NULL)`,
+		memberID, ReasonDraftPending,
+		"你的 Agent · "+agentName+" 写了建单草稿待确认："+title,
+		agentName, memberID, agentID, url, now)
+	return err
+}
 
 // NotifySystem 把一条不挂工单的系统通知发给全部在职管理员，并唤醒桌面通知流。
 func (m *Manager) NotifySystem(ctx context.Context, reason, text string) error {
