@@ -70,6 +70,22 @@ export interface TimelineEvent {
   to?: string
   collaborator?: string
   label?: string
+  signature?: string
+}
+
+export interface DraftView {
+  id: string
+  kind: string
+  status: string
+  version: number
+  ticket?: { number: string; seq: number; url: string } | null
+  request: { body_md: string; deliver?: boolean }
+  author: Author
+  versions: { version: number; author: string; at: string }[]
+  base: { timeline_seq: number }
+  new_events: number
+  preview_url: string
+  url: string
 }
 
 export interface Collaborator {
@@ -118,6 +134,7 @@ export interface TicketView {
   waiting_on: { party: string; member?: string | null; text: string; reason: string }
   /** 仅成员视角：工单当前标签（访客响应没有这个字段）。 */
   labels?: string[]
+  my_draft?: DraftView | null
   brief: Brief
   attachments: Attachment[]
   viewer: {

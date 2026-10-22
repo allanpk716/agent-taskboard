@@ -6,12 +6,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, ApiError } from '../api'
 import type { MemberTicket } from './memberApi'
+import type { DraftView } from '../shared/types'
 import {
   addCollaborator,
   assignTicket,
   changeLabels,
   closeTicket,
   createGuestLink,
+  discardDraft,
   extendGuestLink,
   fetchAccessRecords,
   fetchGuestLinks,
@@ -20,6 +22,7 @@ import {
   leaveCollaborators,
   reopenTicket,
   replyTicket,
+  sendDraft,
   removeCollaborator,
   resetGuestAccessCode,
   revokeGuestLink,
@@ -1166,9 +1169,14 @@ export function TicketDetailPage({
             />
           ),
         )}
+        {ticket.my_draft && <DraftCard draft={ticket.my_draft} onChanged={changed} />}
       </div>
 
-      {open ? (
+      {ticket.my_draft ? (
+        <div className="composer ro draft-lock">
+          <span>你在这张工单上有一份草稿，发出或丢弃后才能直接回复或修订说明。</span>
+        </div>
+      ) : open ? (
         <>
           {ticket.kind === 'report' && guestLinks !== null && !hasActiveGuestLink && (
             <div className="warnbox no-guest-link">
@@ -1468,6 +1476,81 @@ export function TicketDetailPage({
 }
 
 /* ---------------- 回复输入区（带交付标记与附件） ---------------- */
+function DraftCard({ draft, onChanged }: { draft: DraftView; onChanged: () => void }) {
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
+  const [changed, setChanged] = useState<{ throughSeq: number; count: number } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const agent = draft.author.agent?.name ?? 'Agent'
+  const member = draft.author.member?.name ?? ''
+
+  async function send(confirmThroughSeq?: number) {
+    setBusy(true)
+    try {
+      await sendDraft(draft.id, draft.version, confirmThroughSeq === undefined ? {} : { confirmThroughSeq })
+      toast('草稿已发出')
+      onChanged()
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'ticket_changed') {
+        setChanged({ throughSeq: e.body?.through_seq ?? 0, count: e.body?.new_events ?? 0 })
+      } else if (e instanceof ApiError) {
+        toast(`${e.code}：${e.message}`)
+      } else {
+        toast('发出失败，请重试')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <article className="draft-card" aria-label="回复草稿">
+      <div className="draft-label">草稿 · 未发出 · 只有你能看到</div>
+      <div className="draft-meta">
+        {agent}（{member}的 Agent）写的回复草稿 · 第 {draft.version} 版
+        {draft.request.deliver ? ' · 将作为交付' : ''}
+      </div>
+      <div className="draft-body">{draft.request.body_md}</div>
+      <div className="draft-actions">
+        <button type="button" className="btn danger ghost" disabled={busy} onClick={() => setConfirmDiscard(true)}>
+          丢弃
+        </button>
+        <span className="sp" />
+        <button type="button" className="btn" disabled={busy} onClick={() => void send()}>
+          发出
+        </button>
+      </div>
+      {confirmDiscard && (
+        <Confirm
+          title="丢弃草稿？"
+          body={<div>丢弃后工单上不会留下这份草稿的痕迹。</div>}
+          yesLabel="丢弃"
+          danger
+          onYes={() => {
+            setConfirmDiscard(false)
+            void discardDraft(draft.id).then(() => {
+              toast('草稿已丢弃')
+              onChanged()
+            })
+          }}
+          onCancel={() => setConfirmDiscard(false)}
+        />
+      )}
+      {changed && (
+        <Confirm
+          title={`草稿写成后工单有 ${changed.count} 条新变化`}
+          body={<div>仍然发出会把这些变化视为已知。</div>}
+          yesLabel="仍然发出"
+          onYes={() => {
+            const seq = changed.throughSeq
+            setChanged(null)
+            void send(seq)
+          }}
+          onCancel={() => setChanged(null)}
+        />
+      )}
+    </article>
+  )
+}
 
 function Composer({
   ticket,

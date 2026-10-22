@@ -1401,6 +1401,49 @@
   margin-top: 10px;
   padding-bottom: 4px;
 }
+.draft-card {
+  margin: 12px 0;
+  padding: 14px;
+  border: 2px dashed #d97706;
+  border-radius: 8px;
+  background:
+    repeating-linear-gradient(135deg, rgba(217, 119, 6, 0.08) 0 12px, rgba(255, 251, 235, 0.9) 12px 24px);
+}
+
+.draft-label {
+  color: #92400e;
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.draft-meta {
+  color: #78350f;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.draft-body {
+  white-space: pre-wrap;
+  margin-bottom: 10px;
+}
+
+.draft-actions,
+.draft-confirm {
+  display: flex;
+  align-items: center;
+}
+
+.draft-confirm {
+  margin-left: 8px;
+  color: #92400e;
+  font-size: 12px;
+}
+
+.draft-lock {
+  margin-top: 12px;
+}
+
 .composer.mcard {
   margin: 0 8px 10px;
   border-radius: 14px;

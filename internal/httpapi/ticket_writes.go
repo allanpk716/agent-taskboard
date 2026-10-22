@@ -2,9 +2,11 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
+	"github.com/allanpk716/agent-taskboard/internal/drafts"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
@@ -34,7 +36,8 @@ func (a *API) replyTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if !ok {
 		return
 	}
-	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
+	full, err := a.tickets.ForViewer(r.Context(), viewer, ref)
+	if err != nil {
 		a.writeTicketError(w, r, ref, err)
 		return
 	}
@@ -43,6 +46,33 @@ func (a *API) replyTicket(w http.ResponseWriter, r *http.Request, ref string) {
 		return
 	}
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
+		if viewer.Kind == identity.ViewerMember {
+			if pending, err := a.drafts.Pending(r.Context(), viewer.Member.ID, full.Seq); err == nil {
+				a.writeDraftPending(w, pending)
+				return
+			} else if !errors.Is(err, drafts.ErrNotFound) {
+				panic(err)
+			}
+		}
+		if viewer.Agent != nil && viewer.Agent.DraftMode == "required" {
+			d, err := a.drafts.SaveReply(r.Context(), viewer, ref, drafts.Request{
+				BodyMD: req.BodyMD, AttachmentIDs: req.AttachmentIDs, Deliver: req.Deliver,
+			})
+			if err != nil {
+				a.writeTicketError(w, r, ref, err)
+				return
+			}
+			view := newDraftView(a, r, d)
+			writeJSON(w, http.StatusAccepted, struct {
+				Draft      draftView `json:"draft"`
+				PreviewURL string    `json:"preview_url"`
+				Message    string    `json:"message"`
+				Next       string    `json:"next"`
+			}{Draft: view, PreviewURL: view.PreviewURL,
+				Message: "内容已保存为草稿，等待成员确认；它还没有发出。",
+				Next:    "把 preview_url 告诉成员；要改就在 " + view.URL + " 上 PUT，并带 base_version。"})
+			return
+		}
 		result, err := a.tickets.Reply(r.Context(), viewer, ref, tickets.ReplyInput{
 			BodyMD:        req.BodyMD,
 			AttachmentIDs: req.AttachmentIDs,
@@ -64,6 +94,15 @@ func (a *API) replyTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	})
 }
 
+func (a *API) writeDraftPending(w http.ResponseWriter, pending drafts.Draft) {
+	WriteErrorExtra(w, http.StatusConflict, CodeDraftPending,
+		"这一方在这张工单上已有一份草稿", "先处理草稿，再直接回复或修订说明",
+		map[string]any{"draft": map[string]any{
+			"id": pending.ID, "kind": "reply", "version": pending.Version,
+			"preview_url": "/t/" + pending.TicketNumber + "#draft", "url": "/api/v1/drafts/" + pending.ID,
+		}})
+}
+
 // reviseTicketRequest 是 PATCH /api/v1/tickets/{id} 的请求体。
 // 只需传改动的部分：title、brief_md（非模板工单）或 fields（模板工单，
 // 只传改动的字段）；base_revision 必带（乐观锁）；author_name / via_agent
@@ -83,9 +122,18 @@ func (a *API) reviseTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if !ok {
 		return
 	}
-	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
+	full, err := a.tickets.ForViewer(r.Context(), viewer, ref)
+	if err != nil {
 		a.writeTicketError(w, r, ref, err)
 		return
+	}
+	if viewer.Kind == identity.ViewerMember && (viewer.Member.ID == full.Creator.MemberID) {
+		if pending, err := a.drafts.Pending(r.Context(), viewer.Member.ID, full.Seq); err == nil {
+			a.writeDraftPending(w, pending)
+			return
+		} else if !errors.Is(err, drafts.ErrNotFound) {
+			panic(err)
+		}
 	}
 	var req reviseTicketRequest
 	if !decodeJSON(w, r, &req, `{"title?": "…", "brief_md?": "…", "base_revision": 1}`) {

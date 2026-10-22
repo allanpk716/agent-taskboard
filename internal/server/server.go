@@ -14,6 +14,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
+	"github.com/allanpk716/agent-taskboard/internal/drafts"
 	"github.com/allanpk716/agent-taskboard/internal/httpapi"
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
@@ -38,6 +39,7 @@ type Server struct {
 	Idem          *idempotency.Manager
 	Notifications *notifications.Manager
 	AccessRecords *accessrecords.Manager
+	Drafts        *drafts.Manager
 
 	handler  http.Handler
 	web      *webapp.Handler
@@ -87,8 +89,9 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	accessRecords := accessrecords.NewManager(st.DB, c)
 	ticketStore := tickets.NewManager(st.DB, c, labelDict, templateDict, atts)
 	ticketStore.SetNotifier(notificationStore)
+	draftStore := drafts.NewManager(st.DB, c, ticketStore)
 	api := httpapi.NewAPI(ident, ticketStore,
-		templateDict, idem, atts, backups, accessRecords, cfg, c)
+		templateDict, idem, atts, backups, accessRecords, draftStore, cfg, c)
 	api.SetNotifications(notificationStore)
 	web, err := webapp.New(cfg.WebDir)
 	if err != nil {
@@ -108,6 +111,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 		Idem:          idem,
 		Notifications: notificationStore,
 		AccessRecords: accessRecords,
+		Drafts:        draftStore,
 		handler:       mux,
 		httpSrv:       &http.Server{Handler: mux},
 		web:           web,

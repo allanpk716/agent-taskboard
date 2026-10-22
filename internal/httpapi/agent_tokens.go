@@ -31,6 +31,7 @@ type agentTokenRow struct {
 	Name      string  `json:"name"`
 	CreatedAt string  `json:"created_at"`
 	RevokedAt *string `json:"revoked_at"`
+	DraftMode string  `json:"draft_mode"`
 }
 
 func (a *API) listAgentTokens(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +45,7 @@ func (a *API) listAgentTokens(w http.ResponseWriter, r *http.Request) {
 	}
 	rows := make([]agentTokenRow, 0, len(list))
 	for _, tk := range list {
-		row := agentTokenRow{ID: tk.ID, Name: tk.Name, CreatedAt: tk.CreatedAt.Format("2006-01-02T15:04:05Z07:00")}
+		row := agentTokenRow{ID: tk.ID, Name: tk.Name, DraftMode: tk.DraftMode, CreatedAt: tk.CreatedAt.Format("2006-01-02T15:04:05Z07:00")}
 		if tk.Revoked {
 			at := tk.RevokedAt.Format("2006-01-02T15:04:05Z07:00")
 			row.RevokedAt = &at
@@ -67,7 +68,8 @@ func (a *API) handleAgentToken(w http.ResponseWriter, r *http.Request) {
 		idStr = strings.TrimSuffix(idStr, "/rotate")
 	}
 	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil || id <= 0 || (rotate && r.Method != http.MethodPost) || (!rotate && r.Method != http.MethodDelete) {
+	if err != nil || id <= 0 || (rotate && r.Method != http.MethodPost) ||
+		(!rotate && r.Method != http.MethodDelete && r.Method != http.MethodPatch) {
 		WriteError(w, http.StatusNotFound, CodeAgentTokenNotFound, "没有这个 Agent token", "")
 		return
 	}
@@ -75,11 +77,16 @@ func (a *API) handleAgentToken(w http.ResponseWriter, r *http.Request) {
 		a.rotateAgentToken(w, r, id)
 		return
 	}
+	if r.Method == http.MethodPatch {
+		a.patchAgentToken(w, r, id)
+		return
+	}
 	a.revokeAgentToken(w, r, id)
 }
 
 type issueAgentTokenRequest struct {
-	Name string `json:"name"`
+	Name      string `json:"name"`
+	DraftMode string `json:"draft_mode"`
 }
 
 func (a *API) issueAgentToken(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +103,15 @@ func (a *API) issueAgentToken(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusUnprocessableEntity, CodeNameRequired, "Agent 名字不能为空", "给这个 Agent 起个名字，如「笔记本」")
 		return
 	}
-	tok, err := a.ident.IssueAgentToken(r.Context(), viewer.Member, req.Name)
+	draftMode := req.DraftMode
+	if draftMode == "" {
+		draftMode = "direct"
+	}
+	if draftMode != "required" && draftMode != "direct" {
+		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidDraftMode, "draft_mode 只能是 required 或 direct", "")
+		return
+	}
+	tok, err := a.ident.IssueAgentTokenWithMode(r.Context(), viewer.Member, req.Name, draftMode)
 	if err != nil {
 		if errors.Is(err, identity.ErrAgentNameTaken) {
 			WriteError(w, http.StatusConflict, CodeAgentNameTaken, "该名字的 Agent 已存在", "换一个名字，或先撤销原有的同名 Agent")
@@ -148,4 +163,28 @@ func (a *API) revokeAgentToken(w http.ResponseWriter, r *http.Request, id int64)
 	}
 	a.wakeMemberStreams(viewer.Member.ID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) patchAgentToken(w http.ResponseWriter, r *http.Request, id int64) {
+	viewer, ok := a.webSessionFromRequest(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		DraftMode string `json:"draft_mode"`
+	}
+	if !decodeJSON(w, r, &req, `{"draft_mode": "required|direct"}`) {
+		return
+	}
+	err := a.ident.SetAgentTokenDraftMode(r.Context(), viewer.Member, id, req.DraftMode)
+	switch {
+	case errors.Is(err, identity.ErrInvalidDraftMode):
+		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidDraftMode, err.Error(), "")
+	case errors.Is(err, identity.ErrAgentTokenNotFound):
+		WriteError(w, http.StatusNotFound, CodeAgentTokenNotFound, "没有这个 Agent token", "")
+	case err != nil:
+		panic(err)
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
 }

@@ -74,12 +74,14 @@ type ReplyInput struct {
 	Deliver       bool     // 交付标记，仅指派人一方可用（#36）
 	AuthorName    string   // 访客自报的署名
 	ViaAgent      bool     // 访客自报「由其 Agent 写成」
+	Actor         *Author  // 发出回复草稿时使用原执笔 Agent 的正式署名
 }
 
 // ReplyResult 是回复成功后的投影。
 type ReplyResult struct {
 	ReplyNo     int64
 	TimelineSeq int64 // 本条回复事件的 seq
+	Deliver     bool
 	AuthorName  string
 	WaitingOn   WaitingOn
 }
@@ -89,32 +91,19 @@ type ReplyResult struct {
 // 工单关闭后只读，重开后恢复可回复（spec「凭证与访问」）。访客的回复带
 // 链接备注与自报信息；成员的自报字段不采纳（署名由凭证决定，ADR 0003）。
 func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string, in ReplyInput) (ReplyResult, error) {
+	if err := m.ValidateReply(ctx, viewer, ref, in); err != nil {
+		return ReplyResult{}, err
+	}
 	full, err := m.ForViewer(ctx, viewer, ref)
 	if err != nil {
 		return ReplyResult{}, err
 	}
-	if viewer.Kind == identity.ViewerGuest {
-		if full.Status != "open" {
-			return ReplyResult{}, ErrTicketClosed
-		}
-	}
-	if in.Deliver {
-		// 交付标记只限指派人一方（本人或其 Agent）；交付不改变工单状态，
-		// 由发起人验收后关闭。
-		if full.Status != "open" || full.AssigneeID == 0 || viewer.Member.ID != full.AssigneeID {
-			return ReplyResult{}, &DeliverAssigneeOnlyError{
-				Closed: full.Status != "open", Assignee: full.AssigneeName,
-			}
-		}
-	}
-	// 附件引用：attachment_ids 与正文 att: 合并去重（插图语法单独标记）。
-	refs := attachments.ParsePostRefs(in.BodyMD, in.AttachmentIDs)
-	if strings.TrimSpace(in.BodyMD) == "" && len(refs) == 0 {
-		return ReplyResult{}, ErrEmptyReply
-	}
-
 	now := m.clk.Now()
 	author := authorOf(viewer)
+	if in.Actor != nil {
+		author = *in.Actor
+	}
+	refs := attachments.ParsePostRefs(in.BodyMD, in.AttachmentIDs)
 	var notified []int64
 	if viewer.Kind == identity.ViewerGuest {
 		author = guestAuthorOf(viewer, in.AuthorName, in.ViaAgent)
@@ -179,9 +168,29 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 	return ReplyResult{
 		ReplyNo:     replyNo,
 		TimelineSeq: eventSeq,
+		Deliver:     in.Deliver,
 		AuthorName:  author.DisplayName(),
 		WaitingOn:   turn,
 	}, nil
+}
+
+// ValidateReply 按原回复规则做保存草稿前的校验，不写任何工单数据。
+func (m *Manager) ValidateReply(ctx context.Context, viewer identity.Viewer, ref string, in ReplyInput) error {
+	full, err := m.ForViewer(ctx, viewer, ref)
+	if err != nil {
+		return err
+	}
+	if viewer.Kind == identity.ViewerGuest && full.Status != "open" {
+		return ErrTicketClosed
+	}
+	if in.Deliver && (full.Status != "open" || full.AssigneeID == 0 || viewer.Member.ID != full.AssigneeID) {
+		return &DeliverAssigneeOnlyError{Closed: full.Status != "open", Assignee: full.AssigneeName}
+	}
+	refs := attachments.ParsePostRefs(in.BodyMD, in.AttachmentIDs)
+	if strings.TrimSpace(in.BodyMD) == "" && len(refs) == 0 {
+		return ErrEmptyReply
+	}
+	return nil
 }
 
 // ReviseInput 是修订说明的输入。只需传改动的部分：title、brief_md（非模板工单）
