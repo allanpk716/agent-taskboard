@@ -147,6 +147,7 @@ type AttachmentInfo struct {
 	Size       int64
 	State      string // pending | attached
 	AttachedTo string // 「说明」或「回复 N」；pending 为空
+	DraftID    int64  // 非 0 表示被这份草稿的最新版占用
 	Uploader   Principal
 	UploadedAt time.Time
 	ClaimedAt  *time.Time
@@ -319,7 +320,7 @@ func MarkdownSnippet(a AttachmentInfo) string {
 // ByTicket 列出这张工单的全部附件（含待用），按 id 排序。
 func (m *Manager) ByTicket(ctx context.Context, ticketSeq int64) ([]AttachmentInfo, error) {
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT id, ticket_seq, filename, size, state, attached_to,
+		SELECT id, ticket_seq, filename, size, state, attached_to, draft_id,
 		       uploader_member_id, uploader_agent_id, uploader_link_id, uploaded_at, claimed_at
 		FROM attachments WHERE ticket_seq = ? ORDER BY id`, ticketSeq)
 	if err != nil {
@@ -352,7 +353,7 @@ func (m *Manager) Get(ctx context.Context, ref string) (AttachmentInfo, error) {
 		return AttachmentInfo{}, ErrNotFound
 	}
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT id, ticket_seq, filename, size, state, attached_to,
+		SELECT id, ticket_seq, filename, size, state, attached_to, draft_id,
 		       uploader_member_id, uploader_agent_id, uploader_link_id, uploaded_at, claimed_at
 		FROM attachments WHERE id = ? AND ticket_seq IS NOT NULL`, id)
 	if err != nil {
@@ -402,13 +403,15 @@ func scanAttachments(rows *sql.Rows) ([]AttachmentInfo, error) {
 			linkID     sql.NullInt64
 			uploadedAt string
 			claimedAt  sql.NullString
+			draftID    sql.NullInt64
 		)
 		if err := rows.Scan(&a.ID, &ticket, &a.Filename, &a.Size, &a.State, &attachedTo,
-			&memberID, &agentID, &linkID, &uploadedAt, &claimedAt); err != nil {
+			&draftID, &memberID, &agentID, &linkID, &uploadedAt, &claimedAt); err != nil {
 			return nil, err
 		}
 		a.TicketSeq = ticket.Int64
 		a.AttachedTo = attachedTo.String
+		a.DraftID = draftID.Int64
 		a.Uploader = Principal{MemberID: memberID.Int64, AgentID: agentID.Int64, LinkID: linkID.Int64}
 		var err error
 		if a.UploadedAt, err = parseTime(uploadedAt); err != nil {

@@ -17,6 +17,7 @@ import {
   extendGuestLink,
   fetchAccessRecords,
   fetchGuestLinks,
+  fetchReplyDrafting,
   fetchMembers,
   fetchTicket,
   leaveCollaborators,
@@ -37,7 +38,7 @@ import {
 } from './memberApi'
 import { BriefBubble, EventLine, ReplyBubble, eventText } from '../shared/conversation'
 import { DimensionSelect } from '../guest/DimensionSelect'
-import { DeactivatedBadge, Lightbox } from '../shared/widgets'
+import { AttachmentChips, DeactivatedBadge, Lightbox } from '../shared/widgets'
 import { absoluteUrl, authorName, closeReasonText, fmtBeijing, fmtLinkExpiry, fmtShort, linkExpired } from '../shared/format'
 import { Confirm, Modal, copyText, invalidate, nav, toast, useLocationSearch } from './ui'
 import { HandoffDialog } from './HandoffDialog'
@@ -1011,6 +1012,7 @@ export function TicketDetailPage({
   const [knownLinkUrls, setKnownLinkUrls] = useState<Record<number, string>>({})
   const [accessRecords, setAccessRecords] = useState<AccessRecordsResponse | null>(null)
   const [allInfoOpen, setAllInfoOpen] = useState(false)
+  const [draftingSeq, setDraftingSeq] = useState<number | null>(null)
   const load = useCallback(async () => {
     try {
       const got = await fetchTicket(ticketRef)
@@ -1158,10 +1160,24 @@ export function TicketDetailPage({
         {ticket.timeline.map((e) =>
           e.type === 'reply' ? (
             (actor === 'all' || (actor === 'agent') === (!!e.actor.agent || !!e.actor.via_agent) ? (
-              <ReplyBubble key={e.seq} event={e} ticket={ticket} onImageClick={setLightbox} />
+              <ReplyBubble
+                key={e.seq}
+                event={e}
+                ticket={ticket}
+                onImageClick={setLightbox}
+                draftingOpen={draftingSeq === e.seq}
+                onToggleDrafting={() => setDraftingSeq((current) => (current === e.seq ? null : e.seq))}
+                fetchDrafting={() => fetchReplyDrafting(ticket.number, e.reply_no ?? 0)}
+              />
             ) : null)
-          ) : e.type === 'created' ? null : (
-            <EventLine key={e.seq} event={e} />
+          ) : (
+            <EventLine
+              key={e.seq}
+              event={e}
+              onShowBriefVersion={(revision) =>
+                window.dispatchEvent(new CustomEvent('tb:show-brief-version', { detail: revision }))
+              }
+            />
           ),
         )}
         {ticket.my_draft && <DraftCard draft={ticket.my_draft} ticket={ticket} onChanged={changed} />}
@@ -1582,6 +1598,7 @@ function DraftCard({
       {editing ? (
         <>
           <textarea aria-label="草稿正文" value={body} onChange={(e) => setBody(e.target.value)} />
+          <AttachmentChips attachments={draft.attachments} />
           <div className="draft-actions">
             <button type="button" className="btn ghost" disabled={busy} onClick={() => setEditing(false)}>
               取消
@@ -1595,6 +1612,7 @@ function DraftCard({
       ) : (
         <>
           <div className="draft-body">{draft.request.body_md}</div>
+          <AttachmentChips attachments={draft.attachments} />
           <div className="draft-actions">
             <button type="button" className="btn ghost" onClick={() => void copyInstruction()}>
               复制修改指令

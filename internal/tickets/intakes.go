@@ -470,6 +470,9 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	if _, _, err := m.appendEvent(ctx, tx, t.Seq, now, author, "created"); err != nil {
 		return SubmissionResult{}, err
 	}
+	if err := m.insertBriefVersionTx(ctx, tx, t, author, now); err != nil {
+		return SubmissionResult{}, err
+	}
 	if err := m.insertLinkEvent(ctx, tx, t.Seq, author, "guest_link_created", note, "", now); err != nil {
 		return SubmissionResult{}, err
 	}
