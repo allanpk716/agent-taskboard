@@ -736,10 +736,6 @@ func (m *Manager) sendCreate(ctx context.Context, viewer identity.Viewer, d Draf
 	}
 	defer tx.Rollback()
 	num, _ := parseID(d.ID)
-	created, notified, err := m.tk.CreateTx(ctx, tx, prepared)
-	if err != nil {
-		return SendResult{}, err
-	}
 	claimed, err := tx.ExecContext(ctx, `
 		UPDATE drafts SET status = 'sent', member_edited = ?, sent_at = ?
 		WHERE id = ? AND version = ? AND status = 'pending'`,
@@ -749,6 +745,10 @@ func (m *Manager) sendCreate(ctx context.Context, viewer identity.Viewer, d Draf
 	}
 	if n, _ := claimed.RowsAffected(); n == 0 {
 		return SendResult{}, &AlreadySentError{}
+	}
+	created, notified, err := m.tk.CreateTx(ctx, tx, prepared)
+	if err != nil {
+		return SendResult{}, err
 	}
 	_, err = tx.ExecContext(ctx, `
 		UPDATE drafts SET ticket_seq = ?, sent_timeline_seq = 1 WHERE id = ?`,
