@@ -98,13 +98,11 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 	if err != nil {
 		return ReplyResult{}, err
 	}
-	now := m.clk.Now()
 	author := authorOf(viewer)
 	if in.Actor != nil {
 		author = *in.Actor
 	}
 	refs := attachments.ParsePostRefs(in.BodyMD, in.AttachmentIDs)
-	var notified []int64
 	if viewer.Kind == identity.ViewerGuest {
 		author = guestAuthorOf(viewer, in.AuthorName, in.ViaAgent)
 	}
@@ -113,30 +111,55 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 		return ReplyResult{}, err
 	}
 	defer tx.Rollback()
+	result, notified, err := m.replyTx(ctx, tx, full, viewer, author, refs, in)
+	if err != nil {
+		return ReplyResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ReplyResult{}, err
+	}
+	m.Wake(notified)
+	after, err := m.ByRef(ctx, ref)
+	if err != nil {
+		return ReplyResult{}, err
+	}
+	turn, err := m.WaitingOn(ctx, after)
+	if err != nil {
+		return ReplyResult{}, err
+	}
+	result.WaitingOn = turn
+	return result, nil
+}
+
+func (m *Manager) replyTx(ctx context.Context, tx *sql.Tx, full Full, viewer identity.Viewer,
+	author Author, refs []attachments.PostRef, in ReplyInput) (ReplyResult, []int64, error) {
+	now := m.clk.Now()
+	var notified []int64
+	var err error
 
 	var replies int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM timeline_events WHERE ticket_seq = ? AND type = 'reply'`, full.Seq).
 		Scan(&replies); err != nil {
-		return ReplyResult{}, err
+		return ReplyResult{}, nil, err
 	}
 	replyNo := int64(replies) + 1
 	// 认领附件（两步上传的第二步）：引用的必须存在、待用、且是本次凭证上传的。
 	if err := m.atts.ClaimTx(ctx, tx, full.Seq, attachments.PrincipalOf(viewer), refs,
 		attachments.ClaimAllPending, "回复 "+strconv.FormatInt(replyNo, 10), now); err != nil {
-		return ReplyResult{}, err
+		return ReplyResult{}, nil, err
 	}
 	eventSeq, change, err := m.appendEvent(ctx, tx, full.Seq, now, author, "reply")
 	if err != nil {
-		return ReplyResult{}, err
+		return ReplyResult{}, nil, err
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE timeline_events SET body_md = ?, reply_no = ?, deliver = ?, attachment_ids = ? WHERE ticket_seq = ? AND seq = ?`,
 		in.BodyMD, replyNo, boolToInt(in.Deliver), attachmentIDsJSON(refs), full.Seq, eventSeq); err != nil {
-		return ReplyResult{}, fmt.Errorf("写入回复失败：%w", err)
+		return ReplyResult{}, nil, fmt.Errorf("写入回复失败：%w", err)
 	}
 	if err := touchLastChange(ctx, tx, full.Seq, change); err != nil {
-		return ReplyResult{}, err
+		return ReplyResult{}, nil, err
 	}
 	if m.notifier != nil {
 		after := full
@@ -150,28 +173,15 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 			Before: full, After: after, Actor: author, Event: after.Timeline[len(after.Timeline)-1],
 		})
 		if err != nil {
-			return ReplyResult{}, err
+			return ReplyResult{}, nil, err
 		}
-	}
-	if err := m.commitAndWake(tx, notified); err != nil {
-		return ReplyResult{}, err
-	}
-
-	after, err := m.ByRef(ctx, ref)
-	if err != nil {
-		return ReplyResult{}, err
-	}
-	turn, err := m.WaitingOn(ctx, after)
-	if err != nil {
-		return ReplyResult{}, err
 	}
 	return ReplyResult{
 		ReplyNo:     replyNo,
 		TimelineSeq: eventSeq,
 		Deliver:     in.Deliver,
 		AuthorName:  author.DisplayName(),
-		WaitingOn:   turn,
-	}, nil
+	}, notified, nil
 }
 
 // ValidateReply 按原回复规则做保存草稿前的校验，不写任何工单数据。

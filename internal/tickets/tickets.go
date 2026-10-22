@@ -260,6 +260,13 @@ func (m *Manager) commitAndWake(tx *sql.Tx, notified []int64) error {
 	return nil
 }
 
+// Wake 供调用方在自己提交事务后唤醒通知接收人。
+func (m *Manager) Wake(notified []int64) {
+	if m.notifier != nil {
+		m.notifier.Wake(notified)
+	}
+}
+
 // Labels 返回标签字典模块（HTTP 层组 hint 用；完整字典接口在 #31）。
 func (m *Manager) Labels() *labels.Manager { return m.labels }
 

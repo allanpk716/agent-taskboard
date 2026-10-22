@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
@@ -108,11 +109,12 @@ type Version struct {
 }
 
 type Manager struct {
-	db    *sql.DB
-	clk   clock.Clock
-	tk    *tickets.Manager
-	atts  *attachments.Manager
-	notes Notifier
+	db     *sql.DB
+	clk    clock.Clock
+	tk     *tickets.Manager
+	atts   *attachments.Manager
+	notes  Notifier
+	sendMu sync.Mutex
 }
 
 func NewManager(db *sql.DB, clk clock.Clock, tk *tickets.Manager, atts *attachments.Manager) *Manager {
@@ -632,6 +634,8 @@ func (m *Manager) Delete(ctx context.Context, viewer identity.Viewer, id string)
 }
 
 func (m *Manager) Send(ctx context.Context, viewer identity.Viewer, id string, version, throughSeq int64, deliver *bool) (SendResult, error) {
+	m.sendMu.Lock()
+	defer m.sendMu.Unlock()
 	d, err := m.ByViewer(ctx, viewer, id)
 	if err != nil {
 		return SendResult{}, err
@@ -662,6 +666,27 @@ func (m *Manager) Send(ctx context.Context, viewer identity.Viewer, id string, v
 		req.Deliver = *deliver
 		memberEdited = memberEdited || *deliver != d.Request.Deliver
 	}
+	if err = m.tk.ValidateReply(ctx, viewer, d.TicketNumber, tickets.ReplyInput{
+		BodyMD: req.BodyMD, AttachmentIDs: req.AttachmentIDs, Deliver: req.Deliver,
+	}); err != nil {
+		return SendResult{}, err
+	}
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return SendResult{}, err
+	}
+	defer tx.Rollback()
+	num, _ := parseID(id)
+	claimed, err := tx.ExecContext(ctx, `
+		UPDATE drafts SET status = 'sent', member_edited = ?, sent_at = ?
+		WHERE id = ? AND version = ? AND status = 'pending'`,
+		boolInt(memberEdited), m.clk.Now().Format(time.RFC3339Nano), num, d.Version)
+	if err != nil {
+		return SendResult{}, err
+	}
+	if n, _ := claimed.RowsAffected(); n == 0 {
+		return SendResult{}, &AlreadySentError{}
+	}
 	actor := tickets.Author{MemberID: d.MemberID, MemberName: d.MemberName}
 	for i := len(d.Versions) - 1; i >= 0; i-- {
 		if d.Versions[i].AgentID != 0 {
@@ -669,23 +694,27 @@ func (m *Manager) Send(ctx context.Context, viewer identity.Viewer, id string, v
 			break
 		}
 	}
-	result, err := m.tk.Reply(ctx, viewer, d.TicketNumber, tickets.ReplyInput{
+	result, notified, err := m.tk.ReplyTx(ctx, tx, full, viewer, tickets.ReplyInput{
 		BodyMD: req.BodyMD, AttachmentIDs: req.AttachmentIDs, Deliver: req.Deliver, Actor: &actor,
 	})
 	if err != nil {
 		return SendResult{}, err
 	}
-	num, _ := parseID(id)
-	_, err = m.db.ExecContext(ctx, `
-		UPDATE drafts SET status = 'sent', member_edited = ?, sent_at = ?, sent_timeline_seq = ? WHERE id = ? AND version = ? AND status = 'pending'`,
-		boolInt(memberEdited), m.clk.Now().Format(time.RFC3339Nano), result.TimelineSeq, num, d.Version)
+	_, err = tx.ExecContext(ctx, `UPDATE drafts SET sent_timeline_seq = ? WHERE id = ?`,
+		result.TimelineSeq, num)
 	if err != nil {
 		return SendResult{}, err
 	}
-	signature := "经" + d.MemberName + "确认"
-	if memberEdited {
-		signature = "经" + d.MemberName + "修改并确认"
+	if err = tx.Commit(); err != nil {
+		return SendResult{}, err
 	}
+	m.tk.Wake(notified)
+	if after, lookupErr := m.tk.ByRef(ctx, d.TicketNumber); lookupErr == nil {
+		if turn, waitErr := m.tk.WaitingOn(ctx, after); waitErr == nil {
+			result.WaitingOn = turn
+		}
+	}
+	signature := signatureOf(d.MemberName, memberEdited)
 	return SendResult{Reply: result, Signature: signature, Drafting: d.Versions}, nil
 }
 
@@ -700,26 +729,51 @@ func (m *Manager) sendCreate(ctx context.Context, viewer identity.Viewer, d Draf
 	}
 	in := createInputOf(d.CreateRequest, viewer)
 	in.Actor = &actor
-	created, err := m.tk.Create(ctx, in)
+	prepared, err := m.tk.PrepareCreate(ctx, in)
 	if err != nil {
 		return SendResult{}, err
 	}
+	prepared.Input.Actor = &actor
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return SendResult{}, err
+	}
+	defer tx.Rollback()
 	num, _ := parseID(d.ID)
-	_, err = m.db.ExecContext(ctx, `
-		UPDATE drafts SET status = 'sent', ticket_seq = ?, member_edited = ?, sent_at = ?, sent_timeline_seq = 1
-		WHERE id = ? AND version = ? AND status = 'pending'`,
-		created.Full.Seq, boolInt(memberEdited), m.clk.Now().Format(time.RFC3339Nano), num, d.Version)
+	created, notified, err := m.tk.CreateTx(ctx, tx, prepared)
 	if err != nil {
 		return SendResult{}, err
 	}
-	signature := "经" + d.MemberName + "确认"
-	if memberEdited {
-		signature = "经" + d.MemberName + "修改并确认"
+	claimed, err := tx.ExecContext(ctx, `
+		UPDATE drafts SET status = 'sent', member_edited = ?, sent_at = ?
+		WHERE id = ? AND version = ? AND status = 'pending'`,
+		boolInt(memberEdited), m.clk.Now().Format(time.RFC3339Nano), num, d.Version)
+	if err != nil {
+		return SendResult{}, err
 	}
+	if n, _ := claimed.RowsAffected(); n == 0 {
+		return SendResult{}, &AlreadySentError{}
+	}
+	_, err = tx.ExecContext(ctx, `
+		UPDATE drafts SET ticket_seq = ?, sent_timeline_seq = 1 WHERE id = ?`,
+		created.Full.Seq, num)
+	if err != nil {
+		return SendResult{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return SendResult{}, err
+	}
+	m.tk.Wake(notified)
+	if created.Full, err = m.tk.ByRef(ctx, created.Full.Number); err != nil {
+		return SendResult{}, err
+	}
+	signature := signatureOf(d.MemberName, memberEdited)
 	return SendResult{Create: &created, Signature: signature, Drafting: d.Versions}, nil
 }
 
 func (m *Manager) SendBriefRevision(ctx context.Context, viewer identity.Viewer, id string, version, throughSeq int64) (t tickets.Ticket, signature string, drafting []Version, err error) {
+	m.sendMu.Lock()
+	defer m.sendMu.Unlock()
 	d, err := m.ByViewer(ctx, viewer, id)
 	if err != nil {
 		return
@@ -740,6 +794,12 @@ func (m *Manager) SendBriefRevision(ctx context.Context, viewer identity.Viewer,
 		err = &tickets.RevisionConflictError{BaseRevision: d.BaseBriefRevision, CurrentRevision: full.BriefRevision}
 		return
 	}
+	if _, err = m.tk.ValidateRevise(ctx, viewer, d.TicketNumber, tickets.ReviseInput{
+		Title: d.Request.Title, BriefMD: d.Request.BriefMD, Fields: d.Request.Fields,
+		AttachmentIDs: d.Request.AttachmentIDs, BaseRevision: d.Request.BaseRevision,
+	}); err != nil {
+		return
+	}
 	last := lastSeq(full)
 	if d.NewEvents > 0 && throughSeq < last {
 		err = &TicketChangedError{NewEvents: d.NewEvents, ThroughSeq: last}
@@ -752,14 +812,35 @@ func (m *Manager) SendBriefRevision(ctx context.Context, viewer identity.Viewer,
 			break
 		}
 	}
-	t, err = m.tk.Revise(ctx, viewer, d.TicketNumber, tickets.ReviseInput{
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback()
+	num, _ := parseID(id)
+	claimed, err := tx.ExecContext(ctx, `
+		UPDATE drafts SET status = 'sent', sent_at = ?
+		WHERE id = ? AND version = ? AND status = 'pending'`,
+		m.clk.Now().Format(time.RFC3339Nano), num, version)
+	if err != nil {
+		return
+	}
+	if n, _ := claimed.RowsAffected(); n == 0 {
+		err = &AlreadySentError{}
+		return
+	}
+	var notified []int64
+	t, notified, err = m.tk.ReviseTx(ctx, tx, full, viewer, tickets.ReviseInput{
 		Title: d.Request.Title, BriefMD: d.Request.BriefMD, Fields: d.Request.Fields,
 		AttachmentIDs: d.Request.AttachmentIDs, BaseRevision: d.Request.BaseRevision, Actor: &actor,
 	})
 	if err != nil {
 		return
 	}
-	num, _ := parseID(id)
+	if err = tx.Commit(); err != nil {
+		return
+	}
+	m.tk.Wake(notified)
 	after, err := m.tk.ByRef(ctx, d.TicketNumber)
 	if err != nil {
 		return
@@ -770,18 +851,20 @@ func (m *Manager) SendBriefRevision(ctx context.Context, viewer identity.Viewer,
 			sentSeq = event.Seq
 		}
 	}
-	_, err = m.db.ExecContext(ctx, `
-		UPDATE drafts SET status = 'sent', sent_at = ?, sent_timeline_seq = ? WHERE id = ? AND version = ? AND status = 'pending'`,
-		m.clk.Now().Format(time.RFC3339Nano), sentSeq, num, d.Version)
+	_, err = m.db.ExecContext(ctx, `UPDATE drafts SET sent_timeline_seq = ? WHERE id = ?`, sentSeq, num)
 	if err != nil {
 		return
 	}
-	signature = "经" + d.MemberName + "确认"
-	if d.MemberEdited {
-		signature = "经" + d.MemberName + "修改并确认"
-	}
+	signature = signatureOf(d.MemberName, d.MemberEdited)
 	drafting = d.Versions
 	return
+}
+
+func signatureOf(name string, memberEdited bool) string {
+	if memberEdited {
+		return "经" + name + "修改并确认"
+	}
+	return "经" + name + "确认"
 }
 
 func lastSeq(full tickets.Full) int64 {

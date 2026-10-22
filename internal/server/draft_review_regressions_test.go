@@ -1,6 +1,8 @@
 package server_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -236,6 +238,92 @@ func Test建单草稿保留指定访客链接到期日(t *testing.T) {
 	if res.StatusCode != http.StatusCreated || !strings.HasPrefix(sent.Result.GuestLink.ExpiresAt, "2999-01-01") {
 		t.Fatalf("建单草稿发出后的访客链接到期日 = %d/%q", res.StatusCode, sent.Result.GuestLink.ExpiresAt)
 	}
+}
+
+func Test并发发出同一种草稿只产生一条正式内容(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	s.CreateMember("李工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	_, agent := issueRequiredAgent(t, s, web, "笔记本")
+
+	replyNumber := mustCreateTicket(t, s, web, "并发回复")
+	s.Do(t, web, http.MethodPost, "/api/v1/tickets/"+replyNumber+"/assign", map[string]any{"assignee": "陈工"}, nil)
+	replyDraft := mustReplyDraft(t, s, agent, replyNumber)
+	assertOneConcurrentSend(t, s, web, replyDraft.Draft.ID, replyDraft.Draft.Version)
+	var after ticketResponseBody
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+replyNumber, nil, &after)
+	replyCount := 0
+	for _, event := range after.Timeline {
+		if event.Type == "reply" {
+			replyCount++
+		}
+	}
+	if replyCount != 1 {
+		t.Fatalf("并发发出回复草稿后回复数 = %d, 想 1", replyCount)
+	}
+
+	briefNumber := mustCreateTicket(t, s, web, "并发说明修订")
+	var briefDraft draftAcceptedBody
+	s.Do(t, agent, http.MethodPatch, "/api/v1/tickets/"+briefNumber,
+		map[string]any{"brief_md": "并发说明修订草稿。", "base_revision": 1}, &briefDraft)
+	assertOneConcurrentSend(t, s, web, briefDraft.Draft.ID, briefDraft.Draft.Version)
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+briefNumber, nil, &after)
+	if after.Brief.Revision != 2 {
+		t.Fatalf("并发发出说明修订后版本 = %d, 想 2", after.Brief.Revision)
+	}
+
+	var createDraft draftAcceptedBody
+	s.Do(t, agent, http.MethodPost, "/api/v1/tickets", map[string]any{
+		"title": "并发建单草稿", "brief_md": "说明", "labels": []string{"机型:UD-2300"},
+	}, &createDraft)
+	number := assertOneConcurrentSend(t, s, web, createDraft.Draft.ID, createDraft.Draft.Version)
+	if number == "" {
+		t.Fatal("并发发出建单草稿没有返回工单编号")
+	}
+	var created ticketResponseBody
+	if res := s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number, nil, &created); res.StatusCode != http.StatusOK || created.Title != "并发建单草稿" {
+		t.Fatalf("并发发出的建单 = %d/%+v, 想 201 后可读取", res.StatusCode, created)
+	}
+}
+
+func assertOneConcurrentSend(t *testing.T, s *tbtest.Server, web *http.Client, id string, version int64) string {
+	t.Helper()
+	start := make(chan struct{})
+	type sendOutcome struct {
+		status int
+		number string
+	}
+	responses := make(chan sendOutcome, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			<-start
+			body, _ := json.Marshal(map[string]any{"version": version})
+			req, _ := http.NewRequest(http.MethodPost, s.URL()+"/api/v1/drafts/"+id+"/send", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			res, err := web.Do(req)
+			if err == nil {
+				var body struct {
+					Result struct {
+						Number string `json:"number"`
+					} `json:"result"`
+				}
+				_ = json.NewDecoder(res.Body).Decode(&body)
+				_ = res.Body.Close()
+				responses <- sendOutcome{status: res.StatusCode, number: body.Result.Number}
+			}
+		}()
+	}
+	close(start)
+	first, second := <-responses, <-responses
+	if first.status == second.status || (first.status != http.StatusCreated && first.status != http.StatusConflict) ||
+		(second.status != http.StatusCreated && second.status != http.StatusConflict) {
+		t.Fatalf("并发发出 %s 状态码 = %d/%d, 想 201/409", id, first.status, second.status)
+	}
+	if first.status == http.StatusCreated {
+		return first.number
+	}
+	return second.number
 }
 
 func Test并发丢弃草稿时列表不失败(t *testing.T) {

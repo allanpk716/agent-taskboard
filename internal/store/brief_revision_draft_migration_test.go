@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 
 	"github.com/allanpk716/agent-taskboard/internal/store"
@@ -22,9 +21,7 @@ func Test迁移允许说明修订草稿且保留回复草稿(t *testing.T) {
 	entries, _ := os.ReadDir("migrations")
 	names := []string{}
 	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name(), "0033_") {
-			names = append(names, entry.Name())
-		}
+		names = append(names, entry.Name())
 	}
 	sort.Strings(names)
 	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
