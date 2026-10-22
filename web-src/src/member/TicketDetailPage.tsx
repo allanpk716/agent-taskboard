@@ -36,7 +36,7 @@ import {
 } from './memberApi'
 import { BriefBubble, EventLine, ReplyBubble } from '../shared/conversation'
 import { DimensionSelect } from '../guest/DimensionSelect'
-import { DeactivatedBadge, Lightbox } from '../shared/widgets'
+import { AttachmentChips, DeactivatedBadge, Lightbox } from '../shared/widgets'
 import { absoluteUrl, authorName, closeReasonText, fmtBeijing, fmtLinkExpiry, fmtShort, linkExpired } from '../shared/format'
 import { Confirm, Modal, copyText, invalidate, nav, toast, useLocationSearch } from './ui'
 import { HandoffDialog } from './HandoffDialog'
@@ -1504,6 +1504,7 @@ function DraftCard({ draft, onChanged }: { draft: DraftView; onChanged: () => vo
         {draft.request.deliver ? ' · 将作为交付' : ''}
       </div>
       <div className="draft-body">{draft.request.body_md}</div>
+      <AttachmentChips attachments={draft.attachments} />
       <div className="draft-actions">
         <button type="button" className="btn danger ghost" disabled={busy} onClick={() => setConfirmDiscard(true)}>
           丢弃

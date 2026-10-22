@@ -374,6 +374,7 @@ type ticketResponseBody struct {
 		Request struct {
 			BodyMD string `json:"body_md"`
 		} `json:"request"`
+		Attachments []attachmentViewBody `json:"attachments"`
 	} `json:"my_draft"`
 	HandoffText      string              `json:"handoff_text"`
 	HandoffShareText *string             `json:"handoff_share_text"`
