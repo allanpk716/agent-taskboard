@@ -6,6 +6,37 @@ import { Markdown } from './markdown'
 type VersionLoader = () => Promise<{ versions: BriefVersion[] }>
 
 type DiffLine = { kind: 'same' | 'delete' | 'add'; old?: string; new?: string; label?: string }
+type InlinePart = { text: string; changed: boolean }
+
+function inlineParts(a: string, b: string): InlinePart[] {
+  const dp = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0))
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
+    }
+  }
+  const out: InlinePart[] = []
+  const push = (text: string, changed: boolean) => {
+    const last = out[out.length - 1]
+    if (last && last.changed === changed) last.text += text
+    else out.push({ text, changed })
+  }
+  let i = 0
+  let j = 0
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j] && dp[i][j] === dp[i + 1][j + 1] + 1) {
+      push(a[i], false)
+      i++
+      j++
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      push(a[i++], true)
+    } else {
+      j++
+    }
+  }
+  while (i < a.length) push(a[i++], true)
+  return out.filter((p) => p.text !== '')
+}
 
 function splitVersion(v: BriefVersion, ticket: TicketView): string[] {
   const fields = ticket.brief.template_fields ?? []
@@ -64,6 +95,8 @@ function markReplacements(rows: DiffLine[]): DiffLine[] {
         k++
       }
       out[i] = { ...out[i], label: '~' }
+      out[i].new = out[j].new
+      out[j].old = out[i].old
     }
     i = j - 1
   }
@@ -189,6 +222,23 @@ export function BriefVersions({
 
   const oldVersion = rangeOld !== null ? byRevision.get(rangeOld) : undefined
   const firstOnly = current?.revision === 1 && !oldVersion
+  const renderCell = (row: DiffLine, side: 'old' | 'new') => {
+    const text = row[side] ?? ''
+    const other = side === 'old' ? row.new : row.old
+    if (other === undefined || row.kind === 'same') return <>{text}</>
+    const parts = inlineParts(text, other)
+    return (
+      <>
+        {parts.map((part, i) =>
+          part.changed ? (
+            <mark className="inline-change" key={i}>{part.text}</mark>
+          ) : (
+            <span key={i}>{part.text}</span>
+          ),
+        )}
+      </>
+    )
+  }
   const rows = useMemo(
     () => (oldVersion && current ? diffLines(splitVersion(oldVersion, ticket), splitVersion(current, ticket)) : []),
     [oldVersion, current, ticket],
@@ -260,12 +310,12 @@ export function BriefVersions({
                     <span className="mark">{row.label ?? ' '}</span>
                     {layout === 'split' ? (
                       <>
-                        <span className="diff-cell old">{row.old ?? ''}</span>
-                        <span className="diff-cell new">{row.new ?? ''}</span>
+                        <span className="diff-cell old">{renderCell(row, 'old')}</span>
+                        <span className="diff-cell new">{renderCell(row, 'new')}</span>
                       </>
                     ) : (
                       <span className={`diff-cell ${row.kind === 'delete' ? 'old' : 'new'}`}>
-                        {row.old ?? row.new ?? ''}
+                        {renderCell(row, row.kind === 'delete' ? 'old' : 'new')}
                       </span>
                     )}
                   </div>

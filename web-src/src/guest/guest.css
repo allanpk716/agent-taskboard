@@ -495,6 +495,14 @@
 .diff-row.add {
   color: #1d6735;
 }
+.inline-change {
+  background: #ffcecb;
+  color: inherit;
+  padding: 0;
+}
+.diff-cell.new .inline-change {
+  background: #abf2bc;
+}
 .version-full {
   padding: 8px;
   background: #f4f5f7;

@@ -18,8 +18,8 @@ async function upload(request: APIRequestContext, number: string, name: string, 
 
 test('成员可原位对比任意两个说明版本', async ({ page, request }) => {
   const number = await createTicket(request, { title: '说明版本对比' })
-  await revise(request, number, 1, '第一段新内容\n共同段落\n第二版结尾')
-  await revise(request, number, 2, '第一段新内容\n共同段落\n第三版结尾')
+  await revise(request, number, 1, '第一段新内容\n共同段落：第二版结尾在这里\n结尾')
+  await revise(request, number, 2, '第一段新内容\n共同段落：第三版结尾在这里\n结尾')
 
   await login(page, ADMIN)
   await page.goto(`/t/${number}`)
@@ -29,6 +29,8 @@ test('成员可原位对比任意两个说明版本', async ({ page, request }) 
   await expect(brief.locator('.diff-context')).toContainText('第 2 版 → 第 3 版')
   await expect(brief.locator('.diff-cell.old').filter({ hasText: '第二版结尾' })).toBeVisible()
   await expect(brief.locator('.diff-cell.new').filter({ hasText: '第三版结尾' })).toBeVisible()
+  await expect(brief.locator('.diff-cell.old .inline-change')).toHaveText('二')
+  await expect(brief.locator('.diff-cell.new .inline-change')).toHaveText('三')
 
   await brief.getByRole('button', { name: '✕ 退出对比' }).click()
   await page.reload()
