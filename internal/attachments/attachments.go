@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
@@ -25,8 +26,8 @@ import (
 var (
 	// ErrFileRequired 表示 multipart 里没有文件字段。
 	ErrFileRequired = errors.New("缺少文件字段（multipart 字段名 file）")
-	// ErrInvalidFilename 表示文件名缺失、带路径分隔符或过长。
-	ErrInvalidFilename = errors.New("文件名不能为空，不能带路径分隔符，且不超过 255 个字符")
+	// ErrInvalidFilename 表示文件名缺失、带路径分隔符、过长或不是 UTF-8。
+	ErrInvalidFilename = errors.New("文件名不能为空，不能带路径分隔符，须为 UTF-8，且不超过 255 个字符")
 	// ErrNotFound 表示附件不存在（或不是这张工单上的）。
 	ErrNotFound = errors.New("没有这个附件")
 	// ErrNotUsable 表示引用的附件不存在、已挂在别处，或不是本次凭证上传的。
@@ -188,6 +189,9 @@ func (m *Manager) Path(id int64) string { return filepath.Join(m.dir, strconv.Fo
 // ValidateFilename 校验客户端文件名（存储时不用它做路径，按 id 落盘）。
 func ValidateFilename(name string) error {
 	name = strings.TrimSpace(name)
+	if !utf8.ValidString(name) {
+		return ErrInvalidFilename
+	}
 	if name == "" || len(name) > 255 {
 		return ErrInvalidFilename
 	}

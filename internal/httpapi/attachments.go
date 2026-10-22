@@ -10,10 +10,12 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 // uploadAttachmentMaxMemory 是 multipart 表单在内存里的缓冲上限（超出部分落临时文件）。
@@ -103,6 +105,14 @@ type attachmentUploadView struct {
 // multipart 的 FileName 用 filepath.Base，只认当前平台的分隔符：Linux 上
 // C:\temp\x.png 会原样留下，再被文件名校验拒绝。
 func clientBaseName(name string) string {
+	// Windows curl 可能按系统代码页发送 filename。GBK 第二字节可以是 0x5C，
+	// 所以必须先整体解码，再识别反斜杠路径分隔符。
+	if !utf8.ValidString(name) {
+		if decoded, err := simplifiedchinese.GB18030.NewDecoder().String(name); err == nil &&
+			utf8.ValidString(decoded) && !strings.ContainsRune(decoded, '\uFFFD') {
+			name = decoded
+		}
+	}
 	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
 		return name[i+1:]
 	}

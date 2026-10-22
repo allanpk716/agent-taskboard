@@ -5,12 +5,14 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 // attachmentUploadBody 是 POST …/attachments 成功（201）的响应。
@@ -88,6 +90,37 @@ func mustUploadAttachment(t testing.TB, s *tbtest.Server, c *http.Client, ref, f
 	return got
 }
 
+// uploadAttachmentRawFilename 把原始字节直接写进 Content-Disposition，模拟
+// Windows 上的 curl 按系统代码页发送 filename。
+func uploadAttachmentRawFilename(t testing.TB, s *tbtest.Server, c *http.Client, ref, filename string, content []byte) *http.Response {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", `form-data; name="file"; filename="`+filename+`"`)
+	part, err := mw.CreatePart(header)
+	if err != nil {
+		t.Fatalf("构造 multipart 失败：%v", err)
+	}
+	if _, err := part.Write(content); err != nil {
+		t.Fatalf("写 multipart 失败：%v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("关闭 multipart 失败：%v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, s.URL()+"/api/v1/tickets/"+ref+"/attachments", &buf)
+	if err != nil {
+		t.Fatalf("构造请求失败：%v", err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	res, err := c.Do(req)
+	if err != nil {
+		t.Fatalf("上传附件请求失败：%v", err)
+	}
+	t.Cleanup(func() { res.Body.Close() })
+	return res
+}
+
 // claimByReply 用回复引用附件（两步上传的第二步），返回原始响应。
 func claimByReply(t testing.TB, s *tbtest.Server, c *http.Client, ref string, body map[string]any) *http.Response {
 	t.Helper()
@@ -158,6 +191,33 @@ func Test两步上传返回引用与Markdown片段(t *testing.T) {
 	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number, nil, &full)
 	if len(full.Timeline) != 1 || full.Timeline[0].Type != "created" {
 		t.Errorf("上传附件不应写时间线事件：%+v", full.Timeline)
+	}
+}
+
+// Windows curl 按 GBK 发送 filename 时，服务端先转 UTF-8 再入库。
+func Test上传附件把GBK文件名转成UTF8(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	number := mustCreateTicket(t, s, web, "整理环保设备资料")
+
+	raw, err := simplifiedchinese.GB18030.NewEncoder().Bytes([]byte("R4-01-广于环保科技.html"))
+	if err != nil {
+		t.Fatalf("编码 GB18030 文件名失败：%v", err)
+	}
+	res := uploadAttachmentRawFilename(t, s, web, number, string(raw), []byte("<html></html>"))
+	if res.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(res.Body)
+		t.Fatalf("上传 GBK 文件名状态码 = %d, 想 201（%s）", res.StatusCode, body)
+	}
+	var got attachmentUploadBody
+	tbtest.DecodeJSON(t, res, &got)
+	want := "R4-01-广于环保科技.html"
+	if got.Filename != want {
+		t.Fatalf("filename = %q, want %q", got.Filename, want)
+	}
+	if want := "[" + want + "](att:" + got.ID + ")"; got.Markdown != want {
+		t.Fatalf("markdown = %q, want %q", got.Markdown, want)
 	}
 }
 
