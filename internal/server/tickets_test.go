@@ -367,6 +367,14 @@ type ticketResponseBody struct {
 			Assign           bool `json:"assign"`
 		} `json:"can"`
 	} `json:"viewer"`
+	MyDraft *struct {
+		ID      string `json:"id"`
+		Kind    string `json:"kind"`
+		Version int64  `json:"version"`
+		Request struct {
+			BodyMD string `json:"body_md"`
+		} `json:"request"`
+	} `json:"my_draft"`
 	HandoffText      string              `json:"handoff_text"`
 	HandoffShareText *string             `json:"handoff_share_text"`
 	Timeline         []timelineEventBody `json:"timeline"`

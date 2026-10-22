@@ -180,6 +180,7 @@ export function ReplyBubble({
           <b>{authorName(event.actor)}</b>
           {event.actor.member?.deactivated && <DeactivatedBadge />} · {fmtShort(event.at)}
           {event.deliver && <span className="deliver-tag">交付</span>}
+          {event.signature && <span className="draft-confirm">{event.signature}</span>}
         </div>
         <Markdown body={event.body_md ?? ''} attachments={atts} onImageClick={onImageClick} />
         <AttachmentChips attachments={chips} />

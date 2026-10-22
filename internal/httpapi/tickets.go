@@ -14,6 +14,7 @@ import (
 	accessrecords "github.com/allanpk716/agent-taskboard/internal/accessrecords"
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/drafts"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/labels"
 	"github.com/allanpk716/agent-taskboard/internal/markdownview"
@@ -338,8 +339,19 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if err != nil {
 		panic(err)
 	}
+	var myDraft *markdownview.MyDraft
+	if viewer.Kind == identity.ViewerMember {
+		if pending, err := a.drafts.Pending(r.Context(), viewer.Member.ID, full.Seq); err == nil {
+			myDraft = &markdownview.MyDraft{
+				ID: pending.ID, Kind: "reply", Version: pending.Version, BodyMD: pending.Request.BodyMD,
+				URL: "/api/v1/drafts/" + pending.ID,
+			}
+		} else if !errors.Is(err, drafts.ErrNotFound) {
+			panic(err)
+		}
+	}
 	if r.URL.Query().Get("format") == "markdown" {
-		md := markdownview.Ticket(ticketMarkdownInput(full, viewer, atts, usage, waitingOn))
+		md := markdownview.Ticket(ticketMarkdownInput(full, viewer, atts, usage, waitingOn, myDraft))
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(md))
@@ -731,6 +743,7 @@ type eventView struct {
 	ExpiresAt   string `json:"expires_at,omitempty"` // guest_link_extended 的新到期时刻（#32）
 
 	AttachmentIDs []string `json:"attachment_ids,omitempty"` // reply 引用的附件（#33）
+	Signature     string   `json:"signature,omitempty"`      // 从草稿发出的回复带确认署名
 	From          string   `json:"from,omitempty"`           // assigned 事件的改派前指派人；空 = 创建时指派（#36）
 	To            string   `json:"to,omitempty"`             // assigned 事件的指派对象（#36）
 	Collaborator  string   `json:"collaborator,omitempty"`   // 协作者事件的对象（#158）
@@ -780,6 +793,7 @@ type ticketView struct {
 	Usage         attachmentUsage    `json:"attachment_usage"` // 含待用附件（#33）
 	Viewer        ticketViewerView   `json:"viewer"`
 	Timeline      []eventView        `json:"timeline"`
+	MyDraft       *draftView         `json:"my_draft"`
 
 	// 成员交接文案（#98）：访客视角不出现这两个字段。
 	HandoffText      *string `json:"handoff_text,omitempty"`
@@ -897,11 +911,32 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 		}
 	}
 	v.Viewer = tv
+	signatures := map[int64]string{}
+	if !isGuest {
+		signatures, err = a.drafts.Signatures(r.Context(), full.Seq)
+		if err != nil {
+			panic(err)
+		}
+	}
+	if viewer.Kind == identity.ViewerMember {
+		if pending, err := a.drafts.Pending(r.Context(), viewer.Member.ID, full.Seq); err == nil {
+			pending.MemberName = viewer.Member.Name
+			if viewer.Agent != nil {
+				pending.AgentID, pending.AgentName = viewer.Agent.ID, viewer.Agent.Name
+			}
+			view := newDraftView(a, r, pending)
+			v.MyDraft = &view
+		} else if !errors.Is(err, drafts.ErrNotFound) {
+			panic(err)
+		}
+	}
 	for _, e := range full.Timeline {
 		if isGuest && !visibleToGuest(e) {
 			continue
 		}
-		v.Timeline = append(v.Timeline, newEventView(e, !isGuest))
+		ev := newEventView(e, !isGuest)
+		ev.Signature = signatures[e.Seq]
+		v.Timeline = append(v.Timeline, ev)
 	}
 	return v
 }
@@ -910,7 +945,7 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 // 访客（#32）：无标签行、时间线跳过标签事件，署名按访客写法；附件小节与
 // 用量由 attachmentProjection 生成（#33），访客的下载链接是签名地址。
 func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer, atts []attachmentView, usage attachmentUsage,
-	waitingOn tickets.WaitingOn) markdownview.Input {
+	waitingOn tickets.WaitingOn, myDraft *markdownview.MyDraft) markdownview.Input {
 	isGuest := viewer.Kind == identity.ViewerGuest
 	viewerName := viewer.Member.Name
 	if isGuest {
@@ -971,6 +1006,7 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer, atts []attac
 	if !isGuest {
 		in.CreatorName = full.Creator.DisplayName()
 	}
+	in.MyDraft = myDraft
 	if full.CloseReason != "" {
 		in.CloseReasonText = markdownview.CloseReasonText(full.CloseReason)
 	}

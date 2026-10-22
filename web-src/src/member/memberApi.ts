@@ -513,6 +513,21 @@ export async function replyTicket(
   })
 }
 
+export async function sendDraft(
+  id: string,
+  version: number,
+  opts: { confirmThroughSeq?: number; deliver?: boolean } = {},
+): Promise<{ signature: string }> {
+  return api(`/api/v1/drafts/${encodeURIComponent(id)}/send`, {
+    method: 'POST',
+    body: JSON.stringify({ version, ...opts }),
+  })
+}
+
+export async function discardDraft(id: string): Promise<void> {
+  await api(`/api/v1/drafts/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
 export interface LabelChangeResult {
   labels: string[]
   alias_resolved?: { requested: string; label: string; via: string }[]
