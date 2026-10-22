@@ -61,7 +61,7 @@ test('签发 Agent 时默认必须走草稿', async ({ page, request }) => {
   expect(((await session.json()) as { viewer: { agent: { draft_mode: string } } }).viewer.agent.draft_mode).toBe('required')
 })
 
-test('草稿上线提示列出必须走草稿的Agent且只出现一次', async ({ page, request }) => {
+test('新签发的Agent不触发草稿上线提示', async ({ page, request }) => {
   const suffix = Date.now().toString(36)
   await request.post('/api/v1/session', { data: ADMIN })
   const member = {
@@ -81,9 +81,6 @@ test('草稿上线提示列出必须走草稿的Agent且只出现一次', async 
 
   await login(page, { username: member.username, password: initialPassword })
   const dialog = page.getByRole('dialog', { name: '工单板已更新' })
-  await expect(dialog).toContainText('已改为必须走草稿')
-  await expect(dialog).toContainText(`提示Agent${suffix}`)
-  await dialog.getByRole('button', { name: '知道了' }).click()
   await expect(dialog).toHaveCount(0)
   await page.reload()
   await expect(page.getByRole('dialog', { name: '工单板已更新' })).toHaveCount(0)
