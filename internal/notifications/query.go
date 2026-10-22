@@ -68,10 +68,10 @@ func (m *Manager) List(ctx context.Context, q ListQuery) (ListResult, error) {
 		args = append(args, *q.Before)
 	}
 	if q.Unread {
-		where = append(where, "read_at IS NULL")
+		where = append(where, "read_at IS NULL", "kind <> 'draft'")
 	}
 	if !q.IncludeSystem {
-		where = append(where, "ticket_seq IS NOT NULL")
+		where = append(where, "ticket_seq IS NOT NULL", "kind <> 'draft'")
 	}
 	order := "DESC"
 	if ascending {
@@ -183,6 +183,7 @@ func (m *Manager) Unread(ctx context.Context, memberID int64) (UnreadResult, err
 func (m *Manager) UnreadForViewer(ctx context.Context, memberID int64, includeSystem bool) (UnreadResult, error) {
 	var out UnreadResult
 	where := "member_id = ?"
+	where += " AND kind <> 'draft'"
 	if !includeSystem {
 		where += " AND ticket_seq IS NOT NULL"
 	}

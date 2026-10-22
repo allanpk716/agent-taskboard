@@ -4,11 +4,21 @@
 // 与管理页入口（仅管理员，#42）；收件箱顶部是两屏建单流程入口（#195）。
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '../api'
-import { fetchInbox, fetchServerVersion, fetchSession, type Me } from './memberApi'
+import {
+  fetchAgentTokens,
+  fetchDrafts,
+  fetchInbox,
+  fetchServerVersion,
+  fetchSession,
+  markDraftsIntroSeen,
+  type Me,
+} from './memberApi'
 import { InboxPage } from './InboxPage'
+import { DraftsPage } from './DraftsPage'
 import { TicketsPage } from './TicketsPage'
 import { TicketDetailPage } from './TicketDetailPage'
 import { NewTicketPage } from './NewTicketPage'
+import { CreateDraftPage } from './CreateDraftPage'
 import { ToolsPage } from './ToolsPage'
 import { TemplatesPage } from './TemplatesPage'
 import { TemplateEditPage } from './TemplateEditPage'
@@ -16,7 +26,7 @@ import { MePage } from './MePage'
 import { AdminPage } from './AdminPage'
 import { NotificationBell } from './NotificationBell'
 import { detailListSource } from './listFilters'
-import { nav, useLocationSearch, useNavSeq, useRoute, type Route } from './ui'
+import { Modal, nav, useLocationSearch, useNavSeq, useRoute, type Route } from './ui'
 import { useLayoutTier } from './useLayoutTier'
 
 function pageTitle(route: Route, newTicketTitle: string): string {
@@ -25,12 +35,16 @@ function pageTitle(route: Route, newTicketTitle: string): string {
       return '收件箱'
     case 'tickets':
       return '工单'
+    case 'drafts':
+      return '我的草稿'
     case 'new':
       return newTicketTitle
     case 'feedback':
       return newTicketTitle
     case 'detail':
       return '工单'
+    case 'draft':
+      return '建单草稿'
     case 'tools':
       return '工具'
     case 'me':
@@ -44,6 +58,57 @@ function pageTitle(route: Route, newTicketTitle: string): string {
   }
 }
 
+function DraftsIntroDialog({ onDone }: { onDone: () => void }) {
+  const [agents, setAgents] = useState<string[] | null>(null)
+
+  useEffect(() => {
+    fetchAgentTokens()
+      .then((tokens) =>
+        setAgents(
+          tokens
+            .filter((token) => !token.revoked_at && token.draft_mode_switched_by_launch)
+            .map((token) => token.name),
+        ),
+      )
+      .catch(() => setAgents([]))
+  }, [])
+
+  async function close(goSettings: boolean) {
+    try {
+      await markDraftsIntroSeen()
+    } finally {
+      onDone()
+      if (goSettings) nav('/me')
+    }
+  }
+
+  return (
+    <Modal title="工单板已更新" onClose={() => void close(false)}>
+      <div className="hint">
+        你的下列 Agent 已改为必须走草稿，它们写的建单、回复和说明修订会先存成草稿，等你确认后发出。
+      </div>
+      <div className="draft-agent-list">
+        {(agents ?? []).map((name) => (
+          <span key={name} className="badge open">
+            {name}
+          </span>
+        ))}
+        {agents !== null && agents.length === 0 && <span className="hint">没有启用的 Agent</span>}
+      </div>
+      <div className="hint">要改回可直接发，去「我的 → Agent」的草稿开关。</div>
+      <div className="mrow">
+        <button className="btn ghost" onClick={() => void close(true)}>
+          去看 Agent 设置
+        </button>
+        <span className="sp" />
+        <button className="btn" onClick={() => void close(false)}>
+          知道了
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
 export function MemberApp() {
   const route = useRoute()
   const search = useLocationSearch()
@@ -52,12 +117,17 @@ export function MemberApp() {
   const [me, setMe] = useState<Me | null>(null)
   const [denied, setDenied] = useState(false)
   const [inboxCount, setInboxCount] = useState(0)
+  const [draftCount, setDraftCount] = useState(0)
   const [serverVersion, setServerVersion] = useState<string | undefined>()
   const [newTicketTitle, setNewTicketTitle] = useState('建单')
+  const [draftIntro, setDraftIntro] = useState(false)
 
   useEffect(() => {
     fetchSession()
-      .then((s) => setMe(s.viewer.member))
+      .then((s) => {
+        setMe(s.viewer.member)
+        setDraftIntro(s.notices?.includes('drafts_intro') ?? false)
+      })
       .catch((err) => {
         if (err instanceof ApiError && err.status === 401) {
           window.location.replace('/login')
@@ -76,11 +146,19 @@ export function MemberApp() {
       .then((d) => setInboxCount(d.count))
       .catch(() => {})
   }, [])
+  const refreshDrafts = useCallback(() => {
+    fetchDrafts().then((d) => setDraftCount(d.count)).catch(() => {})
+  }, [])
   useEffect(() => {
     refreshInbox()
-    window.addEventListener('tb:invalidate', refreshInbox)
-    return () => window.removeEventListener('tb:invalidate', refreshInbox)
-  }, [refreshInbox, route])
+    refreshDrafts()
+    const invalidate = () => {
+      refreshInbox()
+      refreshDrafts()
+    }
+    window.addEventListener('tb:invalidate', invalidate)
+    return () => window.removeEventListener('tb:invalidate', invalidate)
+  }, [refreshInbox, refreshDrafts, route])
 
   if (denied) {
     return (
@@ -105,16 +183,25 @@ export function MemberApp() {
   const toolsOn = h.page === 'tools' || h.page === 'templates' || h.page === 'templateEdit'
   const meOn = h.page === 'me' || h.page === 'admin'
   const centered =
-    ['tools', 'me', 'admin', 'new', 'templates', 'templateEdit', 'feedback'].includes(h.page)
+    ['tools', 'me', 'admin', 'new', 'templates', 'templateEdit', 'feedback', 'draft'].includes(h.page)
   const { fromInbox, query: detailQuery } = detailListSource(search)
   const detailReturnTo = fromInbox
     ? `/${detailQuery ? '?' + detailQuery : ''}`
     : `/tickets${detailQuery ? '?' + detailQuery : ''}`
   const bell = <NotificationBell tier={tier} onNavigate={() => window.dispatchEvent(new Event('tb:invalidate'))} />
+  const intro = draftIntro && (
+    <DraftsIntroDialog
+      onDone={() => {
+        setDraftIntro(false)
+        window.dispatchEvent(new Event('tb:invalidate'))
+      }}
+    />
+  )
   const page = (
     <>
       {route.page === 'inbox' && <InboxPage key={route.page} />}
       {route.page === 'tickets' && <TicketsPage key={route.page} me={me} />}
+      {route.page === 'drafts' && <DraftsPage key={navSeq} />}
       {(route.page === 'new' || route.page === 'feedback') && (
         <NewTicketPage
           key={navSeq}
@@ -126,6 +213,7 @@ export function MemberApp() {
       {route.page === 'detail' && (
         <TicketDetailPage key={navSeq} ticketRef={route.ref} me={me} returnTo={detailReturnTo} />
       )}
+      {route.page === 'draft' && <CreateDraftPage key={navSeq} id={route.id} />}
       {route.page === 'tools' && <ToolsPage key={navSeq} />}
       {route.page === 'me' && <MePage key={navSeq} me={me} serverVersion={serverVersion} />}
       {route.page === 'templates' && <TemplatesPage key={navSeq} />}
@@ -133,9 +221,16 @@ export function MemberApp() {
       {route.page === 'admin' && <AdminPage key={navSeq} me={me} />}
     </>
   )
-  const tab = (k: Route['page'], icon: string, name: string, badge?: number, on?: boolean) => (
+  const tab = (
+    k: Route['page'],
+    icon: string,
+    name: string,
+    badge?: number,
+    on?: boolean,
+    badgeTone?: 'red' | 'amber',
+  ) => (
     <a
-      className={`tabbtn${(on ?? h.page === k) ? ' on' : ''}`}
+      className={`tabbtn${(on ?? h.page === k) ? ' on' : ''}${badgeTone ? ` ${badgeTone}-badge` : ''}`}
       href={k === 'inbox' ? '/' : `/${k}`}
       onClick={(e) => {
         e.preventDefault()
@@ -158,9 +253,10 @@ export function MemberApp() {
       on: boolean,
       badge?: number,
       primary?: boolean,
+      badgeTone?: 'red' | 'amber',
     ) => (
       <a
-        className={`pc-nav-item${primary ? ' primary' : ''}${on ? ' on' : ''}`}
+        className={`pc-nav-item${primary ? ' primary' : ''}${on ? ' on' : ''}${badgeTone ? ` ${badgeTone}-badge` : ''}`}
         href={href}
         aria-current={on ? 'page' : undefined}
         onClick={(e) => {
@@ -180,6 +276,7 @@ export function MemberApp() {
         </a>
         {item('/new', '✚', '＋ 建单', '建单', h.page === 'new' || h.page === 'feedback', undefined, true)}
         {item('/', '📥', '收件箱', '收件箱', h.page === 'inbox' || (h.page === 'detail' && fromInbox), inboxCount)}
+        {item('/drafts', '✎', '✎ 草稿', '草稿', h.page === 'drafts', draftCount, false, 'amber')}
         {item('/tickets', '🗂', '工单', '工单', h.page === 'tickets' || (h.page === 'detail' && !fromInbox))}
         {item('/tools', '🧰', '工具', '工具', toolsOn)}
         {item('/me', '👤', '我的', '我的', meOn)}
@@ -199,6 +296,7 @@ export function MemberApp() {
       return (
         <>
           {bell}
+          {intro}
           <div className={`pc-shell${compact ? ' compact' : ''}`}>
             {sidebar}
             <div className="pc-split">
@@ -222,6 +320,7 @@ export function MemberApp() {
     return (
       <>
         {bell}
+        {intro}
         <div className={`pc-shell${compact ? ' compact' : ''}`}>
           {sidebar}
           <main className="pc-main">
@@ -242,6 +341,7 @@ export function MemberApp() {
 
   return (
     <main className="member-root">
+      {intro}
       <div className="b-app">
         <header className="b-top">
           <h1 className="b-title">{pageTitle(route, newTicketTitle)}</h1>
@@ -267,7 +367,7 @@ export function MemberApp() {
             <span>建单</span>
           </a>
           {tab('tools', '🧰', '工具', undefined, toolsOn)}
-          {tab('me', '👤', '我的', undefined, meOn)}
+          {tab('me', '👤', '我的', draftCount, meOn, 'amber')}
         </nav>
       </div>
     </main>

@@ -74,12 +74,14 @@ type ReplyInput struct {
 	Deliver       bool     // 交付标记，仅指派人一方可用（#36）
 	AuthorName    string   // 访客自报的署名
 	ViaAgent      bool     // 访客自报「由其 Agent 写成」
+	Actor         *Author  // 发出回复草稿时使用原执笔 Agent 的正式署名
 }
 
 // ReplyResult 是回复成功后的投影。
 type ReplyResult struct {
 	ReplyNo     int64
 	TimelineSeq int64 // 本条回复事件的 seq
+	Deliver     bool
 	AuthorName  string
 	WaitingOn   WaitingOn
 }
@@ -89,33 +91,18 @@ type ReplyResult struct {
 // 工单关闭后只读，重开后恢复可回复（spec「凭证与访问」）。访客的回复带
 // 链接备注与自报信息；成员的自报字段不采纳（署名由凭证决定，ADR 0003）。
 func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string, in ReplyInput) (ReplyResult, error) {
+	if err := m.ValidateReply(ctx, viewer, ref, in); err != nil {
+		return ReplyResult{}, err
+	}
 	full, err := m.ForViewer(ctx, viewer, ref)
 	if err != nil {
 		return ReplyResult{}, err
 	}
-	if viewer.Kind == identity.ViewerGuest {
-		if full.Status != "open" {
-			return ReplyResult{}, ErrTicketClosed
-		}
-	}
-	if in.Deliver {
-		// 交付标记只限指派人一方（本人或其 Agent）；交付不改变工单状态，
-		// 由发起人验收后关闭。
-		if full.Status != "open" || full.AssigneeID == 0 || viewer.Member.ID != full.AssigneeID {
-			return ReplyResult{}, &DeliverAssigneeOnlyError{
-				Closed: full.Status != "open", Assignee: full.AssigneeName,
-			}
-		}
-	}
-	// 附件引用：attachment_ids 与正文 att: 合并去重（插图语法单独标记）。
-	refs := attachments.ParsePostRefs(in.BodyMD, in.AttachmentIDs)
-	if strings.TrimSpace(in.BodyMD) == "" && len(refs) == 0 {
-		return ReplyResult{}, ErrEmptyReply
-	}
-
-	now := m.clk.Now()
 	author := authorOf(viewer)
-	var notified []int64
+	if in.Actor != nil {
+		author = *in.Actor
+	}
+	refs := attachments.ParsePostRefs(in.BodyMD, in.AttachmentIDs)
 	if viewer.Kind == identity.ViewerGuest {
 		author = guestAuthorOf(viewer, in.AuthorName, in.ViaAgent)
 	}
@@ -124,30 +111,55 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 		return ReplyResult{}, err
 	}
 	defer tx.Rollback()
+	result, notified, err := m.replyTx(ctx, tx, full, viewer, author, refs, in)
+	if err != nil {
+		return ReplyResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ReplyResult{}, err
+	}
+	m.Wake(notified)
+	after, err := m.ByRef(ctx, ref)
+	if err != nil {
+		return ReplyResult{}, err
+	}
+	turn, err := m.WaitingOn(ctx, after)
+	if err != nil {
+		return ReplyResult{}, err
+	}
+	result.WaitingOn = turn
+	return result, nil
+}
+
+func (m *Manager) replyTx(ctx context.Context, tx *sql.Tx, full Full, viewer identity.Viewer,
+	author Author, refs []attachments.PostRef, in ReplyInput) (ReplyResult, []int64, error) {
+	now := m.clk.Now()
+	var notified []int64
+	var err error
 
 	var replies int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM timeline_events WHERE ticket_seq = ? AND type = 'reply'`, full.Seq).
 		Scan(&replies); err != nil {
-		return ReplyResult{}, err
+		return ReplyResult{}, nil, err
 	}
 	replyNo := int64(replies) + 1
 	// 认领附件（两步上传的第二步）：引用的必须存在、待用、且是本次凭证上传的。
 	if err := m.atts.ClaimTx(ctx, tx, full.Seq, attachments.PrincipalOf(viewer), refs,
 		attachments.ClaimAllPending, "回复 "+strconv.FormatInt(replyNo, 10), now); err != nil {
-		return ReplyResult{}, err
+		return ReplyResult{}, nil, err
 	}
 	eventSeq, change, err := m.appendEvent(ctx, tx, full.Seq, now, author, "reply")
 	if err != nil {
-		return ReplyResult{}, err
+		return ReplyResult{}, nil, err
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE timeline_events SET body_md = ?, reply_no = ?, deliver = ?, attachment_ids = ? WHERE ticket_seq = ? AND seq = ?`,
 		in.BodyMD, replyNo, boolToInt(in.Deliver), attachmentIDsJSON(refs), full.Seq, eventSeq); err != nil {
-		return ReplyResult{}, fmt.Errorf("写入回复失败：%w", err)
+		return ReplyResult{}, nil, fmt.Errorf("写入回复失败：%w", err)
 	}
 	if err := touchLastChange(ctx, tx, full.Seq, change); err != nil {
-		return ReplyResult{}, err
+		return ReplyResult{}, nil, err
 	}
 	if m.notifier != nil {
 		after := full
@@ -161,27 +173,34 @@ func (m *Manager) Reply(ctx context.Context, viewer identity.Viewer, ref string,
 			Before: full, After: after, Actor: author, Event: after.Timeline[len(after.Timeline)-1],
 		})
 		if err != nil {
-			return ReplyResult{}, err
+			return ReplyResult{}, nil, err
 		}
-	}
-	if err := m.commitAndWake(tx, notified); err != nil {
-		return ReplyResult{}, err
-	}
-
-	after, err := m.ByRef(ctx, ref)
-	if err != nil {
-		return ReplyResult{}, err
-	}
-	turn, err := m.WaitingOn(ctx, after)
-	if err != nil {
-		return ReplyResult{}, err
 	}
 	return ReplyResult{
 		ReplyNo:     replyNo,
 		TimelineSeq: eventSeq,
+		Deliver:     in.Deliver,
 		AuthorName:  author.DisplayName(),
-		WaitingOn:   turn,
-	}, nil
+	}, notified, nil
+}
+
+// ValidateReply 按原回复规则做保存草稿前的校验，不写任何工单数据。
+func (m *Manager) ValidateReply(ctx context.Context, viewer identity.Viewer, ref string, in ReplyInput) error {
+	full, err := m.ForViewer(ctx, viewer, ref)
+	if err != nil {
+		return err
+	}
+	if viewer.Kind == identity.ViewerGuest && full.Status != "open" {
+		return ErrTicketClosed
+	}
+	if in.Deliver && (full.Status != "open" || full.AssigneeID == 0 || viewer.Member.ID != full.AssigneeID) {
+		return &DeliverAssigneeOnlyError{Closed: full.Status != "open", Assignee: full.AssigneeName}
+	}
+	refs := attachments.ParsePostRefs(in.BodyMD, in.AttachmentIDs)
+	if strings.TrimSpace(in.BodyMD) == "" && len(refs) == 0 {
+		return ErrEmptyReply
+	}
+	return nil
 }
 
 // ReviseInput 是修订说明的输入。只需传改动的部分：title、brief_md（非模板工单）
@@ -193,9 +212,10 @@ type ReviseInput struct {
 	BriefMD       *string
 	Fields        map[string]string // 模板工单：只需传改动的字段
 	AttachmentIDs []string
-	BaseRevision  int64  // 缺省时为 0，视为没带
-	AuthorName    string // 访客自报的署名（仅访客凭证采纳）
-	ViaAgent      bool   // 访客自报「由其 Agent 写成」
+	BaseRevision  int64   // 缺省时为 0，视为没带
+	AuthorName    string  // 访客自报的署名（仅访客凭证采纳）
+	ViaAgent      bool    // 访客自报「由其 Agent 写成」
+	Actor         *Author // 发出草稿时用草稿最后执笔的 Agent 署名
 }
 
 // Revise 以 viewer 的身份修订标题/说明：校验 base_revision 乐观锁、推进版本号、
@@ -208,6 +228,9 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 		return Ticket{}, err
 	}
 	author := authorOf(viewer)
+	if in.Actor != nil {
+		author = *in.Actor
+	}
 	if viewer.Kind == identity.ViewerGuest {
 		if full.Status != "open" {
 			return Ticket{}, ErrTicketClosed
@@ -290,6 +313,7 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 	revision := full.BriefRevision + 1
 	var fieldsJSON any
 	var attachmentIDsJSON any
+	var result sql.Result
 	if attachmentIDs != nil {
 		buf, err := json.Marshal(attachmentIDs)
 		if err != nil {
@@ -303,15 +327,27 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 			return Ticket{}, fmt.Errorf("序列化字段值失败：%w", err)
 		}
 		fieldsJSON = string(buf)
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE tickets SET title = ?, brief_md = ?, fields_json = ?, brief_revision = ?, brief_attachment_ids = ? WHERE seq = ?`,
-			title, brief, fieldsJSON, revision, attachmentIDsJSON, full.Seq); err != nil {
+		result, err = tx.ExecContext(ctx,
+			`UPDATE tickets SET title = ?, brief_md = ?, fields_json = ?, brief_revision = ?, brief_attachment_ids = ?
+			 WHERE seq = ? AND brief_revision = ?`,
+			title, brief, fieldsJSON, revision, attachmentIDsJSON, full.Seq, in.BaseRevision)
+		if err != nil {
 			return Ticket{}, fmt.Errorf("写入修订失败：%w", err)
 		}
-	} else if _, err := tx.ExecContext(ctx,
-		`UPDATE tickets SET title = ?, brief_md = ?, brief_revision = ?, brief_attachment_ids = ? WHERE seq = ?`,
-		title, brief, revision, attachmentIDsJSON, full.Seq); err != nil {
-		return Ticket{}, fmt.Errorf("写入修订失败：%w", err)
+	} else {
+		result, err = tx.ExecContext(ctx,
+			`UPDATE tickets SET title = ?, brief_md = ?, brief_revision = ?, brief_attachment_ids = ?
+			 WHERE seq = ? AND brief_revision = ?`,
+			title, brief, revision, attachmentIDsJSON, full.Seq, in.BaseRevision)
+		if err != nil {
+			return Ticket{}, fmt.Errorf("写入修订失败：%w", err)
+		}
+		if n, _ := result.RowsAffected(); n == 0 {
+			return Ticket{}, &RevisionConflictError{BaseRevision: in.BaseRevision, CurrentRevision: revision}
+		}
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return Ticket{}, &RevisionConflictError{BaseRevision: in.BaseRevision, CurrentRevision: revision}
 	}
 	if err := m.atts.ClaimTx(ctx, tx, full.Seq, attachments.PrincipalOf(viewer), briefRefs,
 		attachments.ClaimOnlyPending, "说明", now); err != nil {
@@ -330,6 +366,12 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 		return Ticket{}, fmt.Errorf("写入修订事件失败：%w", err)
 	}
 	if err := touchLastChange(ctx, tx, full.Seq, change); err != nil {
+		return Ticket{}, err
+	}
+	snapshot := full.Ticket
+	snapshot.Title, snapshot.BriefMD, snapshot.Fields = title, brief, fields
+	snapshot.BriefRevision, snapshot.BriefAttachmentIDs = revision, attachmentIDs
+	if err := m.insertBriefVersionTx(ctx, tx, snapshot, author, now); err != nil {
 		return Ticket{}, err
 	}
 	if m.notifier != nil {

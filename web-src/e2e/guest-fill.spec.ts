@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext, type Locator, type Page } from '@playwright/test'
-import { login, openGuestPage } from './helpers'
+import { login, markDraftIntroSeen, openGuestPage } from './helpers'
 
 // 访客分组填写页（#65）：持「可填写说明」链接的访客第一次打开链接先看到
 // 落地页（#66），「开始填写」进入分组清单式填写页；补全过说明后再打开链接
@@ -21,12 +21,15 @@ async function loginAdmin(request: APIRequestContext) {
 
 /** 造一张 Bug 反馈模板工单（分组：哪台仪器 / 发生了什么 / 影响多大，必填 6 项全部留空）
  *  + 一条带「可填写说明」权限的访客链接。 */
-async function seedFillTicket(request: APIRequestContext): Promise<FillSeed> {
+async function seedFillTicket(
+  request: APIRequestContext,
+  opts: { title?: string } = {},
+): Promise<FillSeed> {
   await loginAdmin(request)
   const created = await request.post('/api/v1/tickets', {
     data: {
       template: 'bug-report',
-      title: 'UD-2300 质控时报警 E-203',
+      title: opts.title ?? 'UD-2300 质控时报警 E-203',
       fields: {},
       labels: ['机型:UD-2300'],
     },
@@ -588,21 +591,23 @@ test.describe('桌面视口', () => {
   })
 
   test('附件区的日志独立于字段，提交后列在说明底部', async ({ page, request, browser }) => {
-    const seed = await seedFillTicket(request)
+    const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    const logName = `质控日志-${suffix}.log`
+    const seed = await seedFillTicket(request, { title: `附件区独立提交 ${suffix}` })
     await openGuestPage(page, request, seed.linkKey)
     await page.getByRole('button', { name: '开始填写' }).click()
 
     const side = page.locator('.fill-side')
     await side.locator('.cf.area input[type=file]').setInputFiles({
-      name: '质控日志.log',
+      name: logName,
       mimeType: 'text/plain',
       buffer: Buffer.from('E-203 at 09:01\n'),
     })
-    await expect(side.locator('.staged-file.ready')).toContainText('质控日志.log', { timeout: 15000 })
+    await expect(side.locator('.staged-file.ready').filter({ hasText: logName })).toBeVisible({ timeout: 15000 })
 
     await page.reload()
     await page.getByRole('button', { name: '继续填写（必填 0/5）' }).click()
-    await expect(page.locator('.fill-side .staged-file')).toContainText('质控日志.log')
+    await expect(page.locator('.fill-side .staged-file').filter({ hasText: logName })).toBeVisible()
     for (const textarea of await page.locator('.cf:not(.area) textarea').all()) {
       await expect(textarea).not.toHaveValue(/att:/)
     }
@@ -618,14 +623,15 @@ test.describe('桌面视口', () => {
 
     const member = await browser.newPage({ baseURL: `http://127.0.0.1:${process.env.E2E_PORT || '8901'}` })
     await login(member, ADMIN)
+    await markDraftIntroSeen(member.request)
     await member.goto(`/t/${seed.number}`)
     const brief = member.locator('[data-bubble="brief"]')
-    await expect(brief.locator('.atts .att')).toContainText('质控日志.log', { timeout: 15000 })
+    await expect(brief.locator('.atts .att').filter({ hasText: logName })).toBeVisible({ timeout: 15000 })
     // 成员端空字段默认折叠；先展开再检查它没有吞掉统一附件区的引用。
     await brief.getByRole('button', { name: /另有 \d+ 项未填写 ▸/ }).click()
     const guess = brief.locator('.f', { hasText: '你的猜测或补充？' })
     await expect(guess).not.toContainText('att:')
-    await expect(guess.getByRole('link', { name: '质控日志.log' })).toHaveCount(0)
+    await expect(guess.getByRole('link', { name: logName })).toHaveCount(0)
     await member.close()
   })
 

@@ -333,7 +333,8 @@ func (s *Server) IssueAgentToken(t testing.TB, c *http.Client, name string) (int
 		ID    int64  `json:"id"`
 		Token string `json:"token"`
 	}
-	res := s.Do(t, c, http.MethodPost, "/api/v1/me/agent-tokens", map[string]string{"name": name}, &issued)
+	res := s.Do(t, c, http.MethodPost, "/api/v1/me/agent-tokens",
+		map[string]string{"name": name, "draft_mode": "direct"}, &issued)
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("签发 Agent token %q 失败：状态码 %d", name, res.StatusCode)
 	}

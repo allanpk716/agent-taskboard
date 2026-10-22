@@ -70,6 +70,66 @@ export interface TimelineEvent {
   to?: string
   collaborator?: string
   label?: string
+  signature?: string
+  drafting_count?: number
+  brief_version_saved?: boolean
+}
+
+export interface DraftView {
+  id: string
+  kind: string
+  status: string
+  version: number
+  ticket?: { number: string; seq: number; title: string; url: string } | null
+  request: {
+    body_md: string
+    title?: string | null
+    brief_md?: string | null
+    fields?: Record<string, string> | null
+    attachment_ids?: string[]
+    deliver?: boolean
+    base_revision?: number
+  }
+  attachments: Attachment[]
+  author: Author
+  versions: { version: number; author: string; at: string }[]
+  base: { timeline_seq: number; brief_revision?: number }
+  new_events: number
+  preview_url: string
+  url: string
+  result?: { number: string } | null
+}
+
+export interface CreateDraftView extends Omit<DraftView, 'request'> {
+  request: CreateDraftRequest
+  warnings?: { field: string; message: string }[]
+}
+
+export type AnyDraftView = DraftView | CreateDraftView
+
+export interface CreateDraftRequest {
+  kind: string
+  template?: string
+  title: string
+  brief_md: string
+  fields?: Record<string, string>
+  labels: string[]
+  assignee: string
+  guest_link?: {
+    note: string
+    valid_days?: number
+    expires_at?: string
+    can_edit_brief: boolean
+  } | null
+}
+
+export interface DraftHistoryVersion {
+  version: number
+  body_md: string
+  attachment_ids: string[]
+  author: string
+  author_kind: 'member' | 'agent'
+  at: string
 }
 
 export interface Collaborator {
@@ -94,6 +154,16 @@ export interface Brief {
   template_groups?: TemplateGroup[]
 }
 
+export interface BriefVersion {
+  revision: number
+  title: string
+  markdown: string
+  fields?: Record<string, string> | null
+  attachment_ids: string[]
+  author: Author
+  at: string
+}
+
 export interface TicketView {
   number: string
   seq: number
@@ -108,6 +178,7 @@ export interface TicketView {
   waiting_on: { party: string; member?: string | null; text: string; reason: string }
   /** 仅成员视角：工单当前标签（访客响应没有这个字段）。 */
   labels?: string[]
+  my_draft?: DraftView | null
   brief: Brief
   attachments: Attachment[]
   viewer: {

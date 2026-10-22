@@ -2,7 +2,15 @@
 import { api, ApiError } from '../api'
 import { compressImage } from '../shared/compress'
 import { fetchServerVersion } from '../shared/health'
-import type { Author, Collaborator, TicketView } from '../shared/types'
+import type {
+  Author,
+  Collaborator,
+  CreateDraftRequest,
+  CreateDraftView,
+  DraftHistoryVersion,
+  DraftView,
+  TicketView,
+} from '../shared/types'
 
 export type { Collaborator } from '../shared/types'
 
@@ -114,12 +122,25 @@ export interface AccessRecordsResponse {
   since: string
 }
 
-export async function fetchSession(): Promise<{ viewer: { kind: string; member: Me } }> {
+export interface SessionView {
+  viewer: { kind: string; member: Me }
+  notices?: string[]
+}
+
+export async function fetchSession(): Promise<SessionView> {
   return api('/api/v1/session')
+}
+
+export async function markDraftsIntroSeen(): Promise<void> {
+  await api('/api/v1/me/notices/drafts_intro/seen', { method: 'POST' })
 }
 
 export async function fetchInbox(): Promise<InboxResponse> {
   return api('/api/v1/inbox')
+}
+
+export async function fetchDrafts(): Promise<{ count: number; drafts: DraftView[] }> {
+  return api('/api/v1/drafts')
 }
 
 export { fetchServerVersion }
@@ -358,8 +379,10 @@ export async function repointAlias(alias: string, label: string): Promise<void> 
 export interface AgentTokenRow {
   id: number
   name: string
+  draft_mode: 'required' | 'direct'
   created_at: string
   revoked_at?: string | null
+  draft_mode_switched_by_launch?: boolean
 }
 
 export interface IssuedToken {
@@ -375,10 +398,23 @@ export async function fetchAgentTokens(): Promise<AgentTokenRow[]> {
   return (body.tokens ?? []) as AgentTokenRow[]
 }
 
-export async function issueAgentToken(name: string): Promise<IssuedToken> {
+export async function issueAgentToken(
+  name: string,
+  draftMode: 'required' | 'direct',
+): Promise<IssuedToken> {
   return api('/api/v1/me/agent-tokens', {
     method: 'POST',
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, draft_mode: draftMode }),
+  })
+}
+
+export async function setAgentTokenDraftMode(
+  id: number,
+  draftMode: 'required' | 'direct',
+): Promise<void> {
+  await api(`/api/v1/me/agent-tokens/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ draft_mode: draftMode }),
   })
 }
 
@@ -511,6 +547,88 @@ export async function replyTicket(
     body: JSON.stringify(body),
     idempotencyKey: idemKey,
   })
+}
+
+export async function sendDraft(
+  id: string,
+  version: number,
+  opts: { confirmThroughSeq?: number; deliver?: boolean } = {},
+): Promise<{
+  signature: string
+  result: {
+    number: string
+    seq: number
+    url: string
+    warnings: { field: string; message: string }[]
+    assignee?: { id: number; name: string } | null
+    guest_link?: { url: string; note: string; expires_at: string; can_edit_brief: boolean; share_text: string }
+    share_text?: string | null
+  }
+}> {
+  return api(`/api/v1/drafts/${encodeURIComponent(id)}/send`, {
+    method: 'POST',
+    body: JSON.stringify({
+      version,
+      ...(opts.confirmThroughSeq === undefined ? {} : { confirm_through_seq: opts.confirmThroughSeq }),
+      ...(opts.deliver === undefined ? {} : { deliver: opts.deliver }),
+    }),
+  })
+}
+
+export async function fetchDraft(id: string): Promise<DraftView | CreateDraftView> {
+  return api(`/api/v1/drafts/${encodeURIComponent(id)}`)
+}
+
+export async function updateCreateDraft(
+  id: string,
+  baseVersion: number,
+  request: CreateDraftRequest,
+): Promise<CreateDraftView> {
+  return api(`/api/v1/drafts/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ base_version: baseVersion, request }),
+  })
+}
+
+export async function updateDraft(
+  id: string,
+  baseVersion: number,
+  request: {
+    body_md?: string
+    title?: string | null
+    brief_md?: string | null
+    fields?: Record<string, string> | null
+    attachment_ids?: string[]
+    deliver?: boolean
+    base_revision?: number
+  },
+): Promise<DraftView> {
+  return api(`/api/v1/drafts/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ base_version: baseVersion, request }),
+  })
+}
+
+export async function fetchBriefDrafting(
+  ticketNumber: string,
+  revision: number,
+): Promise<{ versions: import('../shared/types').BriefVersion[] }> {
+  return api(
+    `/api/v1/tickets/${encodeURIComponent(ticketNumber)}/brief-drafting/${revision}`,
+  )
+}
+
+export async function discardDraft(id: string): Promise<void> {
+  await api(`/api/v1/drafts/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export async function fetchReplyDrafting(
+  ticketNumber: string,
+  replyNo: number,
+): Promise<{ versions: DraftHistoryVersion[] }> {
+  return api(
+    `/api/v1/tickets/${encodeURIComponent(ticketNumber)}/drafting/${replyNo}`,
+  )
 }
 
 export interface LabelChangeResult {

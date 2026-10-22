@@ -7,9 +7,11 @@ import { useEffect, useState, type ReactNode } from 'react'
 export type Route =
   | { page: 'inbox' }
   | { page: 'tickets' }
+  | { page: 'drafts' }
   | { page: 'new' }
   | { page: 'feedback' }
   | { page: 'detail'; ref: string }
+  | { page: 'draft'; id: string }
   | { page: 'tools' }
   | { page: 'me' }
   | { page: 'templates' }
@@ -18,10 +20,13 @@ export type Route =
 
 export function parseRoute(pathname: string): Route {
   if (pathname.startsWith('/t/')) return { page: 'detail', ref: decodeURIComponent(pathname.slice(3)) }
+  if (pathname.startsWith('/drafts/'))
+    return { page: 'draft', id: decodeURIComponent(pathname.slice('/drafts/'.length)) }
   if (pathname.startsWith('/templates/'))
     return { page: 'templateEdit', key: decodeURIComponent(pathname.slice('/templates/'.length)) }
   if (pathname === '/templates') return { page: 'templates' }
   if (pathname === '/tickets') return { page: 'tickets' }
+  if (pathname === '/drafts') return { page: 'drafts' }
   if (pathname === '/new') return { page: 'new' }
   if (pathname === '/feedback') return { page: 'feedback' }
   if (pathname === '/tools') return { page: 'tools' }

@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 )
 
@@ -20,7 +19,12 @@ func Test入口附件迁移保留旧附件(t *testing.T) {
 	entries, _ := os.ReadDir("migrations")
 	names := []string{}
 	for _, e := range entries {
-		if !strings.HasPrefix(e.Name(), "0024_") {
+		var version int
+		if _, err := fmt.Sscanf(e.Name(), "%d_", &version); err != nil {
+			t.Fatal(err)
+		}
+		// 从 0024 之前的真实历史库出发，让 Open 按版本顺序补跑后续迁移。
+		if version < 24 {
 			names = append(names, e.Name())
 		}
 	}

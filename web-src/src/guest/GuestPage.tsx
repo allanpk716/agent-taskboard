@@ -201,6 +201,9 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
       <Conversation
         ticket={ticket}
         onEditBrief={ticket.viewer.can.edit_brief && ticket.status !== 'closed' ? () => setMode('fill') : undefined}
+        fetchBriefVersions={async () =>
+          guestApi(linkKey, `/api/v1/tickets/${encodeURIComponent(ticket.number)}/brief-versions`)
+        }
       />
       {closed || !ticket.viewer.can.reply ? (
         <div className="ro">工单已关闭，只能查看。如还有问题，请联系 {contact}。</div>

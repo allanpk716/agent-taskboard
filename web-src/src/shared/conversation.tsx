@@ -1,12 +1,13 @@
 // 对话流的共用气泡与事件行（#38 访客网页 / #41 成员工单详情都用）：
 // 说明 = 第一条气泡（按字段显示问句和回答）、回复气泡（头像 + 署名 + Markdown
 // + 附件条）、居中灰色系统事件行。成员视角比访客多看到标签事件。
-import { useState } from 'react'
-import type { Author, TicketView, TimelineEvent } from './types'
+import { useCallback, useState } from 'react'
+import type { Author, BriefVersion, DraftHistoryVersion, TicketView, TimelineEvent } from './types'
 import { authorName, closeReasonText, fmtDateCN, fmtShort } from './format'
 import { Markdown, inlineImageIds } from './markdown'
 import { AttachmentChips, Avatar, DeactivatedBadge } from './widgets'
 import type { Attachment } from './types'
+import { BriefVersions } from './BriefVersions'
 
 /** 事件文案（成员视角可见全部类型；访客看不到标签事件，服务端已过滤）。 */
 export function eventText(e: TimelineEvent): string {
@@ -49,12 +50,31 @@ export function eventText(e: TimelineEvent): string {
 }
 
 /** 居中的灰色系统事件行。 */
-export function EventLine({ event }: { event: TimelineEvent }) {
+export function EventLine({
+  event,
+  onShowBriefVersion,
+}: {
+  event: TimelineEvent
+  onShowBriefVersion?: (revision: number) => void
+}) {
   return (
     <div className="event">
       {authorName(event.actor)}
       {event.actor.member?.deactivated && <DeactivatedBadge />}
-        {' '}{eventText(event)} · {fmtShort(event.at)}
+      {' '}{eventText(event)} · {fmtShort(event.at)}
+      {event.signature && <span className="draft-confirm">{event.signature}</span>}
+      {onShowBriefVersion && (event.type === 'brief_revised' || event.type === 'created') &&
+        event.brief_version_saved === false && <span className="hint">{' · 此版本上线前未存档'}</span>}
+      {onShowBriefVersion && event.type === 'brief_revised' && event.brief_version_saved !== false && (
+        <button type="button" className="linkish sm" onClick={() => onShowBriefVersion(event.revision ?? 0)}>
+          查看差异
+        </button>
+      )}
+      {onShowBriefVersion && event.type === 'created' && event.brief_version_saved !== false && (
+        <button type="button" className="linkish sm" onClick={() => onShowBriefVersion(1)}>
+          查看第 1 版
+        </button>
+      )}
     </div>
   )
 }
@@ -70,11 +90,19 @@ export function BriefBubble({
   onImageClick,
   onEditBrief,
   collapseEmpty = false,
+  fetchVersions,
+  briefDraftingOpen = false,
+  onToggleBriefDrafting,
+  fetchBriefDrafting,
 }: {
   ticket: TicketView
   onImageClick: (url: string) => void
   onEditBrief?: () => void
   collapseEmpty?: boolean
+  fetchVersions?: () => Promise<{ versions: import('./types').BriefVersion[] }>
+  briefDraftingOpen?: boolean
+  onToggleBriefDrafting?: () => void
+  fetchBriefDrafting?: (revision: number) => Promise<{ versions: import('./types').BriefVersion[] }>
 }) {
   const [emptyFieldsOpen, setEmptyFieldsOpen] = useState(false)
   const atts = attachmentsOf(ticket)
@@ -86,6 +114,7 @@ export function BriefBubble({
   const emptyCount = fields.filter((f) => !(values[f.key] ?? '').trim()).length
   const reviser = ticket.brief.last_revised
   const revisedEvent = [...ticket.timeline].reverse().find((e) => e.type === 'brief_revised')
+  const draftEvent = [...ticket.timeline].reverse().find((e) => e.type === 'brief_revised' && e.signature && e.drafting_count)
   const reviserName =
     reviser.type === 'guest' ? `${reviser.display_name}（访客）` : reviser.display_name
   const reviserAvatar: Author =
@@ -96,6 +125,31 @@ export function BriefBubble({
             revisedEvent?.actor.member ??
             ticket.creator.member ?? { id: 0, name: reviser.display_name },
         }
+  const [selectedVersion, setSelectedVersion] = useState<number | null>(null)
+  const [selectedDraftVersion, setSelectedDraftVersion] = useState<number | null>(null)
+  const draftRevision = draftEvent?.revision
+  const loadDrafting = useCallback(
+    async () => {
+      if (draftRevision === undefined || !fetchBriefDrafting) throw new Error('brief drafting unavailable')
+      return fetchBriefDrafting(draftRevision)
+    },
+    [fetchBriefDrafting, draftRevision],
+  )
+  const loadVersions = useCallback(async () => {
+    if (fetchVersions) return fetchVersions()
+    const res = await fetch(`/api/v1/tickets/${encodeURIComponent(ticket.number)}/brief-versions`, {
+      cache: 'no-store',
+    })
+    if (!res.ok) throw new Error('brief versions unavailable')
+    return (await res.json()) as { versions: import('./types').BriefVersion[] }
+  }, [fetchVersions, ticket.number, ticket.brief.revision])
+  const selectVersion = (revision: number, _shift: boolean) => {
+    if (revision === -1) {
+      setSelectedVersion(null)
+      return
+    }
+    setSelectedVersion(revision)
+  }
   return (
     <div className="bubble" data-bubble="brief">
       <Avatar author={reviserAvatar} />
@@ -151,6 +205,36 @@ export function BriefBubble({
           <Markdown body={ticket.brief.markdown} attachments={atts} onImageClick={onImageClick} />
         )}
         <AttachmentChips attachments={briefAtts} />
+        {draftEvent && onToggleBriefDrafting && fetchBriefDrafting && (
+          <button
+            type="button"
+            className="linkish sm drafting-toggle"
+            aria-expanded={briefDraftingOpen}
+            onClick={onToggleBriefDrafting}
+          >
+            查看起草过程（{draftEvent.drafting_count} 版）
+          </button>
+        )}
+        <BriefVersions
+          ticket={ticket}
+          loadVersions={loadVersions}
+          selected={selectedVersion}
+          onSelect={selectVersion}
+        />
+        {briefDraftingOpen && fetchBriefDrafting && (
+          <BriefVersions
+            ticket={ticket}
+            loadVersions={loadDrafting}
+            selected={selectedDraftVersion}
+            onSelect={(revision) => setSelectedDraftVersion(revision === -1 ? null : revision)}
+            drafting={{
+              replyNo: draftEvent?.revision ?? 0,
+              author: draftEvent ? authorName(draftEvent.actor) : '',
+              sentAt: draftEvent?.at ?? '',
+            }}
+            draftingKind="brief"
+          />
+        )}
       </div>
     </div>
   )
@@ -161,12 +245,19 @@ export function ReplyBubble({
   event,
   ticket,
   onImageClick,
+  draftingOpen = false,
+  onToggleDrafting,
+  fetchDrafting,
 }: {
   event: TimelineEvent
   ticket: TicketView
   onImageClick: (url: string) => void
+  draftingOpen?: boolean
+  onToggleDrafting?: () => void
+  fetchDrafting?: () => Promise<{ versions: DraftHistoryVersion[] }>
 }) {
   const atts = attachmentsOf(ticket)
+  const [selectedVersion, setSelectedVersion] = useState<number | null>(null)
   const inline = inlineImageIds(event.body_md ?? '')
   const chips = (event.attachment_ids ?? [])
     .filter((id) => !inline.has(id))
@@ -180,9 +271,45 @@ export function ReplyBubble({
           <b>{authorName(event.actor)}</b>
           {event.actor.member?.deactivated && <DeactivatedBadge />} · {fmtShort(event.at)}
           {event.deliver && <span className="deliver-tag">交付</span>}
+          {event.signature && <span className="draft-confirm">{event.signature}</span>}
         </div>
         <Markdown body={event.body_md ?? ''} attachments={atts} onImageClick={onImageClick} />
         <AttachmentChips attachments={chips} />
+        {event.signature && !!event.drafting_count && onToggleDrafting && fetchDrafting && (
+          <button
+            type="button"
+            className="linkish sm drafting-toggle"
+            aria-expanded={draftingOpen}
+            onClick={onToggleDrafting}
+          >
+            查看起草过程（{event.drafting_count} 版）
+          </button>
+        )}
+        {draftingOpen && fetchDrafting && (
+          <BriefVersions
+            ticket={ticket}
+            loadVersions={async () => {
+              const body = await fetchDrafting()
+              const versions: BriefVersion[] = body.versions.map((v) => ({
+                revision: v.version,
+                title: '',
+                markdown: v.body_md,
+                attachment_ids: v.attachment_ids,
+                author: { author_name: v.author },
+                at: v.at,
+              }))
+              return { versions }
+            }}
+            selected={selectedVersion}
+            onSelect={(revision) => setSelectedVersion(revision === -1 ? null : revision)}
+            drafting={{
+              replyNo: event.reply_no ?? 0,
+              author: authorName(event.actor),
+              sentAt: event.at,
+            }}
+            draftingKind="reply"
+          />
+        )}
       </div>
     </div>
   )

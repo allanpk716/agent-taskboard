@@ -17,11 +17,13 @@ var ErrAgentNameTaken = errors.New("该名字的 Agent 已存在")
 
 // ErrAgentTokenNotFound 表示没有这个属于当前成员的 Agent token。
 var ErrAgentTokenNotFound = errors.New("没有这个 Agent token")
+var ErrInvalidDraftMode = errors.New("draft_mode 只能是 required 或 direct")
 
 // Agent 是挂在某位成员名下的一个具名 Agent（ADR 0003），不是独立账号。
 type Agent struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	DraftMode string `json:"draft_mode,omitempty"`
 }
 
 // AgentToken 是一次签发的结果。明文 token 只出现在这里，库与列表都不回显。
@@ -59,6 +61,10 @@ func (v Viewer) IsWebSession() bool {
 
 // IssueAgentToken 为 member 签发一个具名 Agent token。名字未撤销时不能重复。
 func (m *Manager) IssueAgentToken(ctx context.Context, member Member, name string) (AgentToken, error) {
+	return m.IssueAgentTokenWithMode(ctx, member, name, "direct")
+}
+
+func (m *Manager) IssueAgentTokenWithMode(ctx context.Context, member Member, name, draftMode string) (AgentToken, error) {
 	var exists int
 	if err := m.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM agent_tokens WHERE member_id = ? AND name = ? AND revoked_at IS NULL`,
@@ -76,15 +82,15 @@ func (m *Manager) IssueAgentToken(ctx context.Context, member Member, name strin
 	token := agentTokenPrefix + base64URLEncode(buf)
 	now := m.clock.Now()
 	tok := AgentToken{
-		Agent:     Agent{Name: name},
+		Agent:     Agent{Name: name, DraftMode: draftMode},
 		Token:     token,
 		CreatedAt: now,
 	}
 	err := m.db.QueryRowContext(ctx, `
-		INSERT INTO agent_tokens (member_id, name, token_hash, created_at)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO agent_tokens (member_id, name, token_hash, draft_mode, created_at)
+		VALUES (?, ?, ?, ?, ?)
 		RETURNING id`,
-		member.ID, name, hashToken(token), now.Format(time.RFC3339Nano),
+		member.ID, name, hashToken(token), draftMode, now.Format(time.RFC3339Nano),
 	).Scan(&tok.Agent.ID)
 	if err != nil {
 		return AgentToken{}, err
@@ -104,11 +110,12 @@ func (m *Manager) RotateAgentToken(ctx context.Context, member Member, id int64)
 
 	var (
 		name      string
+		draftMode string
 		revokedAt sql.NullString
 	)
 	err = tx.QueryRowContext(ctx,
-		`SELECT name, revoked_at FROM agent_tokens WHERE id = ? AND member_id = ?`, id, member.ID).
-		Scan(&name, &revokedAt)
+		`SELECT name, draft_mode, revoked_at FROM agent_tokens WHERE id = ? AND member_id = ?`, id, member.ID).
+		Scan(&name, &draftMode, &revokedAt)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && revokedAt.Valid) {
 		return AgentToken{}, ErrAgentTokenNotFound
 	}
@@ -122,7 +129,7 @@ func (m *Manager) RotateAgentToken(ctx context.Context, member Member, id int64)
 	}
 	token := agentTokenPrefix + base64URLEncode(buf)
 	now := m.clock.Now()
-	tok := AgentToken{Agent: Agent{Name: name}, Token: token, CreatedAt: now}
+	tok := AgentToken{Agent: Agent{Name: name, DraftMode: draftMode}, Token: token, CreatedAt: now}
 	res, err := tx.ExecContext(ctx,
 		`UPDATE agent_tokens SET revoked_at = ? WHERE id = ? AND member_id = ? AND revoked_at IS NULL`,
 		now.Format(time.RFC3339Nano), id, member.ID)
@@ -133,10 +140,10 @@ func (m *Manager) RotateAgentToken(ctx context.Context, member Member, id int64)
 		return AgentToken{}, ErrAgentTokenNotFound
 	}
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO agent_tokens (member_id, name, token_hash, created_at)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO agent_tokens (member_id, name, token_hash, draft_mode, created_at)
+		VALUES (?, ?, ?, ?, ?)
 		RETURNING id`,
-		member.ID, name, hashToken(token), now.Format(time.RFC3339Nano),
+		member.ID, name, hashToken(token), draftMode, now.Format(time.RFC3339Nano),
 	).Scan(&tok.Agent.ID)
 	if err != nil {
 		return AgentToken{}, err
@@ -173,13 +180,16 @@ type AgentTokenInfo struct {
 	// RevokedAt 非零表示已撤销（历史署名保留并标注「已停用」）。
 	RevokedAt time.Time
 	Revoked   bool
+	// DraftModeLaunchSwitched 表示这个 token 是 #217 上线迁移改为必须走草稿的。
+	DraftModeLaunchSwitched bool
 }
 
 // ListAgentTokens 列出成员名下的全部 Agent（含已撤销，新→旧），供个人设置页
 // 展示与撤销；不返回明文 token（只在签发时出现一次）。
 func (m *Manager) ListAgentTokens(ctx context.Context, member Member) ([]AgentTokenInfo, error) {
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT id, name, created_at, revoked_at FROM agent_tokens
+		SELECT id, name, draft_mode, created_at, revoked_at, draft_mode_switched_by_launch
+		FROM agent_tokens
 		WHERE member_id = ? ORDER BY id DESC`, member.ID)
 	if err != nil {
 		return nil, err
@@ -188,13 +198,15 @@ func (m *Manager) ListAgentTokens(ctx context.Context, member Member) ([]AgentTo
 	out := []AgentTokenInfo{}
 	for rows.Next() {
 		var (
-			info      AgentTokenInfo
-			createdAt string
-			revokedAt sql.NullString
+			info           AgentTokenInfo
+			createdAt      string
+			revokedAt      sql.NullString
+			launchSwitched int
 		)
-		if err := rows.Scan(&info.ID, &info.Name, &createdAt, &revokedAt); err != nil {
+		if err := rows.Scan(&info.ID, &info.Name, &info.DraftMode, &createdAt, &revokedAt, &launchSwitched); err != nil {
 			return nil, err
 		}
+		info.DraftModeLaunchSwitched = launchSwitched == 1
 		if info.CreatedAt, err = time.ParseInLocation(time.RFC3339Nano, createdAt, time.Local); err != nil {
 			return nil, err
 		}
@@ -221,10 +233,10 @@ func (m *Manager) ViewerFromAgentToken(ctx context.Context, token string) (Viewe
 		deactivated sql.NullString
 	)
 	err := m.db.QueryRowContext(ctx, `
-		SELECT t.id, t.name, t.revoked_at, m.id, m.username, m.name, m.is_admin, m.deactivated_at
+		SELECT t.id, t.name, t.draft_mode, t.revoked_at, m.id, m.username, m.name, m.is_admin, m.deactivated_at
 		FROM agent_tokens t JOIN members m ON m.id = t.member_id
 		WHERE t.token_hash = ?`, hashToken(token)).
-		Scan(&agent.ID, &agent.Name, &revokedAt, &member.ID, &member.Username, &member.Name, &isAdmin, &deactivated)
+		Scan(&agent.ID, &agent.Name, &agent.DraftMode, &revokedAt, &member.ID, &member.Username, &member.Name, &isAdmin, &deactivated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Viewer{}, ErrInvalidCredentials
 	}
@@ -236,6 +248,22 @@ func (m *Manager) ViewerFromAgentToken(ctx context.Context, token string) (Viewe
 	}
 	member.IsAdmin = isAdmin == 1
 	return Viewer{Kind: ViewerMember, Member: member, Agent: &agent}, nil
+}
+
+func (m *Manager) SetAgentTokenDraftMode(ctx context.Context, member Member, id int64, mode string) error {
+	if mode != "required" && mode != "direct" {
+		return ErrInvalidDraftMode
+	}
+	res, err := m.db.ExecContext(ctx, `
+		UPDATE agent_tokens SET draft_mode = ? WHERE id = ? AND member_id = ? AND revoked_at IS NULL`,
+		mode, id, member.ID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrAgentTokenNotFound
+	}
+	return nil
 }
 
 // ViewerFromSession 把网页会话 id 解析成本人的 Viewer。

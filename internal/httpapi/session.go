@@ -14,6 +14,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
+	"github.com/allanpk716/agent-taskboard/internal/drafts"
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/notifications"
@@ -36,6 +37,7 @@ type API struct {
 	backups         *ops.Backups
 	notifications   *notifications.Manager
 	accessRecords   *accessrecords.Manager
+	drafts          *drafts.Manager
 	cfg             config.Config
 	intakeUploads   *intakeUploadLimiter
 	stampedClientMu sync.Mutex
@@ -44,9 +46,9 @@ type API struct {
 	clientOnline    map[int64]int
 }
 
-func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager, backups *ops.Backups, accessRecs *accessrecords.Manager, cfg config.Config, clk clock.Clock) *API {
+func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager, backups *ops.Backups, accessRecs *accessrecords.Manager, draftStore *drafts.Manager, cfg config.Config, clk clock.Clock) *API {
 	return &API{ident: ident, tickets: tk, templates: tpl, idem: idem, atts: atts, backups: backups,
-		accessRecords: accessRecs, cfg: cfg,
+		accessRecords: accessRecs, drafts: draftStore, cfg: cfg,
 		intakeUploads:  newIntakeUploadLimiter(cfg.Intake.UploadRatePerMin, clk),
 		stampedClients: make(map[string]*stampedClient),
 		clientOnline:   make(map[int64]int)}
@@ -61,9 +63,12 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/guest-links/enter", a.handleGuestLinkClaim)
 	mux.HandleFunc("/api/v1/me/agent-tokens", a.handleAgentTokens)
 	mux.HandleFunc("/api/v1/me/agent-tokens/", a.handleAgentToken)
+	mux.HandleFunc("/api/v1/me/notices/", a.handleMemberNotice)
 	mux.HandleFunc("/api/v1/me/password", a.handleOwnPassword)
 	mux.HandleFunc("/api/v1/tickets", a.handleTicketsRoot)
 	mux.HandleFunc("/api/v1/tickets/", a.handleTicketRef)
+	mux.HandleFunc("/api/v1/drafts", a.handleDrafts)
+	mux.HandleFunc("/api/v1/drafts/", a.handleDraft)
 	mux.HandleFunc("/api/v1/inbox", a.handleInbox)
 	mux.HandleFunc("/api/v1/notifications", a.handleNotifications)
 	mux.HandleFunc("/api/v1/notifications/unread", a.handleNotificationsUnread)
@@ -265,13 +270,19 @@ func (a *API) sessionFromRequest(w http.ResponseWriter, r *http.Request) (identi
 
 // agentView 是 viewer.agent 的结构：具名 Agent 的 id 和名字（本人为 null）。
 type agentView struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	DraftMode string `json:"draft_mode,omitempty"`
 }
 
 type clientView struct {
 	ID       int64  `json:"id"`
 	Hostname string `json:"hostname"`
+}
+
+type draftsSummaryView struct {
+	Count int    `json:"count"`
+	URL   string `json:"url"`
 }
 
 // viewerView 是 viewer 的对外结构：成员带 member/agent；访客（#32）member 与
@@ -301,6 +312,8 @@ type sessionView struct {
 	Inbox            string             `json:"inbox,omitempty"`
 	Ticket           *sessionTicketView `json:"ticket,omitempty"`
 	MinClientVersion string             `json:"min_client_version"`
+	Drafts           *draftsSummaryView `json:"drafts,omitempty"`
+	Notices          []string           `json:"notices,omitempty"`
 }
 
 func (a *API) newSessionView(v identity.Viewer) sessionView {
@@ -317,12 +330,24 @@ func (a *API) newSessionView(v identity.Viewer) sessionView {
 	member := v.Member
 	vv.Member = &member
 	if v.Agent != nil {
-		vv.Agent = &agentView{ID: v.Agent.ID, Name: v.Agent.Name}
+		vv.Agent = &agentView{ID: v.Agent.ID, Name: v.Agent.Name, DraftMode: v.Agent.DraftMode}
 	}
 	if v.Client != nil {
 		vv.Client = &clientView{ID: v.Client.ID, Hostname: v.Client.Hostname}
 	}
-	return sessionView{Viewer: vv, Inbox: "/api/v1/inbox", MinClientVersion: a.cfg.Server.MinClientVersion}
+	count := 0
+	if list, err := a.drafts.List(context.Background(), v); err == nil {
+		count = len(list)
+	}
+	view := sessionView{Viewer: vv, Inbox: "/api/v1/inbox", MinClientVersion: a.cfg.Server.MinClientVersion,
+		Drafts: &draftsSummaryView{Count: count, URL: "/api/v1/drafts"}, Notices: []string{}}
+	if v.IsWebSession() {
+		notices, err := a.ident.UnseenWebNotices(context.Background(), v.Member)
+		if err == nil {
+			view.Notices = notices
+		}
+	}
+	return view
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

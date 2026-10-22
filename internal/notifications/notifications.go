@@ -40,6 +40,7 @@ const (
 	ReasonCollaboratorReplied = "collaborator_replied"
 	ReasonBackupFailing       = "backup_failing"
 	ReasonBackupRecovered     = "backup_recovered"
+	ReasonDraftPending        = "draft_pending"
 )
 
 type notificationStyle struct {
@@ -321,6 +322,68 @@ func (m *Manager) NotifyTx(ctx context.Context, tx *sql.Tx, in tickets.Notificat
 		memberIDs = append(memberIDs, d.MemberID)
 	}
 	return memberIDs, nil
+}
+
+type DraftNotificationInput struct {
+	MemberID        int64
+	TicketSeq       int64
+	TicketNumber    string
+	TicketTitle     string
+	Text            string
+	BaseTimelineSeq int64
+	AgentID         int64
+	AgentName       string
+	URL             string
+}
+
+// NotifyDraftTx 随草稿首次写成插入一条通知。草稿通知挂工单，但不进入未读。
+func (m *Manager) NotifyDraftTx(ctx context.Context, tx *sql.Tx, in DraftNotificationInput) error {
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO notifications (
+			member_id, ticket_seq, ticket_number, ticket_title, kind, reason, text,
+			trigger_seq, trigger_type, actor_kind, actor_name, actor_member_id, actor_agent_id,
+			url, created_at, read_at
+		) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, 'draft', 'agent', ?, ?, ?, ?, ?, NULL)`,
+		in.MemberID, in.TicketSeq, in.TicketNumber, in.TicketTitle, ReasonDraftPending, in.Text,
+		in.BaseTimelineSeq, in.AgentName, in.MemberID, in.AgentID, in.URL,
+		m.clk.Now().Format(time.RFC3339Nano))
+	return err
+}
+
+func (m *Manager) DraftNotifier() DraftSink { return draftSink{m} }
+
+type DraftSink interface {
+	NotifyDraftTx(ctx context.Context, tx *sql.Tx, memberID, ticketSeq int64, number, title, text string,
+		baseTimelineSeq, agentID int64, agentName, url string) error
+	NotifyCreateDraftTx(ctx context.Context, tx *sql.Tx, memberID, agentID int64,
+		memberName, agentName, title, url string) error
+	Wake(memberIDs []int64)
+}
+
+type draftSink struct{ m *Manager }
+
+func (s draftSink) NotifyDraftTx(ctx context.Context, tx *sql.Tx, memberID, ticketSeq int64,
+	number, title, text string, baseTimelineSeq, agentID int64, agentName, url string) error {
+	return s.m.NotifyDraftTx(ctx, tx, DraftNotificationInput{
+		MemberID: memberID, TicketSeq: ticketSeq, TicketNumber: number, TicketTitle: title,
+		Text: text, BaseTimelineSeq: baseTimelineSeq, AgentID: agentID, AgentName: agentName, URL: url,
+	})
+}
+
+func (s draftSink) Wake(memberIDs []int64) { s.m.Wake(memberIDs) }
+
+func (s draftSink) NotifyCreateDraftTx(ctx context.Context, tx *sql.Tx,
+	memberID, agentID int64, memberName, agentName, title, url string) error {
+	now := s.m.clk.Now().Format(time.RFC3339Nano)
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO notifications (
+			member_id, kind, reason, text, trigger_type, actor_kind, actor_name,
+			actor_member_id, actor_agent_id, url, created_at, read_at
+		) VALUES (?, 'draft', ?, ?, 'draft', 'agent', ?, ?, ?, ?, ?, NULL)`,
+		memberID, ReasonDraftPending,
+		"你的 Agent · "+agentName+" 写了建单草稿待确认："+title,
+		agentName, memberID, agentID, url, now)
+	return err
 }
 
 // NotifySystem 把一条不挂工单的系统通知发给全部在职管理员，并唤醒桌面通知流。

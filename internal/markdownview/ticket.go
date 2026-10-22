@@ -73,6 +73,15 @@ type Input struct {
 	CanReopen        bool   // 已关闭时是否可重新开启（成员恒可）
 	LastSeq          int64  // 时间线最后一条（可见）事件的 seq，增量读取用
 	ReopenedByViewer bool   // 工单开启且最后一条事件是重开、重开者就是当前凭证一方（spec 已接受边界）
+	MyDraft          *MyDraft
+}
+
+type MyDraft struct {
+	ID      string
+	Kind    string
+	Version int64
+	BodyMD  string
+	URL     string
 }
 
 // Ticket 渲染单张工单的 Markdown：头部信息、说明、附件（占位）、时间线和「下一步」。
@@ -122,6 +131,13 @@ func Ticket(in Input) string {
 		L = append(L, "- ["+strconv.FormatInt(e.Seq, 10)+"] "+e.At.Format("2006-01-02 15:04")+" · "+e.AuthorName+" "+eventText(e))
 	}
 	L = append(L, "")
+	if in.MyDraft != nil {
+		L = append(L,
+			"## 你的草稿", "",
+			"- "+in.MyDraft.Kind+" · 第 "+strconv.FormatInt(in.MyDraft.Version, 10)+" 版 · 未发出",
+			"- 查看/修改："+in.MyDraft.URL, "",
+			in.MyDraft.BodyMD, "")
+	}
 	L = append(L, nextStep(in)...)
 	return strings.Join(L, "\n")
 }

@@ -60,26 +60,39 @@ export function GuestHeader({ ticket }: { ticket: TicketView }) {
 export function Conversation({
   ticket,
   onEditBrief,
+  fetchBriefVersions,
 }: {
   ticket: TicketView
   onEditBrief?: () => void
+  fetchBriefVersions?: () => Promise<{ versions: import('../shared/types').BriefVersion[] }>
 }) {
   const [lightbox, setLightbox] = useState<string | null>(null)
   const body = useMemo(
     () => (
       <>
         <GuestHeader ticket={ticket} />
-        <BriefBubble ticket={ticket} onImageClick={setLightbox} onEditBrief={onEditBrief} />
+        <BriefBubble
+          ticket={ticket}
+          onImageClick={setLightbox}
+          onEditBrief={onEditBrief}
+          fetchVersions={fetchBriefVersions}
+        />
         {ticket.timeline.map((e) =>
           e.type === 'reply' ? (
             <ReplyBubble key={e.seq} event={e} ticket={ticket} onImageClick={setLightbox} />
-          ) : e.type === 'created' ? null : ( // 创建动作由说明气泡代表，不再重复一行
-            <EventLine key={e.seq} event={e} />
+          ) : (
+            <EventLine
+              key={e.seq}
+              event={e}
+              onShowBriefVersion={(revision) =>
+                window.dispatchEvent(new CustomEvent('tb:show-brief-version', { detail: revision }))
+              }
+            />
           ),
         )}
       </>
     ),
-    [ticket, onEditBrief],
+    [ticket, onEditBrief, fetchBriefVersions],
   )
   return (
     <div className="guest-app">

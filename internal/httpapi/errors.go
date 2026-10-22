@@ -98,7 +98,16 @@ const (
 	CodeGuestLinkNotFound   = "guest_link_not_found"   // 这个工单下没有这条访客链接
 	CodeLinkNotExtendable   = "link_not_extendable"    // 已撤销或已过期的链接不能延期
 	CodeLinkCannotEditBrief = "link_cannot_edit_brief" // 链接没有「可填写说明」权限
-	CodeTicketClosed        = "ticket_closed"          // 工单已关闭，访客链接只读
+	CodeTicketClosed        = "ticket_closed"          // 工单已关闭，访客链接只读；成员回复草稿保存/发出同样使用
+
+	// #211：草稿。
+	CodeInvalidDraftMode     = "invalid_draft_mode"     // draft_mode 不是 required/direct
+	CodeDraftPending         = "draft_pending"          // 同一方已有待确认草稿
+	CodeDraftNotFound        = "draft_not_found"        // 草稿不存在、已丢弃或不属于当前一方
+	CodeDraftVersionConflict = "draft_version_conflict" // PUT/发出基于的草稿版本过期
+	CodeDraftAlreadySent     = "draft_already_sent"     // 草稿已发出，不能再修改或发出
+	CodeBaseVersionRequired  = "base_version_required"  // PUT 草稿缺 base_version
+	CodeTicketChanged        = "ticket_changed"         // 草稿写成后工单有新事件且未确认
 
 	// #33：附件。
 	CodeAttachmentTooLarge      = "attachment_too_large"      // 单个文件超限（413）

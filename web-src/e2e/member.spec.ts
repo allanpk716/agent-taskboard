@@ -94,8 +94,11 @@ async function createTicketViaAgent(
   assignee?: string,
 ): Promise<string> {
   await loginAdmin(request)
-  const tokenRes = await request.post('/api/v1/me/agent-tokens', { data: { name: `agent-${title}` } })
+  const tokenRes = await request.post('/api/v1/me/agent-tokens', {
+    data: { name: `agent-${title}`, draft_mode: 'direct' },
+  })
   expect(tokenRes.ok()).toBeTruthy()
+  await request.post('/api/v1/me/notices/drafts_intro/seen')
   const token: string = (await tokenRes.json()).token
   const res = await request.post('/api/v1/tickets', {
     data: {
@@ -176,9 +179,10 @@ test('自派自任务：Agent交付后本人验收界面', async ({ page, reques
   })
   await loginAdmin(request)
   const tokenRes = await request.post('/api/v1/me/agent-tokens', {
-    data: { name: `自派自验收-${number}` },
+    data: { name: `自派自验收-${number}`, draft_mode: 'direct' },
   })
   expect(tokenRes.ok(), await tokenRes.text()).toBeTruthy()
+  await request.post('/api/v1/me/notices/drafts_intro/seen')
   const token: string = (await tokenRes.json()).token
   const delivered = await request.post(`/api/v1/tickets/${number}/replies`, {
     data: { body_md: '清单已完成，请验收。', deliver: true },
@@ -270,8 +274,11 @@ test('反馈没有可用访客链接时提示并可发链接', async ({ page, re
 test('时间线按本人/Agent筛选后结果正确', async ({ page, request }) => {
   const number = await createTicket(request, { title: '有本人与Agent回复的工单', assignee: '管理员' })
   await loginAdmin(request)
-  const tokenRes = await request.post('/api/v1/me/agent-tokens', { data: { name: '时间线筛选' } })
+  const tokenRes = await request.post('/api/v1/me/agent-tokens', {
+    data: { name: '时间线筛选', draft_mode: 'direct' },
+  })
   const token: string = (await tokenRes.json()).token
+  await request.post('/api/v1/me/notices/drafts_intro/seen')
   const agentReply = await request.post(`/api/v1/tickets/${number}/replies`, {
     data: { body_md: '这是成员 Agent 的回复。' },
     headers: { Authorization: `Bearer ${token}` },

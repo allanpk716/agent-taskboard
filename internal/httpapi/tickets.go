@@ -14,6 +14,7 @@ import (
 	accessrecords "github.com/allanpk716/agent-taskboard/internal/accessrecords"
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/drafts"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/labels"
 	"github.com/allanpk716/agent-taskboard/internal/markdownview"
@@ -135,6 +136,12 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 		a.handleGuestLinks(w, r, ref, rest)
 	case "attachments":
 		a.handleTicketAttachments(w, r, ref)
+	case "brief-versions":
+		a.handleBriefVersions(w, r, ref, rest)
+	case "drafting":
+		a.handleReplyDrafting(w, r, ref, rest)
+	case "brief-drafting":
+		a.handleBriefDrafting(w, r, ref, rest)
 	case "access-records":
 		if len(rest) != 0 {
 			WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "读取访问记录用 GET /api/v1/tickets/{id}/access-records")
@@ -145,6 +152,123 @@ func (a *API) handleTicketRef(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
 			"读工单用 /api/v1/tickets/{编号或序号}；回复、关闭、时间线等子资源见 docs/api.md")
 	}
+}
+
+func (a *API) handleBriefDrafting(w http.ResponseWriter, r *http.Request, ref string, rest []string) {
+	if r.Method != http.MethodGet {
+		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "读取起草过程用 GET", "")
+		return
+	}
+	if len(rest) != 1 {
+		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "读取起草过程用 GET /api/v1/tickets/{id}/brief-drafting/{revision}")
+		return
+	}
+	revision, err := strconv.ParseInt(rest[0], 10, 64)
+	if err != nil || revision < 2 {
+		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidCursor, "说明版本号必须是大于 1 的整数", "")
+		return
+	}
+	viewer, ok := a.viewerFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if viewer.Kind == identity.ViewerGuest {
+		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单", "")
+		return
+	}
+	full, err := a.tickets.ForViewer(r.Context(), viewer, ref)
+	if err != nil {
+		a.writeTicketError(w, r, ref, err)
+		return
+	}
+	versions, err := a.drafts.BriefHistory(r.Context(), full.Seq, revision)
+	if err != nil {
+		if errors.Is(err, drafts.ErrNotFound) {
+			WriteError(w, http.StatusNotFound, CodeNotFound, "没有这份起草过程", "只有从草稿发出的说明修订才有起草过程")
+			return
+		}
+		panic(err)
+	}
+	views := make([]briefVersionView, 0, len(versions))
+	for _, v := range versions {
+		views = append(views, newBriefVersionView(v.Snapshot, full, viewer, r))
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Versions []briefVersionView `json:"versions"`
+	}{Versions: views})
+}
+
+func (a *API) handleBriefVersions(w http.ResponseWriter, r *http.Request, ref string, rest []string) {
+	if r.Method != http.MethodGet {
+		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "读取说明版本用 GET")
+		return
+	}
+	if len(rest) > 1 {
+		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "读取说明版本列表用 GET /api/v1/tickets/{id}/brief-versions")
+		return
+	}
+	viewer, ok := a.viewerFromRequest(w, r)
+	if !ok {
+		return
+	}
+	full, err := a.tickets.ForViewer(r.Context(), viewer, ref)
+	if err != nil {
+		a.writeTicketError(w, r, ref, err)
+		return
+	}
+	if len(rest) == 1 {
+		revision, err := strconv.ParseInt(rest[0], 10, 64)
+		if err != nil || revision < 1 {
+			WriteError(w, http.StatusUnprocessableEntity, CodeInvalidCursor, "版本号必须是正整数", "")
+			return
+		}
+		v, err := a.tickets.BriefVersion(r.Context(), full.Seq, revision)
+		if err != nil {
+			a.writeBriefVersionError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, newBriefVersionView(v, full, viewer, r))
+		return
+	}
+	versions, err := a.tickets.BriefVersions(r.Context(), full.Seq)
+	if err != nil {
+		panic(err)
+	}
+	views := make([]briefVersionView, 0, len(versions))
+	for _, v := range versions {
+		views = append(views, newBriefVersionView(v, full, viewer, r))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"versions": views})
+}
+
+type briefVersionView struct {
+	Revision      int64              `json:"revision"`
+	Title         string             `json:"title"`
+	Markdown      string             `json:"markdown"`
+	Fields        *map[string]string `json:"fields"`
+	AttachmentIDs []string           `json:"attachment_ids"`
+	Author        authorView         `json:"author"`
+	At            string             `json:"at"`
+}
+
+func newBriefVersionView(v tickets.BriefVersion, _ tickets.Full, viewer identity.Viewer, _ *http.Request) briefVersionView {
+	out := briefVersionView{
+		Revision: v.Revision, Title: v.Title, Markdown: v.BriefMD,
+		AttachmentIDs: v.AttachmentIDs, Author: newAuthorView(v.Author, viewer.Kind != identity.ViewerGuest),
+		At: v.At.Format(time.RFC3339Nano),
+	}
+	if v.Fields != nil {
+		out.Fields = &v.Fields
+	}
+	return out
+}
+
+func (a *API) writeBriefVersionError(w http.ResponseWriter, err error) {
+	if errors.Is(err, tickets.ErrBriefVersionNotFound) {
+		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "这个说明版本上线前未存档", "没有可查看的历史内容")
+		return
+	}
+	panic(err)
 }
 
 // ticketAccessRecords 处理 GET /api/v1/tickets/{id}/access-records。
@@ -248,6 +372,33 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 		guestSpec = &spec
 	}
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
+		if viewer.Agent != nil && viewer.Agent.DraftMode == "required" {
+			var guestDraft *drafts.CreateGuestLinkRequest
+			if guestSpec != nil {
+				guestDraft = &drafts.CreateGuestLinkRequest{
+					Note: guestSpec.Note, ValidDays: guestSpec.ValidDays, ExpiresAt: req.GuestLink.ExpiresAt,
+					CanEditBrief: guestSpec.CanEditBrief,
+				}
+			}
+			d, err := a.drafts.SaveCreate(r.Context(), viewer, drafts.CreateRequest{
+				Kind: req.Kind, Template: req.Template, Title: req.Title, BriefMD: req.BriefMD,
+				Fields: req.Fields, Labels: req.Labels, Assignee: req.Assignee.ref, GuestLink: guestDraft,
+			})
+			if err != nil {
+				a.writeTicketError(w, r, "", err)
+				return
+			}
+			view := newDraftView(a, r, d)
+			writeJSON(w, http.StatusAccepted, struct {
+				Draft      draftView `json:"draft"`
+				PreviewURL string    `json:"preview_url"`
+				Message    string    `json:"message"`
+				Next       string    `json:"next"`
+			}{Draft: view, PreviewURL: view.PreviewURL,
+				Message: "内容已保存为建单草稿，等待成员确认；它还没有发出。",
+				Next:    "把 preview_url 告诉成员；要改就在 " + view.URL + " 上 PUT，并带 base_version。"})
+			return
+		}
 		result, err := a.tickets.Create(r.Context(), tickets.CreateInput{
 			Kind:        req.Kind,
 			Title:       req.Title,
@@ -338,8 +489,23 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 	if err != nil {
 		panic(err)
 	}
+	var myDraft *markdownview.MyDraft
+	if viewer.Kind == identity.ViewerMember {
+		if pending, err := a.drafts.Pending(r.Context(), viewer.Member.ID, full.Seq); err == nil {
+			kindText := pending.Kind
+			if kindText == "brief_revision" {
+				kindText = "说明修订草稿"
+			}
+			myDraft = &markdownview.MyDraft{
+				ID: pending.ID, Kind: string(kindText), Version: pending.Version, BodyMD: pending.Request.BodyMD,
+				URL: "/api/v1/drafts/" + pending.ID,
+			}
+		} else if !errors.Is(err, drafts.ErrNotFound) {
+			panic(err)
+		}
+	}
 	if r.URL.Query().Get("format") == "markdown" {
-		md := markdownview.Ticket(ticketMarkdownInput(full, viewer, atts, usage, waitingOn))
+		md := markdownview.Ticket(ticketMarkdownInput(full, viewer, atts, usage, waitingOn, myDraft))
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(md))
@@ -730,10 +896,13 @@ type eventView struct {
 	DuplicateOf string `json:"duplicate_of,omitempty"`
 	ExpiresAt   string `json:"expires_at,omitempty"` // guest_link_extended 的新到期时刻（#32）
 
-	AttachmentIDs []string `json:"attachment_ids,omitempty"` // reply 引用的附件（#33）
-	From          string   `json:"from,omitempty"`           // assigned 事件的改派前指派人；空 = 创建时指派（#36）
-	To            string   `json:"to,omitempty"`             // assigned 事件的指派对象（#36）
-	Collaborator  string   `json:"collaborator,omitempty"`   // 协作者事件的对象（#158）
+	AttachmentIDs     []string `json:"attachment_ids,omitempty"` // reply 引用的附件（#33）
+	Signature         string   `json:"signature,omitempty"`      // 从草稿发出的回复带确认署名
+	DraftingCount     int64    `json:"drafting_count,omitempty"` // 起草过程版本数（#214）
+	BriefVersionSaved *bool    `json:"brief_version_saved,omitempty"`
+	From              string   `json:"from,omitempty"`         // assigned 事件的改派前指派人；空 = 创建时指派（#36）
+	To                string   `json:"to,omitempty"`           // assigned 事件的指派对象（#36）
+	Collaborator      string   `json:"collaborator,omitempty"` // 协作者事件的对象（#158）
 }
 
 // newEventView 把时间线事件转成对外结构。
@@ -780,6 +949,7 @@ type ticketView struct {
 	Usage         attachmentUsage    `json:"attachment_usage"` // 含待用附件（#33）
 	Viewer        ticketViewerView   `json:"viewer"`
 	Timeline      []eventView        `json:"timeline"`
+	MyDraft       *draftView         `json:"my_draft"`
 
 	// 成员交接文案（#98）：访客视角不出现这两个字段。
 	HandoffText      *string `json:"handoff_text,omitempty"`
@@ -897,11 +1067,52 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 		}
 	}
 	v.Viewer = tv
+	signatures := map[int64]string{}
+	draftingCounts := map[int64]int64{}
+	if !isGuest {
+		signatures, err = a.drafts.Signatures(r.Context(), full.Seq)
+		if err != nil {
+			panic(err)
+		}
+		draftingCounts, err = a.drafts.Counts(r.Context(), full.Seq)
+		if err != nil {
+			panic(err)
+		}
+	}
+	if viewer.Kind == identity.ViewerMember {
+		if pending, err := a.drafts.Pending(r.Context(), viewer.Member.ID, full.Seq); err == nil {
+			view := newDraftView(a, r, pending)
+			v.MyDraft = &view
+		} else if !errors.Is(err, drafts.ErrNotFound) {
+			panic(err)
+		}
+	}
+	briefVersions, err := a.tickets.BriefVersions(r.Context(), full.Seq)
+	if err != nil {
+		panic(err)
+	}
+	savedBriefs := make(map[int64]bool, len(briefVersions))
+	for _, version := range briefVersions {
+		savedBriefs[version.Revision] = true
+	}
 	for _, e := range full.Timeline {
 		if isGuest && !visibleToGuest(e) {
 			continue
 		}
-		v.Timeline = append(v.Timeline, newEventView(e, !isGuest))
+		ev := newEventView(e, !isGuest)
+		ev.Signature = signatures[e.Seq]
+		if !isGuest {
+			ev.DraftingCount = draftingCounts[e.Seq]
+		}
+		if e.Type == "created" || e.Type == "brief_revised" {
+			revision := int64(1)
+			if e.Type == "brief_revised" {
+				revision = e.Revision
+			}
+			saved := savedBriefs[revision]
+			ev.BriefVersionSaved = &saved
+		}
+		v.Timeline = append(v.Timeline, ev)
 	}
 	return v
 }
@@ -910,7 +1121,7 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 // 访客（#32）：无标签行、时间线跳过标签事件，署名按访客写法；附件小节与
 // 用量由 attachmentProjection 生成（#33），访客的下载链接是签名地址。
 func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer, atts []attachmentView, usage attachmentUsage,
-	waitingOn tickets.WaitingOn) markdownview.Input {
+	waitingOn tickets.WaitingOn, myDraft *markdownview.MyDraft) markdownview.Input {
 	isGuest := viewer.Kind == identity.ViewerGuest
 	viewerName := viewer.Member.Name
 	if isGuest {
@@ -971,6 +1182,7 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer, atts []attac
 	if !isGuest {
 		in.CreatorName = full.Creator.DisplayName()
 	}
+	in.MyDraft = myDraft
 	if full.CloseReason != "" {
 		in.CloseReasonText = markdownview.CloseReasonText(full.CloseReason)
 	}
