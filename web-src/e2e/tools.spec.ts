@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { ADMIN, createTicket, login, wang } from './helpers'
+import { ADMIN, createTicket, login, wang, loginWithRequest } from './helpers'
 
 // 成员网页（#42）：模板维护、标签字典与别名、个人设置（Agent token）、
 // 管理页（成员账号、标签治理）。对真实服务 + 构建好的前端跑用例；
@@ -209,7 +209,7 @@ test('管理页：合并标签值后历史工单的标签已改写', async ({ pa
 // 5.（验收）非管理员看不到管理功能：UI 不显示，直接访问只有提示；接口 403。
 test('非管理员看不到管理功能（UI 隐藏 + API 403）', async ({ page, request }) => {
   const WANG = await wang()
-  const wangLogin = await request.post('/api/v1/session', { data: WANG })
+  const wangLogin = await loginWithRequest(request, WANG)
   expect(wangLogin.ok(), `王工登录失败：${await wangLogin.text()}`).toBeTruthy()
   const wangCookie = (wangLogin.headers()['set-cookie'] ?? '').split(';')[0]
   const wangHeaders = { Cookie: wangCookie }
@@ -268,7 +268,7 @@ test('管理页：创建成员账号并停用', async ({ page, request }) => {
   await expect(page.locator(`tr[data-member="${sun}"] .badge.open`)).toBeVisible()
 
   // 新成员用初始密码能登录
-  const sunLogin = await request.post('/api/v1/session', { data: { username: sun, password } })
+  const sunLogin = await loginWithRequest(request, { username: sun, password })
   expect(sunLogin.ok(), '新成员用初始密码登录').toBeTruthy()
   const sunCookie = (sunLogin.headers()['set-cookie'] ?? '').split(';')[0]
 
@@ -281,7 +281,7 @@ test('管理页：创建成员账号并停用', async ({ page, request }) => {
 
   const alive = await request.get('/api/v1/members', { headers: { Cookie: sunCookie } })
   expect(alive.status()).toBe(401)
-  const again = await request.post('/api/v1/session', { data: { username: sun, password } })
+  const again = await loginWithRequest(request, { username: sun, password })
   expect(again.status()).toBe(401)
   expect((await again.json()).error.code).toBe('member_deactivated')
 

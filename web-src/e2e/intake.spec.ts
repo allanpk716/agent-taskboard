@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext, type Locator, type Page } from '@playwright/test'
-import { openGuestPage } from './helpers'
+import { openGuestPage, loginWithRequest } from './helpers'
 
 // 访客网页 #39：反馈入口提交页（/i/<slug>）与「补全说明」表单。
 // 对真实服务 + 构建好的前端跑用例，造数据（入口、别名、工单、访客链接）
@@ -8,7 +8,7 @@ import { openGuestPage } from './helpers'
 const ADMIN = { username: 'admin', password: 'admin-pass-123' }
 
 async function loginAdmin(request: APIRequestContext) {
-  const res = await request.post('/api/v1/session', { data: ADMIN })
+  const res = await loginWithRequest(request, ADMIN)
   expect(res.ok(), '管理员登录失败').toBeTruthy()
 }
 

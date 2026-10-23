@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/captcha"
+
 	accessrecords "github.com/allanpk716/agent-taskboard/internal/accessrecords"
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
@@ -39,25 +41,43 @@ type API struct {
 	accessRecords   *accessrecords.Manager
 	drafts          *drafts.Manager
 	cfg             config.Config
+	clk             clock.Clock
 	intakeUploads   *intakeUploadLimiter
 	stampedClientMu sync.Mutex
 	stampedClients  map[string]*stampedClient
 	clientOnlineMu  sync.Mutex
 	clientOnline    map[int64]int
+	captchaSource   captcha.Source
+	captchaMu       sync.Mutex
+	captchas        map[string]captchaRecord
+}
+
+// SetCaptchaSource 装配登录验证码来源（生产固定随机，测试可注入）。
+func (a *API) SetCaptchaSource(source captcha.Source) {
+	a.captchaSource = source
+	a.captchas = make(map[string]captchaRecord)
+}
+
+type captchaRecord struct {
+	answer    string
+	expiresAt time.Time
+	used      bool
 }
 
 func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager, backups *ops.Backups, accessRecs *accessrecords.Manager, draftStore *drafts.Manager, cfg config.Config, clk clock.Clock) *API {
 	return &API{ident: ident, tickets: tk, templates: tpl, idem: idem, atts: atts, backups: backups,
-		accessRecords: accessRecs, drafts: draftStore, cfg: cfg,
+		accessRecords: accessRecs, drafts: draftStore, cfg: cfg, clk: clk,
 		intakeUploads:  newIntakeUploadLimiter(cfg.Intake.UploadRatePerMin, clk),
 		stampedClients: make(map[string]*stampedClient),
-		clientOnline:   make(map[int64]int)}
+		clientOnline:   make(map[int64]int),
+		captchaSource:  captcha.Random{}, captchas: make(map[string]captchaRecord)}
 }
 
 // Handler 返回 /api/v1 前缀的 http.Handler（带 panic 恢复，统一错误格式）。
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/session", a.handleSession)
+	mux.HandleFunc("/api/v1/login-captcha", a.handleLoginCaptcha)
 	mux.HandleFunc("/api/v1/guest-link", a.handleGuestLinkClaim)
 	mux.HandleFunc("/api/v1/guest-links/claim", a.handleGuestLinkClaim)
 	mux.HandleFunc("/api/v1/guest-links/enter", a.handleGuestLinkClaim)
@@ -149,8 +169,10 @@ func (a *API) handleSession(w http.ResponseWriter, r *http.Request) {
 }
 
 type loginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	CaptchaID     string `json:"captcha_id"`
+	CaptchaAnswer string `json:"captcha_answer"`
 }
 
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
@@ -158,6 +180,11 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req, `{"username": "…", "password": "…"}`) {
 		return
 	}
+	if err := a.consumeCaptcha(req.CaptchaID, req.CaptchaAnswer); err != nil {
+		a.writeCaptchaError(w, err)
+		return
+	}
+	// 验证码校验通过后才是密码校验；#229 的密码失败统计应加在这个调用内部/调用点。
 	sess, err := a.ident.Login(r.Context(), req.Username, req.Password)
 	if err != nil {
 		if errors.Is(err, identity.ErrInvalidCredentials) {

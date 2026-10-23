@@ -16,6 +16,7 @@ import (
 	accessrecords "github.com/allanpk716/agent-taskboard/internal/accessrecords"
 	"github.com/allanpk716/agent-taskboard/internal/agentdocs"
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
+	"github.com/allanpk716/agent-taskboard/internal/captcha"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/drafts"
@@ -52,9 +53,21 @@ type Server struct {
 	listener net.Listener
 }
 
+// Option 定制服务装配；验证码来源只给黑盒测试注入，生产没有关闭配置。
+type Option func(*options)
+
+type options struct {
+	captchaSource captcha.Source
+}
+
+// WithCaptchaSource 指定登录验证码来源。
+func WithCaptchaSource(source captcha.Source) Option {
+	return func(o *options) { o.captchaSource = source }
+}
+
 // New 打开数据库、装配 API 与静态站点。webDir 不存在会报错。
 // 首次启动时导入标签字典与预置模板的一次性种子（spec「初始数据」）。
-func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
+func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Server, error) {
 	if cfg.Server.Deploy == "container" && strings.TrimSpace(cfg.Server.PublicURL) == "" {
 		return nil, fmt.Errorf("容器模式必须配置 [server] public_url：对外链接不能依赖可被请求头篡改的地址")
 	}
@@ -62,6 +75,14 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 		if err := installImageClient(cfg); err != nil {
 			return nil, err
 		}
+	}
+	o := options{}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	captchaSrc := captchaSource()
+	if o.captchaSource != nil {
+		captchaSrc = o.captchaSource
 	}
 	ident := identity.NewManager(st.DB, c)
 	labelDict := labels.NewManager(st.DB)
@@ -108,6 +129,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	draftStore.SetNotifier(notificationStore.DraftNotifier())
 	api := httpapi.NewAPI(ident, ticketStore,
 		templateDict, idem, atts, backups, accessRecords, draftStore, cfg, c)
+	api.SetCaptchaSource(captchaSrc)
 	api.SetNotifications(notificationStore)
 	web, err := webapp.New(cfg.WebDir)
 	if err != nil {

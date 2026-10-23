@@ -20,7 +20,7 @@ func Test账号或密码错误返回统一错误格式(t *testing.T) {
 		"用户名不存在": {"username": "nobody", "password": "secret-pass"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			res := s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/session", body, nil)
+			res := s.LoginRequest(body)
 			if res.StatusCode != http.StatusUnauthorized {
 				t.Fatalf("状态码 = %d, 想 %d", res.StatusCode, http.StatusUnauthorized)
 			}
@@ -80,8 +80,7 @@ func Test创建管理员后可以登录查身份并登出(t *testing.T) {
 	}
 
 	// 登录：换到会话 cookie。
-	loginRes := s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/session",
-		map[string]string{"username": "admin", "password": "secret-pass"}, nil)
+	loginRes := s.LoginRequest(map[string]string{"username": "admin", "password": "secret-pass"})
 	if loginRes.StatusCode != http.StatusOK {
 		t.Fatalf("登录状态码 = %d, 想 200", loginRes.StatusCode)
 	}

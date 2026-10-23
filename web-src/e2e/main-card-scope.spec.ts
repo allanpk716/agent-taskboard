@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
-import { ADMIN, createTicket, login, loginAdmin, openGuestPage } from './helpers'
+import { ADMIN, createTicket, login, loginAdmin, openGuestPage, loginWithRequest } from './helpers'
 
 async function seedGuestLink(
   request: APIRequestContext,
@@ -129,7 +129,7 @@ test('手机访客根元素铺满屏幕', async ({ page, request }) => {
 
 test('登录页和客户端连接页保留居中卡片', async ({ page, request }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
-  await request.post('/api/v1/session', { data: ADMIN })
+  await loginWithRequest(request, ADMIN)
   const cookies = (await request.storageState()).cookies
   await page.context().addCookies(cookies)
 

@@ -51,8 +51,7 @@ func Test管理员在网页上创建成员账号(t *testing.T) {
 	}
 
 	// 新成员用初始密码能登录（登录成功即算账号可用）。
-	res = s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/session",
-		map[string]string{"username": "zhao", "password": created.InitialPassword}, nil)
+	res = s.LoginRequest(map[string]string{"username": "zhao", "password": created.InitialPassword})
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("新成员用初始密码登录状态码 = %d, 想 200", res.StatusCode)
 	}
@@ -254,8 +253,7 @@ func Test停用成员账号立即生效(t *testing.T) {
 		t.Errorf("停用后 Agent token 状态码 = %d, 想 401", res.StatusCode)
 	}
 	// 不能再登录（明确告知账号已停用）。
-	res = s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/session",
-		map[string]string{"username": "zhao", "password": created.InitialPassword}, nil)
+	res = s.LoginRequest(map[string]string{"username": "zhao", "password": created.InitialPassword})
 	if res.StatusCode != http.StatusUnauthorized {
 		t.Errorf("停用后登录状态码 = %d, 想 401", res.StatusCode)
 	}
@@ -500,8 +498,7 @@ func Test管理员可重置另一位管理员密码(t *testing.T) {
 	if res := s.Do(t, laptop, http.MethodGet, "/api/v1/session", nil, nil); res.StatusCode != http.StatusOK {
 		t.Errorf("重置后 Agent token 状态码 = %d, 想 200", res.StatusCode)
 	}
-	if res := s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/session",
-		map[string]string{"username": "backup", "password": reset.InitialPassword}, nil); res.StatusCode != http.StatusOK {
+	if res := s.LoginRequest(map[string]string{"username": "backup", "password": reset.InitialPassword}); res.StatusCode != http.StatusOK {
 		t.Errorf("备用管理员用新密码登录状态码 = %d, 想 200", res.StatusCode)
 	}
 

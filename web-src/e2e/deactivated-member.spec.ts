@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { ADMIN, login, loginAdmin } from './helpers'
+import { ADMIN, login, loginAdmin, loginWithRequest } from './helpers'
 
 test('指派给已停用成员的工单显示停用徽标', async ({ page, request }) => {
   const title = `停用成员徽标工单 ${Date.now()}`
@@ -25,7 +25,7 @@ test('指派给已停用成员的工单显示停用徽标', async ({ page, reque
   expect(ticket.status(), await ticket.text()).toBe(201)
   const number = (await ticket.json()).number
 
-  const memberLogin = await request.post('/api/v1/session', { data: { username: `offline-${suffix}`, password } })
+  const memberLogin = await loginWithRequest(request, { username: `offline-${suffix}`, password })
   expect(memberLogin.ok(), await memberLogin.text()).toBeTruthy()
   const reply = await request.post(`/api/v1/tickets/${number}/replies`, {
     data: { body_md: '我先跟进这张工单。' },

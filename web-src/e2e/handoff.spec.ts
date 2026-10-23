@@ -1,10 +1,10 @@
 import { expect, test, type APIRequestContext } from '@playwright/test'
-import { ADMIN, createTicket, login, markDraftIntroSeen, wang } from './helpers'
+import { ADMIN, createTicket, login, markDraftIntroSeen, wang, loginWithRequest } from './helpers'
 
 // Agent 接入、工单指令与交接文案：只从浏览器可见行为与剪贴板断言。
 
 async function issueToken(request: APIRequestContext, who: { username: string; password: string }, name: string) {
-  const session = await request.post('/api/v1/session', { data: who })
+  const session = await loginWithRequest(request, who)
   expect(session.ok()).toBeTruthy()
   const res = await request.post('/api/v1/me/agent-tokens', { data: { name } })
   expect(res.ok(), await res.text()).toBeTruthy()
@@ -15,7 +15,7 @@ async function issueToken(request: APIRequestContext, who: { username: string; p
 async function createMemberWithoutAgentToken(
   request: APIRequestContext,
 ): Promise<{ memberID: number; credentials: { username: string; password: string } }> {
-  const session = await request.post('/api/v1/session', { data: ADMIN })
+  const session = await loginWithRequest(request, ADMIN)
   expect(session.ok()).toBeTruthy()
   const username = `handoff-notoken-${Date.now().toString(36)}`
   const created = await request.post('/api/v1/members', {
@@ -187,7 +187,7 @@ test('建单完成区域按是否指派显示未指派提示', async ({ page }) 
 
 test('指派人按成员id判断而不是重名判断', async ({ page, request }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
-  const session = await request.post('/api/v1/session', { data: ADMIN })
+  const session = await loginWithRequest(request, ADMIN)
   const adminName = (await session.json()).viewer.member.name
   const suffix = Date.now().toString(36)
   const member = await request.post('/api/v1/members', {

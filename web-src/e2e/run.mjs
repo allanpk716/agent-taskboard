@@ -15,7 +15,7 @@ const run = (cmd, args, opts = {}) => {
 // 1. 编译后端到 bin/（Windows 与本机构建；linux/amd64 交叉构建见 docs/dev.md）。
 const exe = process.platform === 'win32' ? 'taskboard.exe' : 'taskboard'
 const binPath = join(repoRoot, 'bin', exe)
-run('go', ['build', '-o', binPath, './cmd/taskboard'], { cwd: repoRoot })
+run('go', ['build', '-tags', 'e2e_fixed_captcha', '-o', binPath, './cmd/taskboard'], { cwd: repoRoot })
 
 // 2. 构建前端到 web/（已构建且不是最新也直接重建，成本可接受）。
 run('npm', ['run', 'build'], { cwd: webSrc })

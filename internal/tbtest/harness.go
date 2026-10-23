@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
+	"github.com/allanpk716/agent-taskboard/internal/captcha"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
@@ -40,24 +41,27 @@ type Server struct {
 	webDir            string
 	srv               *server.Server
 	guestDeviceTokens map[string]string
+	captchaAnswer     string
 }
 
 // Option 定制 Start 的行为。
 type Option func(*options)
 
 type options struct {
-	webDir      string
-	dataDir     string
-	clockStart  time.Time
-	attachments config.Attachments
-	backup      config.Backup
-	update      config.Update
-	intake      config.Intake
-	publicURL   string
-	minClient   string
-	deploy      string
-	clientImage string
-	startupErr  *error
+	webDir        string
+	dataDir       string
+	clockStart    time.Time
+	attachments   config.Attachments
+	backup        config.Backup
+	update        config.Update
+	intake        config.Intake
+	publicURL     string
+	minClient     string
+	deploy        string
+	clientImage   string
+	captcha       captcha.Source
+	captchaAnswer string
+	startupErr    *error
 }
 
 // WithWebDir 指定前端目录（默认用临时目录里的一页 index.html 占位）。
@@ -110,6 +114,11 @@ func WithStartupError(err *error) Option {
 	return func(o *options) { o.startupErr = err }
 }
 
+// WithCaptchaSource 注入登录验证码来源；生产服务固定使用随机来源。
+func WithCaptchaSource(source captcha.Source, answer string) Option {
+	return func(o *options) { o.captcha, o.captchaAnswer = source, answer }
+}
+
 // WithUpdate 指定更新源配置（#45；默认不配置任何源：管理端点会明确报
 // “没有配置更新源”，测试里指向本地假源，不碰真实 GitHub/UpdateHub）。
 func WithUpdate(u config.Update) Option { return func(o *options) { o.update = u } }
@@ -131,6 +140,10 @@ func Start(t testing.TB, opts ...Option) *Server {
 	o := options{clockStart: defaultClockStart}
 	for _, opt := range opts {
 		opt(&o)
+	}
+	if o.captcha == nil {
+		o.captcha = harnessCaptcha{}
+		o.captchaAnswer = "AB23"
 	}
 
 	dataDir := t.TempDir()
@@ -173,7 +186,11 @@ func Start(t testing.TB, opts ...Option) *Server {
 	cfg.Server.ClientImageDir = o.clientImage
 	config.ApplyDefaults(&cfg) // 与 config.Load 一致：端口、附件上限等补默认值
 	clk := clock.NewFake(o.clockStart)
-	srv, err := server.New(cfg, st, clk)
+	srvOpts := make([]server.Option, 0, 1)
+	if o.captcha != nil {
+		srvOpts = append(srvOpts, server.WithCaptchaSource(o.captcha))
+	}
+	srv, err := server.New(cfg, st, clk, srvOpts...)
 	if err != nil {
 		if o.startupErr != nil {
 			*o.startupErr = err
@@ -203,6 +220,7 @@ func Start(t testing.TB, opts ...Option) *Server {
 		webDir:            webDir,
 		srv:               srv,
 		guestDeviceTokens: map[string]string{},
+		captchaAnswer:     o.captchaAnswer,
 	}
 }
 
@@ -275,8 +293,13 @@ func (s *Server) NewClient() *http.Client { return &http.Client{} }
 // 所以这里手工把 cookie 固定在后续请求上（浏览器对 127.0.0.1 没有这个限制）。
 func (s *Server) Login(username, password string) *http.Client {
 	s.TB.Helper()
+	var captcha struct {
+		ID string `json:"id"`
+	}
+	s.Do(s.TB, s.NewClient(), http.MethodGet, "/api/v1/login-captcha", nil, &captcha)
 	res := s.Do(s.TB, s.NewClient(), http.MethodPost, "/api/v1/session",
-		map[string]string{"username": username, "password": password}, nil)
+		map[string]string{"username": username, "password": password,
+			"captcha_id": captcha.ID, "captcha_answer": s.captchaAnswer}, nil)
 	if res.StatusCode != http.StatusOK {
 		s.TB.Fatalf("登录 %s 失败：状态码 %d", username, res.StatusCode)
 	}
@@ -285,6 +308,21 @@ func (s *Server) Login(username, password string) *http.Client {
 		s.TB.Fatalf("登录 %s 成功但没有会话 cookie", username)
 	}
 	return s.cookieClient(cookie)
+}
+
+// LoginRequest 先获取一张验证码，再把用户名密码的登录请求发给真实 HTTP 接口。
+func (s *Server) LoginRequest(body map[string]string) *http.Response {
+	s.TB.Helper()
+	var captcha struct {
+		ID string `json:"id"`
+	}
+	s.Do(s.TB, s.NewClient(), http.MethodGet, "/api/v1/login-captcha", nil, &captcha)
+	if body == nil {
+		body = map[string]string{}
+	}
+	body["captcha_id"] = captcha.ID
+	body["captcha_answer"] = s.captchaAnswer
+	return s.Do(s.TB, s.NewClient(), http.MethodPost, "/api/v1/session", body, nil)
 }
 
 func (s *Server) cookieClient(cookie string) *http.Client {
@@ -468,6 +506,13 @@ func testClientChallenge() string {
 }
 
 const testClientVerifier = "test-verifier-with-enough-characters-for-pkce-1234567890"
+
+type harnessCaptcha struct{}
+
+func (harnessCaptcha) Generate() (string, []byte, error) {
+	pngBytes, err := captcha.Render("AB23")
+	return "AB23", pngBytes, err
+}
 
 type cookieTransport struct {
 	cookie string

@@ -69,6 +69,7 @@ test('未登录打开确认页，登录后回到确认页完成连接', async ({
     const who = await wang()
     await page.getByLabel('用户名').fill(who.username)
     await page.getByLabel('密码').fill(who.password)
+    await page.getByLabel('验证码').fill('TB123')
     await page.getByRole('button', { name: '登录' }).click()
     await expect(page.getByRole('heading', { name: '连接这台电脑' })).toBeVisible()
     await page.getByRole('button', { name: '连接' }).click()

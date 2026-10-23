@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { expect, type APIRequestContext, type Page } from '@playwright/test'
 
 export const ADMIN = { username: 'admin', password: 'admin-pass-123' }
+const E2E_CAPTCHA_ANSWER = 'TB123'
 
 // 王工是普通成员（start-server.mjs 用 #42 的成员账号接口创建）：初始密码由
 // 服务器生成、只出现一次，写在按端口命名的临时文件里；服务刚起来时可能还没
@@ -31,13 +32,26 @@ export async function login(page: Page, who: { username: string; password: strin
   await page.goto('/login')
   await page.getByLabel('用户名').fill(who.username)
   await page.getByLabel('密码').fill(who.password)
+  await page.getByLabel('验证码').fill(E2E_CAPTCHA_ANSWER)
   await page.getByRole('button', { name: '登录' }).click()
   await page.waitForURL((u) => !u.pathname.endsWith('/login'))
 }
 
 export async function loginAdmin(request: APIRequestContext) {
-  const res = await request.post('/api/v1/session', { data: ADMIN })
+  const res = await loginWithRequest(request, ADMIN)
   expect(res.ok(), '管理员登录失败').toBeTruthy()
+}
+
+export async function loginWithRequest(
+  request: APIRequestContext,
+  who: { username: string; password: string },
+) {
+  const captcha = await request.get('/api/v1/login-captcha')
+  expect(captcha.ok(), '获取验证码失败').toBeTruthy()
+  const { id } = (await captcha.json()) as { id: string }
+  return request.post('/api/v1/session', {
+    data: { ...who, captcha_id: id, captcha_answer: E2E_CAPTCHA_ANSWER },
+  })
 }
 
 export async function markDraftIntroSeen(request: APIRequestContext) {

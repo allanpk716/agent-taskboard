@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -20,7 +21,7 @@ func buildBinary(t *testing.T) string {
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
-	cmd := exec.Command("go", "build", "-o", bin, "github.com/allanpk716/agent-taskboard/cmd/taskboard")
+	cmd := exec.Command("go", "build", "-tags", "e2e_fixed_captcha", "-o", bin, "github.com/allanpk716/agent-taskboard/cmd/taskboard")
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("编译 taskboard 失败：%v\n%s", err, out)
@@ -95,8 +96,7 @@ func Test命令行创建管理员后可以启动服务并登录(t *testing.T) {
 	waitReady(t, base)
 
 	// 网页会话层登录成功。
-	res, err := http.Post(base+"/api/v1/session", "application/json",
-		strings.NewReader(`{"username":"admin","password":"secret-pass"}`))
+	res, err := postLogin(base, "admin", "secret-pass")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,6 +104,23 @@ func Test命令行创建管理员后可以启动服务并登录(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("登录状态码 = %d, 想 200", res.StatusCode)
 	}
+}
+
+func postLogin(base, username, password string) (*http.Response, error) {
+	captchaRes, err := http.Get(base + "/api/v1/login-captcha")
+	if err != nil {
+		return nil, err
+	}
+	defer captchaRes.Body.Close()
+	var captcha struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(captchaRes.Body).Decode(&captcha); err != nil {
+		return nil, err
+	}
+	body := fmt.Sprintf(`{"username":%q,"password":%q,"captcha_id":%q,"captcha_answer":"TB123"}`,
+		username, password, captcha.ID)
+	return http.Post(base+"/api/v1/session", "application/json", strings.NewReader(body))
 }
 
 func waitReady(t *testing.T, base string) {
