@@ -1,0 +1,17 @@
+services:
+  taskboard:
+    image: ghcr.io/allanpk716/agent-taskboard:latest
+    build:
+      context: .
+      args:
+        APP_VERSION: "0.0.0"
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      TASKBOARD_PORT: "8080"
+    volumes:
+      - taskboard-data:/app/data
+      - ./config.toml:/app/config/config.toml:ro
+
+volumes:
+  taskboard-data:
