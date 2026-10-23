@@ -11,7 +11,7 @@ import { join, resolve } from 'node:path'
 
 const port = Number(process.env.E2E_PORT || 8901)
 const repoRoot = resolve(import.meta.dirname, '..', '..')
-const bin = process.env.E2E_BIN || join(repoRoot, 'bin', process.platform === 'win32' ? 'taskboard.exe' : 'taskboard')
+const bin = process.env.E2E_BIN || join(repoRoot, 'bin', `taskboard-e2e${process.platform === 'win32' ? '.exe' : ''}`)
 const webDir = process.env.E2E_WEB_DIR || join(repoRoot, 'web')
 const admin = { username: 'admin', password: 'admin-pass-123', name: '管理员' }
 // 成员网页 e2e 需要第二位成员（指派、收件箱流转、非管理员视角）。
@@ -26,7 +26,10 @@ const tomlPath = (p) => p.replaceAll('\\', '/')
 const configPath = join(dir, 'config.toml')
 writeFileSync(
   configPath,
-  `data_dir = '${tomlPath(join(dir, 'data'))}'\nport = ${port}\nweb_dir = '${tomlPath(webDir)}'\n`,
+  `data_dir = '${tomlPath(join(dir, 'data'))}'\nport = ${port}\nweb_dir = '${tomlPath(webDir)}'\n` +
+    (process.env.E2E_CONTAINER
+      ? `[server]\ndeploy = 'container'\npublic_url = 'http://127.0.0.1:${port}'\n`
+      : ''),
 )
 
 // 预置服务端代管的桌面客户端（#83）：e2e 分两轮跑，有版本时验证下载区，
@@ -110,10 +113,18 @@ async function createWorker() {
     } catch {}
     await new Promise((r) => setTimeout(r, 500))
   }
+  const captchaRes = await fetch(`${base}/api/v1/login-captcha`)
+  if (!captchaRes.ok) throw new Error(`[e2e] 获取验证码失败：${captchaRes.status}`)
+  const captcha = await captchaRes.json()
   const login = await fetch(`${base}/api/v1/session`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: admin.username, password: admin.password }),
+    body: JSON.stringify({
+      username: admin.username,
+      password: admin.password,
+      captcha_id: captcha.id,
+      captcha_answer: 'TB123',
+    }),
   })
   if (!login.ok) throw new Error(`[e2e] 管理员登录失败：${login.status}`)
   const cookie = (login.headers.get('set-cookie') ?? '').split(';')[0]

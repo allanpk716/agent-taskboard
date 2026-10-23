@@ -6,6 +6,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -298,6 +299,19 @@ func (a *API) submitToIntake(w http.ResponseWriter, r *http.Request, slug string
 		return
 	}
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
+		in, err := a.tickets.ActiveIntakeBySlug(r.Context(), slug)
+		if err != nil {
+			a.writeIntakesError(w, r, err)
+			return
+		}
+		if retry := a.intakeUploads.allow(strconv.FormatInt(in.ID, 10) + "/" + clientIP(r)); retry > 0 {
+			seconds := retryAfterSeconds(retry)
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
+			WriteErrorExtra(w, http.StatusTooManyRequests, CodeIntakeUploadRateLimited,
+				"这个反馈入口的提交太频繁，请稍后再试",
+				"同一入口按来源地址限流；稍后自动恢复", map[string]any{"retry_after_seconds": seconds})
+			return
+		}
 		result, err := a.tickets.SubmitToIntake(r.Context(), slug, tickets.SubmissionInput{
 			Title: req.Title, Fields: req.Fields, AuthorName: req.AuthorName,
 			IdempotencyKey: r.Header.Get(IdempotencyKeyHeader),
@@ -371,6 +385,9 @@ func (a *API) writeIntakesError(w http.ResponseWriter, r *http.Request, err erro
 	case errors.Is(err, tickets.ErrTemplateNotReport):
 		WriteError(w, http.StatusUnprocessableEntity, CodeTemplateNotReport, err.Error(),
 			"入口提交的是反馈，换一份类型为「反馈」的模板（如 bug-report），或先修改模板类型")
+	case errors.Is(err, tickets.ErrIntakeDailyLimit):
+		WriteError(w, http.StatusTooManyRequests, CodeIntakePaused, err.Error(),
+			"入口今日已暂停，请明天再试或联系部门")
 	case errors.As(err, &missing):
 		hints := make([]string, 0, len(missing.Fields))
 		for _, f := range missing.Fields {

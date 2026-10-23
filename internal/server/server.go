@@ -3,15 +3,20 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	accessrecords "github.com/allanpk716/agent-taskboard/internal/accessrecords"
 	"github.com/allanpk716/agent-taskboard/internal/agentdocs"
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
+	"github.com/allanpk716/agent-taskboard/internal/captcha"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/drafts"
@@ -21,6 +26,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/labels"
 	"github.com/allanpk716/agent-taskboard/internal/notifications"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
+	"github.com/allanpk716/agent-taskboard/internal/release"
 	"github.com/allanpk716/agent-taskboard/internal/store"
 	"github.com/allanpk716/agent-taskboard/internal/templates"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
@@ -47,9 +53,37 @@ type Server struct {
 	listener net.Listener
 }
 
+// Option 定制服务装配；验证码来源只给黑盒测试注入，生产没有关闭配置。
+type Option func(*options)
+
+type options struct {
+	captchaSource captcha.Source
+}
+
+// WithCaptchaSource 指定登录验证码来源。
+func WithCaptchaSource(source captcha.Source) Option {
+	return func(o *options) { o.captchaSource = source }
+}
+
 // New 打开数据库、装配 API 与静态站点。webDir 不存在会报错。
 // 首次启动时导入标签字典与预置模板的一次性种子（spec「初始数据」）。
-func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
+func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Server, error) {
+	if cfg.Server.Deploy == config.DeployContainer && strings.TrimSpace(cfg.Server.PublicURL) == "" {
+		return nil, fmt.Errorf("容器模式必须配置 [server] public_url：对外链接不能依赖可被请求头篡改的地址")
+	}
+	if cfg.Server.Deploy == config.DeployContainer {
+		if err := installImageClient(cfg); err != nil {
+			return nil, err
+		}
+	}
+	o := options{}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	captchaSrc := captchaSource()
+	if o.captchaSource != nil {
+		captchaSrc = o.captchaSource
+	}
 	ident := identity.NewManager(st.DB, c)
 	labelDict := labels.NewManager(st.DB)
 	if err := labelDict.SeedIfEmpty(context.Background()); err != nil {
@@ -88,11 +122,15 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	backups.SetNotifier(notificationStore)
 	accessRecords := accessrecords.NewManager(st.DB, c)
 	ticketStore := tickets.NewManager(st.DB, c, labelDict, templateDict, atts)
+	ticketStore.SetIntakeDailyLimit(cfg.Intake.DailyLimit)
 	ticketStore.SetNotifier(notificationStore)
+	ticketStore.SetSystemNotifier(notificationStore)
 	draftStore := drafts.NewManager(st.DB, c, ticketStore, atts)
 	draftStore.SetNotifier(notificationStore.DraftNotifier())
 	api := httpapi.NewAPI(ident, ticketStore,
 		templateDict, idem, atts, backups, accessRecords, draftStore, cfg, c)
+	api.SetCaptchaSource(captchaSrc)
+	api.SetLoginRateLimit(loginRateLimit())
 	api.SetNotifications(notificationStore)
 	web, err := webapp.New(cfg.WebDir)
 	if err != nil {
@@ -117,6 +155,42 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 		httpSrv:       &http.Server{Handler: mux},
 		web:           web,
 	}, nil
+}
+
+// installImageClient 把镜像自带的桌面客户端安装包装入数据目录。目录不存在
+// 表示镜像没有携带客户端；目录存在但清单或安装包无效时拒绝启动。
+func installImageClient(cfg config.Config) error {
+	manifestPath := filepath.Join(cfg.Server.ClientImageDir, "manifest.json")
+	raw, err := os.ReadFile(manifestPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("读取镜像客户端清单 %s 失败：%w", manifestPath, err)
+	}
+	var manifest release.Manifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return fmt.Errorf("解析镜像客户端清单 %s 失败：%w", manifestPath, err)
+	}
+	if manifest.Component != release.ComponentClient {
+		return fmt.Errorf("镜像客户端清单的 component = %q, 想 client", manifest.Component)
+	}
+	entry := manifest.FileEntry("taskboard-client.exe")
+	if entry == nil {
+		return fmt.Errorf("镜像客户端清单缺少 taskboard-client.exe")
+	}
+	if current := updater.ClientVersion(cfg.DataDir); !version.Less(current, manifest.Version) {
+		return nil
+	}
+	data, err := os.ReadFile(filepath.Join(cfg.Server.ClientImageDir, "taskboard-client.exe"))
+	if err != nil {
+		return fmt.Errorf("读取镜像客户端安装包失败：%w", err)
+	}
+	pkg := updater.ClientPackage{Version: manifest.Version, Sha256: entry.Sha256, Size: entry.Size}
+	if err := updater.InstallClient(cfg.DataDir, data, pkg); err != nil {
+		return fmt.Errorf("装入镜像客户端安装包失败：%w", err)
+	}
+	return nil
 }
 
 // Handler 返回完整路由（测试和反向代理调试用）。

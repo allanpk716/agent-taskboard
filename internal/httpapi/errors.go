@@ -10,6 +10,14 @@ import (
 const (
 	CodeUnauthenticated    = "unauthenticated"      // 未登录或凭证失效
 	CodeInvalidCredentials = "invalid_credentials"  // 用户名或密码不正确
+	CodeCaptchaRequired    = "captcha_required"     // 登录请求缺验证码标识或答案
+	CodeCaptchaInvalid     = "captcha_invalid"      // 验证码答案错误
+	CodeCaptchaExpired     = "captcha_expired"      // 验证码已过期
+	CodeCaptchaUsed        = "captcha_used"         // 验证码已被使用
+	CodeLoginLocked        = "login_locked"         // 连续密码失败后账号来源组合已锁定
+	CodeLoginRateLimited   = "login_rate_limited"   // 登录来源每分钟请求过多
+	CodeLoginLockRequired  = "login_lock_required"  // 解锁请求缺登录名或来源 IP
+	CodeLoginLockNotFound  = "login_lock_not_found" // 解锁目标不存在或已过期
 	CodeInvalidJSON        = "invalid_json"         // 请求体不是合法 JSON
 	CodeInvalidUTF8        = "invalid_utf8"         // 请求体不是合法的 UTF-8
 	CodeInvalidToken       = "invalid_token"        // Agent token 无效或已撤销
@@ -129,10 +137,12 @@ const (
 	CodeIdempotencyKeyRequired     = "idempotency_key_required" // 入口附件上传缺提交归属键
 	CodeIntakeUploadRateLimited    = "intake_upload_rate_limited"
 	CodeIntakePendingQuotaExceeded = "intake_pending_quota_exceeded"
+	CodeIntakePaused               = "intake_paused"
 
 	// #45：更新。
-	CodeUpdateSourceUnreachable = "update_source_unreachable" // 所有更新源都连不上（502）
-	CodeUpdateFailed            = "update_failed"             // 更新本身的失败（哈希不符、备份失败等）
+	CodeUpdateSourceUnreachable    = "update_source_unreachable"    // 所有更新源都连不上（502）
+	CodeUpdateFailed               = "update_failed"                // 更新本身的失败（哈希不符、备份失败等）
+	CodeContainerUpdateUnsupported = "container_update_unsupported" // 容器部署不支持原地更新（409）
 	// #42：成员账号管理（网页上创建与停用，仅管理员）。
 	CodeUsernameRequired     = "username_required"      // 创建成员时登录名为空
 	CodeInvalidUsername      = "invalid_username"       // 登录名里有不适合的字符

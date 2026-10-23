@@ -1,0 +1,17 @@
+# 容器部署配置示例。复制到 compose 文件所在目录的 config.toml 后修改域名。
+data_dir = '/app/data'
+port = 8080
+web_dir = '/app/web'
+
+[server]
+public_url = 'https://taskboard.example.com'
+deploy = 'container'
+client_image_dir = '/app/client-package'
+
+[backup]
+# 备份留在挂载的数据卷内；异地备份由后续工单统一设计。
+target = '/app/data/backups'
+
+[update]
+# 容器模式通过替换镜像升级，不使用原地更新源。
+sources = []

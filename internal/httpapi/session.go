@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/allanpk716/agent-taskboard/internal/captcha"
 
 	accessrecords "github.com/allanpk716/agent-taskboard/internal/accessrecords"
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
@@ -39,25 +42,55 @@ type API struct {
 	accessRecords   *accessrecords.Manager
 	drafts          *drafts.Manager
 	cfg             config.Config
-	intakeUploads   *intakeUploadLimiter
+	clk             clock.Clock
+	intakeUploads   *requestRateLimiter
 	stampedClientMu sync.Mutex
 	stampedClients  map[string]*stampedClient
 	clientOnlineMu  sync.Mutex
 	clientOnline    map[int64]int
+	captchaSource   captcha.Source
+	captchaMu       sync.Mutex
+	captchas        map[string]captchaRecord
+	loginLimits     *requestRateLimiter
+	loginLocks      *loginLockStore
+}
+
+// SetCaptchaSource 装配登录验证码来源（生产固定随机，测试可注入）。
+func (a *API) SetCaptchaSource(source captcha.Source) {
+	a.captchaSource = source
+	a.captchas = make(map[string]captchaRecord)
+}
+
+// SetLoginRateLimit 调整登录来源限流；只供测试二进制装配使用，生产固定 20 次/分钟。
+func (a *API) SetLoginRateLimit(perMinute int) {
+	if perMinute < 1 {
+		panic("登录限流必须大于 0")
+	}
+	a.loginLimits = newRequestRateLimiter(perMinute, a.clk)
+}
+
+type captchaRecord struct {
+	answer    string
+	expiresAt time.Time
+	used      bool
 }
 
 func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager, backups *ops.Backups, accessRecs *accessrecords.Manager, draftStore *drafts.Manager, cfg config.Config, clk clock.Clock) *API {
 	return &API{ident: ident, tickets: tk, templates: tpl, idem: idem, atts: atts, backups: backups,
-		accessRecords: accessRecs, drafts: draftStore, cfg: cfg,
-		intakeUploads:  newIntakeUploadLimiter(cfg.Intake.UploadRatePerMin, clk),
+		accessRecords: accessRecs, drafts: draftStore, cfg: cfg, clk: clk,
+		intakeUploads:  newRequestRateLimiter(cfg.Intake.UploadRatePerMin, clk),
 		stampedClients: make(map[string]*stampedClient),
-		clientOnline:   make(map[int64]int)}
+		clientOnline:   make(map[int64]int),
+		captchaSource:  captcha.Random{}, captchas: make(map[string]captchaRecord),
+		loginLimits: newRequestRateLimiter(loginRatePerMinute, clk),
+		loginLocks:  newLoginLockStore()}
 }
 
 // Handler 返回 /api/v1 前缀的 http.Handler（带 panic 恢复，统一错误格式）。
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/session", a.handleSession)
+	mux.HandleFunc("/api/v1/login-captcha", a.handleLoginCaptcha)
 	mux.HandleFunc("/api/v1/guest-link", a.handleGuestLinkClaim)
 	mux.HandleFunc("/api/v1/guest-links/claim", a.handleGuestLinkClaim)
 	mux.HandleFunc("/api/v1/guest-links/enter", a.handleGuestLinkClaim)
@@ -90,6 +123,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/intakes", a.handleIntakesRoot)
 	mux.HandleFunc("/api/v1/intakes/", a.handleIntakeRef)
 	mux.HandleFunc("/api/v1/admin/backups", a.handleAdminBackups)
+	mux.HandleFunc("/api/v1/admin/login-locks", a.handleLoginLocks)
+	mux.HandleFunc("/api/v1/admin/login-locks/unlock", a.handleLoginUnlock)
 	mux.HandleFunc("/api/v1/admin/update", a.handleAdminUpdate)
 	mux.HandleFunc("/api/v1/health", a.handleHealth)
 	mux.HandleFunc("/api/v1", a.handleAPIRoot)
@@ -149,18 +184,44 @@ func (a *API) handleSession(w http.ResponseWriter, r *http.Request) {
 }
 
 type loginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	CaptchaID     string `json:"captcha_id"`
+	CaptchaAnswer string `json:"captcha_answer"`
 }
 
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r)
+	if retry := a.loginLimits.allow(ip); retry > 0 {
+		a.writeLoginRateLimited(w, retry)
+		return
+	}
 	var req loginRequest
 	if !decodeJSON(w, r, &req, `{"username": "…", "password": "…"}`) {
 		return
 	}
+	if err := a.consumeCaptcha(req.CaptchaID, req.CaptchaAnswer); err != nil {
+		a.writeCaptchaError(w, err)
+		return
+	}
+	now := a.clk.Now()
+	if remaining, locked := a.loginLocks.locked(req.Username, ip, now); locked {
+		minutes := remainingMinutes(remaining)
+		WriteErrorExtra(w, http.StatusForbidden, CodeLoginLocked,
+			fmt.Sprintf("账号已锁定，约 %d 分钟后再试或联系管理员", minutes),
+			"", map[string]any{"remaining_minutes": minutes})
+		return
+	}
+	// 验证码校验通过后才是密码校验；#229 的密码失败统计应加在这个调用内部/调用点。
 	sess, err := a.ident.Login(r.Context(), req.Username, req.Password)
 	if err != nil {
 		if errors.Is(err, identity.ErrInvalidCredentials) {
+			if a.loginLocks.recordFailure(req.Username, ip, now) {
+				WriteErrorExtra(w, http.StatusForbidden, CodeLoginLocked,
+					fmt.Sprintf("账号已锁定，约 %d 分钟后再试或联系管理员", remainingMinutes(loginLockDuration)),
+					"", map[string]any{"remaining_minutes": remainingMinutes(loginLockDuration)})
+				return
+			}
 			WriteError(w, http.StatusUnauthorized, CodeInvalidCredentials, "用户名或密码不正确", "")
 			return
 		}
@@ -170,6 +231,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		}
 		panic(err) // 由 recoverMiddleware 统一转成 500
 	}
+	a.loginLocks.reset(req.Username, ip)
 	http.SetCookie(w, sessionCookie(sess, sess.ExpiresAt))
 	member := sess.Member
 	writeJSON(w, http.StatusOK, sessionView{Viewer: viewerView{Kind: "member", Member: &member}})

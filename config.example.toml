@@ -16,6 +16,10 @@ web_dir = 'web'
 [server]
 public_url = ''
 min_client_version = ''  # 桌面客户端最低兼容版本；空 = 不限制
+deploy = ''              # 空 = 原地部署；container = 容器部署，更新改为替换镜像
+# 容器镜像内桌面客户端安装包目录（manifest.json + taskboard-client.exe）。
+# Docker 运行时约定为 /app/client-package；空 = 使用默认 client-package。
+client_image_dir = ''
 
 # 附件上限（#33）。服务端只检查上限，不压缩图片（压缩在前端做）；超过上限
 # 的文件改用 NAS 外部文件引用，把路径写在说明或回复里。
@@ -30,6 +34,7 @@ max_ticket_mb       = 50   # 整张工单合计（待用附件也计入）
 [intake]
 upload_rate_per_min = 20
 pending_quota_mb    = 200
+daily_limit         = 200
 
 # 备份（#43，见 docs/deploy-and-release.md「备份与恢复」）。定时备份内置在 serve 里；
 # 手动备份用 taskboard backup，恢复用 taskboard restore <备份文件>。

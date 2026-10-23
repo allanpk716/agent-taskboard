@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { ADMIN, login } from './helpers'
+import { ADMIN, login, loginWithRequest } from './helpers'
 
 // 管理页系统状态面板（#45）：管理员在「管理」页（成员账号、标签治理之外）
 // 看到备份状态（从未成功备份超过 36 小时时标红、未配置备份目标时提示
@@ -26,6 +26,16 @@ test('管理员在管理页看到备份状态与版本', async ({ page }) => {
   await expect(page.getByTestId('update-btn')).toBeDisabled()
 })
 
+test('容器模式下管理页提示升级镜像', async ({ page }) => {
+  test.skip(!process.env.E2E_CONTAINER, '需要以容器模式启动 e2e 服务')
+  await login(page, ADMIN)
+  await page.goto('/admin')
+
+  await expect(page.getByTestId('update-card')).toBeVisible()
+  await expect(page.getByTestId('update-error')).toHaveText('容器部署，请升级镜像')
+  await expect(page.getByTestId('update-btn')).toBeDisabled()
+})
+
 test('管理员在管理页切换成员的初筛人身份', async ({ page }) => {
   await login(page, ADMIN)
   await page.goto('/admin')
@@ -47,7 +57,7 @@ test('管理员在管理页切换成员的初筛人身份', async ({ page }) => 
 })
 
 test('管理员编辑反馈入口的部门联系方式', async ({ page, request }) => {
-  const loginRes = await request.post('/api/v1/session', { data: ADMIN })
+  const loginRes = await loginWithRequest(request, ADMIN)
   expect(loginRes.ok()).toBeTruthy()
   const cookie = (loginRes.headers()['set-cookie'] ?? '').split(';')[0]
   const slug = `contact-${Date.now() % 1_000_000}`
@@ -69,7 +79,7 @@ test('管理员编辑反馈入口的部门联系方式', async ({ page, request 
 })
 
 test('管理员停用后可显示并恢复已停用成员', async ({ page, request }) => {
-  const loginRes = await request.post('/api/v1/session', { data: ADMIN })
+  const loginRes = await loginWithRequest(request, ADMIN)
   expect(loginRes.ok()).toBeTruthy()
   const cookie = (loginRes.headers()['set-cookie'] ?? '').split(';')[0]
   const username = `inactive-${Date.now() % 1_000_000}`
@@ -115,7 +125,7 @@ test('管理员停用后可显示并恢复已停用成员', async ({ page, reque
 })
 
 test('管理员重置成员密码后可用新密码登录', async ({ page, request }) => {
-  const loginRes = await request.post('/api/v1/session', { data: ADMIN })
+  const loginRes = await loginWithRequest(request, ADMIN)
   expect(loginRes.ok()).toBeTruthy()
   const cookie = (loginRes.headers()['set-cookie'] ?? '').split(';')[0]
   const username = `reset-${Date.now() % 1_000_000}`

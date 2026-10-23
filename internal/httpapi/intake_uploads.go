@@ -3,7 +3,6 @@ package httpapi
 import (
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,8 +13,9 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 )
 
-// intakeUploadLimiter 是按（入口, IP）计数的进程内令牌桶；服务重启后清零。
-type intakeUploadLimiter struct {
+// requestRateLimiter 是按调用方提供的 key 计数的进程内令牌桶；入口提交/附件
+// 上传和登录共用，服务重启后清零。
+type requestRateLimiter struct {
 	mu      sync.Mutex
 	buckets map[string]*intakeTokenBucket
 	rate    int
@@ -27,11 +27,11 @@ type intakeTokenBucket struct {
 	last   time.Time
 }
 
-func newIntakeUploadLimiter(rate int, clk clock.Clock) *intakeUploadLimiter {
-	return &intakeUploadLimiter{buckets: map[string]*intakeTokenBucket{}, rate: rate, clk: clk}
+func newRequestRateLimiter(rate int, clk clock.Clock) *requestRateLimiter {
+	return &requestRateLimiter{buckets: map[string]*intakeTokenBucket{}, rate: rate, clk: clk}
 }
 
-func (l *intakeUploadLimiter) allow(key string) time.Duration {
+func (l *requestRateLimiter) allow(key string) time.Duration {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.clk.Now()
@@ -67,10 +67,7 @@ func (a *API) handleIntakeAttachments(w http.ResponseWriter, r *http.Request, sl
 		return
 	}
 	if retry := a.intakeUploads.allow(strconv.FormatInt(in.ID, 10) + "/" + clientIP(r)); retry > 0 {
-		seconds := int(retry.Round(time.Second) / time.Second)
-		if seconds < 1 {
-			seconds = 1
-		}
+		seconds := retryAfterSeconds(retry)
 		w.Header().Set("Retry-After", strconv.Itoa(seconds))
 		WriteErrorExtra(w, http.StatusTooManyRequests, CodeIntakeUploadRateLimited,
 			"这个反馈入口的附件上传太频繁，请稍后再试",
@@ -82,7 +79,7 @@ func (a *API) handleIntakeAttachments(w http.ResponseWriter, r *http.Request, sl
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
 			WriteError(w, http.StatusRequestEntityTooLarge, CodeAttachmentTooLarge,
-				"单个文件不能超过 "+strconv.Itoa(a.atts.Limits().MaxFileMB())+" MB", "")
+				"单个文件不能超过 "+strconv.Itoa(a.atts.Limits().MaxFileMB())+" MB", guestLargeFileHint)
 			return
 		}
 		WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "请求体不是合法的 multipart 表单",
@@ -121,7 +118,7 @@ func (a *API) writeIntakeAttachmentError(w http.ResponseWriter, err error, filen
 	var count *attachments.CountExceededError
 	switch {
 	case errors.As(err, &tooLarge):
-		WriteError(w, http.StatusRequestEntityTooLarge, CodeAttachmentTooLarge, err.Error(), "")
+		WriteError(w, http.StatusRequestEntityTooLarge, CodeAttachmentTooLarge, err.Error(), guestLargeFileHint)
 	case errors.As(err, &quota):
 		WriteErrorExtra(w, http.StatusRequestEntityTooLarge, CodeIntakePendingQuotaExceeded,
 			err.Error(), "待提交附件过多时，请先提交已有反馈，或把大文件路径写在说明里",
@@ -140,25 +137,4 @@ func (a *API) writeIntakeAttachmentError(w http.ResponseWriter, err error, filen
 	}
 }
 
-// clientIP 只信任回环反代带来的 X-Forwarded-For，并取最右侧一段（Caddy 追加
-// 的客户端地址）；直连时忽略该头。
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	ip := net.ParseIP(host)
-	if ip != nil && ip.IsLoopback() {
-		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-			parts := strings.Split(forwarded, ",")
-			last := strings.TrimSpace(parts[len(parts)-1])
-			if parsed := net.ParseIP(last); parsed != nil {
-				return parsed.String()
-			}
-		}
-	}
-	if ip != nil {
-		return ip.String()
-	}
-	return host
-}
+const guestLargeFileHint = "请压缩或联系对接成员"

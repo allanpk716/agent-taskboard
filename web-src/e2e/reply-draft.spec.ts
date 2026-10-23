@@ -1,10 +1,10 @@
 import { test, expect } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
-import { createTicket, login, loginAdmin, markDraftIntroSeen, wang } from './helpers'
+import { createTicket, login, loginAdmin, markDraftIntroSeen, wang, loginWithRequest } from './helpers'
 
 async function issueRequiredAgent(request: APIRequestContext): Promise<string> {
   const member = await wang()
-  const login = await request.post('/api/v1/session', { data: member })
+  const login = await loginWithRequest(request, member)
   expect(login.status(), `王工登录失败：${await login.text()}`).toBe(200)
   const res = await request.post('/api/v1/me/agent-tokens', {
     data: { name: `笔记本-${Date.now()}`, draft_mode: 'required' },
@@ -84,7 +84,7 @@ test('成员丢弃回复草稿后工单不留痕迹', async ({ page, request }) 
 
 test('草稿通知出现在铃铛并定位到草稿处', async ({ page, request }) => {
   const number = await createTicket(request, { title: '草稿通知', assignee: '王工' })
-  const session = await request.post('/api/v1/session', { data: await wang() })
+  const session = await loginWithRequest(request, await wang())
   expect(session.status()).toBe(200)
   await login(page, await wang())
   const issued = await request.post('/api/v1/me/agent-tokens', {

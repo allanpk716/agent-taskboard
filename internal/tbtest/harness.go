@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
+	"github.com/allanpk716/agent-taskboard/internal/captcha"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
@@ -40,24 +41,35 @@ type Server struct {
 	webDir            string
 	srv               *server.Server
 	guestDeviceTokens map[string]string
+	captchaAnswer     string
 }
 
 // Option 定制 Start 的行为。
 type Option func(*options)
 
 type options struct {
-	webDir      string
-	clockStart  time.Time
-	attachments config.Attachments
-	backup      config.Backup
-	update      config.Update
-	intake      config.Intake
-	publicURL   string
-	minClient   string
+	webDir        string
+	dataDir       string
+	clockStart    time.Time
+	attachments   config.Attachments
+	backup        config.Backup
+	update        config.Update
+	intake        config.Intake
+	publicURL     string
+	minClient     string
+	deploy        string
+	clientImage   string
+	captcha       captcha.Source
+	captchaAnswer string
+	listenHost    string
+	startupErr    *error
 }
 
 // WithWebDir 指定前端目录（默认用临时目录里的一页 index.html 占位）。
 func WithWebDir(dir string) Option { return func(o *options) { o.webDir = dir } }
+
+// WithDataDir 指定数据目录（默认临时目录），用于跨启动的持久化场景。
+func WithDataDir(dir string) Option { return func(o *options) { o.dataDir = dir } }
 
 // WithClockStart 指定假时钟的起点（默认 2026-10-16 09:00 北京时间）。
 func WithClockStart(t time.Time) Option { return func(o *options) { o.clockStart = t } }
@@ -88,14 +100,37 @@ func WithMinClientVersion(version string) Option {
 	}
 }
 
+// WithContainer 以容器模式启动服务。publicURL 是容器模式必填的对外地址；
+// clientImageDir 为空时使用默认镜像客户端目录（目录可以不存在）。
+func WithContainer(publicURL, clientImageDir string) Option {
+	return func(o *options) {
+		o.deploy = config.DeployContainer
+		o.publicURL = publicURL
+		o.clientImage = clientImageDir
+	}
+}
+
+// WithStartupError 捕获装配服务时的错误，供测试验证启动前校验。
+func WithStartupError(err *error) Option {
+	return func(o *options) { o.startupErr = err }
+}
+
+// WithCaptchaSource 注入登录验证码来源；生产服务固定使用随机来源。
+func WithCaptchaSource(source captcha.Source, answer string) Option {
+	return func(o *options) { o.captcha, o.captchaAnswer = source, answer }
+}
+
+// WithListenHost 指定测试服务监听的地址，供需要真实非回环来源 IP 的黑盒测试使用。
+func WithListenHost(host string) Option { return func(o *options) { o.listenHost = host } }
+
 // WithUpdate 指定更新源配置（#45；默认不配置任何源：管理端点会明确报
 // “没有配置更新源”，测试里指向本地假源，不碰真实 GitHub/UpdateHub）。
 func WithUpdate(u config.Update) Option { return func(o *options) { o.update = u } }
 
-// WithIntake 指定入口匿名上传的限流与临时配额。
-func WithIntake(ratePerMin, pendingQuotaMB int) Option {
+// WithIntake 指定入口匿名上传的限流、临时配额与每日提交上限。
+func WithIntake(ratePerMin, pendingQuotaMB, dailyLimit int) Option {
 	return func(o *options) {
-		o.intake = config.Intake{UploadRatePerMin: ratePerMin, PendingQuotaMB: pendingQuotaMB}
+		o.intake = config.Intake{UploadRatePerMin: ratePerMin, PendingQuotaMB: pendingQuotaMB, DailyLimit: dailyLimit}
 	}
 }
 
@@ -110,8 +145,15 @@ func Start(t testing.TB, opts ...Option) *Server {
 	for _, opt := range opts {
 		opt(&o)
 	}
+	if o.captcha == nil {
+		o.captcha = harnessCaptcha{}
+		o.captchaAnswer = "AB23"
+	}
 
 	dataDir := t.TempDir()
+	if o.dataDir != "" {
+		dataDir = o.dataDir
+	}
 	webDir := o.webDir
 	if webDir == "" {
 		webDir = t.TempDir()
@@ -144,14 +186,28 @@ func Start(t testing.TB, opts ...Option) *Server {
 		cfg.Server.PublicURL = o.publicURL
 	}
 	cfg.Server.MinClientVersion = o.minClient
+	cfg.Server.Deploy = o.deploy
+	cfg.Server.ClientImageDir = o.clientImage
 	config.ApplyDefaults(&cfg) // 与 config.Load 一致：端口、附件上限等补默认值
 	clk := clock.NewFake(o.clockStart)
-	srv, err := server.New(cfg, st, clk)
+	srvOpts := make([]server.Option, 0, 1)
+	if o.captcha != nil {
+		srvOpts = append(srvOpts, server.WithCaptchaSource(o.captcha))
+	}
+	srv, err := server.New(cfg, st, clk, srvOpts...)
 	if err != nil {
+		if o.startupErr != nil {
+			*o.startupErr = err
+			return nil
+		}
 		t.Fatalf("装配服务失败：%v", err)
 	}
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	listenHost := o.listenHost
+	if listenHost == "" {
+		listenHost = "127.0.0.1"
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort(listenHost, "0"))
 	if err != nil {
 		t.Fatalf("监听失败：%v", err)
 	}
@@ -172,6 +228,7 @@ func Start(t testing.TB, opts ...Option) *Server {
 		webDir:            webDir,
 		srv:               srv,
 		guestDeviceTokens: map[string]string{},
+		captchaAnswer:     o.captchaAnswer,
 	}
 }
 
@@ -180,6 +237,9 @@ func (s *Server) URL() string { return s.url }
 
 // Clock 返回注入的假时钟。
 func (s *Server) Clock() *clock.Fake { return s.clk }
+
+// CaptchaAnswer 返回测试验证码的固定答案，供需要自定义来源地址的登录请求使用。
+func (s *Server) CaptchaAnswer() string { return s.captchaAnswer }
 
 // Shutdown 显式优雅停机；测试结束时的自动关闭会再执行一次，幂等。
 func (s *Server) Shutdown(t testing.TB) {
@@ -244,8 +304,13 @@ func (s *Server) NewClient() *http.Client { return &http.Client{} }
 // 所以这里手工把 cookie 固定在后续请求上（浏览器对 127.0.0.1 没有这个限制）。
 func (s *Server) Login(username, password string) *http.Client {
 	s.TB.Helper()
+	var captcha struct {
+		ID string `json:"id"`
+	}
+	s.Do(s.TB, s.NewClient(), http.MethodGet, "/api/v1/login-captcha", nil, &captcha)
 	res := s.Do(s.TB, s.NewClient(), http.MethodPost, "/api/v1/session",
-		map[string]string{"username": username, "password": password}, nil)
+		map[string]string{"username": username, "password": password,
+			"captcha_id": captcha.ID, "captcha_answer": s.captchaAnswer}, nil)
 	if res.StatusCode != http.StatusOK {
 		s.TB.Fatalf("登录 %s 失败：状态码 %d", username, res.StatusCode)
 	}
@@ -254,6 +319,21 @@ func (s *Server) Login(username, password string) *http.Client {
 		s.TB.Fatalf("登录 %s 成功但没有会话 cookie", username)
 	}
 	return s.cookieClient(cookie)
+}
+
+// LoginRequest 先获取一张验证码，再把用户名密码的登录请求发给真实 HTTP 接口。
+func (s *Server) LoginRequest(body map[string]string) *http.Response {
+	s.TB.Helper()
+	var captcha struct {
+		ID string `json:"id"`
+	}
+	s.Do(s.TB, s.NewClient(), http.MethodGet, "/api/v1/login-captcha", nil, &captcha)
+	if body == nil {
+		body = map[string]string{}
+	}
+	body["captcha_id"] = captcha.ID
+	body["captcha_answer"] = s.captchaAnswer
+	return s.Do(s.TB, s.NewClient(), http.MethodPost, "/api/v1/session", body, nil)
 }
 
 func (s *Server) cookieClient(cookie string) *http.Client {
@@ -437,6 +517,13 @@ func testClientChallenge() string {
 }
 
 const testClientVerifier = "test-verifier-with-enough-characters-for-pkce-1234567890"
+
+type harnessCaptcha struct{}
+
+func (harnessCaptcha) Generate() (string, []byte, error) {
+	pngBytes, err := captcha.Render("AB23")
+	return "AB23", pngBytes, err
+}
 
 type cookieTransport struct {
 	cookie string

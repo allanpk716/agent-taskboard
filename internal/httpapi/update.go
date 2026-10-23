@@ -11,6 +11,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
 	"github.com/allanpk716/agent-taskboard/internal/updater"
 )
@@ -41,6 +42,11 @@ func (a *API) updateOptions() updater.Options {
 func (a *API) handleAdminUpdate(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.adminFromRequestFor(w, r, "更新由管理员在管理页或命令行触发（taskboard update）；访客请联系管理员",
 		"更新由管理员在管理页或命令行触发（taskboard update）"); !ok {
+		return
+	}
+	if a.cfg.Server.Deploy == config.DeployContainer {
+		WriteError(w, http.StatusConflict, CodeContainerUpdateUnsupported,
+			"容器部署，请升级镜像", "平台运行在容器里，不能替换容器内的后端与前端文件。")
 		return
 	}
 	switch r.Method {

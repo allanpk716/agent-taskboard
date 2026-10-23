@@ -55,8 +55,7 @@ func Test每个测试独占数据目录(t *testing.T) {
 		if s == s2 {
 			want = "pass-two"
 		}
-		res := s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/session",
-			map[string]string{"username": "admin", "password": want}, nil)
+		res := s.LoginRequest(map[string]string{"username": "admin", "password": want})
 		if res.StatusCode != http.StatusOK {
 			t.Fatalf("用 %s 登录状态码 = %d, 想 200", want, res.StatusCode)
 		}
@@ -64,8 +63,7 @@ func Test每个测试独占数据目录(t *testing.T) {
 		if s == s2 {
 			bad = "pass-two"
 		}
-		res = s.Do(t, s.NewClient(), http.MethodPost, "/api/v1/session",
-			map[string]string{"username": "admin", "password": bad + "-x"}, nil)
+		res = s.LoginRequest(map[string]string{"username": "admin", "password": bad + "-x"})
 		if res.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("错误密码登录状态码 = %d, 想 401", res.StatusCode)
 		}

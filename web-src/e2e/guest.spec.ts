@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
-import { login, openGuestPage } from './helpers'
+import { login, openGuestPage, loginWithRequest } from './helpers'
 
 // 访客网页（#38）：工单对话页。对真实服务 + 构建好的前端跑用例，
 // 造数据（工单、回复、访客链接）全部通过 HTTP API 完成。
@@ -13,7 +13,7 @@ interface Seed {
 }
 
 async function loginAdmin(request: APIRequestContext) {
-  const res = await request.post('/api/v1/session', { data: ADMIN })
+  const res = await loginWithRequest(request, ADMIN)
   expect(res.ok(), '管理员登录失败').toBeTruthy()
 }
 
@@ -353,8 +353,8 @@ test('粘贴的图片已压缩且不含 EXIF，小 PNG 保持原样', async ({ p
   expect(bytesEqual(buf2, png)).toBe(true) // 字节原样
 })
 
-// 5. 附件超限（413）：提示改用 NAS 路径，不产生回复。
-test('附件超过单个文件上限时提示改用 NAS 路径', async ({ page, request }) => {
+// 5. 附件超限（413）：访客提示压缩或联系对接成员，不产生回复。
+test('附件超过单个文件上限时提示请压缩或联系对接成员', async ({ page, request }) => {
   const seed = await seedGuestTicket(request, {})
   await openGuestPage(page, request, seed.linkKey)
 
@@ -365,7 +365,7 @@ test('附件超过单个文件上限时提示改用 NAS 路径', async ({ page, 
     buffer: Buffer.alloc(6 * 1024 * 1024, 1), // 超过 5MB 的单个文件上限
   })
   await expect(page.locator('.toobig')).toContainText('录像.zip', { timeout: 10000 })
-  await expect(page.locator('.toobig')).toContainText('NAS')
+  await expect(page.locator('.toobig')).toContainText('请压缩或联系对接成员')
 
   // 没上传成附件：发送不携带它，也不应把它写进正文
   await expect(page.locator('textarea')).toHaveValue('录像放在 NAS 上')

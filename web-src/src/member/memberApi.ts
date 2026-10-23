@@ -505,6 +505,25 @@ export async function resetMemberPassword(id: number): Promise<ResetMemberPasswo
   return api(`/api/v1/members/${id}/reset-password`, { method: 'POST' })
 }
 
+export interface LoginLock {
+  username: string
+  name: string
+  ip: string
+  remaining_minutes: number
+}
+
+export async function fetchLoginLocks(): Promise<LoginLock[]> {
+  const body = await api('/api/v1/admin/login-locks')
+  return (body.locks ?? []) as LoginLock[]
+}
+
+export async function unlockLogin(username: string, ip: string): Promise<void> {
+  await api('/api/v1/admin/login-locks/unlock', {
+    method: 'POST',
+    body: JSON.stringify({ username, ip }),
+  })
+}
+
 export async function setMemberTriager(id: number, triager: boolean): Promise<void> {
   await api(`/api/v1/members/${id}/triager`, {
     method: 'POST',

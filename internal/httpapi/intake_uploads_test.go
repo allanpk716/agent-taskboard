@@ -25,7 +25,7 @@ func TestClientIP只在回环时信任XFF(t *testing.T) {
 
 func Test入口上传限流按客户端IP重填令牌(t *testing.T) {
 	clk := clock.NewFake(time.Date(2026, 10, 20, 9, 0, 0, 0, clock.Beijing))
-	limiter := newIntakeUploadLimiter(1, clk)
+	limiter := newRequestRateLimiter(1, clk)
 	loopback, _ := http.NewRequest(http.MethodPost, "/", nil)
 	loopback.RemoteAddr = "127.0.0.1:1"
 	if wait := limiter.allow(loopback.RemoteAddr); wait != 0 {

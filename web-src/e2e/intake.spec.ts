@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext, type Locator, type Page } from '@playwright/test'
-import { openGuestPage } from './helpers'
+import { openGuestPage, loginWithRequest } from './helpers'
 
 // 访客网页 #39：反馈入口提交页（/i/<slug>）与「补全说明」表单。
 // 对真实服务 + 构建好的前端跑用例，造数据（入口、别名、工单、访客链接）
@@ -8,7 +8,7 @@ import { openGuestPage } from './helpers'
 const ADMIN = { username: 'admin', password: 'admin-pass-123' }
 
 async function loginAdmin(request: APIRequestContext) {
-  const res = await request.post('/api/v1/session', { data: ADMIN })
+  const res = await loginWithRequest(request, ADMIN)
   expect(res.ok(), '管理员登录失败').toBeTruthy()
 }
 
@@ -318,4 +318,36 @@ test('入口提交时服务中断草稿仍在，恢复后自动重试且只建�
   const res = await request.get('/api/v1/tickets', { params: { status: 'all', q: title } })
   expect(res.ok()).toBeTruthy()
   expect((await res.json()).total).toBe(1)
+})
+
+// 6. 每日提交上限：当天已满 200 笔后，网页提交显示可理解的暂停提示，不进入自动重试。
+test('入口达到每日上限后显示今日已暂停', async ({ page, request }) => {
+  const slug = await seedIntake(request)
+  const fields = {
+    '哪台仪器？': 'UD-2300',
+    '什么时候发生的？': '今天上午',
+    '你做了哪些操作？': '点「开始」后报警',
+    '出错的例子': '弹出 E-203；应正常开始。',
+    '出现得频繁吗？': '每次',
+  }
+  for (let i = 0; i < 200; i++) {
+    const res = await request.post(`/api/v1/intakes/${slug}/tickets`, {
+      data: { title: `每日上限预置 ${i + 1}`, fields, author_name: '赵六' },
+      headers: { 'X-Forwarded-For': `10.20.${Math.floor(i / 250)}.${(i % 250) + 1}` },
+    })
+    expect(res.status(), `第 ${i + 1} 笔预置提交失败：${await res.text()}`).toBe(201)
+  }
+
+  await page.goto(`/i/${slug}`)
+  await page.getByLabel('一句话标题').fill('这天已经暂停的反馈')
+  await pickDimension(page, '哪台仪器？', 'UD', 'UD-2300')
+  await page.locator('.fld', { hasText: '什么时候发生的？' }).getByRole('textbox').fill('今天上午')
+  await page.locator('.fld', { hasText: '你做了哪些操作？' }).getByRole('textbox').fill('点「开始」后报警')
+  await page.locator('.fld', { hasText: '出错的例子' }).getByRole('textbox').fill('弹出 E-203；应正常开始。')
+  await page.locator('.fld', { hasText: '出现得频繁吗？' }).getByText('每次').check()
+  await page.getByLabel('你的署名').fill('张三')
+  await page.getByRole('button', { name: '提交反馈' }).click()
+
+  await expect(page.locator('.notice.err')).toHaveText('入口今日已暂停，请明天再试或联系部门。')
+  await expect(page.getByRole('heading', { name: /已提交/ })).toHaveCount(0)
 })

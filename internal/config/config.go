@@ -42,7 +42,19 @@ type Server struct {
 	PublicURL string `toml:"public_url"`
 	// MinClientVersion 是平台要求的最低桌面客户端版本；空字符串表示不限制。
 	MinClientVersion string `toml:"min_client_version"`
+	// Deploy 是部署方式：空（默认）表示原地部署；container 表示运行在
+	// 容器里，更新由替换镜像完成。
+	Deploy string `toml:"deploy"`
+	// ClientImageDir 是镜像内自带桌面客户端安装包的目录（manifest.json +
+	// taskboard-client.exe）。容器模式下启动时装入 data_dir/client。
+	ClientImageDir string `toml:"client_image_dir"`
 }
+
+// 部署方式。空值表示配置文件中的默认原地部署。
+const (
+	DeployInPlace   = ""
+	DeployContainer = "container"
+)
 
 // Attachments 是 [attachments] 小节：服务端只检查上限，不压缩图片
 // （压缩在前端做；spec「附件显示与安全」）。
@@ -61,6 +73,7 @@ type Attachments struct {
 type Intake struct {
 	UploadRatePerMin int `toml:"upload_rate_per_min"`
 	PendingQuotaMB   int `toml:"pending_quota_mb"`
+	DailyLimit       int `toml:"daily_limit"`
 }
 
 // Backup 是 [backup] 小节：备份目标与保留策略（#43，docs/deploy-and-release.md
@@ -134,6 +147,15 @@ func Load(path string) (Config, error) {
 	if t := cfg.Backup.Target; strings.HasPrefix(t, `\`) && !strings.HasPrefix(t, `\\`) {
 		return cfg, fmt.Errorf(`解析 %s 失败：[backup] target = %q 只有一个反斜杠开头；UNC 路径要以 \\ 开头，如 '\\nas01\taskboard-backup'`, path, t)
 	}
+	// TASKBOARD_DEPLOY 优先于 [server] deploy，供镜像内置默认值覆盖仍沿用原地
+	// 部署的配置文件；未设置时完全使用配置文件。
+	deploy, ok := os.LookupEnv("TASKBOARD_DEPLOY")
+	if ok {
+		if deploy != DeployContainer && deploy != DeployInPlace {
+			return cfg, fmt.Errorf("环境变量 TASKBOARD_DEPLOY = %q 无效（只能是 container 或空）", deploy)
+		}
+		cfg.Server.Deploy = deploy
+	}
 	ApplyDefaults(&cfg)
 	return cfg, nil
 }
@@ -149,6 +171,9 @@ func ApplyDefaults(cfg *Config) {
 	}
 	if cfg.WebDir == "" {
 		cfg.WebDir = "web"
+	}
+	if cfg.Server.ClientImageDir == "" {
+		cfg.Server.ClientImageDir = "client-package"
 	}
 	if cfg.Attachments.MaxFileMB == 0 {
 		cfg.Attachments.MaxFileMB = 5
@@ -182,5 +207,8 @@ func ApplyDefaults(cfg *Config) {
 	}
 	if cfg.Intake.PendingQuotaMB == 0 {
 		cfg.Intake.PendingQuotaMB = 200
+	}
+	if cfg.Intake.DailyLimit == 0 {
+		cfg.Intake.DailyLimit = 200
 	}
 }

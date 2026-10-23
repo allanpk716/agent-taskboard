@@ -13,9 +13,8 @@ const run = (cmd, args, opts = {}) => {
 }
 
 // 1. 编译后端到 bin/（Windows 与本机构建；linux/amd64 交叉构建见 docs/dev.md）。
-const exe = process.platform === 'win32' ? 'taskboard.exe' : 'taskboard'
-const binPath = join(repoRoot, 'bin', exe)
-run('go', ['build', '-o', binPath, './cmd/taskboard'], { cwd: repoRoot })
+const binPath = join(repoRoot, 'bin', `taskboard-e2e${process.platform === 'win32' ? '.exe' : ''}`)
+run('go', ['build', '-tags', 'e2e_fixed_captcha', '-o', binPath, './cmd/taskboard'], { cwd: repoRoot })
 
 // 2. 构建前端到 web/（已构建且不是最新也直接重建，成本可接受）。
 run('npm', ['run', 'build'], { cwd: webSrc })
@@ -26,5 +25,17 @@ if (!existsSync(join(repoRoot, 'web', 'index.html'))) {
 
 // 3. 跑 Playwright。
 const npx = 'npx'
-const res = spawnSync(npx, ['playwright', 'test'], { stdio: 'inherit', cwd: webSrc, shell: process.platform === 'win32' })
-process.exit(res.status ?? 1)
+const runPlaywright = (env, args = []) => {
+  const res = spawnSync(npx, ['playwright', 'test', ...args], {
+    stdio: 'inherit',
+    cwd: webSrc,
+    shell: process.platform === 'win32',
+    env: { ...process.env, ...env },
+  })
+  return res.status ?? 1
+}
+
+const status = runPlaywright({})
+if (status !== 0) process.exit(status)
+// 容器提示第二轮：独立服务与端口，只跑需要容器部署配置的用例。
+process.exit(runPlaywright({ E2E_CONTAINER: '1', E2E_PORT: '8915' }, ['--grep', '容器模式下管理页提示升级镜像']))
