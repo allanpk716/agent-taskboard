@@ -80,7 +80,7 @@ taskboard.example.com {
 .\scripts\docker-smoke.ps1
 ```
 
-脚本会构建镜像、启动容器、检查 health 和登录、确认进程非 root，并重建容器后验证数据仍保留；结束时会删除冒烟容器、数据卷和镜像。
+脚本会构建带 `e2e_fixed_captcha` build tag 的本地测试镜像（验证码固定为 `TB123`）、启动容器、检查 health 和带验证码登录、确认进程非 root，并重建容器后验证数据仍保留。发布镜像不带该 build tag，验证码仍是随机实现；脚本结束时会删除冒烟容器、数据卷和镜像。
 
 ## 容器升级
 

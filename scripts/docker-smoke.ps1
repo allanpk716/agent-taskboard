@@ -63,22 +63,21 @@ trap {
 }
 
 function Invoke-ContainerJson {
-    param([string]$Method = "GET", [string]$Body = "")
-    $args = @("compose", "-p", $Project, "-f", $ComposePath, "exec", "-T", "taskboard", "curl", "-fsS")
+    param([string]$Method = "GET", [string]$Path = "health", [string]$Body = "")
+    $curlArgs = @("compose", "-p", $Project, "-f", $ComposePath, "exec", "-T", "taskboard", "curl", "-fsS")
     if ($Method -eq "POST") {
         Set-Content -Encoding ascii -Path $LoginPath -Value $Body
-        $args += @("-H", "Content-Type: application/json", "--data-binary", "@/app/requests/login.json")
+        $curlArgs += @("-H", "Content-Type: application/json", "--data-binary", "@/app/requests/login.json")
     }
-    $args += "$PublicUrl/api/v1/session"
-    if ($Method -eq "GET") {
-        $args[-1] = "$PublicUrl/api/v1/health"
-    }
-    $raw = docker @args
-    if ($LASTEXITCODE -ne 0 -or -not $raw) { throw "HTTP request inside container failed" }
+    $curlArgs += "$PublicUrl/api/v1/$Path"
+    Write-Host "HTTP $Method /api/v1/$Path"
+    $raw = docker @curlArgs
+    if ($LASTEXITCODE -ne 0 -or -not $raw) { throw "HTTP $Method /api/v1/$Path failed: $raw" }
     return ($raw | ConvertFrom-Json)
 }
 
-docker build -t $ImageName --build-arg APP_VERSION=0.0.0 .
+docker build -t $ImageName --build-arg APP_VERSION=0.0.0 `
+    --build-arg BUILD_TAGS=e2e_fixed_captcha .
 if ($LASTEXITCODE -ne 0) { throw "docker build failed" }
 
 docker compose -p $Project -f $ComposePath up -d --wait
@@ -96,17 +95,30 @@ docker compose -p $Project -f $ComposePath exec -T taskboard /app/taskboard crea
     -config /app/config/config.toml -username smoke-admin -password smoke-pass-123 | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "create-admin failed" }
 
-$loginBody = @{ username = "smoke-admin"; password = "smoke-pass-123" } | ConvertTo-Json -Compress
-$login = Invoke-ContainerJson -Method POST -Body $loginBody
+$captcha = Invoke-ContainerJson -Path "login-captcha"
+$loginBody = @{
+    username = "smoke-admin"
+    password = "smoke-pass-123"
+    captcha_id = $captcha.id
+    captcha_answer = "TB123"
+} | ConvertTo-Json -Compress
+$login = Invoke-ContainerJson -Method POST -Path "session" -Body $loginBody
 if ($login.viewer.kind -ne "member") { throw "Login returned an unexpected viewer kind" }
-Write-Host "Plain login passed: smoke-admin"
+Write-Host "Captcha login passed: smoke-admin"
 
 docker compose -p $Project -f $ComposePath down | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "stopping container failed" }
 docker compose -p $Project -f $ComposePath up -d --wait | Out-Host
 if ($LASTEXITCODE -ne 0) { throw "recreating container failed" }
 
-$persistLogin = Invoke-ContainerJson -Method POST -Body $loginBody
+$captcha = Invoke-ContainerJson -Path "login-captcha"
+$persistBody = @{
+    username = "smoke-admin"
+    password = "smoke-pass-123"
+    captcha_id = $captcha.id
+    captcha_answer = "TB123"
+} | ConvertTo-Json -Compress
+$persistLogin = Invoke-ContainerJson -Method POST -Path "session" -Body $persistBody
 if ($persistLogin.viewer.member.username -ne "smoke-admin") {
     throw "Login failed after recreation; data was not retained"
 }
