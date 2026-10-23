@@ -6,7 +6,6 @@ web_dir = '/app/web'
 [server]
 public_url = 'https://taskboard.example.com'
 deploy = 'container'
-client_image_dir = '/app/client-package'
 
 [backup]
 # 备份留在挂载的数据卷内；异地备份由后续工单统一设计。

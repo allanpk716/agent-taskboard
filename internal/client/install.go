@@ -2,14 +2,16 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"path/filepath"
 	"runtime"
 	"strings"
-
-	"github.com/allanpk716/agent-taskboard/internal/clientstamp"
+	"time"
 )
 
 // ServerConfigStore 保存已安装客户端连接的平台地址。
@@ -52,6 +54,12 @@ type InstallAlert interface {
 	NotifyFirstInstall() error
 }
 
+// ServerURLPrompter 弹出原生输入框，让成员填写或修改平台地址。probeErr
+// 非空时对话框应显示上次探测失败原因并允许重填。
+type ServerURLPrompter interface {
+	PromptServerURL(current string, probeErr error) (string, bool, error)
+}
+
 // FatalReporter 把致命错误写进固定日志，并向用户展示系统对话框。
 type FatalReporter interface {
 	Infof(format string, args ...any)
@@ -68,8 +76,11 @@ type LifecycleDependencies struct {
 	InstallAlert InstallAlert
 }
 
-// ResolveServerURL 按参数、环境变量、已保存地址和自身尾部戳解析平台地址。
-func ResolveServerURL(argServer, envServer string, config ServerConfigStore, executable string) (string, error) {
+// ErrServerURLRequired 表示参数、环境变量和本机配置都没有平台地址。
+var ErrServerURLRequired = errors.New("缺少 Taskboard 平台地址")
+
+// ResolveServerURL 按参数、环境变量和已保存地址解析平台地址。
+func ResolveServerURL(argServer, envServer string, config ServerConfigStore) (string, error) {
 	for _, candidate := range []string{strings.TrimSpace(argServer), strings.TrimSpace(envServer)} {
 		if candidate != "" {
 			return normalizeServerURL(candidate)
@@ -84,16 +95,78 @@ func ResolveServerURL(argServer, envServer string, config ServerConfigStore, exe
 			return normalizeServerURL(saved)
 		}
 	}
-	if executable != "" {
-		stamped, ok, err := clientstamp.Read(executable)
-		if err != nil {
-			return "", err
-		}
-		if ok {
-			return normalizeServerURL(stamped)
+	return "", ErrServerURLRequired
+}
+
+// ResolveInteractiveServerURL 按固定顺序解析地址；没有来源时弹框让成员填写，
+// 探测通过后保存。取消时返回 false。
+func ResolveInteractiveServerURL(ctx context.Context, argServer, envServer string, config ServerConfigStore, prompter ServerURLPrompter, httpClient *http.Client) (string, bool, error) {
+	rawURL, err := ResolveServerURL(argServer, envServer, config)
+	if err == nil {
+		return rawURL, true, nil
+	}
+	if !errors.Is(err, ErrServerURLRequired) || prompter == nil {
+		return "", false, err
+	}
+	current := ""
+	if config != nil {
+		if saved, ok, getErr := config.ServerURL(); getErr == nil && ok {
+			current = saved
 		}
 	}
-	return "", errors.New("缺少 Taskboard 平台地址：请用 -server 指定，或从平台网页重新下载客户端")
+	var probeErr error
+	for {
+		input, ok, promptErr := prompter.PromptServerURL(current, probeErr)
+		if promptErr != nil {
+			return "", false, promptErr
+		}
+		if !ok {
+			return "", false, nil
+		}
+		current = input // 重填时保留成员刚输入的内容
+		rawURL, err = normalizeServerURL(input)
+		if err != nil {
+			probeErr = err
+			continue
+		}
+		probeErr = ProbeServerURL(ctx, rawURL, httpClient)
+		if probeErr != nil {
+			continue
+		}
+		if config != nil {
+			if err := config.SaveServerURL(rawURL); err != nil {
+				return "", false, err
+			}
+		}
+		return rawURL, true, nil
+	}
+}
+
+// ProbeServerURL 验证地址确实是 taskboard 平台。
+func ProbeServerURL(ctx context.Context, rawURL string, httpClient *http.Client) error {
+	client := httpClient
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL+"/api/v1/health", nil)
+	if err != nil {
+		return err
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("连接失败：%w", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("这个地址不是 taskboard 平台（HTTP %d）", res.StatusCode)
+	}
+	var body struct {
+		ServerVersion string `json:"server_version"`
+	}
+	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&body); err != nil || body.ServerVersion == "" {
+		return errors.New("这个地址不是 taskboard 平台")
+	}
+	return nil
 }
 
 // InstallIfNeeded 在安装目录外启动时完成自安装，返回 true 表示调用方应退出。

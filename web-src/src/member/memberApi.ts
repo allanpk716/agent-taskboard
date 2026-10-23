@@ -1,5 +1,5 @@
 // 成员网页调用的 API（网页会话 cookie；错误结构见 api.ts）。
-import { api, ApiError } from '../api'
+import { api } from '../api'
 import { compressImage } from '../shared/compress'
 import { fetchServerVersion } from '../shared/health'
 import type {
@@ -443,23 +443,6 @@ export async function fetchClients(): Promise<ClientCredentialRow[]> {
 
 export async function revokeClient(id: number): Promise<void> {
   await api(`/api/v1/me/clients/${id}`, { method: 'DELETE' })
-}
-
-export interface ClientLatest {
-  version: string
-  sha256: string
-  size: number
-  download_url: string
-}
-
-/** 未代管时返回 null（404 client_not_available），页面显示管理员尚未发布。 */
-export async function fetchClientLatest(): Promise<ClientLatest | null> {
-  try {
-    return await api('/api/v1/client/latest')
-  } catch (e) {
-    if (e instanceof ApiError && e.status === 404 && e.code === 'client_not_available') return null
-    throw e
-  }
 }
 
 /* ---------------- 成员账号（#42，仅管理员） ---------------- */

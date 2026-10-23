@@ -1,7 +1,6 @@
 [CmdletBinding()]
 param(
     [string]$ImageName = "agent-taskboard:232-smoke",
-    [string]$ClientVersion = "",
     [int]$Port = 8932
 )
 
@@ -9,11 +8,6 @@ $ErrorActionPreference = "Stop"
 if ($Port -ge 8911 -and $Port -le 8914 -or $Port -eq 8901) {
     throw "Smoke port must not use 8901 or 8911-8914"
 }
-if (-not $ClientVersion) {
-    $latest = Invoke-RestMethod -Uri "https://github.com/allanpk716/agent-taskboard/releases/download/channel-stable/latest.json"
-    $ClientVersion = $latest.client.version
-}
-
 $Project = "taskboard-smoke-232"
 $Root = Join-Path $env:TEMP ("taskboard-smoke-232-" + $PID)
 New-Item -ItemType Directory -Path $Root | Out-Null
@@ -34,7 +28,6 @@ $PublicUrl = "http://127.0.0.1:$Port"
     "[server]"
     "public_url = '$PublicUrl'"
     "deploy = 'container'"
-    "client_image_dir = '/app/client-package'"
     ""
     "[backup]"
     "target = '/app/data/backups'"
@@ -81,7 +74,6 @@ function Invoke-ContainerJson {
 }
 
 docker build -t $ImageName --build-arg APP_VERSION=0.0.0 `
-    --build-arg CLIENT_VERSION=$ClientVersion `
     --build-arg BUILD_TAGS=e2e_fixed_captcha .
 if ($LASTEXITCODE -ne 0) { throw "docker build failed" }
 

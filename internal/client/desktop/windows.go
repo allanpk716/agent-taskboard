@@ -50,6 +50,7 @@ type System struct {
 	Browser   *ShellBrowser
 	Lock      *NamedMutex
 	Update    *WindowsUpdateManager
+	Prompter  Win32ServerURLPrompter
 	Lifecycle *client.LifecycleDependencies
 }
 
@@ -75,14 +76,14 @@ func NewSystem() (*System, error) {
 	return &System{
 		Tray: &WindowsTray{}, Toaster: &WindowsToaster{appID: appAUMID},
 		Store: &CredentialManager{}, Browser: &ShellBrowser{}, Lock: &NamedMutex{name: mutexName},
-		Update: updates, Lifecycle: lifecycle,
+		Update: updates, Prompter: Win32ServerURLPrompter{}, Lifecycle: lifecycle,
 	}, nil
 }
 
 // Dependencies 返回客户端核心需要的适配器集合。
 func (s *System) Dependencies() client.Dependencies {
 	return client.Dependencies{Tray: s.Tray, Toaster: s.Toaster, Store: s.Store, Browser: s.Browser,
-		Lock: s.Lock, Update: s.Update, Lifecycle: s.Lifecycle}
+		Lock: s.Lock, Update: s.Update, Prompter: s.Prompter, Lifecycle: s.Lifecycle}
 }
 
 // NewLifecycle 返回安装阶段使用的适配器；此时还没有创建托盘和 Toast。
@@ -93,6 +94,16 @@ func NewLifecycle() *client.LifecycleDependencies {
 	}
 }
 
+// NewLifecycleWithConfigKey 用指定 HKCU key 保存平台地址，仅供手工测试隔离。
+func NewLifecycleWithConfigKey(key string) *client.LifecycleDependencies {
+	deps := NewLifecycle()
+	deps.Config = RegistryConfig{key: key}
+	return deps
+}
+
+// NewServerURLPrompter 返回 Win32 平台地址输入框。
+func NewServerURLPrompter() client.ServerURLPrompter { return Win32ServerURLPrompter{} }
+
 // WindowsTray 用 systray 实现托盘。
 type WindowsTray struct {
 	mu     sync.Mutex
@@ -100,6 +111,7 @@ type WindowsTray struct {
 	state  client.TrayState
 	unread []client.Notification
 	slots  []*systray.MenuItem
+	update *systray.MenuItem
 }
 
 func (t *WindowsTray) Run(ctx context.Context, cb client.TrayCallbacks) error {
@@ -155,6 +167,9 @@ func (t *WindowsTray) buildMenu(cb client.TrayCallbacks) {
 	}
 	t.mu.Unlock()
 	systray.AddSeparator()
+	changeServer := systray.AddMenuItem("更改平台地址…", "连接另一个 Taskboard 平台")
+	update := systray.AddMenuItem("", "")
+	update.Hide()
 	allRead := systray.AddMenuItem("全部标为已读", "保留更新的通知")
 	viewAll := systray.AddMenuItem("查看全部", "在浏览器中打开通知")
 	logout := systray.AddMenuItem("退出登录", "撤销这台电脑的凭证")
@@ -163,10 +178,16 @@ func (t *WindowsTray) buildMenu(cb client.TrayCallbacks) {
 	for _, item := range []*systray.MenuItem{allRead, viewAll, logout, uninstall, quit} {
 		item.Disable()
 	}
+	t.mu.Lock()
+	t.update = update
+	t.mu.Unlock()
 	allRead.Enable()
 	viewAll.Enable()
+	changeServer.Enable()
 	logout.Enable()
 	quit.Enable()
+	t.watch(changeServer, cb.ChangeServerURL)
+	t.watch(update, cb.Update)
 	t.watch(allRead, cb.MarkAllRead)
 	t.watch(viewAll, cb.ViewAll)
 	t.watch(logout, cb.Logout)
@@ -185,6 +206,23 @@ func (t *WindowsTray) buildMenu(cb client.TrayCallbacks) {
 			t.mu.Unlock()
 		})
 	}
+}
+
+func (t *WindowsTray) SetUpdateVersion(version string) {
+	guard("托盘更新菜单更新", func() {
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		if t.update == nil {
+			return
+		}
+		if version == "" {
+			t.update.Hide()
+			return
+		}
+		t.update.SetTitle("更新到 " + version)
+		t.update.SetTooltip("下载并安装 Taskboard 客户端 " + version)
+		t.update.Show()
+	})
 }
 
 func (t *WindowsTray) watch(item *systray.MenuItem, onClick func()) {
@@ -280,6 +318,9 @@ func (w *WindowsToaster) Run(ctx context.Context, onClick func(client.Notificati
 
 func (w *WindowsToaster) Show(n client.Notification) {
 	key := strconv.FormatInt(n.ID, 10)
+	if n.ID == 0 {
+		key = n.Reason
+	}
 	w.mu.Lock()
 	if w.items == nil {
 		w.items = make(map[string]client.Notification)
@@ -534,10 +575,17 @@ func (m *NamedMutex) Acquire() (func(), error) {
 }
 
 // RegistryConfig 在 HKCU 保存客户端解析出的平台地址。
-type RegistryConfig struct{}
+type RegistryConfig struct{ key string }
 
-func (RegistryConfig) ServerURL() (string, bool, error) {
-	key, err := registry.OpenKey(registry.CURRENT_USER, clientConfigKey, registry.READ)
+func (c RegistryConfig) configKey() string {
+	if c.key != "" {
+		return c.key
+	}
+	return clientConfigKey
+}
+
+func (c RegistryConfig) ServerURL() (string, bool, error) {
+	key, err := registry.OpenKey(registry.CURRENT_USER, c.configKey(), registry.READ)
 	if err != nil {
 		if errors.Is(err, registry.ErrNotExist) {
 			return "", false, nil
@@ -552,8 +600,8 @@ func (RegistryConfig) ServerURL() (string, bool, error) {
 	return value, value != "", err
 }
 
-func (RegistryConfig) SaveServerURL(rawURL string) error {
-	key, _, err := registry.CreateKey(registry.CURRENT_USER, clientConfigKey, registry.SET_VALUE)
+func (c RegistryConfig) SaveServerURL(rawURL string) error {
+	key, _, err := registry.CreateKey(registry.CURRENT_USER, c.configKey(), registry.SET_VALUE)
 	if err != nil {
 		return err
 	}
@@ -561,8 +609,8 @@ func (RegistryConfig) SaveServerURL(rawURL string) error {
 	return key.SetStringValue("ServerURL", rawURL)
 }
 
-func (RegistryConfig) DeleteServerURL() error {
-	if err := registry.DeleteKey(registry.CURRENT_USER, clientConfigKey); err != nil && !errors.Is(err, registry.ErrNotExist) {
+func (c RegistryConfig) DeleteServerURL() error {
+	if err := registry.DeleteKey(registry.CURRENT_USER, c.configKey()); err != nil && !errors.Is(err, registry.ErrNotExist) {
 		return err
 	}
 	return nil

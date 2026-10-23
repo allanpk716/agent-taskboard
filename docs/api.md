@@ -17,7 +17,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 - 凭证四种，统一解析成一个 Viewer（`kind` 为 `member` / `guest`，成员带 `member` 与 `agent` / `client`，访客带 `guest_link`，见 spec「身份与凭证」模块）：
   1. **成员本人**：网页会话 cookie `tb_session`（HttpOnly + Secure + SameSite=Lax）。本人操作的唯一来源。
   2. **成员 Agent**：`Authorization: Bearer <Agent token>`，token 由 `POST /api/v1/me/agent-tokens` 签发（前缀 `tbag_`）。ADR 0003：用 token 的操作一律署名为「某成员 的 Agent · 名字」，永远不算本人。
-  3. **桌面客户端**：`Authorization: Bearer <客户端凭证>`（前缀 `tbc_`）。权限边界是 `client_scope`：只能调用通知接口、`GET /session`、`GET /client/latest`、`GET /client/download`，以及撤销自己的 `DELETE /me/clients/self`；它不署名、不代表成员操作工单。
+  3. **桌面客户端**：`Authorization: Bearer <客户端凭证>`（前缀 `tbc_`）。权限边界是 `client_scope`：只能调用通知接口、`GET /session`，以及撤销自己的 `DELETE /me/clients/self`；它不署名、不代表成员操作工单。
   4. **访客**：链接密钥（前缀 `tbg_`）只用于读取认领/输码页信息、执行认领和凭访问码进入；浏览器成功后使用同源设备凭证（Bearer 前缀 `tbgd_`，同时收到 HttpOnly cookie `tb_guest_device`）。访客 Agent 后续请求用组合凭证 `Authorization: Bearer tbg_<链接密钥>:<访问码>`。
 - 请求同时带 Bearer 和 cookie 时按 Bearer 解析，且解析失败不回退到 cookie：凭证坏了应当报错（401），而不是悄悄当作本人。Bearer 先按客户端凭证、成员 Agent token、访客设备凭证、`tbg_…:…` 访客 Agent 组合凭证、访客链接密钥的顺序解析。
 - 401 错误码：`unauthenticated`（未登录/会话过期）、`invalid_token`（Agent token 或访客链接密钥未知）、`link_revoked`（访客链接已撤销）、`link_expired`（访客链接已过期）。访客链接的撤销与过期即时生效：每个请求都实时查库（密钥只存哈希）。
@@ -54,7 +54,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 | `GET /api/v1/session` | 当前凭证的身份（任何有效凭证；匿名 401 `unauthenticated`）。 |
 | `DELETE /api/v1/session` | 登出（幂等 204），清除会话 cookie。 |
 
-`GET /api/v1/session` 对成员还会返回 `client` 与 `min_client_version`：
+`GET /api/v1/session` 对客户端凭证还会返回 `client`：
 
 ```json
 {
@@ -65,14 +65,13 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
     "client": {"id": 8, "hostname": "WORKSTATION-01"}
   },
   "inbox": "/api/v1/inbox",
-  "drafts": {"count": 2, "url": "/api/v1/drafts"},
-  "min_client_version": ""
+  "drafts": {"count": 2, "url": "/api/v1/drafts"}
 }
 ```
 
 网页会话没有 `viewer.client`；客户端凭证必带。成员 Agent 的 `viewer.agent` 另有
 `draft_mode: "required"|"direct"`。网页会话另有 `notices`（如 `drafts_intro`）。
-`min_client_version` 来自 `[server]` 配置，空串表示不限制。
+`min_client_version` 已随服务端代管客户端机制移除；0.1.4 客户端把缺失字段解析为空值，不会因此停止工作。
 
 ## 通知（#74）
 
@@ -96,20 +95,18 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
   `closed` / `reopened`。本人网页操作不通知自己；其名下成员 Agent 的操作照常通知本人。
 - 游标格式错误：400 `invalid_after` / `invalid_before`；SSE 重连头错误：400 `invalid_last_event_id`。
 
-## 桌面客户端凭证与服务端代管（#74）
+## 桌面客户端凭证（#74）
 
 | 方法与路径 | 说明 |
 |---|---|
 | `POST /api/v1/client/connect` | 网页会话确认「连接这台电脑」。请求体 `{port,state,code_challenge,hostname}`，返回 `{redirect_url}`；port 只允许本机回环监听。 |
 | `POST /api/v1/client/token` | 客户端用一次性 code 和 PKCE verifier 换客户端凭证。 |
-| `GET /api/v1/client/latest` | 查询服务端代管客户端 `{version,sha256,size,download_url}`。成员网页会话与客户端凭证可调；成员 Agent 403 `agent_not_allowed`。 |
-| `GET /api/v1/client/download` | 下载代管客户端。下载内容按 ADR 0006 附加平台地址尾部戳，`latest` 的 SHA256/大小与下载字节一致。 |
 | `GET /api/v1/me/clients` | 列出本人已连接电脑。 |
 | `DELETE /api/v1/me/clients/{id}` | 网页会话撤销某台电脑。 |
 | `DELETE /api/v1/me/clients/self` | 客户端凭证撤销自己（退出登录/卸载用）。 |
 | `POST /api/v1/me/password` | 自助改密 `{old_password,new_password}`；成功 204，并在同一事务里保留当前网页会话、注销其他网页会话；客户端凭证与 Agent token 不受影响。原密码错误 422 `invalid_old_password`，少于 8 位 422 `password_too_short`，新密码与旧密码相同 422 `password_unchanged`（先校验旧密码，再判断是否相同）。 |
 
-尚未代管客户端时，`latest` 与下载均返回 404 `client_not_available`。
+桌面客户端安装包不在服务端代管；网页和客户端都从 GitHub Release 的 `channel-stable` 固定地址下载。
 
 `GET /api/v1/session` 与登录成功响应的结构（成员）：
 

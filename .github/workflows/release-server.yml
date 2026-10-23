@@ -42,13 +42,6 @@ jobs:
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X github.com/allanpk716/agent-taskboard/internal/version.Server=$VERSION" -o dist/taskboard.exe ./cmd/taskboard
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X github.com/allanpk716/agent-taskboard/internal/version.Server=$VERSION" -o dist/taskboard-linux-amd64 ./cmd/taskboard
 
-      - name: 读取最新客户端版本
-        run: |
-          set -euxo pipefail
-          curl -fsSL -o latest.json "https://github.com/$GITHUB_REPOSITORY/releases/download/channel-stable/latest.json"
-          CLIENT_VERSION="$(jq -er '.client.version' latest.json)"
-          echo "CLIENT_VERSION=$CLIENT_VERSION" >> "$GITHUB_ENV"
-
       - name: 构建本地镜像
         uses: docker/build-push-action@v6
         with:
@@ -59,7 +52,6 @@ jobs:
           load: true
           build-args: |
             APP_VERSION=${{ env.IMAGE_VERSION }}
-            CLIENT_VERSION=${{ env.CLIENT_VERSION }}
           tags: |
             ghcr.io/${{ github.repository }}:${{ env.IMAGE_VERSION }}
 

@@ -4,11 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"io"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,21 +15,20 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/client"
-	"github.com/allanpk716/agent-taskboard/internal/clientstamp"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
-	"github.com/allanpk716/agent-taskboard/internal/tbtest"
-	"github.com/allanpk716/agent-taskboard/internal/updater"
+	"github.com/allanpk716/agent-taskboard/internal/release"
 )
 
-func Test自动更新就绪后替换exe并退出旧进程(t *testing.T) {
+func Test检查到客户端新版本只提示确认后更新(t *testing.T) {
 	fake := newFakeDesktop(t)
 	s := fake.startService(t)
 	webLi := s.Login("李工", "secret-pass")
 	fake.browser.web = webLi
 	fake.browser.serverURL = s.URL()
+	oldExe := testClientBinary(t, "0.2.0 old")
 	newExe := testClientBinary(t, "1.2.0 new")
-	installClientPackage(t, s, "1.2.0", newExe)
-	fx := newUpdateFixture(t, s, testClientBinary(t, "0.2.0 old"))
+	fx := newUpdateFixture(t, oldExe)
+	_ = newFakeGitHubRelease(t, "1.2.0", newExe, false)
 	fake.lifecycle = fx.lifecycle
 	fake.updater = fx.updater
 	fake.clock = clock.NewFake(time.Now())
@@ -40,151 +37,66 @@ func Test自动更新就绪后替换exe并退出旧进程(t *testing.T) {
 	defer cancel()
 	done := fake.startClient(t, ctx, s.URL())
 	fake.waitState(t, client.TrayNormal)
-
-	waitClient(t, done)
+	toasts := fake.toaster.waitUpdate(t)
+	if len(toasts) != 1 || toasts[0].Text != "Taskboard 客户端有新版本 1.2.0，点击更新" {
+		t.Fatalf("更新 Toast = %+v", toasts)
+	}
+	if got := fake.tray.updateVersion(); got != "1.2.0" {
+		t.Fatalf("托盘更新版本 = %q", got)
+	}
+	fake.toaster.click(t, toasts[0])
 	fx.updater.waitStarted(t)
-	stampedNew := string(newExe) + stampSuffix(t, s.URL())
-	if got := readFile(t, fx.exePath); string(got) != stampedNew {
-		t.Fatalf("更新后的 exe 内容 = %q, 想新版本", got)
+	waitClient(t, done)
+	if got := readFile(t, fx.exePath); string(got) != string(newExe) {
+		t.Fatalf("更新后的 exe 内容 = %q", got)
 	}
 	if got := readFile(t, fx.exePath+".prev"); !strings.HasSuffix(string(got), "0.2.0 old") {
 		t.Fatalf("上一版 exe 内容 = %q", got)
 	}
-	starts := fx.updater.startsList()
-	if len(starts) != 1 || starts[0].path != fx.exePath ||
-		strings.Join(starts[0].args, ",") != "--after-update" {
-		t.Fatalf("新进程启动参数 = %+v", starts)
-	}
-	if len(fx.updater.stoppedList()) != 0 {
-		t.Fatalf("就绪后不应结束新进程：%v", fx.updater.stoppedList())
-	}
 }
 
-func Test自动更新三十秒无就绪时结束新进程并换回旧版(t *testing.T) {
+func Test更新下载校验失败时提示并保留重试菜单(t *testing.T) {
 	fake := newFakeDesktop(t)
 	s := fake.startService(t)
 	webLi := s.Login("李工", "secret-pass")
 	fake.browser.web = webLi
 	fake.browser.serverURL = s.URL()
 	oldExe := testClientBinary(t, "0.2.0 old")
-	newExe := testClientBinary(t, "1.2.0 new")
-	installClientPackage(t, s, "1.2.0", newExe)
-	fx := newUpdateFixture(t, s, oldExe)
-	fx.updater.autoReady = false
+	fx := newUpdateFixture(t, oldExe)
+	_ = newFakeGitHubRelease(t, "1.2.0", testClientBinary(t, "1.2.0 tampered"), true)
 	fake.lifecycle = fx.lifecycle
 	fake.updater = fx.updater
-	fake.clock = clock.NewFake(time.Now())
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := fake.startClient(t, ctx, s.URL())
 	fake.waitState(t, client.TrayNormal)
-	waitForFakeTimer(t, fake.clock, 30*time.Second)
-	fake.clock.Advance(31 * time.Second)
-
-	waitCondition(t, func() bool { return len(fx.updater.stoppedList()) == 1 })
-	var rolledBack []byte
-	waitCondition(t, func() bool {
-		data, err := os.ReadFile(fx.exePath)
-		rolledBack = data
-		return err == nil && string(data) == string(oldExe)
-	})
-	if string(rolledBack) != string(oldExe) {
-		t.Fatalf("回滚后的 exe 内容不符：%q", string(rolledBack))
-	}
-	if _, err := os.Stat(fx.exePath + ".prev"); !os.IsNotExist(err) {
-		t.Fatalf(".prev 应随回滚换回：%v", err)
-	}
-	select {
-	case err := <-done:
-		t.Fatalf("旧客户端不应因更新失败退出：%v", err)
-	default:
-	}
-	cancel()
-	waitClient(t, done)
-}
-
-func Test自动更新新进程退出旧实例时不回滚新exe(t *testing.T) {
-	fake := newFakeDesktop(t)
-	s := fake.startService(t)
-	webLi := s.Login("李工", "secret-pass")
-	fake.browser.web = webLi
-	fake.browser.serverURL = s.URL()
-	newExe := testClientBinary(t, "1.2.0 new")
-	installClientPackage(t, s, "1.2.0", newExe)
-	fx := newUpdateFixture(t, s, testClientBinary(t, "0.2.0 old"))
-	fx.updater.autoReady = false
-	fake.lifecycle = fx.lifecycle
-	fake.updater = fx.updater
-	fake.clock = clock.NewFake(time.Now())
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := fake.startClient(t, ctx, s.URL())
-	fake.waitState(t, client.TrayNormal)
-	waitCondition(t, func() bool { return len(fake.updater.startsList()) == 1 })
-	if err := fake.updater.SendQuit(); err != nil {
-		t.Fatal(err)
-	}
-	waitClient(t, done)
-	if got := readFile(t, fx.exePath); string(got) != string(newExe)+stampSuffix(t, s.URL()) {
-		t.Fatalf("退出信号后 exe = %q, 想保留新版本", got)
-	}
-	if len(fx.updater.stoppedList()) != 0 {
-		t.Fatalf("新进程已正常退出，不应被终止：%v", fx.updater.stoppedList())
-	}
-}
-
-func Test自动更新SHA256不符时不替换并继续运行(t *testing.T) {
-	fake := newFakeDesktop(t)
-	s := fake.startService(t)
-	webLi := s.Login("李工", "secret-pass")
-	fake.browser.web = webLi
-	fake.browser.serverURL = s.URL()
-	oldExe := testClientBinary(t, "0.2.0 old")
-	newExe := testClientBinary(t, "1.2.0 new")
-	installClientPackage(t, s, "1.2.0", newExe)
-	proxy := newBadLatestProxy(t, s.URL())
-	t.Cleanup(proxy.Close)
-	fake.browser.serverURL = proxy.URL
-	fx := newUpdateFixture(t, s, oldExe)
-	fake.lifecycle = fx.lifecycle
-	fake.updater = fx.updater
-	fake.clock = clock.NewFake(time.Now())
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := fake.startClient(t, ctx, proxy.URL)
-	fake.waitState(t, client.TrayNormal)
-	waitForFakeTimer(t, fake.clock, 6*time.Hour)
-
+	toasts := fake.toaster.waitUpdate(t)
+	fake.toaster.click(t, toasts[0])
+	waitCondition(t, func() bool { return len(fake.toaster.shown(t)) >= 2 })
 	if got := readFile(t, fx.exePath); string(got) != string(oldExe) {
-		t.Fatal("SHA256 不符时不应替换 exe")
+		t.Fatal("校验失败时不应替换 exe")
 	}
 	if _, err := os.Stat(fx.exePath + ".download"); !os.IsNotExist(err) {
 		t.Fatalf("临时文件应删除：%v", err)
 	}
-	if starts := fx.updater.startsList(); len(starts) != 0 {
-		t.Fatalf("SHA256 不符时不应启动新进程：%+v", starts)
-	}
-	select {
-	case err := <-done:
-		t.Fatalf("客户端不应因校验失败退出：%v", err)
-	default:
+	if got := fake.tray.updateVersion(); got != "1.2.0" {
+		t.Fatalf("重试菜单版本 = %q", got)
 	}
 	cancel()
 	waitClient(t, done)
 }
 
-func Test自动更新每六小时检查一次新版本(t *testing.T) {
+func Test更新三十秒无就绪时回滚旧版(t *testing.T) {
 	fake := newFakeDesktop(t)
 	s := fake.startService(t)
 	webLi := s.Login("李工", "secret-pass")
 	fake.browser.web = webLi
 	fake.browser.serverURL = s.URL()
 	oldExe := testClientBinary(t, "0.2.0 old")
-	installClientPackage(t, s, "0.2.0", testClientBinary(t, "0.2.0 same"))
-	fx := newUpdateFixture(t, s, oldExe)
+	fx := newUpdateFixture(t, oldExe)
+	fx.updater.autoReady = false
+	_ = newFakeGitHubRelease(t, "1.2.0", testClientBinary(t, "1.2.0 new"), false)
 	fake.lifecycle = fx.lifecycle
 	fake.updater = fx.updater
 	fake.clock = clock.NewFake(time.Now())
@@ -193,243 +105,84 @@ func Test自动更新每六小时检查一次新版本(t *testing.T) {
 	defer cancel()
 	done := fake.startClient(t, ctx, s.URL())
 	fake.waitState(t, client.TrayNormal)
-	if starts := fx.updater.startsList(); len(starts) != 0 {
-		t.Fatalf("版本不比自己新时不应启动新进程：%+v", starts)
-	}
-
-	installClientPackage(t, s, "1.2.0", testClientBinary(t, "1.2.0 new"))
-	waitForFakeTimer(t, fake.clock, 6*time.Hour)
-	fake.clock.Advance(6 * time.Hour)
-	fx.updater.waitStarted(t)
-	waitClient(t, done)
-	if got := readFile(t, fx.exePath); !strings.HasSuffix(string(got), stampSuffix(t, s.URL())) {
-		t.Fatalf("定时检查后 exe = %q, 想新版本", got)
-	}
-}
-
-func TestSSE重连收到hello后检查更新(t *testing.T) {
-	fake := newFakeDesktop(t)
-	s := fake.startService(t)
-	webLi := s.Login("李工", "secret-pass")
-	fake.browser.web = webLi
-	fake.browser.serverURL = s.URL()
-	oldExe := testClientBinary(t, "0.2.0 old")
-	installClientPackage(t, s, "0.2.0", testClientBinary(t, "0.2.0 same"))
-	proxy := newLatestCountProxy(t, s.URL())
-	t.Cleanup(proxy.Close)
-	fx := newUpdateFixture(t, s, oldExe)
-	fake.lifecycle = fx.lifecycle
-	fake.updater = fx.updater
-	fake.clock = clock.NewFake(time.Now())
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := fake.startClient(t, ctx, proxy.URL)
-	fake.waitState(t, client.TrayNormal)
-	waitCondition(t, func() bool { return proxy.count() >= 1 })
-	time.Sleep(100 * time.Millisecond) // 等待 streamCancel 挂上，托盘的重新登录/重连命令才会断开 SSE。
-	installClientPackage(t, s, "1.2.0", testClientBinary(t, "1.2.0 new"))
-	fake.tray.click(t, "reconnect")
-	waitCondition(t, func() bool { return proxy.count() >= 2 })
-
-	fx.updater.waitStarted(t)
-	waitClient(t, done)
-	if got := readFile(t, fx.exePath); !strings.HasSuffix(string(got), stampSuffix(t, proxy.URL)) {
-		t.Fatalf("hello 后的 exe = %q, 想新版本", got)
-	}
-}
-
-func TestAfterUpdate进程发就绪信号并弹更新Toast(t *testing.T) {
-	fake := newFakeDesktop(t)
-	s := fake.startService(t)
-	webLi := s.Login("李工", "secret-pass")
-	fake.browser.web = webLi
-	fake.browser.serverURL = s.URL()
-	fx := newUpdateFixture(t, s, testClientBinary(t, "0.2.0 old"))
-	fake.lifecycle = fx.lifecycle
-	fake.updater = fx.updater
-	fake.clock = clock.NewFake(time.Now())
-	oldRelease := fake.lock.AcquireMust(t)
-	fake.updater.quitOld = oldRelease
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	app := client.New(client.Config{
-		ServerURL: s.URL(), Version: "1.2.0", Hostname: "TEST-PC", Nonces: fixedNonces,
-		RetryWait: func(context.Context, time.Duration) error { return nil }, AfterUpdate: true,
-	}, client.Dependencies{
-		Tray: fake.tray, Toaster: fake.toaster, Store: fake.store, Browser: fake.browser,
-		Lock: fake.lock, Lifecycle: &fake.lifecycle, Update: fake.updater, Clock: fake.clock,
+	updates := fake.toaster.waitUpdate(t)
+	go fake.toaster.clickAsync(updates[0])
+	waitForFakeTimer(t, fake.clock, 30*time.Second)
+	fake.clock.Advance(31 * time.Second)
+	waitCondition(t, func() bool { return len(fx.updater.stoppedList()) == 1 })
+	waitCondition(t, func() bool {
+		data, err := os.ReadFile(fx.exePath)
+		return err == nil && string(data) == string(oldExe)
 	})
-	done := make(chan error, 1)
-	go func() { done <- app.Run(ctx) }()
-	go func() {
-		for i := 0; i < 100 && fake.lock.acquiredCount() < 2; i++ {
-			time.Sleep(time.Millisecond)
-			fake.clock.Advance(100 * time.Millisecond)
-		}
-	}()
-
-	fx.updater.waitStarted(t)
-	if got := fake.lock.acquiredCount(); got != 2 {
-		t.Fatalf("更新进程获取单实例锁次数 = %d, 想 2", got)
-	}
-	if fake.lock.heldByUpdate() != true {
-		t.Fatal("更新完成后单实例锁应由新进程持有")
-	}
-	toasts := fake.toaster.shown(t)
-	if len(toasts) == 0 || toasts[0].Text != "客户端已更新到 1.2.0" {
-		t.Fatalf("更新 Toast = %+v", toasts)
-	}
 	cancel()
-	oldRelease()
 	waitClient(t, done)
 }
 
-func Test运行中的客户端收到覆盖安装退出信号后释放单实例锁(t *testing.T) {
+func Test托盘修改平台地址撤销旧凭证并连接新平台(t *testing.T) {
 	fake := newFakeDesktop(t)
-	s := fake.startService(t)
-	webLi := s.Login("李工", "secret-pass")
+	oldServer := fake.startService(t)
+	webLi := oldServer.Login("李工", "secret-pass")
 	fake.browser.web = webLi
-	fake.browser.serverURL = s.URL()
-	fake.updater = newFakeUpdateAdapter()
+	fake.browser.serverURL = oldServer.URL()
+
+	newServer := newFakeDesktop(t).startService(t)
+	newWeb := newServer.Login("王工", "secret-pass")
+	prompter := &fakeServerURLPrompter{value: newServer.URL()}
+	fake.prompter = prompter
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	done := fake.startClient(t, ctx, s.URL())
+	done := fake.startClient(t, ctx, oldServer.URL())
 	fake.waitState(t, client.TrayNormal)
-
-	if err := fake.updater.SendQuit(); err != nil {
-		t.Fatal(err)
+	if clients := listClients(t, oldServer, webLi); len(clients) != 1 {
+		t.Fatalf("切换前旧平台应有 1 个客户端凭证，实际 %d", len(clients))
 	}
-	waitClient(t, done)
-	if fake.lock.heldByUpdate() {
-		t.Fatal("覆盖安装退出后单实例锁应已释放")
-	}
-}
-
-func Test覆盖安装启动的新实例等待旧实例释放锁(t *testing.T) {
-	fake := newFakeDesktop(t)
-	s := fake.startService(t)
-	webLi := s.Login("李工", "secret-pass")
-	fake.browser.web = webLi
-	fake.browser.serverURL = s.URL()
-	fake.updater = newFakeUpdateAdapter()
-	oldRelease := fake.lock.AcquireMust(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	app := client.New(client.Config{
-		ServerURL: s.URL(), Version: "1.2.0", Hostname: "TEST-PC", Nonces: fixedNonces,
-		RetryWait: func(context.Context, time.Duration) error { return nil }, AfterInstall: true,
-	}, fake.dependencies())
-	done := make(chan error, 1)
-	go func() { done <- app.Run(ctx) }()
-	go func() {
-		for i := 0; i < 100 && fake.lock.acquiredCount() < 2; i++ {
-			time.Sleep(time.Millisecond)
-			fake.clock.Advance(100 * time.Millisecond)
-		}
-		oldRelease()
-	}()
-
-	waitCondition(t, func() bool { return fake.lock.acquiredCount() == 2 })
-	if got := fake.updater.resets(); got != 1 {
-		t.Fatalf("启动时清理退出信号次数 = %d, 想 1", got)
-	}
-	if !fake.lock.heldByUpdate() {
-		t.Fatal("旧实例释放后新实例应持有单实例锁")
+	fake.browser.web = newWeb
+	fake.browser.serverURL = newServer.URL()
+	fake.tray.click(t, "change-server")
+	waitCondition(t, func() bool { return prompter.prompted })
+	fake.waitState(t, client.TrayNormal)
+	// 旧凭证必须在旧平台上撤销，而不是发给新地址。
+	if clients := listClients(t, oldServer, webLi); len(clients) != 0 {
+		t.Fatalf("切换后旧平台的客户端凭证应已撤销，实际还剩 %d", len(clients))
 	}
 	cancel()
 	waitClient(t, done)
 }
 
-func Test版本过旧时停止拉取通知并提示下载(t *testing.T) {
-	fake := newFakeDesktop(t)
-	s := tbtest.Start(t, tbtest.WithMinClientVersion("1.0.0"))
-	s.CreateAdmin("王工", "secret-pass")
-	s.CreateMember("李工", "secret-pass")
-	webLi := s.Login("李工", "secret-pass")
-	fake.browser.web = webLi
-	fake.browser.serverURL = s.URL()
-	fake.clock = clock.NewFake(time.Now())
-	proxy := newLatestCountProxy(t, s.URL())
-	t.Cleanup(proxy.Close)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := fake.startClient(t, ctx, proxy.URL)
-	fake.waitState(t, client.TrayOutdated)
-	toasts := fake.toaster.shown(t)
-	if len(toasts) != 1 || toasts[0].Reason != "outdated" || toasts[0].Ticket.URL != "/me#client" {
-		t.Fatalf("版本过旧 Toast = %+v", toasts)
-	}
-	fake.toaster.click(t, toasts[0])
-	if got := fake.browser.opened(t); got != proxy.URL+"/me#client" {
-		t.Fatalf("点击打开 = %q, 想 %q", got, proxy.URL+"/me#client")
-	}
-	if streams := proxy.streams(); streams != 0 {
-		t.Fatalf("版本过旧时不应建立 SSE，连接数 = %d", streams)
-	}
-	cancel()
-	waitClient(t, done)
-}
-
-type latestCountProxy struct {
+type fakeGitHubRelease struct {
 	*httptest.Server
-	mu     sync.Mutex
-	checks int
-	conns  int
 }
 
-func newLatestCountProxy(t testing.TB, backend string) *latestCountProxy {
+func newFakeGitHubRelease(t *testing.T, version string, exe []byte, corrupt bool) *fakeGitHubRelease {
 	t.Helper()
-	p := &latestCountProxy{}
-	p.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/client/latest" {
-			p.mu.Lock()
-			p.checks++
-			p.mu.Unlock()
-		}
-		if r.URL.Path == "/api/v1/notifications/stream" {
-			p.mu.Lock()
-			p.conns++
-			p.mu.Unlock()
-		}
-		proxy := httputil.NewSingleHostReverseProxy(backendURL(t, backend))
-		proxy.FlushInterval = -1
-		proxy.ServeHTTP(w, r)
-	}))
-	return p
-}
-
-func backendURL(t testing.TB, backend string) *url.URL {
-	t.Helper()
-	u, err := url.Parse(backend)
-	if err != nil {
-		t.Fatal(err)
+	sum := sha256.Sum256(exe)
+	sha := hex.EncodeToString(sum[:])
+	if corrupt {
+		sha = strings.Repeat("0", 64)
 	}
-	return u
-}
-
-func (p *latestCountProxy) count() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.checks
-}
-
-func (p *latestCountProxy) streams() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.conns
-}
-
-func stampSuffix(t testing.TB, serverURL string) string {
-	t.Helper()
-	stamped, err := clientstamp.Append([]byte{}, serverURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(stamped)
+	manifest := release.Manifest{Component: "client", Version: version, Files: []release.FileEntry{{
+		Name: "taskboard-client.exe", Sha256: sha, Size: int64(len(exe)),
+	}}}
+	manifestURL := "/releases/download/client/v" + version + "/manifest.json"
+	exeURL := "/releases/download/client/v" + version + "/taskboard-client.exe"
+	var server *httptest.Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("/releases/download/channel-stable/latest.json", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(release.Latest{Client: &release.LatestEntry{
+			Version: version, Tag: "client/v" + version, ManifestURL: server.URL + manifestURL,
+		}})
+	})
+	mux.HandleFunc(manifestURL, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(manifest)
+	})
+	mux.HandleFunc(exeURL, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(exe)
+	})
+	server = httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	t.Setenv("TASKBOARD_CLIENT_UPDATE_BASE", server.URL)
+	return &fakeGitHubRelease{Server: server}
 }
 
 type updateFixture struct {
@@ -439,7 +192,7 @@ type updateFixture struct {
 	updater   *fakeUpdateAdapter
 }
 
-func newUpdateFixture(t testing.TB, s *tbtest.Server, oldExe []byte) updateFixture {
+func newUpdateFixture(t testing.TB, oldExe []byte) updateFixture {
 	t.Helper()
 	dir := t.TempDir()
 	exePath := filepath.Join(dir, "taskboard-client.exe")
@@ -466,24 +219,6 @@ func testClientBinary(t testing.TB, suffix string) []byte {
 	return append(b, suffix...)
 }
 
-func installClientPackage(t testing.TB, s *tbtest.Server, version string, data []byte) {
-	t.Helper()
-	sum := sha256.Sum256(data)
-	pkg := updater.ClientPackage{
-		Version: version, Sha256: hex.EncodeToString(sum[:]), Size: int64(len(data)),
-	}
-	for attempt := 0; ; attempt++ {
-		err := updater.InstallClient(s.DataDir(), data, pkg)
-		if err == nil {
-			return
-		}
-		if attempt == 20 {
-			t.Fatal(err)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-}
-
 type fakeUpdateAdapter struct {
 	mu         sync.Mutex
 	starts     []fakeStart
@@ -497,36 +232,6 @@ type fakeUpdateAdapter struct {
 	resetCount int
 }
 
-func newBadLatestProxy(t testing.TB, backend string) *httptest.Server {
-	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/client/latest" {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"version":"1.2.0","sha256":"bad","size":1,"download_url":"/api/v1/client/download"}`))
-			return
-		}
-		req, err := http.NewRequestWithContext(r.Context(), r.Method, backend+r.URL.RequestURI(), r.Body)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		req.Header = r.Header.Clone()
-		res, err := http.DefaultTransport.RoundTrip(req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		defer res.Body.Close()
-		for k, vs := range res.Header {
-			for _, v := range vs {
-				w.Header().Add(k, v)
-			}
-		}
-		w.WriteHeader(res.StatusCode)
-		_, _ = io.Copy(w, res.Body)
-	}))
-}
-
 func newFakeUpdateAdapter() *fakeUpdateAdapter {
 	return &fakeUpdateAdapter{signaled: make(chan struct{}), quit: make(chan struct{}), autoReady: true}
 }
@@ -535,25 +240,20 @@ func (u *fakeUpdateAdapter) Start(path string, args []string) (client.UpdateProc
 	u.mu.Lock()
 	u.starts = append(u.starts, fakeStart{path: path, args: args})
 	u.mu.Unlock()
-	proc := fakeUpdateProcess{owner: u, path: path}
 	if u.autoReady {
 		go func() {
-			time.Sleep(20 * time.Millisecond)
-			_ = u.SendReady()
+			_, _ = u.SendReady(), struct{}{}
 		}()
 	}
-	return proc, nil
+	return fakeUpdateProcess{owner: u, path: path}, nil
 }
 
 func (u *fakeUpdateAdapter) Ready() <-chan struct{} { return u.signaled }
-
-func (u *fakeUpdateAdapter) Quit() <-chan struct{} { return u.quit }
-
+func (u *fakeUpdateAdapter) Quit() <-chan struct{}  { return u.quit }
 func (u *fakeUpdateAdapter) SendReady() error {
 	u.once.Do(func() { close(u.signaled) })
 	return nil
 }
-
 func (u *fakeUpdateAdapter) SendQuit() error {
 	u.mu.Lock()
 	quit := u.quitOld
@@ -567,24 +267,7 @@ func (u *fakeUpdateAdapter) SendQuit() error {
 	}
 	return nil
 }
-
-func (u *fakeUpdateAdapter) ResetQuit() error {
-	u.mu.Lock()
-	u.resetCount++
-	if u.quitClosed {
-		u.quit = make(chan struct{})
-		u.quitClosed = false
-	}
-	u.mu.Unlock()
-	return nil
-}
-
-func (u *fakeUpdateAdapter) resets() int {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	return u.resetCount
-}
-
+func (u *fakeUpdateAdapter) ResetQuit() error { u.resetCount++; return nil }
 func (u *fakeUpdateAdapter) waitStarted(t testing.TB) {
 	t.Helper()
 	select {
@@ -593,13 +276,11 @@ func (u *fakeUpdateAdapter) waitStarted(t testing.TB) {
 		t.Fatal("等待新进程就绪超时")
 	}
 }
-
 func (u *fakeUpdateAdapter) startsList() []fakeStart {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return append([]fakeStart(nil), u.starts...)
 }
-
 func (u *fakeUpdateAdapter) stoppedList() []string {
 	u.mu.Lock()
 	defer u.mu.Unlock()

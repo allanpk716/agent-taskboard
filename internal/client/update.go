@@ -9,10 +9,17 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/release"
 	"github.com/allanpk716/agent-taskboard/internal/version"
 )
+
+// GitHubRepoName 是桌面客户端独立分发使用的 GitHub 仓库。
+const GitHubRepoName = "allanpk716/agent-taskboard"
+
+const defaultClientUpdateBase = "https://github.com/" + GitHubRepoName
 
 // UpdateProcess 是自动更新启动出的新客户端进程。
 type UpdateProcess interface {
@@ -29,22 +36,77 @@ type UpdateProcessManager interface {
 	ResetQuit() error
 }
 
-type clientLatest struct {
-	Version     string `json:"version"`
-	Sha256      string `json:"sha256"`
-	Size        int64  `json:"size"`
-	DownloadURL string `json:"download_url"`
+func updateBaseURL() string {
+	if base := strings.TrimRight(os.Getenv("TASKBOARD_CLIENT_UPDATE_BASE"), "/"); base != "" {
+		return base
+	}
+	return defaultClientUpdateBase
 }
 
-func (a *App) checkUpdate(ctx context.Context, token string) bool {
+func (a *App) updateJSON(ctx context.Context, url string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	res, err := a.streamClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		data, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
+		return fmt.Errorf("GET %s 返回 %d：%s", url, res.StatusCode, strings.TrimSpace(string(data)))
+	}
+	return json.NewDecoder(io.LimitReader(res.Body, 8<<20)).Decode(out)
+}
+
+// checkUpdate 只检查并提示；成员点击 Toast 或托盘菜单后才执行 installUpdate。
+func (a *App) checkUpdate(ctx context.Context) bool {
+	if a.deps.Update == nil || a.deps.Lifecycle == nil {
+		return false
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	var latest release.Latest
+	if err := a.updateJSON(checkCtx, updateBaseURL()+"/releases/download/channel-stable/latest.json", &latest); err != nil {
+		return false
+	}
+	if latest.Client == nil || !version.Less(a.cfg.Version, latest.Client.Version) {
+		return false
+	}
+	a.mu.Lock()
+	previous := a.availableUpdate
+	a.availableUpdate = *latest.Client
+	_, notified := a.notifiedUpdates[latest.Client.Version]
+	a.mu.Unlock()
+	if previous.Tag == latest.Client.Tag && previous.Version == latest.Client.Version && notified {
+		return false
+	}
+	a.deps.Tray.SetUpdateVersion(latest.Client.Version)
+	a.mu.Lock()
+	if a.notifiedUpdates == nil {
+		a.notifiedUpdates = make(map[string]struct{})
+	}
+	a.notifiedUpdates[latest.Client.Version] = struct{}{}
+	a.mu.Unlock()
+	a.deps.Toaster.Show(Notification{
+		Reason: "update-available",
+		Text:   "Taskboard 客户端有新版本 " + latest.Client.Version + "，点击更新",
+	})
+	return false
+}
+
+// installUpdate 下载 manifest 指定的 exe，校验后沿用现有替换和重启机制。
+func (a *App) installUpdate(ctx context.Context) bool {
 	if a.deps.Update == nil || a.deps.Lifecycle == nil {
 		return false
 	}
 	a.mu.Lock()
-	if a.updating {
+	if a.updating || a.availableUpdate.Tag == "" {
 		a.mu.Unlock()
 		return false
 	}
+	latest := a.availableUpdate
 	a.updating = true
 	a.mu.Unlock()
 	defer func() {
@@ -52,58 +114,59 @@ func (a *App) checkUpdate(ctx context.Context, token string) bool {
 		a.updating = false
 		a.mu.Unlock()
 	}()
-
-	latest, err := a.clientLatest(ctx, token)
-	if err != nil || !version.Less(a.cfg.Version, latest.Version) {
+	installCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	var manifest release.Manifest
+	if err := a.updateJSON(installCtx, latest.ManifestURL, &manifest); err != nil {
+		a.showUpdateError("读取更新清单失败：" + err.Error())
+		return false
+	}
+	entry := manifest.FileEntry("taskboard-client.exe")
+	if entry == nil {
+		a.showUpdateError("更新清单里没有 taskboard-client.exe")
 		return false
 	}
 	exe, err := a.deps.Lifecycle.Files.Executable()
 	if err != nil {
+		a.showUpdateError("读取客户端路径失败：" + err.Error())
 		return false
 	}
 	temp := exe + ".download"
-	sum, size, err := a.downloadClient(ctx, token, latest.DownloadURL, temp)
+	sum, size, err := a.downloadClient(installCtx, updateBaseURL()+"/releases/download/"+latest.Tag+"/taskboard-client.exe", temp)
 	if err != nil {
 		_ = os.Remove(temp)
+		a.showUpdateError("下载客户端失败：" + err.Error())
 		return false
 	}
-	if size != latest.Size || hex.EncodeToString(sum[:]) != latest.Sha256 {
+	if size != entry.Size || hex.EncodeToString(sum[:]) != entry.Sha256 {
 		_ = os.Remove(temp)
+		reason := "SHA256 不符"
+		if size != entry.Size {
+			reason = fmt.Sprintf("大小不符（清单 %d 字节，下载 %d 字节）", entry.Size, size)
+		}
+		a.showUpdateError("客户端下载内容校验失败：" + reason + "，已保留当前版本")
 		return false
 	}
-	return a.replaceExecutable(ctx, exe, temp)
+	if a.replaceExecutable(ctx, exe, temp) {
+		a.mu.Lock()
+		a.availableUpdate = release.LatestEntry{}
+		a.mu.Unlock()
+		a.deps.Tray.SetUpdateVersion("")
+		return true
+	}
+	a.showUpdateError("启动更新后的客户端失败，已回滚")
+	return false
 }
 
-func (a *App) clientLatest(ctx context.Context, token string) (clientLatest, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.cfg.ServerURL+"/api/v1/client/latest", nil)
-	if err != nil {
-		return clientLatest{}, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("User-Agent", a.userAgent())
-	res, err := a.httpClient.Do(req)
-	if err != nil {
-		return clientLatest{}, err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		data, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
-		return clientLatest{}, fmt.Errorf("client latest: status %d: %s", res.StatusCode, data)
-	}
-	var latest clientLatest
-	if err := json.NewDecoder(res.Body).Decode(&latest); err != nil {
-		return clientLatest{}, err
-	}
-	return latest, nil
+func (a *App) showUpdateError(message string) {
+	a.deps.Toaster.Show(Notification{Reason: "update-error", Text: message})
 }
 
-func (a *App) downloadClient(ctx context.Context, token, rawURL, dest string) ([32]byte, int64, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.absolute(rawURL), nil)
+func (a *App) downloadClient(ctx context.Context, rawURL, dest string) ([32]byte, int64, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return [32]byte{}, 0, err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("User-Agent", a.userAgent())
 	res, err := a.streamClient.Do(req)
 	if err != nil {
 		return [32]byte{}, 0, err

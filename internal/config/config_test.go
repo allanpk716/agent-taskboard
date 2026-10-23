@@ -23,6 +23,20 @@ deploy = ''
 	}
 }
 
+func Test废弃的客户端镜像目录配置仍可加载并忽略(t *testing.T) {
+	path := writeConfig(t, `[server]
+public_url = 'https://taskboard.example.com'
+client_image_dir = '/app/client-package'
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("旧配置应能加载：%v", err)
+	}
+	if cfg.Server.PublicURL != "https://taskboard.example.com" {
+		t.Fatalf("其它配置被影响：%+v", cfg.Server)
+	}
+}
+
 func Test任务板部署环境变量非法时拒绝(t *testing.T) {
 	path := writeConfig(t, `[server]
 deploy = ''

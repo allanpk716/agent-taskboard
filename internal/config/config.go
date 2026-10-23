@@ -40,14 +40,9 @@ type Server struct {
 	//「复制链接」拿到即可发送（评审 P2-7）；留空（默认）时保持相对路径，
 	// 前端复制时用当前页面的 origin 拼绝对地址。
 	PublicURL string `toml:"public_url"`
-	// MinClientVersion 是平台要求的最低桌面客户端版本；空字符串表示不限制。
-	MinClientVersion string `toml:"min_client_version"`
 	// Deploy 是部署方式：空（默认）表示原地部署；container 表示运行在
 	// 容器里，更新由替换镜像完成。
 	Deploy string `toml:"deploy"`
-	// ClientImageDir 是镜像内自带桌面客户端安装包的目录（manifest.json +
-	// taskboard-client.exe）。容器模式下启动时装入 data_dir/client。
-	ClientImageDir string `toml:"client_image_dir"`
 }
 
 // 部署方式。空值表示配置文件中的默认原地部署。
@@ -139,8 +134,12 @@ func Load(path string) (Config, error) {
 	if _, err := os.Stat(path); err != nil {
 		return cfg, fmt.Errorf("读取配置 %s 失败：%w（先用 config.example.toml 复制一份）", path, err)
 	}
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+	md, err := toml.DecodeFile(path, &cfg)
+	if err != nil {
 		return cfg, fmt.Errorf("解析 %s 失败：%w", path, err)
+	}
+	if md.IsDefined("server", "client_image_dir") {
+		fmt.Printf("警告：config.toml 的 [server].client_image_dir 已废弃；服务端不再代管桌面客户端，该配置已忽略\n")
 	}
 	// 单反斜杠开头（\nas\share）在 Windows 上是“当前盘根下的目录”：备份会
 	// 悄悄留在本机，管理页却显示已离开本机（#46）。
@@ -171,9 +170,6 @@ func ApplyDefaults(cfg *Config) {
 	}
 	if cfg.WebDir == "" {
 		cfg.WebDir = "web"
-	}
-	if cfg.Server.ClientImageDir == "" {
-		cfg.Server.ClientImageDir = "client-package"
 	}
 	if cfg.Attachments.MaxFileMB == 0 {
 		cfg.Attachments.MaxFileMB = 5
