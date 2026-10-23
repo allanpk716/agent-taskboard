@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext, type Locator, type Page } from '@playwright/test'
-import { login, markDraftIntroSeen, openGuestPage } from './helpers'
+import { login, markDraftIntroSeen, openGuestPage, loginWithRequest } from './helpers'
 
 // 访客分组填写页（#65）：持「可填写说明」链接的访客第一次打开链接先看到
 // 落地页（#66），「开始填写」进入分组清单式填写页；补全过说明后再打开链接
@@ -15,7 +15,7 @@ interface FillSeed {
 }
 
 async function loginAdmin(request: APIRequestContext) {
-  const res = await request.post('/api/v1/session', { data: ADMIN })
+  const res = await loginWithRequest(request, ADMIN)
   expect(res.ok(), '管理员登录失败').toBeTruthy()
 }
 

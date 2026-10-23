@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test'
-import { login, openGuestPage } from './helpers'
+import { login, openGuestPage, loginWithRequest } from './helpers'
 
 // 访客网页（#38）：工单对话页。对真实服务 + 构建好的前端跑用例，
 // 造数据（工单、回复、访客链接）全部通过 HTTP API 完成。
@@ -13,7 +13,7 @@ interface Seed {
 }
 
 async function loginAdmin(request: APIRequestContext) {
-  const res = await request.post('/api/v1/session', { data: ADMIN })
+  const res = await loginWithRequest(request, ADMIN)
   expect(res.ok(), '管理员登录失败').toBeTruthy()
 }
 

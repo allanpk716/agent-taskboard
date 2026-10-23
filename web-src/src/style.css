@@ -52,6 +52,31 @@ form button:disabled {
   background: #93c5fd;
 }
 
+.captcha-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.captcha-image {
+  grid-row: span 2;
+  height: 48px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+}
+
+.captcha-refresh {
+  padding: 0.25rem 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #f9fafb;
+  color: #374151;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
 .error {
   color: #b91c1c;
 }

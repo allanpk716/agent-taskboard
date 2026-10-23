@@ -1,6 +1,6 @@
 import { expect, request as playwrightRequest, test, type APIRequestContext, type Page } from '@playwright/test'
 import { createHash } from 'node:crypto'
-import { ADMIN, login, wang } from './helpers'
+import { ADMIN, login, loginWithRequest, wang } from './helpers'
 
 const viewports = [
   { name: 'PC 1440', width: 1440, height: 900 },
@@ -15,7 +15,7 @@ declare global {
 
 async function adminContext() {
   const admin = await playwrightRequest.newContext()
-  const res = await admin.post('/api/v1/session', { data: ADMIN })
+  const res = await loginWithRequest(admin, ADMIN)
   expect(res.ok(), await res.text()).toBeTruthy()
   return admin
 }

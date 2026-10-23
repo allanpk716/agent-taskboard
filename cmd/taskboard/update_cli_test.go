@@ -674,8 +674,7 @@ func Test命令行回滚恢复版本与数据库(t *testing.T) {
 // cookieClient 登录管理员拿会话 cookie（沿用 backup_cli_test 的做法）。
 func (f *updateFixture) cookieClient(base string) *http.Client {
 	f.t.Helper()
-	res, err := http.Post(base+"/api/v1/session", "application/json",
-		strings.NewReader(`{"username":"admin","password":"secret-pass"}`))
+	res, err := postLogin(base, "admin", "secret-pass")
 	if err != nil {
 		f.t.Fatal(err)
 	}

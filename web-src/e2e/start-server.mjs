@@ -110,10 +110,18 @@ async function createWorker() {
     } catch {}
     await new Promise((r) => setTimeout(r, 500))
   }
+  const captchaRes = await fetch(`${base}/api/v1/login-captcha`)
+  if (!captchaRes.ok) throw new Error(`[e2e] 获取验证码失败：${captchaRes.status}`)
+  const captcha = await captchaRes.json()
   const login = await fetch(`${base}/api/v1/session`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: admin.username, password: admin.password }),
+    body: JSON.stringify({
+      username: admin.username,
+      password: admin.password,
+      captcha_id: captcha.id,
+      captcha_answer: 'TB123',
+    }),
   })
   if (!login.ok) throw new Error(`[e2e] 管理员登录失败：${login.status}`)
   const cookie = (login.headers.get('set-cookie') ?? '').split(';')[0]

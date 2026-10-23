@@ -10,13 +10,13 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	_ "modernc.org/sqlite"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	_ "modernc.org/sqlite"
 )
 
 // cliFixture 是一个可以反复启停的服务环境（真实二进制 + 临时目录）。
@@ -83,8 +83,7 @@ func (f *cliFixture) serve() (base string, stop func()) {
 // cookieClient 是带会话 cookie 的客户端（登录后的成员本人）。
 func (f *cliFixture) cookieClient(base string) *http.Client {
 	f.t.Helper()
-	res, err := http.Post(base+"/api/v1/session", "application/json",
-		strings.NewReader(`{"username":"admin","password":"secret-pass"}`))
+	res, err := postLogin(base, "admin", "secret-pass")
 	if err != nil {
 		f.t.Fatal(err)
 	}

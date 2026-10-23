@@ -1,12 +1,12 @@
 import { expect, test, type APIRequestContext } from '@playwright/test'
-import { ADMIN, login } from './helpers'
+import { ADMIN, login, loginWithRequest } from './helpers'
 
 const RUN = Date.now().toString(36)
 
 async function createMemberWithInitialPassword(
   request: APIRequestContext,
 ): Promise<{ username: string; password: string }> {
-  const loginRes = await request.post('/api/v1/session', { data: ADMIN })
+  const loginRes = await loginWithRequest(request, ADMIN)
   expect(loginRes.ok()).toBeTruthy()
   const username = `pw${RUN}`
   const res = await request.post('/api/v1/members', { data: { username, name: '改密成员' } })
