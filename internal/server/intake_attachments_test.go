@@ -143,7 +143,7 @@ func Test入口附件按入口和幂等钥防串用(t *testing.T) {
 }
 
 func Test入口上传按入口和IP限流并信任回环反代(t *testing.T) {
-	s := tbtest.Start(t, tbtest.WithIntake(1, 200))
+	s := tbtest.Start(t, tbtest.WithIntake(1, 200, 200))
 	s.CreateAdmin("陈工", "secret-pass")
 	web := s.Login("陈工", "secret-pass")
 	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
@@ -158,7 +158,7 @@ func Test入口上传按入口和IP限流并信任回环反代(t *testing.T) {
 }
 
 func Test入口未提交附件受临时配额限制(t *testing.T) {
-	s := tbtest.Start(t, tbtest.WithIntake(20, 1))
+	s := tbtest.Start(t, tbtest.WithIntake(20, 1, 200))
 	s.CreateAdmin("陈工", "secret-pass")
 	web := s.Login("陈工", "secret-pass")
 	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})

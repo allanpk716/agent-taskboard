@@ -1020,6 +1020,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   - 入口内未认领附件合计默认 200MB（`[intake] pending_quota_mb`），超限
     `413 intake_pending_quota_exceeded`，附 `used_mb`、`limit_mb`。上传超过 24 小时
     仍未提交的附件由周期任务连同文件清除。
+  - 访客超限提示为「请压缩或联系对接成员」；成员上传工单附件仍提示改用外部 NAS 引用。
 
 - 提交（严格校验，与成员建单的 warnings 相反）：
   - 缺必填项直接拦下：`422 missing_fields`，`fields` 附加数组逐项给出
@@ -1044,6 +1045,11 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
     `intake_upload_key` 等于本次 `Idempotency-Key` 且仍待用的附件可认领；不匹配
     返回 `422 attachment_not_usable`。认领后的合计仍受
     `[attachments] max_ticket_mb` 与每帖个数/插图限制。
+  - 提交按（入口, 客户端 IP）限流，规则与匿名附件上传相同，超限同样返回
+    `429 intake_upload_rate_limited`。
+  - 每个入口按北京时间统计成功提交数，默认每天 200 笔（`[intake] daily_limit`）。
+    达到上限后当天返回 `429 intake_paused`，hint 提示「入口今日已暂停，请明天再试
+    或联系部门」；全体在职管理员收到一条 `intake_paused` 系统通知，次日自动恢复。
 - 提交者**视同说明的创建者**：工单的创建者记录为访客（带链接备注
   `反馈入口「<名称>」提交人` 与自报的 `author_name`）；`viewer.role` 为 `creator`，
     用提交时返回/下发的设备凭证即可读工单、修订说明（带「可填写说明」权限）和回复。

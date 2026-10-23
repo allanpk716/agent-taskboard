@@ -114,6 +114,12 @@ export function IntakePage({ slug }: { slug: string }) {
       setPhase({ kind: 'done', result })
     } catch (err) {
       if (err instanceof ApiError) {
+        if (err.status === 429 && err.code === 'intake_paused') {
+          pendingRef.current = false
+          if (retryTimer.current) clearTimeout(retryTimer.current)
+          setNotice({ kind: 'err', text: '入口今日已暂停，请明天再试或联系部门。' })
+          return
+        }
         if (err.status === 422 && err.code === 'missing_fields') {
           // 服务端的逐项提示（引导 + 示例）并入字段标红的展示。
           const hints = (err.body?.fields ?? []) as MissingFieldHint[]

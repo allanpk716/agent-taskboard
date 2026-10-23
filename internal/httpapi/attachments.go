@@ -51,7 +51,7 @@ func (a *API) handleTicketAttachments(w http.ResponseWriter, r *http.Request, re
 		if errors.As(err, &tooLarge) {
 			WriteError(w, http.StatusRequestEntityTooLarge, CodeAttachmentTooLarge,
 				"单个文件不能超过 "+strconv.Itoa(a.atts.Limits().MaxFileMB())+" MB",
-				nasHint(full.Number, ""))
+				attachmentLimitHint(viewer.Kind == identity.ViewerGuest, full.Number, ""))
 			return
 		}
 		WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "请求体不是合法的 multipart 表单",
@@ -75,7 +75,7 @@ func (a *API) handleTicketAttachments(w http.ResponseWriter, r *http.Request, re
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
 		info, markdown, err := a.atts.Upload(r.Context(), full.Seq, filename, content, attachments.PrincipalOf(viewer))
 		if err != nil {
-			a.writeAttachmentError(w, err, full.Number, filename)
+			a.writeAttachmentError(w, err, full.Number, filename, viewer.Kind == identity.ViewerGuest)
 			return
 		}
 		writeJSON(w, http.StatusCreated, attachmentUploadView{
@@ -109,16 +109,16 @@ func clientBaseName(name string) string {
 	return name
 }
 
-// writeAttachmentError 把附件模块的错误映射成 HTTP 错误；三种 413 的 hint
-// 都提示改用 NAS 路径（外部文件引用，见 GLOSSARY）。
-func (a *API) writeAttachmentError(w http.ResponseWriter, err error, ticketNumber, filename string) {
+// writeAttachmentError 把附件模块的错误映射成 HTTP 错误；成员 413 提示改用
+// NAS 路径，访客提示压缩或联系对接成员。
+func (a *API) writeAttachmentError(w http.ResponseWriter, err error, ticketNumber, filename string, guest bool) {
 	var tooLarge *attachments.TooLargeError
 	var quota *attachments.QuotaExceededError
 	var count *attachments.CountExceededError
 	switch {
 	case errors.As(err, &tooLarge):
 		WriteError(w, http.StatusRequestEntityTooLarge, CodeAttachmentTooLarge,
-			err.Error(), nasHint(ticketNumber, filename))
+			err.Error(), attachmentLimitHint(guest, ticketNumber, filename))
 	case errors.As(err, &quota):
 		WriteErrorExtra(w, http.StatusRequestEntityTooLarge, CodeTicketQuotaExceeded,
 			err.Error(), nasHint(ticketNumber, filename),
@@ -138,6 +138,13 @@ func (a *API) writeAttachmentError(w http.ResponseWriter, err error, ticketNumbe
 	default:
 		panic(err)
 	}
+}
+
+func attachmentLimitHint(guest bool, ticketNumber, filename string) string {
+	if guest {
+		return guestLargeFileHint
+	}
+	return nasHint(ticketNumber, filename)
 }
 
 // nasHint 是三种 413 的统一提示：大文件改用 NAS 路径（外部文件引用）。

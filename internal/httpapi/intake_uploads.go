@@ -82,7 +82,7 @@ func (a *API) handleIntakeAttachments(w http.ResponseWriter, r *http.Request, sl
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
 			WriteError(w, http.StatusRequestEntityTooLarge, CodeAttachmentTooLarge,
-				"单个文件不能超过 "+strconv.Itoa(a.atts.Limits().MaxFileMB())+" MB", "")
+				"单个文件不能超过 "+strconv.Itoa(a.atts.Limits().MaxFileMB())+" MB", guestLargeFileHint)
 			return
 		}
 		WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "请求体不是合法的 multipart 表单",
@@ -121,7 +121,7 @@ func (a *API) writeIntakeAttachmentError(w http.ResponseWriter, err error, filen
 	var count *attachments.CountExceededError
 	switch {
 	case errors.As(err, &tooLarge):
-		WriteError(w, http.StatusRequestEntityTooLarge, CodeAttachmentTooLarge, err.Error(), "")
+		WriteError(w, http.StatusRequestEntityTooLarge, CodeAttachmentTooLarge, err.Error(), guestLargeFileHint)
 	case errors.As(err, &quota):
 		WriteErrorExtra(w, http.StatusRequestEntityTooLarge, CodeIntakePendingQuotaExceeded,
 			err.Error(), "待提交附件过多时，请先提交已有反馈，或把大文件路径写在说明里",
@@ -139,6 +139,8 @@ func (a *API) writeIntakeAttachmentError(w http.ResponseWriter, err error, filen
 		panic(err)
 	}
 }
+
+const guestLargeFileHint = "请压缩或联系对接成员"
 
 // clientIP 只信任回环反代带来的 X-Forwarded-For，并取最右侧一段（Caddy 追加
 // 的客户端地址）；直连时忽略该头。
