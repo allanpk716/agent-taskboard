@@ -26,7 +26,10 @@ const tomlPath = (p) => p.replaceAll('\\', '/')
 const configPath = join(dir, 'config.toml')
 writeFileSync(
   configPath,
-  `data_dir = '${tomlPath(join(dir, 'data'))}'\nport = ${port}\nweb_dir = '${tomlPath(webDir)}'\n`,
+  `data_dir = '${tomlPath(join(dir, 'data'))}'\nport = ${port}\nweb_dir = '${tomlPath(webDir)}'\n` +
+    (process.env.E2E_CONTAINER
+      ? `[server]\ndeploy = 'container'\npublic_url = 'http://127.0.0.1:${port}'\n`
+      : ''),
 )
 
 // 预置服务端代管的桌面客户端（#83）：e2e 分两轮跑，有版本时验证下载区，
