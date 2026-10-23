@@ -12,6 +12,7 @@
 | 前端 | React + TypeScript + Vite 构建的静态文件，放在独立的 `web/` 目录，由后端同源提供 |
 | HTTPS | Caddy（带 alidns 插件）反代到后端，NSSM 托管 |
 | 进程托管 | NSSM，taskboard 和 caddy 各注册一个 Windows 服务 |
+| 云服务器部署 | Docker 镜像 + host 网络，数据在宿主机数据卷，宿主机 Caddy 反代 |
 
 程序和数据分开存放：程序装在 C:（VM 的本地盘，空间小）；数据目录由 `config.toml` 的 `data_dir` 指定，放在 D:（空间大，是 NAS 上的 qcow2）。建议的目录结构：
 
@@ -41,6 +42,58 @@ data_dir = 'D:\taskboard-data'
 - 前缀为 `/api/v1`，只做增量修改：可以加字段、加接口，不删除、不改名。破坏性变更开 `/api/v2`，两版并存一段时间。
 - 所有会产生新内容的请求（回复、建单、反馈提交、附件上传）都接受 `Idempotency-Key` 请求头。服务端按 key 去重，key 重复时返回首次请求的结果；入口附件上传是唯一例外：key 必填，用来把同一份草稿的多个附件归属到之后的一次提交，不做单响应快照。
 - 管理员专用的更新接口：检查更新、执行更新，供管理页按钮和管理员的 Agent 调用。
+
+## 容器部署
+
+云服务器部署使用仓库根的 `Dockerfile` 和 `docker-compose.yml`。镜像一次构建前端、`linux/amd64` 后端和 Windows/amd64 桌面客户端；运行层只保留二进制、前端、客户端包和少量运行工具，并以 `taskboard` 用户（UID 65532）运行。容器使用 host 网络，服务仍只监听 `127.0.0.1`；数据放在 `taskboard-data` 数据卷，配置文件只读挂载，异常退出由 `restart: unless-stopped` 拉起。
+
+首次部署：
+
+```bash
+docker compose pull
+cp config.container.example.toml config.toml
+# 修改 config.toml 里的 public_url；不要把修改后的配置提交进仓库。
+docker compose up -d --wait
+docker compose exec taskboard /app/taskboard create-admin \
+  -config /app/config/config.toml -username <登录名> -password <初始密码> -name <显示名>
+curl -fsS http://127.0.0.1:8080/api/v1/health
+```
+
+`config.container.example.toml` 已设置 `[server] deploy = "container"` 和镜像内客户端路径 `/app/client-package`。缺少 `public_url` 时服务会拒绝启动，避免对外链接依赖可被伪造的请求头。镜像内客户端版本与镜像版本一致，启动时版本更高就装入数据目录；管理页的在线更新按钮会提示「容器部署，请升级镜像」。
+
+宿主机 Caddy 站点必须**覆盖**客户端自带的转发头，不能追加，否则请求方可以伪造来源 IP，影响登录限流和失败锁定的判定：
+
+```caddyfile
+taskboard.example.com {
+    encode zstd gzip
+    reverse_proxy 127.0.0.1:8080 {
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Real-IP {remote_host}
+    }
+}
+```
+
+本地验证镜像执行（端口默认 8932，避开 8901/8911-8914）：
+
+```powershell
+.\scripts\docker-smoke.ps1
+```
+
+脚本会构建镜像、启动容器、检查 health 和登录、确认进程非 root，并重建容器后验证数据仍保留；结束时会删除冒烟容器、数据卷和镜像。
+
+## 容器升级
+
+容器模式不执行原地替换，也**先备份再升级**：
+
+```bash
+docker compose exec taskboard /app/taskboard backup -config /app/config/config.toml
+docker compose pull
+docker compose up -d --wait
+curl -fsS http://127.0.0.1:8080/api/v1/health
+```
+
+新版本异常时，用上一个已验证的镜像 tag 改写 `docker-compose.yml` 的 `image`，再执行 `docker compose up -d --wait` 回滚。镜像里的客户端版本会随后端镜像一起替换，已装在数据卷里的更高版本不会被降级。
 
 ## 附件上限与显示
 
@@ -118,6 +171,7 @@ proxy  = ""                         # http:// 或 socks5://；为空时读取 HT
 ### GitHub Release（唯一构建来源）
 
 - 后端打 `server/vX.Y.Z` tag，前端打 `web/vX.Y.Z` tag，桌面客户端打 `client/vX.Y.Z` tag，各自触发 GitHub Actions 构建并发布 Release。
+- 后端发布同时构建并推送 `ghcr.io/allanpk716/agent-taskboard:X.Y.Z` 和 `:latest`（linux/amd64）；镜像版本号来自 `server/vX.Y.Z` tag。
 - 每个 Release 都附带构建产物和 `manifest.json`：
 
   ```json
@@ -131,6 +185,10 @@ proxy  = ""                         # http:// 或 socks5://；为空时读取 HT
   - `https://github.com/<repo>/releases/download/<tag>/<file>`
 
   因此可以直接在地址前面加镜像前缀。不管经由哪个镜像下载，都按 `manifest.json` 里的 SHA256 校验。
+
+### 容器镜像（GHCR）
+
+`.github/workflows/release-server.yml` 在发布后端 Release 时用同一个 tag 构建并推送 GHCR 镜像。镜像内的桌面客户端不是下载外部 Release 资产，而是在同一提交上交叉编译，并生成同一版本的 `manifest.json`；这样镜像始终携带可校验、版本可追踪的客户端，不依赖前后两个工作流的完成顺序。
 
 CI 更新 `latest.json` 的方式是读改写：下载现有文件，用 `release latest` 只替换本组件的条目（另一组件原样保留），再 `--clobber` 上传。前后端同时打 tag 的极端情况下，两个工作流可能同时尝试创建 `channel-stable` Release，失败的那个重跑一次即可。
 
@@ -237,6 +295,7 @@ payload/{name}        # 产物本身（后端是两个二进制，前端是 web 
 
 **备份目标**：
 
+- 容器部署时，备份目标配置为数据卷内目录（示例是 `/app/data/backups`）。这个目录仍与主库在同一个云服务器数据卷上，只防范误操作和应用错误，不防范服务器整机损坏；每日磁盘快照是迁移初期的补救。把备份拉回异地NAS 的方案另开后续工单。
 - 在 NAS 上新建一个专用共享（如 `taskboard-backup`），用 UNC 路径配置，不要放在数据目录下，否则会和数据一起丢失。
 - 映射的盘符对 Windows 服务不可见，所以要用 UNC 路径，并在 NSSM 中让服务以有该共享写权限的账号运行（服务属性 → 登录）。
 - NAS（群晖）是工作组账号，Windows 服务没法直接以 NAS 账号运行。做法是：在服务器上建一个与 NAS 账号**同名同密码**的本地账号，服务以它运行，访问共享时 Windows 自动用同名同密码通过认证。这个本地账号要设成密码永不过期（`wmic useraccount where "name='<账号>'" set PasswordExpires=false`），否则按服务器策略到期后服务登录失败、备份中断。
