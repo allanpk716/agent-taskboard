@@ -42,6 +42,12 @@ type Server struct {
 	PublicURL string `toml:"public_url"`
 	// MinClientVersion 是平台要求的最低桌面客户端版本；空字符串表示不限制。
 	MinClientVersion string `toml:"min_client_version"`
+	// Deploy 是部署方式：空（默认）表示原地部署；container 表示运行在
+	// 容器里，更新由替换镜像完成。
+	Deploy string `toml:"deploy"`
+	// ClientImageDir 是镜像内自带桌面客户端安装包的目录（manifest.json +
+	// taskboard-client.exe）。容器模式下启动时装入 data_dir/client。
+	ClientImageDir string `toml:"client_image_dir"`
 }
 
 // Attachments 是 [attachments] 小节：服务端只检查上限，不压缩图片
@@ -149,6 +155,9 @@ func ApplyDefaults(cfg *Config) {
 	}
 	if cfg.WebDir == "" {
 		cfg.WebDir = "web"
+	}
+	if cfg.Server.ClientImageDir == "" {
+		cfg.Server.ClientImageDir = "client-package"
 	}
 	if cfg.Attachments.MaxFileMB == 0 {
 		cfg.Attachments.MaxFileMB = 5

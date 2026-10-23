@@ -23,7 +23,7 @@ export function SystemPanel() {
   const [backups, setBackups] = useState<BackupsStatus | null>(null)
   const [update, setUpdate] = useState<UpdateStatus | null>(null)
   const [health, setHealth] = useState<{ server: string; web: string } | null>(null)
-  const [updateError, setUpdateError] = useState<string | null>(null)
+  const [updateError, setUpdateError] = useState<{ code: string; message: string } | null>(null)
   const [applying, setApplying] = useState(false)
   const [result, setResult] = useState<UpdateResult | null>(null)
 
@@ -38,7 +38,7 @@ export function SystemPanel() {
       })
       .catch((err) => {
         setUpdate(null)
-        setUpdateError(err instanceof ApiError ? err.message : String(err))
+        setUpdateError(err instanceof ApiError ? { code: err.code, message: err.message } : { code: '', message: String(err) })
         // 检查失败时仍展示当前版本（健康检查公开可读）。
         fetchHealth()
           .then((h) => setHealth({ server: h.server_version, web: h.web_version }))
@@ -106,7 +106,9 @@ export function SystemPanel() {
         </div>
         {updateError && (
           <div className="hint" data-testid="update-error">
-            暂时查不到更新：{updateError}
+            {updateError.code === 'container_update_unsupported'
+              ? updateError.message
+              : `暂时查不到更新：${updateError.message}`}
           </div>
         )}
         {(update || health) && (

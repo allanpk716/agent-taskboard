@@ -43,6 +43,11 @@ func (a *API) handleAdminUpdate(w http.ResponseWriter, r *http.Request) {
 		"更新由管理员在管理页或命令行触发（taskboard update）"); !ok {
 		return
 	}
+	if a.cfg.Server.Deploy == "container" {
+		WriteError(w, http.StatusConflict, CodeContainerUpdateUnsupported,
+			"容器部署，请升级镜像", "平台运行在容器里，不能替换容器内的后端与前端文件。")
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		status, err := updater.Check(r.Context(), a.updateOptions())

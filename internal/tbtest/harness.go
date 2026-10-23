@@ -49,6 +49,7 @@ type Option func(*options)
 
 type options struct {
 	webDir        string
+	dataDir       string
 	clockStart    time.Time
 	attachments   config.Attachments
 	backup        config.Backup
@@ -56,12 +57,18 @@ type options struct {
 	intake        config.Intake
 	publicURL     string
 	minClient     string
+	deploy        string
+	clientImage   string
 	captcha       captcha.Source
 	captchaAnswer string
+	startupErr    *error
 }
 
 // WithWebDir 指定前端目录（默认用临时目录里的一页 index.html 占位）。
 func WithWebDir(dir string) Option { return func(o *options) { o.webDir = dir } }
+
+// WithDataDir 指定数据目录（默认临时目录），用于跨启动的持久化场景。
+func WithDataDir(dir string) Option { return func(o *options) { o.dataDir = dir } }
 
 // WithClockStart 指定假时钟的起点（默认 2026-10-16 09:00 北京时间）。
 func WithClockStart(t time.Time) Option { return func(o *options) { o.clockStart = t } }
@@ -90,6 +97,21 @@ func WithMinClientVersion(version string) Option {
 	return func(o *options) {
 		o.minClient = version
 	}
+}
+
+// WithContainer 以容器模式启动服务。publicURL 是容器模式必填的对外地址；
+// clientImageDir 为空时使用默认镜像客户端目录（目录可以不存在）。
+func WithContainer(publicURL, clientImageDir string) Option {
+	return func(o *options) {
+		o.deploy = "container"
+		o.publicURL = publicURL
+		o.clientImage = clientImageDir
+	}
+}
+
+// WithStartupError 捕获装配服务时的错误，供测试验证启动前校验。
+func WithStartupError(err *error) Option {
+	return func(o *options) { o.startupErr = err }
 }
 
 // WithCaptchaSource 注入登录验证码来源；生产服务固定使用随机来源。
@@ -125,6 +147,9 @@ func Start(t testing.TB, opts ...Option) *Server {
 	}
 
 	dataDir := t.TempDir()
+	if o.dataDir != "" {
+		dataDir = o.dataDir
+	}
 	webDir := o.webDir
 	if webDir == "" {
 		webDir = t.TempDir()
@@ -157,6 +182,8 @@ func Start(t testing.TB, opts ...Option) *Server {
 		cfg.Server.PublicURL = o.publicURL
 	}
 	cfg.Server.MinClientVersion = o.minClient
+	cfg.Server.Deploy = o.deploy
+	cfg.Server.ClientImageDir = o.clientImage
 	config.ApplyDefaults(&cfg) // 与 config.Load 一致：端口、附件上限等补默认值
 	clk := clock.NewFake(o.clockStart)
 	srvOpts := make([]server.Option, 0, 1)
@@ -165,6 +192,10 @@ func Start(t testing.TB, opts ...Option) *Server {
 	}
 	srv, err := server.New(cfg, st, clk, srvOpts...)
 	if err != nil {
+		if o.startupErr != nil {
+			*o.startupErr = err
+			return nil
+		}
 		t.Fatalf("装配服务失败：%v", err)
 	}
 

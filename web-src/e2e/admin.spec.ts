@@ -26,6 +26,16 @@ test('管理员在管理页看到备份状态与版本', async ({ page }) => {
   await expect(page.getByTestId('update-btn')).toBeDisabled()
 })
 
+test('容器模式下管理页提示升级镜像', async ({ page }) => {
+  test.skip(!process.env.E2E_CONTAINER, '需要以容器模式启动 e2e 服务')
+  await login(page, ADMIN)
+  await page.goto('/admin')
+
+  await expect(page.getByTestId('update-card')).toBeVisible()
+  await expect(page.getByTestId('update-error')).toHaveText('容器部署，请升级镜像')
+  await expect(page.getByTestId('update-btn')).toBeDisabled()
+})
+
 test('管理员在管理页切换成员的初筛人身份', async ({ page }) => {
   await login(page, ADMIN)
   await page.goto('/admin')
