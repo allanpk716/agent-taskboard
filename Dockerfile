@@ -42,6 +42,7 @@ RUN apk add --no-cache curl \
     && mv /out/manifest.json /out/taskboard-client.exe /out/client-package/
 
 FROM alpine:3.22
+ARG APP_VERSION
 RUN apk add --no-cache curl \
     && addgroup -g 65532 taskboard \
     && adduser -D -u 65532 -G taskboard -H -h /app taskboard \
@@ -49,6 +50,9 @@ RUN apk add --no-cache curl \
     && chown -R taskboard:taskboard /app
 COPY --from=server --chown=taskboard:taskboard /out/taskboard /app/taskboard
 COPY --from=web --chown=taskboard:taskboard /src/web /app/web
+RUN printf '{"component":"web","version":"%s"}\n' "${APP_VERSION}" \
+      > /app/web/version.json \
+    && chown taskboard:taskboard /app/web/version.json
 COPY --from=client --chown=taskboard:taskboard /out/client-package/ /app/client-package/
 USER taskboard:taskboard
 WORKDIR /app
@@ -58,4 +62,4 @@ VOLUME ["/app/data"]
 ENTRYPOINT ["/app/taskboard"]
 CMD ["serve", "-config", "/app/config/config.toml"]
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=6 \
-  CMD curl -fsS http://127.0.0.1:${TASKBOARD_PORT:-8080}/api/v1/health >/dev/null
+  CMD /app/taskboard healthcheck -config /app/config/config.toml

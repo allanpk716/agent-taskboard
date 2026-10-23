@@ -9,8 +9,6 @@ services:
         CLIENT_VERSION: "${CLIENT_VERSION:-}"
     network_mode: host
     restart: unless-stopped
-    environment:
-      TASKBOARD_PORT: "8080"
     volumes:
       - taskboard-data:/app/data
       - ./config.toml:/app/config/config.toml:ro

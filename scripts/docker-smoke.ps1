@@ -1,14 +1,17 @@
 [CmdletBinding()]
 param(
     [string]$ImageName = "agent-taskboard:232-smoke",
-    [Parameter(Mandatory = $true)]
-    [string]$ClientVersion,
+    [string]$ClientVersion = "",
     [int]$Port = 8932
 )
 
 $ErrorActionPreference = "Stop"
 if ($Port -ge 8911 -and $Port -le 8914 -or $Port -eq 8901) {
     throw "Smoke port must not use 8901 or 8911-8914"
+}
+if (-not $ClientVersion) {
+    $latest = Invoke-RestMethod -Uri "https://github.com/allanpk716/agent-taskboard/releases/download/channel-stable/latest.json"
+    $ClientVersion = $latest.client.version
 }
 
 $Project = "taskboard-smoke-232"
@@ -46,8 +49,6 @@ services:
     image: $ImageName
     network_mode: host
     restart: unless-stopped
-    environment:
-      TASKBOARD_PORT: "$Port"
     volumes:
       - ${Project}-data:/app/data
       - ${ConfigForCompose}:/app/config/config.toml:ro
@@ -83,6 +84,9 @@ docker build -t $ImageName --build-arg APP_VERSION=0.0.0 `
     --build-arg CLIENT_VERSION=$ClientVersion `
     --build-arg BUILD_TAGS=e2e_fixed_captcha .
 if ($LASTEXITCODE -ne 0) { throw "docker build failed" }
+
+bash "$PSScriptRoot/image-smoke.sh" $ImageName 0.0.0
+if ($LASTEXITCODE -ne 0) { throw "image smoke checks failed" }
 
 docker compose -p $Project -f $ComposePath up -d --wait
 if ($LASTEXITCODE -ne 0) { throw "container startup failed" }

@@ -194,7 +194,7 @@ func (h *Handler) acquire() *versionRoot {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	vr := h.current
-	if linkErr == nil && !h.closed && target != vr.dir {
+	if h.linkMode && linkErr == nil && !h.closed && target != vr.dir {
 		vr = h.switchVersion(target)
 	}
 	vr.refs++

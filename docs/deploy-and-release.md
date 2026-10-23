@@ -98,7 +98,8 @@ daily_limit         = 200
    - `GET /api/v1/health` 的 `server_version` 和 `web_version` 都等于 `X.Y.Z`。
 
    任何一项失败，流水线就此停止，镜像不推送；
-4. 推送镜像：`ghcr.io/allanpk716/agent-taskboard:X.Y.Z` 和 `:latest`，同时推送阿里云 ACR 个人版的 `X.Y.Z` 和 `latest`。ACR 的地址和登录凭据放在 GitHub Secrets（`ACR_REGISTRY`、`ACR_NAMESPACE`、`ACR_USERNAME`、`ACR_PASSWORD`）；
+4. 推送冒烟验过的同一份镜像（不重新构建）：`ghcr.io/allanpk716/agent-taskboard:X.Y.Z` 和 `:latest`。阿里云 ACR 是可选的第二个仓库（暂缓开通，ADR 0010），配置了 GitHub Secrets（`ACR_REGISTRY`、`ACR_NAMESPACE`、`ACR_USERNAME`、`ACR_PASSWORD`）就同时推送 `X.Y.Z` 和 `latest`；
+   未配置 `ACR_REGISTRY` 时跳过 ACR 并在流水线日志给出 warning，发布不因此失败；
 5. 发布 Release（附后端二进制和 `manifest.json`），并读改写 `channel-stable` 的 `latest.json`，只更新 server 条目。
 
 本地验证镜像（端口默认 8932，避开 8901/8911-8914）：
@@ -152,10 +153,10 @@ docker build --build-arg APP_VERSION=0.0.0-local -t taskboard:local .
 
 ### 首次部署
 
-1. 在服务器上建部署目录，把 `deploy/cloud/docker-compose.yml` 复制进去，`image` 改成 ACR 的 VPC 地址加版本号；
+1. 在服务器上建部署目录，把 `deploy/cloud/docker-compose.yml` 复制进去，`image` 改成镜像仓库地址加版本号（目前是 `ghcr.io/allanpk716/agent-taskboard:X.Y.Z`，启用 ACR 后换成 ACR 的 VPC 地址）；
 2. 从 `config.container.example.toml` 复制出 `config.toml`，改 `public_url`。缺少 `public_url` 时服务拒绝启动，避免对外链接依赖可被伪造的请求头。端口只由 `config.toml` 的 `port` 决定；
 3. 写 `deploy.env`（格式见 `deploy/cloud/deploy.env.example`）；
-4. 在服务器上登录 ACR（`docker login`），然后启动并创建管理员：
+4. 启动并创建管理员（GHCR 镜像是公开的，不用登录；启用 ACR 后先 `docker login`）：
 
 ```bash
 docker compose up -d --wait
@@ -163,6 +164,8 @@ docker compose exec taskboard /app/taskboard create-admin \
   -config /app/config/config.toml -username <登录名> -password <初始密码> -name <显示名>
 curl -fsS http://127.0.0.1:8080/api/v1/health
 ```
+
+镜像 `HEALTHCHECK` 使用 `taskboard healthcheck -config /app/config/config.toml`，子命令读取配置里的 `port` 后请求本机 health 接口；端口不再来自环境变量。
 
 5. 配置宿主机 Caddy（见下），确认公网地址能打开；
 6. 手动执行一次备份并做恢复演练（见「备份与恢复」）。
