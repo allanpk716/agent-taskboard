@@ -1,11 +1,26 @@
-import { useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { ApiError, api } from './api'
 
 export function LoginPage() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [captchaAnswer, setCaptchaAnswer] = useState('')
+  const [captcha, setCaptcha] = useState<{ id: string; image: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  const refreshCaptcha = useCallback(async () => {
+    try {
+      setCaptcha(await api('/api/v1/login-captcha'))
+      setCaptchaAnswer('')
+    } catch {
+      setError('无法加载验证码，请稍后重试')
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshCaptcha()
+  }, [refreshCaptcha])
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -14,7 +29,7 @@ export function LoginPage() {
     try {
       await api('/api/v1/session', {
         method: 'POST',
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, captcha_id: captcha?.id, captcha_answer: captchaAnswer }),
       })
       const next = new URLSearchParams(window.location.search).get('next')
       window.location.href =
@@ -22,6 +37,7 @@ export function LoginPage() {
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.hint ? `${err.message}（${err.hint}）` : err.message)
+        if (err.code.startsWith('captcha_')) void refreshCaptcha()
       } else {
         setError('无法连接服务，请稍后重试')
       }
@@ -42,6 +58,21 @@ export function LoginPage() {
             autoComplete="username"
             autoFocus
           />
+        </label>
+        <label>
+          验证码
+          <span className="captcha-row">
+            <input
+              value={captchaAnswer}
+              onChange={(e) => setCaptchaAnswer(e.target.value)}
+              autoComplete="off"
+              inputMode="text"
+            />
+            {captcha && <img className="captcha-image" src={captcha.image} alt="验证码图片" />}
+            <button type="button" className="captcha-refresh" onClick={() => void refreshCaptcha()}>
+              换一张
+            </button>
+          </span>
         </label>
         <label>
           密码

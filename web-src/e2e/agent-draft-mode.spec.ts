@@ -1,12 +1,12 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
-import { login, ADMIN } from './helpers'
+import { login, ADMIN, loginWithRequest } from './helpers'
 
 async function issueAgent(
   request: APIRequestContext,
   name: string,
   draftMode: 'required' | 'direct' = 'direct',
 ): Promise<string> {
-  await request.post('/api/v1/session', { data: ADMIN })
+  await loginWithRequest(request, ADMIN)
   const res = await request.post('/api/v1/me/agent-tokens', {
     data: { name, draft_mode: draftMode },
   })
@@ -63,7 +63,7 @@ test('签发 Agent 时默认必须走草稿', async ({ page, request }) => {
 
 test('新签发的Agent不触发草稿上线提示', async ({ page, request }) => {
   const suffix = Date.now().toString(36)
-  await request.post('/api/v1/session', { data: ADMIN })
+  await loginWithRequest(request, ADMIN)
   const member = {
     username: `draft-notice-${suffix}`,
     password: `pass-${suffix}`,
@@ -73,7 +73,7 @@ test('新签发的Agent不触发草稿上线提示', async ({ page, request }) =
   })
   expect(created.ok(), await created.text()).toBeTruthy()
   const initialPassword = (((await created.json()) as { initial_password: string }).initial_password)
-  await request.post('/api/v1/session', { data: { username: member.username, password: initialPassword } })
+  await loginWithRequest(request, { username: member.username, password: initialPassword })
   const issued = await request.post('/api/v1/me/agent-tokens', {
     data: { name: `提示Agent${suffix}`, draft_mode: 'required' },
   })

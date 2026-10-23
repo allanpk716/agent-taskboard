@@ -49,7 +49,8 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 
 | 方法与路径 | 说明 |
 |---|---|
-| `POST /api/v1/session` | 登录：`{"username","password"}` 换会话 cookie。错误 `invalid_credentials`(401)、`invalid_json`(400)、`invalid_utf8`(400)。 |
+| `GET /api/v1/login-captcha` | 取网页登录验证码：`{"id","image"}`，`image` 是 data URL PNG，约 5 分钟有效。 |
+| `POST /api/v1/session` | 登录：`{"username","password","captcha_id","captcha_answer"}` 换会话 cookie。错误 `invalid_credentials`(401)、`captcha_required`(401)、`captcha_invalid`(401)、`captcha_expired`(401)、`captcha_used`(401)、`invalid_json`(400)、`invalid_utf8`(400)。 |
 | `GET /api/v1/session` | 当前凭证的身份（任何有效凭证；匿名 401 `unauthenticated`）。 |
 | `DELETE /api/v1/session` | 登出（幂等 204），清除会话 cookie。 |
 

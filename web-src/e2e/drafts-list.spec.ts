@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
-import { createTicket, login, loginAdmin, markDraftIntroSeen, wang } from './helpers'
+import { createTicket, login, loginAdmin, markDraftIntroSeen, wang, loginWithRequest } from './helpers'
 
 test.use({ viewport: { width: 1280, height: 800 } })
 
 async function issueRequiredAgent(request: APIRequestContext): Promise<string> {
   const member = await wang()
-  const session = await request.post('/api/v1/session', { data: member })
+  const session = await loginWithRequest(request, member)
   expect(session.status(), `王工登录失败：${await session.text()}`).toBe(200)
   const res = await request.post('/api/v1/me/agent-tokens', {
     data: { name: `草稿列表-${Date.now()}`, draft_mode: 'required' },
@@ -71,7 +71,7 @@ test('草稿写成后工单有新回复时列表提示新变化', async ({ page,
 
 test('发出和丢弃草稿后徽章与列表更新', async ({ page, request }) => {
   const wangUser = await wang()
-  const wangLogin = await request.post('/api/v1/session', { data: wangUser })
+  const wangLogin = await loginWithRequest(request, wangUser)
   expect(wangLogin.status()).toBe(200)
   const existing = await request.get('/api/v1/drafts')
   expect(existing.status(), `读取草稿失败：${await existing.text()}`).toBe(200)
@@ -103,7 +103,7 @@ test('发出和丢弃草稿后徽章与列表更新', async ({ page, request }) 
   await expect(entry).not.toContainText('1')
   await expect(page.locator('.draft-row')).toHaveCount(0)
 
-  await request.post('/api/v1/session', { data: wangUser })
+  await loginWithRequest(request, wangUser)
   const tokens = await request.get('/api/v1/me/agent-tokens')
   expect(tokens.status()).toBe(200)
   for (const token of ((await tokens.json()) as { tokens: { id: number; revoked_at?: string | null }[] }).tokens) {

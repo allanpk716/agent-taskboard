@@ -1,8 +1,8 @@
 import { expect, test, type APIRequestContext } from '@playwright/test'
-import { claimGuestLink, login, loginAdmin, markDraftIntroSeen, wang } from './helpers'
+import { claimGuestLink, login, loginAdmin, markDraftIntroSeen, wang, loginWithRequest } from './helpers'
 
 async function issueRequiredAgent(request: APIRequestContext): Promise<string> {
-  await request.post('/api/v1/session', { data: await wang() })
+  await loginWithRequest(request, await wang())
   const res = await request.post('/api/v1/me/agent-tokens', {
     data: { name: `修订笔记本-${Date.now()}`, draft_mode: 'required' },
   })

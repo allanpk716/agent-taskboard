@@ -1,10 +1,10 @@
 import { expect, test, type APIRequestContext } from '@playwright/test'
-import { openGuestPage } from './helpers'
+import { openGuestPage, loginWithRequest } from './helpers'
 
 const ADMIN = { username: 'admin', password: 'admin-pass-123' }
 
 async function seedGuestTicket(request: APIRequestContext) {
-  const login = await request.post('/api/v1/session', { data: ADMIN })
+  const login = await loginWithRequest(request, ADMIN)
   expect(login.ok()).toBeTruthy()
   const created = await request.post('/api/v1/tickets', {
     data: {

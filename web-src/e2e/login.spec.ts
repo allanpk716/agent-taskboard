@@ -1,11 +1,13 @@
 import { test, expect, type Page } from '@playwright/test'
 
 const ADMIN = { username: 'admin', password: 'admin-pass-123' }
+const CAPTCHA_ANSWER = 'TB123'
 
 async function login(page: Page) {
   await page.goto('/login')
   await page.getByLabel('用户名').fill(ADMIN.username)
   await page.getByLabel('密码').fill(ADMIN.password)
+  await page.getByLabel('验证码').fill(CAPTCHA_ANSWER)
   await page.getByRole('button', { name: '登录' }).click()
 }
 
@@ -19,10 +21,27 @@ test('登录后进入成员网页的收件箱', async ({ page }) => {
   }
 })
 
+test('登录页显示验证码，答错后提示并自动换一张', async ({ page }) => {
+  await page.goto('/login')
+  await expect(page.getByRole('img', { name: '验证码图片' })).toBeVisible()
+  await page.getByRole('button', { name: '换一张' }).click()
+  await expect(page.getByRole('img', { name: '验证码图片' })).toBeVisible()
+
+  await page.getByLabel('用户名').fill(ADMIN.username)
+  await page.getByLabel('密码').fill(ADMIN.password)
+  await page.getByLabel('验证码').fill('wrong')
+  await page.getByRole('button', { name: '登录' }).click()
+  await expect(page.getByRole('alert')).toHaveText(/验证码错误/)
+  await page.getByLabel('验证码').fill(CAPTCHA_ANSWER)
+  await page.getByRole('button', { name: '登录' }).click()
+  await expect(page.getByRole('heading', { name: '收件箱' })).toBeVisible()
+})
+
 test('账号或密码错误时显示统一错误', async ({ page }) => {
   await page.goto('/login')
   await page.getByLabel('用户名').fill(ADMIN.username)
   await page.getByLabel('密码').fill('wrong-pass')
+  await page.getByLabel('验证码').fill(CAPTCHA_ANSWER)
   await page.getByRole('button', { name: '登录' }).click()
   await expect(page.getByRole('alert')).toHaveText(/用户名或密码不正确/)
   // 仍停留在登录页
