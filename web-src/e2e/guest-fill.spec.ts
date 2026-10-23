@@ -205,13 +205,13 @@ test.describe('上传与提交', () => {
     await expect(sn.locator('textarea')).not.toHaveValue(/att:/)
     await sn.locator('textarea').fill('序列号 7600CS-2023-0412，软件 V3.2.1')
 
-    // 单个文件超过 5 MB：提示改为写 NAS 路径（服务端 413 的 hint）
+    // 单个文件超过 5 MB：访客提示压缩或联系对接成员（服务端 413 的 hint）。
     await sn.locator('input[type=file]').setInputFiles({
       name: '仪器录像.zip',
       mimeType: 'application/zip',
       buffer: Buffer.alloc(6 * 1024 * 1024, 1),
     })
-    await expect(sn.locator('.staged-file.failed')).toContainText('NAS', { timeout: 15000 })
+    await expect(sn.locator('.staged-file.failed')).toContainText('请压缩或联系对接成员', { timeout: 15000 })
 
     // 刷新后回到落地页：有草稿时按钮显示必填进度；附件和纯文本都从草稿恢复
     await page.reload()

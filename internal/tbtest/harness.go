@@ -114,10 +114,10 @@ func WithStartupError(err *error) Option {
 // “没有配置更新源”，测试里指向本地假源，不碰真实 GitHub/UpdateHub）。
 func WithUpdate(u config.Update) Option { return func(o *options) { o.update = u } }
 
-// WithIntake 指定入口匿名上传的限流与临时配额。
-func WithIntake(ratePerMin, pendingQuotaMB int) Option {
+// WithIntake 指定入口匿名上传的限流、临时配额与每日提交上限。
+func WithIntake(ratePerMin, pendingQuotaMB, dailyLimit int) Option {
 	return func(o *options) {
-		o.intake = config.Intake{UploadRatePerMin: ratePerMin, PendingQuotaMB: pendingQuotaMB}
+		o.intake = config.Intake{UploadRatePerMin: ratePerMin, PendingQuotaMB: pendingQuotaMB, DailyLimit: dailyLimit}
 	}
 }
 

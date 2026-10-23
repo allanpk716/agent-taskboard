@@ -205,12 +205,14 @@ type Full struct {
 
 // Manager 是工单核心的对外入口：「以某个 Viewer 建单」「读某张工单」。
 type Manager struct {
-	db        *sql.DB
-	clk       clock.Clock
-	labels    *labels.Manager
-	templates *templates.Manager
-	atts      *attachments.Manager // 附件认领在回复/说明修订的同一事务里（#33）
-	notifier  Notifier
+	db               *sql.DB
+	clk              clock.Clock
+	labels           *labels.Manager
+	templates        *templates.Manager
+	atts             *attachments.Manager // 附件认领在回复/说明修订的同一事务里（#33）
+	notifier         Notifier
+	systemNotifier   SystemNotifier
+	dailyIntakeLimit int
 }
 
 // NotificationInput 是通知规则模块的输入：事件前后的完整工单状态、操作者
@@ -239,6 +241,15 @@ func NewManager(db *sql.DB, c clock.Clock, lm *labels.Manager, tm *templates.Man
 }
 
 func (m *Manager) SetNotifier(n Notifier) { m.notifier = n }
+
+// SystemNotifier 发不挂工单的系统通知（反馈入口每日暂停告警）。
+type SystemNotifier interface {
+	NotifySystem(ctx context.Context, reason, text string) error
+}
+
+func (m *Manager) SetSystemNotifier(n SystemNotifier) { m.systemNotifier = n }
+
+func (m *Manager) SetIntakeDailyLimit(limit int) { m.dailyIntakeLimit = limit }
 
 // WaitingOn 用注入时钟和这张工单的访客链接状态推导等待方。HTTP 与查询
 // 入口都从这里取值，不各自读时间或链接表。

@@ -127,7 +127,7 @@ test.describe('手机视口', () => {
     await expect(meTab.locator('.dot')).toHaveCSS('background-color', 'rgb(217, 119, 6)')
     await meTab.click()
     await page.getByRole('link', { name: /我的草稿（\d+）/ }).click()
-    await expect(page.getByRole('heading', { name: '我的草稿' })).toBeVisible()
+    await expect(page.locator('h1', { hasText: '我的草稿' })).toBeVisible()
     await expect(page.locator('section[aria-label="工单上的草稿"]')).toContainText('手机草稿入口')
 
     const drafts = await request.get('/api/v1/drafts')

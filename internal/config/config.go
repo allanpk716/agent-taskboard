@@ -67,6 +67,7 @@ type Attachments struct {
 type Intake struct {
 	UploadRatePerMin int `toml:"upload_rate_per_min"`
 	PendingQuotaMB   int `toml:"pending_quota_mb"`
+	DailyLimit       int `toml:"daily_limit"`
 }
 
 // Backup 是 [backup] 小节：备份目标与保留策略（#43，docs/deploy-and-release.md
@@ -191,5 +192,8 @@ func ApplyDefaults(cfg *Config) {
 	}
 	if cfg.Intake.PendingQuotaMB == 0 {
 		cfg.Intake.PendingQuotaMB = 200
+	}
+	if cfg.Intake.DailyLimit == 0 {
+		cfg.Intake.DailyLimit = 200
 	}
 }

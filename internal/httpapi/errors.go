@@ -129,6 +129,7 @@ const (
 	CodeIdempotencyKeyRequired     = "idempotency_key_required" // 入口附件上传缺提交归属键
 	CodeIntakeUploadRateLimited    = "intake_upload_rate_limited"
 	CodeIntakePendingQuotaExceeded = "intake_pending_quota_exceeded"
+	CodeIntakePaused               = "intake_paused"
 
 	// #45：更新。
 	CodeUpdateSourceUnreachable    = "update_source_unreachable"    // 所有更新源都连不上（502）

@@ -32,6 +32,8 @@ var (
 	ErrNameRequired = errors.New("反馈入口需要一个名称，如「部门 Bug 反馈」")
 	// ErrTemplateNotReport 表示绑定的模板不是反馈类型（spec：绑定的模板必须是反馈类型）。
 	ErrTemplateNotReport = errors.New("反馈入口只能绑定反馈类型的模板（类型：反馈）")
+	// ErrIntakeDailyLimit 表示入口当日提交数达到配置上限，北京时间次日自动恢复。
+	ErrIntakeDailyLimit = errors.New("这个反馈入口今天提交数已达上限")
 )
 
 // MissingFieldHint 是严格校验（422 missing_fields）里每一项的提示：
@@ -384,6 +386,7 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	if len(attachmentRefs) > 0 && in.IdempotencyKey == "" {
 		return SubmissionResult{}, attachments.ErrNotUsable
 	}
+	notifyPaused := false
 
 	key, err := identity.NewGuestKey()
 	if err != nil {
@@ -400,6 +403,10 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	}
 	defer tx.Rollback()
 	var notified []int64
+	notifyPaused, err = m.reserveIntakeDailyTx(ctx, tx, intake.ID, date)
+	if err != nil {
+		return SubmissionResult{}, err
+	}
 
 	// 当日序号与全局序号在同一事务内分配（与成员建单同一段逻辑）。
 	var today int
@@ -501,6 +508,10 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	if err := m.commitAndWake(tx, notified); err != nil {
 		return SubmissionResult{}, err
 	}
+	if notifyPaused && m.systemNotifier != nil {
+		_ = m.systemNotifier.NotifySystem(ctx, "intake_paused",
+			"反馈入口「"+intake.Name+"」今天提交数已达上限，入口今日已暂停")
+	}
 	t.Number = number
 	result := SubmissionResult{
 		Ticket:  t,
@@ -519,6 +530,25 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	result.ClaimedAt = claim.ClaimedAt
 	result.DepartmentContact = intake.DepartmentContact
 	return result, nil
+}
+
+// reserveIntakeDailyTx 在建单事务里预留一个每日提交名额；达到上限时返回暂停错误。
+func (m *Manager) reserveIntakeDailyTx(ctx context.Context, tx *sql.Tx, intakeID int64, day string) (bool, error) {
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO intake_daily_usage (intake_id, day, submissions) VALUES (?, ?, 1)
+		ON CONFLICT(intake_id, day) DO UPDATE SET submissions = submissions + 1`,
+		intakeID, day); err != nil {
+		return false, err
+	}
+	var count int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT submissions FROM intake_daily_usage WHERE intake_id = ? AND day = ?`, intakeID, day).Scan(&count); err != nil {
+		return false, err
+	}
+	if count > m.dailyIntakeLimit {
+		return false, ErrIntakeDailyLimit
+	}
+	return count == m.dailyIntakeLimit, nil
 }
 
 // missingFieldHints 把缺必填的逐项提示拼出来：引导说明、维度字段可「不确定」、

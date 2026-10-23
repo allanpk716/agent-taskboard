@@ -101,7 +101,9 @@ func New(cfg config.Config, st *store.Store, c clock.Clock) (*Server, error) {
 	backups.SetNotifier(notificationStore)
 	accessRecords := accessrecords.NewManager(st.DB, c)
 	ticketStore := tickets.NewManager(st.DB, c, labelDict, templateDict, atts)
+	ticketStore.SetIntakeDailyLimit(cfg.Intake.DailyLimit)
 	ticketStore.SetNotifier(notificationStore)
+	ticketStore.SetSystemNotifier(notificationStore)
 	draftStore := drafts.NewManager(st.DB, c, ticketStore, atts)
 	draftStore.SetNotifier(notificationStore.DraftNotifier())
 	api := httpapi.NewAPI(ident, ticketStore,
