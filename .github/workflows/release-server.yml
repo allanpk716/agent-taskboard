@@ -1,6 +1,6 @@
-# 后端发布：打 server/vX.Y.Z tag 时构建 Windows 与 linux/amd64 产物，
-# 附 manifest.json（含 SHA256）发布 Release，并读改写 channel-stable 下的
-# latest.json（只更新 server 条目，保留 web 条目）。
+# 平台发布：打 server/vX.Y.Z tag 时构建前后端一体的 Windows/linux/amd64
+# 产物和容器镜像，附 manifest.json（含 SHA256）发布 Release，并读改写
+# channel-stable 下的 latest.json（只更新 server 条目，保留旧 web 条目）。
 # 细节见 docs/deploy-and-release.md 的「发布」一节。
 name: release-server
 
@@ -11,6 +11,9 @@ on:
 permissions:
   contents: write
   packages: write
+
+env:
+  ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
 
 jobs:
   release:
@@ -39,6 +42,22 @@ jobs:
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X github.com/allanpk716/agent-taskboard/internal/version.Server=$VERSION" -o dist/taskboard.exe ./cmd/taskboard
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X github.com/allanpk716/agent-taskboard/internal/version.Server=$VERSION" -o dist/taskboard-linux-amd64 ./cmd/taskboard
 
+      - name: 构建本地镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          build-args: |
+            APP_VERSION=${{ env.IMAGE_VERSION }}
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ env.IMAGE_VERSION }}
+
+      - name: 镜像冒烟门禁
+        run: bash scripts/image-smoke.sh "ghcr.io/${GITHUB_REPOSITORY,,}:${IMAGE_VERSION}" "$IMAGE_VERSION"
+
       - name: 登录 GHCR
         uses: docker/login-action@v3
         with:
@@ -46,26 +65,38 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
-      - name: 读取最新客户端版本
+      - name: 推送 GHCR
+        # 推送冒烟验过的同一份本地镜像，不重新构建。
         run: |
           set -euxo pipefail
-          curl -fsSL -o latest.json "https://github.com/$GITHUB_REPOSITORY/releases/download/channel-stable/latest.json"
-          CLIENT_VERSION="$(jq -er '.client.version' latest.json)"
-          echo "CLIENT_VERSION=$CLIENT_VERSION" >> "$GITHUB_ENV"
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          docker tag "$image:$IMAGE_VERSION" "$image:latest"
+          docker push "$image:$IMAGE_VERSION"
+          docker push "$image:latest"
 
-      - name: 构建并推送镜像
-        uses: docker/build-push-action@v6
+      - name: 登录阿里云 ACR
+        if: ${{ env.ACR_REGISTRY != '' }}
+        uses: docker/login-action@v3
         with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64
-          push: true
-          build-args: |
-            APP_VERSION=${{ env.IMAGE_VERSION }}
-            CLIENT_VERSION=${{ env.CLIENT_VERSION }}
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ env.IMAGE_VERSION }}
-            ghcr.io/${{ github.repository }}:latest
+          registry: ${{ secrets.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: 推送阿里云 ACR
+        if: ${{ env.ACR_REGISTRY != '' }}
+        run: |
+          set -euxo pipefail
+          acr_image="${ACR_REGISTRY}/${ACR_NAMESPACE}/agent-taskboard"
+          docker tag "ghcr.io/${GITHUB_REPOSITORY,,}:${IMAGE_VERSION}" "$acr_image:$IMAGE_VERSION"
+          docker tag "ghcr.io/${GITHUB_REPOSITORY,,}:${IMAGE_VERSION}" "$acr_image:latest"
+          docker push "$acr_image:$IMAGE_VERSION"
+          docker push "$acr_image:latest"
+        env:
+          ACR_NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
+
+      - name: ACR 未配置提示
+        if: ${{ env.ACR_REGISTRY == '' }}
+        run: echo '::warning::ACR_REGISTRY is not configured; skipping Aliyun ACR image push.'
 
       - name: 核对产物平台
         run: |
@@ -103,7 +134,7 @@ jobs:
             -tag "$GITHUB_REF_NAME" -repo "$GITHUB_REPOSITORY" -file latest.json
           if ! gh release view channel-stable -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create channel-stable --target "$GITHUB_SHA" --title channel-stable \
-              --notes "固定 tag：latest.json 记录前后端各自的最新版本（打 server/v* 或 web/v* tag 时自动更新）" \
+              --notes "固定 tag：latest.json 记录平台与客户端的最新版本（打 server/v* 或 client/v* tag 时自动更新）" \
               -R "$GITHUB_REPOSITORY"
           fi
           gh release upload channel-stable latest.json --clobber -R "$GITHUB_REPOSITORY"

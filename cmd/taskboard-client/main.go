@@ -23,6 +23,7 @@ func main() {
 		}
 	}()
 	server := flag.String("server", "", "Taskboard 平台地址")
+	configKey := flag.String("config-key", "", "平台地址的 HKCU 配置键（测试隔离用）")
 	autostart := flag.Bool("autostart", false, "开机自启启动参数")
 	afterUpdate := flag.Bool("after-update", false, "自动更新后的新进程启动参数")
 	afterInstall := flag.Bool("after-install", false, "覆盖安装后的新进程启动参数")
@@ -33,14 +34,15 @@ func main() {
 		return
 	}
 	reporter.Infof("启动 Taskboard 桌面客户端 version=%s args=%q", version.Client, os.Args[1:])
-	exe, err := os.Executable()
-	if err != nil {
-		reporter.Fatalf(2, "读取客户端路径失败：%v", err)
-	}
-	lifecycle := desktop.NewLifecycle()
-	serverURL, err := client.ResolveServerURL(*server, os.Getenv("TASKBOARD_SERVER_URL"), lifecycle.Config, exe)
+	lifecycle := desktop.NewLifecycleWithConfigKey(*configKey)
+	promptCtx, stopPrompt := signal.NotifyContext(context.Background(), os.Interrupt)
+	serverURL, ok, err := client.ResolveInteractiveServerURL(promptCtx, *server, os.Getenv("TASKBOARD_SERVER_URL"), lifecycle.Config, desktop.NewServerURLPrompter(), nil)
+	stopPrompt()
 	if err != nil {
 		reporter.Fatalf(2, "%v", err)
+	}
+	if !ok {
+		return
 	}
 	reporter.Infof("解析后的 Taskboard 平台地址：%s", serverURL)
 	installed, err := client.InstallIfNeeded(*lifecycle, serverURL)

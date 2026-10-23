@@ -1,6 +1,6 @@
 # Go + SQLite 单二进制，静态前端独立更新，GitHub Release 与 UpdateHub 双发布源
 
-状态补充：**部分被 [ADR 0009](0009-cloud-docker-deployment.md) 取代**。当前生产部署的 Windows/NSSM 形态、内网 VM 位置和容器内执行原地 exe 更换的部分以 ADR 0009 为准；单二进制、独立前端更新和 Release/UpdateHub 双发布源仍沿用本决策。
+状态补充：**部分被 [ADR 0009](0009-cloud-docker-deployment.md) 取代**。当前生产部署的 Windows/NSSM 形态、内网 VM 位置和容器内执行原地 exe 更换的部分以 ADR 0009 为准；前后端独立版本、UpdateHub 发布源的部分又被 [ADR 0010](0010-cloud-release-and-deploy.md) 和 [ADR 0011](0011-desktop-client-standalone-distribution.md) 取代：前后端合并为一个版本号随镜像发布，UpdateHub 不再是任何组件的发布源。Go + SQLite 单二进制、`/api/v1` 增量修改和 `Idempotency-Key` 兜底仍沿用本决策。
 
 平台由本部门借助 Agent 长期维护，部门已有一个 Go + SQLite、由 NSSM 托管的内网服务（UpdateHub），可以照着做。因此后端选 Go 单二进制，数据库用 SQLite（WAL 模式），附件存在数据目录下的文件里，以 NSSM 服务的形式部署在 UpdateHub 所在的 VM 上。
 

@@ -1,0 +1,13 @@
+services:
+  taskboard:
+    # 替换为 IMAGE_REPO:X.Y.Z；示例：
+    # image: registry-vpc.cn-hangzhou.example.com/example/agent-taskboard:0.12.1
+    image: <IMAGE_REPO>:<VERSION>
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - taskboard-data:/app/data
+      - ./config.toml:/app/config/config.toml:ro
+
+volumes:
+  taskboard-data:

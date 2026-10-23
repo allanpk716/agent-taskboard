@@ -1,5 +1,7 @@
 # 下载的客户端 exe 尾部附带平台地址
 
+状态：**已被 [ADR 0011](0011-desktop-client-standalone-distribution.md) 取代**。服务端不再提供客户端下载，exe 尾部也不再写地址；客户端首次运行时由成员填写平台地址。
+
 桌面客户端需要知道自己该连哪个平台，但发布的 exe 是公开 GitHub Release 上的同一份产物，不能把某个部署的内网地址编进去。服务端在 `/api/v1/client/download` 返回代管的 exe 时，在文件末尾附加一段尾部数据：平台地址、4 字节小端长度、8 字节魔数 `TBSTAMP1`。PE 文件末尾的附加数据不影响运行。地址取配置 `public_url`，为空时由请求的 scheme 和 host 推出。客户端首次运行时从自身 exe 尾部读出地址，安装时存进 HKCU；之后从安装位置重启、开机自启、自动更新都读 HKCU 里保存的这份地址。
 
 地址的解析顺序：`-server` 参数 > `TASKBOARD_SERVER_URL` 环境变量 > HKCU 里保存的地址 > exe 尾部。都没有时报错退出，不再默认连本机。

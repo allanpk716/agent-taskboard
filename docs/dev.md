@@ -66,12 +66,11 @@ npm run e2e
 
 ## 发布
 
-前后端独立打 tag 自动发布（细节和演练步骤见 `docs/deploy-and-release.md` 的「发布」）：
+平台和客户端分别打 tag 自动发布（细节和演练步骤见 `docs/deploy-and-release.md` 的「发布」）：
 
-- `server/vX.Y.Z` → `.github/workflows/release-server.yml`：构建 Windows 与 `linux/amd64` 后端，附 `manifest.json`，更新 `channel-stable` 的 `latest.json`。
-- `web/vX.Y.Z` → `.github/workflows/release-web.yml`：构建前端 zip，同样附 `manifest.json` 并更新 `latest.json`；前端要求的最低后端版本写在 `web-src/server-compat.json` 的 `min_server`，开始依赖新后端接口时记得改它。
+- `server/vX.Y.Z` → `.github/workflows/release-server.yml`：一次构建前端、Windows 与 `linux/amd64` 后端和容器镜像，附 `manifest.json`，更新 `channel-stable` 的 `latest.json`。
 - `client/vX.Y.Z` → `.github/workflows/release-client.yml`：在 Ubuntu 上显式交叉构建 Windows/amd64 客户端，附 `manifest.json` 并更新 `latest.json`。
-- `server/vX.Y.Z` 同时构建并推送 `ghcr.io/allanpk716/agent-taskboard:X.Y.Z` 与 `:latest`；本地镜像验证用 `.\scripts\docker-smoke.ps1`。
+- `server/vX.Y.Z` 通过镜像冒烟门禁后推送 GHCR 与阿里云 ACR；本地镜像验证用 `.\scripts\docker-smoke.ps1`。
 - 本地工具：`go run ./cmd/release manifest|latest`（生成清单、读改写 latest.json）；`go run ./cmd/publish-updatehub`（转发到内网 UpdateHub，需要环境变量 `UPDATEHUB_BASE_URL` 和 `UPDATEHUB_TOKEN`，可选 `GITHUB_TOKEN`、`GITHUB_MIRROR`）。
 
 不碰 GitHub 和 UpdateHub 的演练命令在 `docs/deploy-and-release.md` 的「演练」小节；`internal/release`、`internal/updatehub` 和两个 `cmd/` 的测试就是发布逻辑的回归底座。

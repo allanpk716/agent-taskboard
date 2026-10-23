@@ -2,50 +2,82 @@ package client_test
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/allanpk716/agent-taskboard/internal/client"
-	"github.com/allanpk716/agent-taskboard/internal/clientstamp"
 )
 
-func Test平台地址按参数环境变量已保存地址和尾部戳依次解析(t *testing.T) {
-	dir := t.TempDir()
-	stamped := filepath.Join(dir, "stamped.exe")
-	if err := os.WriteFile(stamped, []byte("MZ"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := clientstamp.AppendFile(stamped, "https://stamp.example.com"); err != nil {
-		t.Fatal(err)
-	}
-	plain := filepath.Join(dir, "plain.exe")
-	if err := os.WriteFile(plain, []byte("MZ"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	store := &fakeServerConfig{savedURL: "https://saved.example.com"}
+func Test首次运行弹框探测通过后保存平台地址(t *testing.T) {
+	var path string
+	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/health" {
+			http.NotFound(w, r)
+			return
+		}
+		path = r.URL.Path
+		_ = json.NewEncoder(w).Encode(map[string]string{"server_version": "1.0.0"})
+	}))
+	t.Cleanup(health.Close)
+	store := &fakeServerConfig{}
+	prompter := &fakeServerURLPrompter{value: health.URL}
 
+	got, ok, err := client.ResolveInteractiveServerURL(context.Background(), "", "", store, prompter, nil)
+	if err != nil || !ok {
+		t.Fatalf("解析 = %q, %v, %v", got, ok, err)
+	}
+	if got != health.URL || store.savedURL != health.URL {
+		t.Fatalf("平台地址 = %q/%q", got, store.savedURL)
+	}
+	if path != "/api/v1/health" {
+		t.Fatalf("没有探测 health：%q", path)
+	}
+}
+
+func Test探测失败时在弹框中显示错误并允许重填(t *testing.T) {
+	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(health.Close)
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"server_version":"1.0.0"}`))
+	}))
+	t.Cleanup(good.Close)
+	store := &fakeServerConfig{}
+	prompter := &recordingPrompter{values: []string{health.URL, good.URL}}
+
+	got, ok, err := client.ResolveInteractiveServerURL(context.Background(), "", "", store, prompter, nil)
+	if err != nil || !ok || got != good.URL {
+		t.Fatalf("解析 = %q, %v, %v；想 %q", got, ok, err, good.URL)
+	}
+	if len(prompter.errs) != 2 || prompter.errs[0] != nil || prompter.errs[1] == nil {
+		t.Fatalf("弹框错误序列 = %+v", prompter.errs)
+	}
+	if store.savedURL != good.URL {
+		t.Fatalf("失败地址不应保存，实际 = %q", store.savedURL)
+	}
+}
+
+func Test平台地址按参数环境变量已保存地址依次解析(t *testing.T) {
 	cases := []struct {
-		name  string
-		arg   string
-		env   string
-		exe   string
-		want  string
-		ok    bool
-		saved bool
+		name string
+		arg  string
+		env  string
+		want string
+		ok   bool
 	}{
-		{"参数最高", "https://arg.example.com", "https://env.example.com", stamped, "https://arg.example.com", true, true},
-		{"环境变量高于已保存", "", "https://env.example.com", stamped, "https://env.example.com", true, true},
-		{"已保存高于尾部", "", "", stamped, "https://saved.example.com", true, true},
-		{"尾部兜底", "", "", stamped, "https://stamp.example.com", true, false},
-		{"无尾部则失败", "", "", plain, "", false, false},
+		{"参数最高", "https://arg.example.com", "https://env.example.com", "https://arg.example.com", true},
+		{"环境变量高于已保存", "", "https://env.example.com", "https://env.example.com", true},
+		{"已保存", "", "", "https://saved.example.com", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if !tc.saved {
-				store.savedURL = ""
-			}
-			got, err := client.ResolveServerURL(tc.arg, tc.env, store, tc.exe)
+			store := &fakeServerConfig{savedURL: "https://saved.example.com"}
+			got, err := client.ResolveServerURL(tc.arg, tc.env, store)
 			if tc.ok && (err != nil || got != tc.want) {
 				t.Fatalf("解析 = %q, %v；想 %q", got, err, tc.want)
 			}
@@ -53,6 +85,9 @@ func Test平台地址按参数环境变量已保存地址和尾部戳依次解�
 				t.Fatalf("应报错，得到 %q", got)
 			}
 		})
+	}
+	if _, err := client.ResolveServerURL("", "", nil); err == nil {
+		t.Fatal("没有任何地址来源时应报错")
 	}
 }
 
@@ -68,7 +103,7 @@ func Test安装目录外启动会复制保存地址写自启并重启(t *testing
 		t.Fatal("应请求本进程退出并从安装位置重启")
 	}
 	if got := readFile(t, fx.files.installPath); string(got) != string(readFile(t, fx.download)) {
-		t.Fatal("安装目录内容应保留下载 exe 的尾部地址")
+		t.Fatal("安装目录内容应是下载的 exe")
 	}
 	if fx.config.savedURL != "https://taskboard.example.com" {
 		t.Fatalf("保存的平台地址 = %q", fx.config.savedURL)
@@ -268,6 +303,18 @@ func readFile(t testing.TB, path string) []byte {
 
 type fakeServerConfig struct {
 	savedURL string
+}
+
+type recordingPrompter struct {
+	values []string
+	errs   []error
+}
+
+func (p *recordingPrompter) PromptServerURL(_ string, probeErr error) (string, bool, error) {
+	p.errs = append(p.errs, probeErr)
+	value := p.values[0]
+	p.values = p.values[1:]
+	return value, true, nil
 }
 
 func (s *fakeServerConfig) ServerURL() (string, bool, error) {

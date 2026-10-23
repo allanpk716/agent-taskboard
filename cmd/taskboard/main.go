@@ -6,6 +6,7 @@
 //	taskboard create-admin 创建首位管理员账号
 //	taskboard backup       手动备份（定时备份在 serve 内置）
 //	taskboard restore <备份文件> 恢复（需先停止服务）
+//	taskboard healthcheck  容器健康检查（按配置端口请求 health）
 //	taskboard update       检查并安装更新（前后端；-check 只检查）
 //	taskboard rollback     换回上一版 exe 和更新前的备份
 //	taskboard version      显示当前前后端版本
@@ -15,11 +16,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
@@ -51,6 +55,8 @@ func run(args []string) error {
 		return cmdCreateAdmin(args)
 	case "backup":
 		return cmdBackup(args)
+	case "healthcheck":
+		return cmdHealthcheck(args)
 	case "restore":
 		return cmdRestore(args)
 	case "update":
@@ -73,6 +79,7 @@ func usage(w *os.File) {
   taskboard serve [flags]              启动服务（默认，内置每日备份调度）
   taskboard create-admin [flags]       创建管理员账号
   taskboard backup [flags]             手动备份一次（与定时备份同一段代码）
+  taskboard healthcheck [flags]        按配置端口请求 health（镜像 HEALTHCHECK 用）
   taskboard restore <备份文件> [flags] 恢复（先停止服务，见 docs/deploy-and-release.md）
   taskboard update [flags]             检查并安装更新（-check 只检查不安装）
   taskboard rollback [flags]           换回上一版 exe 和更新前的备份（先停止服务）
@@ -157,6 +164,7 @@ func cmdCreateAdmin(args []string) error {
 func cmdBackup(args []string) error {
 	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
 	configPath := fs.String("config", "config.toml", "配置文件路径")
+	preupdate := fs.Bool("preupdate", false, "做更新前备份，成功后最后一行只输出备份文件名")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -173,14 +181,49 @@ func cmdBackup(args []string) error {
 	if err != nil {
 		return err
 	}
-	// 手动备份按当天的日期定时备份算（每月 1 日是 monthly），参与同类轮换。
-	now := clock.Real{}.Now()
-	rec, err := b.BackupNow(context.Background(), ops.KindForDate(now))
+	var rec ops.Record
+	if *preupdate {
+		rec, err = b.Preupdate(context.Background())
+	} else {
+		// 手动备份按当天的日期定时备份算（每月 1 日是 monthly），参与同类轮换。
+		rec, err = b.BackupNow(context.Background(), ops.KindForDate(clock.Real{}.Now()))
+	}
 	if err != nil {
 		return fmt.Errorf("备份失败：%w", err)
 	}
+	if *preupdate {
+		fmt.Println(rec.Filename)
+		return nil
+	}
 	fmt.Printf("备份完成：%s（%d 字节，完整性校验通过，附件镜像新增 %d 个文件）\n",
 		rec.Filename, rec.Size, rec.FilesAdded)
+	return nil
+}
+
+func cmdHealthcheck(args []string) error {
+	fs := flag.NewFlagSet("healthcheck", flag.ContinueOnError)
+	configPath := fs.String("config", "config.toml", "配置文件路径")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/v1/health", cfg.Port), nil)
+	if err != nil {
+		return err
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	res, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("健康检查失败：%w", err)
+	}
+	defer res.Body.Close()
+	_, _ = io.Copy(io.Discard, res.Body)
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("健康检查失败：HTTP %d", res.StatusCode)
+	}
 	return nil
 }
 

@@ -7,7 +7,6 @@ import {
   changeOwnPassword,
   fetchAgentTokens,
   fetchClients,
-  fetchClientLatest,
   fetchDrafts,
   issueAgentToken,
   setAgentTokenDraftMode,
@@ -18,7 +17,6 @@ import {
   type AgentTokenRow,
   type IssuedToken,
   type ClientCredentialRow,
-  type ClientLatest,
   type Me,
 } from './memberApi'
 import { fmtShort } from '../shared/format'
@@ -33,7 +31,6 @@ export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }
   const [revoking, setRevoking] = useState<AgentTokenRow | null>(null)
   const [switchingToDirect, setSwitchingToDirect] = useState<AgentTokenRow | null>(null)
   const [clients, setClients] = useState<ClientCredentialRow[] | null>(null)
-  const [clientLatest, setClientLatest] = useState<ClientLatest | null | undefined>(undefined)
   const [draftCount, setDraftCount] = useState<number | null>(null)
   const [revokingClient, setRevokingClient] = useState<ClientCredentialRow | null>(null)
   const [changingPassword, setChangingPassword] = useState(false)
@@ -42,7 +39,6 @@ export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }
     try {
       setTokens(await fetchAgentTokens())
       setClients(await fetchClients())
-      setClientLatest(await fetchClientLatest())
       const drafts = await fetchDrafts()
       setDraftCount(drafts.count)
       setError(null)
@@ -174,25 +170,24 @@ export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }
         <div className="sec-t" style={{ marginTop: 0 }}>
           桌面客户端
         </div>
-        {clientLatest === undefined ? (
-          <div className="hint">…</div>
-        ) : clientLatest ? (
-          <>
-            <div className="btnrow">
-              <a className="btn" data-testid="client-download" href="/api/v1/client/download">
-                下载 Windows 客户端 {clientLatest.version}
-              </a>
-            </div>
-            <div className="hint">
-              首次运行如遇 SmartScreen，先点「更多信息」，再点「仍要运行」；被杀毒软件拦截时，把
-              taskboard-client.exe 加入信任。下载后 SHA256 应为 {clientLatest.sha256}。
-            </div>
-          </>
-        ) : (
-          <div className="hint" data-testid="client-unavailable">
-            管理员尚未发布客户端。
-          </div>
-        )}
+        <div className="btnrow">
+          <a
+            className="btn"
+            data-testid="client-download"
+            href="https://github.com/allanpk716/agent-taskboard/releases/download/channel-stable/taskboard-client.exe"
+            target="_blank"
+            rel="noreferrer"
+          >
+            下载 Windows 客户端
+          </a>
+        </div>
+        <div className="hint" data-testid="client-server-url">
+          首次运行时填写平台地址：{window.location.origin}
+        </div>
+        <div className="hint">
+          首次运行如遇 SmartScreen，先点「更多信息」，再点「仍要运行」；被杀毒软件拦截时，把
+          taskboard-client.exe 加入信任。
+        </div>
       </div>
 
       <div className="mcard">

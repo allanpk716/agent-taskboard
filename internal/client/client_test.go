@@ -279,7 +279,7 @@ func Test服务短暂不可用时客户端不退出并在恢复后重连(t *test
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := fake.startClient(t, ctx, proxy.URL)
-	waitCondition(t, func() bool { return proxy.sessionChecks() >= 1 })
+	waitCondition(t, func() bool { return proxy.streamAttempts() >= 1 })
 	select {
 	case err := <-done:
 		t.Fatalf("服务短暂不可用时客户端提前退出：%v", err)
@@ -481,6 +481,7 @@ type fakeDesktop struct {
 	clock        *clock.Fake
 	lock         *fakeInstanceLock
 	waitOverride func(context.Context, time.Duration) error
+	prompter     *fakeServerURLPrompter
 }
 
 func newFakeDesktop(t testing.TB) *fakeDesktop {
@@ -532,6 +533,9 @@ func (d *fakeDesktop) dependencies() client.Dependencies {
 	}
 	if d.updater != nil {
 		deps.Update = d.updater
+	}
+	if d.prompter != nil {
+		deps.Prompter = d.prompter
 	}
 	return deps
 }
@@ -665,6 +669,7 @@ type fakeTray struct {
 	current   client.TrayState
 	unread    []client.Notification
 	callbacks client.TrayCallbacks
+	update    string
 }
 
 func newFakeTray() *fakeTray {
@@ -691,6 +696,18 @@ func (tr *fakeTray) SetUnread(items []client.Notification) {
 	tr.mu.Unlock()
 }
 
+func (tr *fakeTray) SetUpdateVersion(version string) {
+	tr.mu.Lock()
+	tr.update = version
+	tr.mu.Unlock()
+}
+
+func (tr *fakeTray) updateVersion() string {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	return tr.update
+}
+
 func (tr *fakeTray) state() client.TrayState {
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
@@ -715,6 +732,10 @@ func (tr *fakeTray) click(t testing.TB, name string) {
 		cb.MarkAllRead()
 	case "view-all":
 		cb.ViewAll()
+	case "change-server":
+		cb.ChangeServerURL()
+	case "update":
+		cb.Update()
 	case "logout":
 		cb.Logout()
 	case "uninstall":
@@ -757,6 +778,16 @@ func (to *fakeToaster) click(t testing.TB, n client.Notification) {
 	onClick(n)
 }
 
+func (to *fakeToaster) clickAsync(n client.Notification) {
+	to.mu.Lock()
+	onClick := to.onClick
+	to.mu.Unlock()
+	if onClick == nil {
+		panic("Toast 点击回调尚未注册")
+	}
+	onClick(n)
+}
+
 func (to *fakeToaster) shown(t testing.TB) []client.Notification {
 	to.mu.Lock()
 	defer to.mu.Unlock()
@@ -772,6 +803,35 @@ func (to *fakeToaster) wait(t testing.TB, want int) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("等待 %d 条 Toast 超时，当前 %+v", want, to.shown(t))
+}
+
+func (to *fakeToaster) waitUpdate(t testing.TB) []client.Notification {
+	t.Helper()
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		for _, n := range to.shown(t) {
+			to.mu.Lock()
+			onClick := to.onClick
+			to.mu.Unlock()
+			if n.Reason == "update-available" && onClick != nil {
+				return to.shown(t)
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("等待更新 Toast 超时，当前 %+v", to.shown(t))
+	return nil
+}
+
+type fakeServerURLPrompter struct {
+	value     string
+	prompted  bool
+	probeErrs []error
+}
+
+func (p *fakeServerURLPrompter) PromptServerURL(current string, probeErr error) (string, bool, error) {
+	p.prompted = true
+	p.probeErrs = append(p.probeErrs, probeErr)
+	return p.value, true, nil
 }
 
 func fixedNonces(n int) ([]byte, error) {
@@ -854,7 +914,7 @@ type outageProxy struct {
 	*httptest.Server
 	mu       sync.Mutex
 	down     bool
-	sessions int
+	attempts int
 }
 
 func newOutageProxy(t testing.TB, backend string) *outageProxy {
@@ -866,9 +926,9 @@ func newOutageProxy(t testing.TB, backend string) *outageProxy {
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	p := &outageProxy{down: true}
 	p.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/session" {
+		if r.URL.Path == "/api/v1/notifications/stream" {
 			p.mu.Lock()
-			p.sessions++
+			p.attempts++
 			down := p.down
 			p.mu.Unlock()
 			if down {
@@ -887,10 +947,10 @@ func (p *outageProxy) setDown(down bool) {
 	p.down = down
 }
 
-func (p *outageProxy) sessionChecks() int {
+func (p *outageProxy) streamAttempts() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.sessions
+	return p.attempts
 }
 
 type failingStreamProxy struct {

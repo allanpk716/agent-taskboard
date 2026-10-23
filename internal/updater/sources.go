@@ -30,13 +30,12 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/updatehub"
 )
 
-// Latest 是一次成功的源查询：两个组件各自的最新清单，以及实际用的源。
+// Latest 是一次成功的源查询：平台组件各自的最新清单，以及实际用的源。
 // 源上还没有某组件时对应字段为 nil。
 type Latest struct {
 	Source string
 	Server *Component
 	Web    *Component
-	Client *Component
 }
 
 // Component 是一个组件在某个源上的最新版本。File 返回产物内容并按
@@ -174,11 +173,8 @@ func (s *GitHubSource) Latest(ctx context.Context) (*Latest, error) {
 	if out.Web, err = component(latest.Web); err != nil {
 		return nil, err
 	}
-	if out.Client, err = component(latest.Client); err != nil {
-		return nil, err
-	}
-	if out.Server == nil && out.Web == nil && out.Client == nil {
-		return nil, fmt.Errorf("latest.json 里还没有任何组件的版本")
+	if out.Server == nil && out.Web == nil {
+		return nil, fmt.Errorf("latest.json 里还没有平台组件的版本")
 	}
 	return out, nil
 }
@@ -429,14 +425,10 @@ func (s *UpdateHubSource) Latest(ctx context.Context) (*Latest, error) {
 	if err != nil {
 		return nil, err
 	}
-	client, err := s.latestFeed(ctx, release.ComponentClient)
-	if err != nil {
-		return nil, err
-	}
-	if server == nil && web == nil && client == nil {
+	if server == nil && web == nil {
 		return nil, fmt.Errorf("UpdateHub 源上还没有任何组件的版本")
 	}
-	return &Latest{Source: s.Name(), Server: server, Web: web, Client: client}, nil
+	return &Latest{Source: s.Name(), Server: server, Web: web}, nil
 }
 
 // unpackNupkg 解开 nupkg（就是 zip）：读出 manifest.json 和 payload/ 下的

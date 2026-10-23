@@ -106,24 +106,17 @@ test('我的页面显示已连接电脑并支持撤销', async ({ page, request 
   expect(revoked.status()).toBe(401)
 })
 
-test('我的页面显示已代管的桌面客户端', async ({ page }) => {
-  test.skip(!process.env.E2E_CLIENT_VERSION, '这一轮服务端未预置代管客户端')
+test('我的页面提供固定地址的桌面客户端下载', async ({ page }) => {
   await login(page, await wang())
   await page.goto('/me')
   const card = page.getByTestId('client-card')
   await expect(card).toBeVisible()
-  await expect(card).toContainText('首次运行如遇 SmartScreen')
-  await expect(card).toContainText('更多信息')
-  await expect(card).toContainText('仍要运行')
-  await expect(card).toContainText('杀毒软件')
-  await expect(page.getByTestId('client-download')).toHaveText(
-    `下载 Windows 客户端 ${process.env.E2E_CLIENT_VERSION}`,
+  await expect(page.getByTestId('client-server-url')).toContainText(
+    `首次运行时填写平台地址：${new URL(page.url()).origin}`,
   )
-})
-
-test('我的页面在未代管时提示管理员尚未发布客户端', async ({ page }) => {
-  test.skip(!!process.env.E2E_CLIENT_VERSION, '这一轮服务端已预置代管客户端')
-  await login(page, await wang())
-  await page.goto('/me')
-  await expect(page.getByTestId('client-unavailable')).toHaveText('管理员尚未发布客户端。')
+  await expect(page.getByTestId('client-download')).toHaveAttribute(
+    'href',
+    'https://github.com/allanpk716/agent-taskboard/releases/download/channel-stable/taskboard-client.exe',
+  )
+  await expect(card).toContainText('首次运行如遇 SmartScreen')
 })
