@@ -68,10 +68,10 @@ func WithCaptchaSource(source captcha.Source) Option {
 // New 打开数据库、装配 API 与静态站点。webDir 不存在会报错。
 // 首次启动时导入标签字典与预置模板的一次性种子（spec「初始数据」）。
 func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Server, error) {
-	if cfg.Server.Deploy == "container" && strings.TrimSpace(cfg.Server.PublicURL) == "" {
+	if cfg.Server.Deploy == config.DeployContainer && strings.TrimSpace(cfg.Server.PublicURL) == "" {
 		return nil, fmt.Errorf("容器模式必须配置 [server] public_url：对外链接不能依赖可被请求头篡改的地址")
 	}
-	if cfg.Server.Deploy == "container" {
+	if cfg.Server.Deploy == config.DeployContainer {
 		if err := installImageClient(cfg); err != nil {
 			return nil, err
 		}

@@ -122,6 +122,14 @@ func remainingMinutes(remaining time.Duration) int {
 	return minutes
 }
 
+func retryAfterSeconds(retry time.Duration) int {
+	seconds := int(retry.Round(time.Second) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	return seconds
+}
+
 type loginLockView struct {
 	Username         string `json:"username"`
 	Name             string `json:"name"`
@@ -130,10 +138,7 @@ type loginLockView struct {
 }
 
 func (a *API) writeLoginRateLimited(w http.ResponseWriter, retry time.Duration) {
-	seconds := int(retry.Round(time.Second) / time.Second)
-	if seconds < 1 {
-		seconds = 1
-	}
+	seconds := retryAfterSeconds(retry)
 	w.Header().Set("Retry-After", strconv.Itoa(seconds))
 	WriteErrorExtra(w, http.StatusTooManyRequests, CodeLoginRateLimited,
 		"登录请求太频繁，请稍后再试", "同一来源地址每分钟最多 20 次登录请求",

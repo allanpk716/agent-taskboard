@@ -104,7 +104,7 @@ func WithMinClientVersion(version string) Option {
 // clientImageDir 为空时使用默认镜像客户端目录（目录可以不存在）。
 func WithContainer(publicURL, clientImageDir string) Option {
 	return func(o *options) {
-		o.deploy = "container"
+		o.deploy = config.DeployContainer
 		o.publicURL = publicURL
 		o.clientImage = clientImageDir
 	}

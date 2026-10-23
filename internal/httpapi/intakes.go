@@ -305,10 +305,7 @@ func (a *API) submitToIntake(w http.ResponseWriter, r *http.Request, slug string
 			return
 		}
 		if retry := a.intakeUploads.allow(strconv.FormatInt(in.ID, 10) + "/" + clientIP(r)); retry > 0 {
-			seconds := int(retry.Round(time.Second) / time.Second)
-			if seconds < 1 {
-				seconds = 1
-			}
+			seconds := retryAfterSeconds(retry)
 			w.Header().Set("Retry-After", strconv.Itoa(seconds))
 			WriteErrorExtra(w, http.StatusTooManyRequests, CodeIntakeUploadRateLimited,
 				"这个反馈入口的提交太频繁，请稍后再试",

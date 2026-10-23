@@ -185,6 +185,22 @@ func Test登录IP限流每分钟二十次(t *testing.T) {
 	}
 }
 
+func Test登录锁定和限流不影响AgentToken(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateMember("wang", "member-pass")
+	member := s.Login("wang", "member-pass")
+	_, token := s.IssueAgentToken(t, member, "笔记本")
+	const ip = "203.0.113.60"
+
+	for i := 0; i < 21; i++ {
+		loginFromIP(t, s, ip, "wang", "wrong-pass")
+	}
+	res := s.Do(t, s.AgentClient(token), http.MethodGet, "/api/v1/session", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("锁定和限流后的 Agent session = %d, 想 200", res.StatusCode)
+	}
+}
+
 func Test登录来源IP只信任回环反代的转发头(t *testing.T) {
 	sourceIP, ok := nonLoopbackLocalIP(t)
 	if !ok {

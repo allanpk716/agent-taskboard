@@ -43,7 +43,7 @@ type API struct {
 	drafts          *drafts.Manager
 	cfg             config.Config
 	clk             clock.Clock
-	intakeUploads   *intakeUploadLimiter
+	intakeUploads   *requestRateLimiter
 	stampedClientMu sync.Mutex
 	stampedClients  map[string]*stampedClient
 	clientOnlineMu  sync.Mutex
@@ -51,7 +51,7 @@ type API struct {
 	captchaSource   captcha.Source
 	captchaMu       sync.Mutex
 	captchas        map[string]captchaRecord
-	loginLimits     *intakeUploadLimiter
+	loginLimits     *requestRateLimiter
 	loginLocks      *loginLockStore
 }
 
@@ -66,7 +66,7 @@ func (a *API) SetLoginRateLimit(perMinute int) {
 	if perMinute < 1 {
 		panic("登录限流必须大于 0")
 	}
-	a.loginLimits = newIntakeUploadLimiter(perMinute, a.clk)
+	a.loginLimits = newRequestRateLimiter(perMinute, a.clk)
 }
 
 type captchaRecord struct {
@@ -78,11 +78,11 @@ type captchaRecord struct {
 func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager, backups *ops.Backups, accessRecs *accessrecords.Manager, draftStore *drafts.Manager, cfg config.Config, clk clock.Clock) *API {
 	return &API{ident: ident, tickets: tk, templates: tpl, idem: idem, atts: atts, backups: backups,
 		accessRecords: accessRecs, drafts: draftStore, cfg: cfg, clk: clk,
-		intakeUploads:  newIntakeUploadLimiter(cfg.Intake.UploadRatePerMin, clk),
+		intakeUploads:  newRequestRateLimiter(cfg.Intake.UploadRatePerMin, clk),
 		stampedClients: make(map[string]*stampedClient),
 		clientOnline:   make(map[int64]int),
 		captchaSource:  captcha.Random{}, captchas: make(map[string]captchaRecord),
-		loginLimits: newIntakeUploadLimiter(loginRatePerMinute, clk),
+		loginLimits: newRequestRateLimiter(loginRatePerMinute, clk),
 		loginLocks:  newLoginLockStore()}
 }
 

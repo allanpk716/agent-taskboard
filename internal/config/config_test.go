@@ -9,6 +9,30 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/config"
 )
 
+func Test任务板部署环境变量覆盖配置文件(t *testing.T) {
+	path := writeConfig(t, `[server]
+deploy = ''
+`)
+	t.Setenv("TASKBOARD_DEPLOY", "container")
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("container 环境变量应能加载：%v", err)
+	}
+	if cfg.Server.Deploy != config.DeployContainer {
+		t.Fatalf("Deploy = %q, 想 container", cfg.Server.Deploy)
+	}
+}
+
+func Test任务板部署环境变量非法时拒绝(t *testing.T) {
+	path := writeConfig(t, `[server]
+deploy = ''
+`)
+	t.Setenv("TASKBOARD_DEPLOY", "docker")
+	if _, err := config.Load(path); err == nil || !strings.Contains(err.Error(), "TASKBOARD_DEPLOY") {
+		t.Fatalf("非法环境变量应拒绝并提示变量名：%v", err)
+	}
+}
+
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.toml")

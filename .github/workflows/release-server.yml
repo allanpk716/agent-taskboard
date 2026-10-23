@@ -46,6 +46,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
 
+      - name: 读取最新客户端版本
+        run: |
+          set -euxo pipefail
+          curl -fsSL -o latest.json "https://github.com/$GITHUB_REPOSITORY/releases/download/channel-stable/latest.json"
+          CLIENT_VERSION="$(jq -er '.client.version' latest.json)"
+          echo "CLIENT_VERSION=$CLIENT_VERSION" >> "$GITHUB_ENV"
+
       - name: 构建并推送镜像
         uses: docker/build-push-action@v6
         with:
@@ -55,6 +62,7 @@ jobs:
           push: true
           build-args: |
             APP_VERSION=${{ env.IMAGE_VERSION }}
+            CLIENT_VERSION=${{ env.CLIENT_VERSION }}
           tags: |
             ghcr.io/${{ github.repository }}:${{ env.IMAGE_VERSION }}
             ghcr.io/${{ github.repository }}:latest

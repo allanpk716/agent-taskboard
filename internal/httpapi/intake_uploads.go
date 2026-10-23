@@ -13,8 +13,9 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 )
 
-// intakeUploadLimiter 是按（入口, IP）计数的进程内令牌桶；服务重启后清零。
-type intakeUploadLimiter struct {
+// requestRateLimiter 是按调用方提供的 key 计数的进程内令牌桶；入口提交/附件
+// 上传和登录共用，服务重启后清零。
+type requestRateLimiter struct {
 	mu      sync.Mutex
 	buckets map[string]*intakeTokenBucket
 	rate    int
@@ -26,11 +27,11 @@ type intakeTokenBucket struct {
 	last   time.Time
 }
 
-func newIntakeUploadLimiter(rate int, clk clock.Clock) *intakeUploadLimiter {
-	return &intakeUploadLimiter{buckets: map[string]*intakeTokenBucket{}, rate: rate, clk: clk}
+func newRequestRateLimiter(rate int, clk clock.Clock) *requestRateLimiter {
+	return &requestRateLimiter{buckets: map[string]*intakeTokenBucket{}, rate: rate, clk: clk}
 }
 
-func (l *intakeUploadLimiter) allow(key string) time.Duration {
+func (l *requestRateLimiter) allow(key string) time.Duration {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.clk.Now()
@@ -66,10 +67,7 @@ func (a *API) handleIntakeAttachments(w http.ResponseWriter, r *http.Request, sl
 		return
 	}
 	if retry := a.intakeUploads.allow(strconv.FormatInt(in.ID, 10) + "/" + clientIP(r)); retry > 0 {
-		seconds := int(retry.Round(time.Second) / time.Second)
-		if seconds < 1 {
-			seconds = 1
-		}
+		seconds := retryAfterSeconds(retry)
 		w.Header().Set("Retry-After", strconv.Itoa(seconds))
 		WriteErrorExtra(w, http.StatusTooManyRequests, CodeIntakeUploadRateLimited,
 			"这个反馈入口的附件上传太频繁，请稍后再试",

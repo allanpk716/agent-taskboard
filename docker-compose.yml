@@ -5,6 +5,8 @@ services:
       context: .
       args:
         APP_VERSION: "0.0.0"
+        # 本地构建必须指向已发布的 client/vX.Y.Z；发布 CI 自动取 channel-stable 最新值。
+        CLIENT_VERSION: "${CLIENT_VERSION:-}"
     network_mode: host
     restart: unless-stopped
     environment:

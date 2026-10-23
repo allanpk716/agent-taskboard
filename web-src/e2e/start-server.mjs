@@ -11,7 +11,7 @@ import { join, resolve } from 'node:path'
 
 const port = Number(process.env.E2E_PORT || 8901)
 const repoRoot = resolve(import.meta.dirname, '..', '..')
-const bin = process.env.E2E_BIN || join(repoRoot, 'bin', process.platform === 'win32' ? 'taskboard.exe' : 'taskboard')
+const bin = process.env.E2E_BIN || join(repoRoot, 'bin', `taskboard-e2e${process.platform === 'win32' ? '.exe' : ''}`)
 const webDir = process.env.E2E_WEB_DIR || join(repoRoot, 'web')
 const admin = { username: 'admin', password: 'admin-pass-123', name: '管理员' }
 // 成员网页 e2e 需要第二位成员（指派、收件箱流转、非管理员视角）。

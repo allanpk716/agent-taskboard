@@ -50,6 +50,12 @@ type Server struct {
 	ClientImageDir string `toml:"client_image_dir"`
 }
 
+// 部署方式。空值表示配置文件中的默认原地部署。
+const (
+	DeployInPlace   = ""
+	DeployContainer = "container"
+)
+
 // Attachments 是 [attachments] 小节：服务端只检查上限，不压缩图片
 // （压缩在前端做；spec「附件显示与安全」）。
 type Attachments struct {
@@ -140,6 +146,15 @@ func Load(path string) (Config, error) {
 	// 悄悄留在本机，管理页却显示已离开本机（#46）。
 	if t := cfg.Backup.Target; strings.HasPrefix(t, `\`) && !strings.HasPrefix(t, `\\`) {
 		return cfg, fmt.Errorf(`解析 %s 失败：[backup] target = %q 只有一个反斜杠开头；UNC 路径要以 \\ 开头，如 '\\nas01\taskboard-backup'`, path, t)
+	}
+	// TASKBOARD_DEPLOY 优先于 [server] deploy，供镜像内置默认值覆盖仍沿用原地
+	// 部署的配置文件；未设置时完全使用配置文件。
+	deploy, ok := os.LookupEnv("TASKBOARD_DEPLOY")
+	if ok {
+		if deploy != DeployContainer && deploy != DeployInPlace {
+			return cfg, fmt.Errorf("环境变量 TASKBOARD_DEPLOY = %q 无效（只能是 container 或空）", deploy)
+		}
+		cfg.Server.Deploy = deploy
 	}
 	ApplyDefaults(&cfg)
 	return cfg, nil

@@ -1,5 +1,8 @@
+[CmdletBinding()]
 param(
     [string]$ImageName = "agent-taskboard:232-smoke",
+    [Parameter(Mandatory = $true)]
+    [string]$ClientVersion,
     [int]$Port = 8932
 )
 
@@ -77,6 +80,7 @@ function Invoke-ContainerJson {
 }
 
 docker build -t $ImageName --build-arg APP_VERSION=0.0.0 `
+    --build-arg CLIENT_VERSION=$ClientVersion `
     --build-arg BUILD_TAGS=e2e_fixed_captcha .
 if ($LASTEXITCODE -ne 0) { throw "docker build failed" }
 

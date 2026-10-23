@@ -59,7 +59,7 @@ docker compose exec taskboard /app/taskboard create-admin \
 curl -fsS http://127.0.0.1:8080/api/v1/health
 ```
 
-`config.container.example.toml` 已设置 `[server] deploy = "container"` 和镜像内客户端路径 `/app/client-package`。缺少 `public_url` 时服务会拒绝启动，避免对外链接依赖可被伪造的请求头。镜像内客户端版本与镜像版本一致，启动时版本更高就装入数据目录；管理页的在线更新按钮会提示「容器部署，请升级镜像」。
+镜像默认通过 `TASKBOARD_DEPLOY=container` 进入容器模式；该环境变量优先于配置文件里的 `[server] deploy`，只在镜像内这样设置，手工部署不要依赖它。`config.container.example.toml` 另外示例了对外地址和镜像内客户端路径 `/app/client-package`。缺少 `public_url` 时服务会拒绝启动，避免对外链接依赖可被伪造的请求头。镜像内客户端来自已发布的 `client/vX.Y.Z` Release，启动时版本更高就装入数据目录；管理页的在线更新按钮会提示「容器部署，请升级镜像」。
 
 宿主机 Caddy 站点必须**覆盖**客户端自带的转发头，不能追加，否则请求方可以伪造来源 IP，影响登录限流和失败锁定的判定：
 
@@ -80,7 +80,7 @@ taskboard.example.com {
 .\scripts\docker-smoke.ps1
 ```
 
-脚本会构建带 `e2e_fixed_captcha` build tag 的本地测试镜像（验证码固定为 `TB123`）、启动容器、检查 health 和带验证码登录、确认进程非 root，并重建容器后验证数据仍保留。发布镜像不带该 build tag，验证码仍是随机实现；脚本结束时会删除冒烟容器、数据卷和镜像。
+脚本会构建带 `e2e_fixed_captcha` build tag 的本地测试镜像（验证码固定为 `TB123`）、启动容器、检查 health 和带验证码登录、确认进程非 root，并重建容器后验证数据仍保留。发布镜像不带该 build tag，验证码仍是随机实现；脚本结束时会删除冒烟容器、数据卷和镜像。执行时显式传入已发布客户端版本（例如 `.\scripts\docker-smoke.ps1 -ClientVersion 0.1.4`）。
 
 ## 容器升级
 
@@ -189,7 +189,15 @@ proxy  = ""                         # http:// 或 socks5://；为空时读取 HT
 
 ### 容器镜像（GHCR）
 
-`.github/workflows/release-server.yml` 在发布后端 Release 时用同一个 tag 构建并推送 GHCR 镜像。镜像内的桌面客户端不是下载外部 Release 资产，而是在同一提交上交叉编译，并生成同一版本的 `manifest.json`；这样镜像始终携带可校验、版本可追踪的客户端，不依赖前后两个工作流的完成顺序。
+`.github/workflows/release-server.yml` 在发布后端 Release 时用同一个 tag 构建并推送 GHCR 镜像。构建前先从 `channel-stable` 的 `latest.json` 读取桌面客户端最新版本，镜像构建时下载对应 `client/vX.Y.Z` Release 的 `taskboard-client.exe` 和 `manifest.json`，并按 SHA256 校验。后端与客户端版本线独立，镜像不会把后端版本号写成客户端版本。
+
+本地构建镜像同样必须显式提供客户端版本：
+
+```bash
+docker build --build-arg APP_VERSION=0.0.0-local \
+  --build-arg CLIENT_VERSION=<已发布客户端版本，例如 0.1.4> \
+  -t taskboard:local .
+```
 
 CI 更新 `latest.json` 的方式是读改写：下载现有文件，用 `release latest` 只替换本组件的条目（另一组件原样保留），再 `--clobber` 上传。前后端同时打 tag 的极端情况下，两个工作流可能同时尝试创建 `channel-stable` Release，失败的那个重跑一次即可。
 
