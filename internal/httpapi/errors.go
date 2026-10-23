@@ -132,8 +132,9 @@ const (
 	CodeIntakePaused               = "intake_paused"
 
 	// #45：更新。
-	CodeUpdateSourceUnreachable = "update_source_unreachable" // 所有更新源都连不上（502）
-	CodeUpdateFailed            = "update_failed"             // 更新本身的失败（哈希不符、备份失败等）
+	CodeUpdateSourceUnreachable    = "update_source_unreachable"    // 所有更新源都连不上（502）
+	CodeUpdateFailed               = "update_failed"                // 更新本身的失败（哈希不符、备份失败等）
+	CodeContainerUpdateUnsupported = "container_update_unsupported" // 容器部署不支持原地更新（409）
 	// #42：成员账号管理（网页上创建与停用，仅管理员）。
 	CodeUsernameRequired     = "username_required"      // 创建成员时登录名为空
 	CodeInvalidUsername      = "invalid_username"       // 登录名里有不适合的字符
