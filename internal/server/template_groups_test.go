@@ -8,9 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/server"
 	"github.com/allanpk716/agent-taskboard/internal/store"
@@ -411,7 +409,7 @@ func restartServer(t testing.TB, s *tbtest.Server) string {
 	t.Cleanup(func() { st.Close() })
 	cfg := config.Config{DataDir: s.DataDir(), WebDir: s.WebDir()}
 	config.ApplyDefaults(&cfg)
-	srv, err := server.New(cfg, st, clock.NewFake(time.Now()))
+	srv, err := server.New(cfg, st, s.Clock())
 	if err != nil {
 		t.Fatalf("重启服务失败：%v", err)
 	}
