@@ -130,6 +130,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	api := httpapi.NewAPI(ident, ticketStore,
 		templateDict, idem, atts, backups, accessRecords, draftStore, cfg, c)
 	api.SetCaptchaSource(captchaSrc)
+	api.SetLoginRateLimit(loginRateLimit())
 	api.SetNotifications(notificationStore)
 	web, err := webapp.New(cfg.WebDir)
 	if err != nil {

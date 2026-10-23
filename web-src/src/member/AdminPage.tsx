@@ -12,6 +12,7 @@ import {
   fetchDictionary,
   fetchIntakes,
   fetchMemberAccounts,
+  fetchLoginLocks,
   reactivateMemberAccount,
   resetMemberPassword,
   setMemberTriager,
@@ -25,6 +26,8 @@ import {
   type Me,
   type IntakeAccount,
   updateIntakeContact,
+  unlockLogin,
+  type LoginLock,
 } from './memberApi'
 import { Confirm, Modal, copyText, toast } from './ui'
 import { chipClass } from './TicketsPage'
@@ -210,6 +213,7 @@ function IntakeContactDialog({
 
 function MembersTab({ me }: { me: Me }) {
   const [members, setMembers] = useState<MemberAccount[] | null>(null)
+  const [locks, setLocks] = useState<LoginLock[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
   const [created, setCreated] = useState<CreatedMember | null>(null)
@@ -225,7 +229,9 @@ function MembersTab({ me }: { me: Me }) {
 
   async function refresh() {
     try {
-      setMembers(await fetchMemberAccounts())
+      const [nextMembers, nextLocks] = await Promise.all([fetchMemberAccounts(), fetchLoginLocks()])
+      setMembers(nextMembers)
+      setLocks(nextLocks)
       setError(null)
     } catch (e) {
       setError(e instanceof ApiError ? `${e.message}（${e.code}）` : '读取成员失败')
@@ -270,6 +276,17 @@ function MembersTab({ me }: { me: Me }) {
       await refresh()
     } catch (e) {
       setError(e instanceof ApiError ? `${e.message}（${e.code}）` : '设置初筛人失败')
+      await refresh()
+    }
+  }
+
+  async function doUnlock(lock: LoginLock) {
+    try {
+      await unlockLogin(lock.username, lock.ip)
+      toast(`✓ 已解锁 ${lock.name}（${lock.ip}）`)
+      await refresh()
+    } catch (e) {
+      setError(e instanceof ApiError ? `${e.message}（${e.code}）` : '解锁失败')
       await refresh()
     }
   }
@@ -365,6 +382,33 @@ function MembersTab({ me }: { me: Me }) {
           ＋ 新建成员账号
         </button>
       </div>
+      <div className="sec-t">当前登录锁定</div>
+      <table className="mini-tbl">
+        <tbody>
+          {(locks ?? []).map((lock) => (
+            <tr key={`${lock.username}/${lock.ip}`} data-lock={lock.username}>
+              <td>
+                <b>{lock.name}</b>
+                <div className="hint mono">{lock.username}</div>
+              </td>
+              <td className="mono">{lock.ip}</td>
+              <td>约 {lock.remaining_minutes} 分钟</td>
+              <td>
+                <button className="btn sm ghost" onClick={() => void doUnlock(lock)}>
+                  解锁
+                </button>
+              </td>
+            </tr>
+          ))}
+          {locks !== null && locks.length === 0 && (
+            <tr>
+              <td className="hint" colSpan={4}>
+                当前没有锁定的账号。
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
 
       {creating && (
         <CreateMemberDialog

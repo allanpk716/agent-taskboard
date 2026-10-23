@@ -14,6 +14,10 @@ const (
 	CodeCaptchaInvalid     = "captcha_invalid"      // 验证码答案错误
 	CodeCaptchaExpired     = "captcha_expired"      // 验证码已过期
 	CodeCaptchaUsed        = "captcha_used"         // 验证码已被使用
+	CodeLoginLocked        = "login_locked"         // 连续密码失败后账号来源组合已锁定
+	CodeLoginRateLimited   = "login_rate_limited"   // 登录来源每分钟请求过多
+	CodeLoginLockRequired  = "login_lock_required"  // 解锁请求缺登录名或来源 IP
+	CodeLoginLockNotFound  = "login_lock_not_found" // 解锁目标不存在或已过期
 	CodeInvalidJSON        = "invalid_json"         // 请求体不是合法 JSON
 	CodeInvalidUTF8        = "invalid_utf8"         // 请求体不是合法的 UTF-8
 	CodeInvalidToken       = "invalid_token"        // Agent token 无效或已撤销

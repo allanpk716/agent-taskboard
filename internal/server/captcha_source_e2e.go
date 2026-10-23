@@ -16,3 +16,7 @@ func (fixedCaptchaSource) Generate() (string, []byte, error) {
 
 // captchaSource 只在带 e2e_fixed_captcha build tag 编译时返回固定来源。
 func captchaSource() captcha.Source { return fixedCaptchaSource{} }
+
+// e2e 全套 Playwright 夹具都来自同一个回环地址；这里放宽限流避免测试互相影响。
+// 429 行为由生产默认配置的 Go 黑盒测试覆盖。
+func loginRateLimit() int { return 1000000 }

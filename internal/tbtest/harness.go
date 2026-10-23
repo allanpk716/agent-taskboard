@@ -61,6 +61,7 @@ type options struct {
 	clientImage   string
 	captcha       captcha.Source
 	captchaAnswer string
+	listenHost    string
 	startupErr    *error
 }
 
@@ -118,6 +119,9 @@ func WithStartupError(err *error) Option {
 func WithCaptchaSource(source captcha.Source, answer string) Option {
 	return func(o *options) { o.captcha, o.captchaAnswer = source, answer }
 }
+
+// WithListenHost 指定测试服务监听的地址，供需要真实非回环来源 IP 的黑盒测试使用。
+func WithListenHost(host string) Option { return func(o *options) { o.listenHost = host } }
 
 // WithUpdate 指定更新源配置（#45；默认不配置任何源：管理端点会明确报
 // “没有配置更新源”，测试里指向本地假源，不碰真实 GitHub/UpdateHub）。
@@ -199,7 +203,11 @@ func Start(t testing.TB, opts ...Option) *Server {
 		t.Fatalf("装配服务失败：%v", err)
 	}
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	listenHost := o.listenHost
+	if listenHost == "" {
+		listenHost = "127.0.0.1"
+	}
+	ln, err := net.Listen("tcp", net.JoinHostPort(listenHost, "0"))
 	if err != nil {
 		t.Fatalf("监听失败：%v", err)
 	}
@@ -229,6 +237,9 @@ func (s *Server) URL() string { return s.url }
 
 // Clock 返回注入的假时钟。
 func (s *Server) Clock() *clock.Fake { return s.clk }
+
+// CaptchaAnswer 返回测试验证码的固定答案，供需要自定义来源地址的登录请求使用。
+func (s *Server) CaptchaAnswer() string { return s.captchaAnswer }
 
 // Shutdown 显式优雅停机；测试结束时的自动关闭会再执行一次，幂等。
 func (s *Server) Shutdown(t testing.TB) {

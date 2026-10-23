@@ -50,7 +50,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 | 方法与路径 | 说明 |
 |---|---|
 | `GET /api/v1/login-captcha` | 取网页登录验证码：`{"id","image"}`，`image` 是 data URL PNG，约 5 分钟有效。 |
-| `POST /api/v1/session` | 登录：`{"username","password","captcha_id","captcha_answer"}` 换会话 cookie。错误 `invalid_credentials`(401)、`captcha_required`(401)、`captcha_invalid`(401)、`captcha_expired`(401)、`captcha_used`(401)、`invalid_json`(400)、`invalid_utf8`(400)。 |
+| `POST /api/v1/session` | 登录：`{"username","password","captcha_id","captcha_answer"}` 换会话 cookie。同一来源每分钟最多 20 次，超限 `429 login_rate_limited`（带 `Retry-After`）；账号 + 来源 IP 连续 10 次密码错误后锁 15 分钟，锁定返回 `403 login_locked`（带 `remaining_minutes`）。其余错误 `invalid_credentials`(401)、`captcha_required`(401)、`captcha_invalid`(401)、`captcha_expired`(401)、`captcha_used`(401)、`invalid_json`(400)、`invalid_utf8`(400)。 |
 | `GET /api/v1/session` | 当前凭证的身份（任何有效凭证；匿名 401 `unauthenticated`）。 |
 | `DELETE /api/v1/session` | 登出（幂等 204），清除会话 cookie。 |
 
@@ -182,6 +182,8 @@ spec 用户故事 84），没有 `inbox`：
 | `POST /api/v1/members/{id}/reactivate` | 恢复成员账号（**仅管理员网页会话**，幂等；#112）。 |
 | `POST /api/v1/members/{id}/triager` | 设置初筛人（**仅管理员网页会话**，幂等）。 |
 | `POST /api/v1/members/{id}/reset-password` | 重置成员密码（**仅管理员网页会话**；撤销网页会话与全部客户端凭证）。 |
+| `GET /api/v1/admin/login-locks` | 列出当前登录锁定（**仅管理员网页会话**）。 |
+| `POST /api/v1/admin/login-locks/unlock` | 手动解除一条登录锁定（**仅管理员网页会话**）。 |
 
 - `GET` 响应 `{members: [{id, username, name, active}]}`；仅成员可读（匿名 401，访客 403 `members_only`）。
   停用的成员仍列出（历史署名与事件保留），`active: false`；指派下拉等「选人」的场合
@@ -210,6 +212,11 @@ spec 用户故事 84），没有 `inbox`：
   都不会复活，指派给该成员的开启工单会按等待方规则回到收件箱。错误码：`404 member_not_found`。
 - 越权：非管理员 403 `admin_required`；Agent token 403 `web_session_required`
   （ADR 0003：Agent 不能创建、停用或恢复账号）；访客 403 `members_only`；匿名 401。
+- 锁定列表返回 `{locks: [{username, name, ip, remaining_minutes}]}`，`remaining_minutes`
+  向上取整；状态只在当前进程内存里，服务重启后清零。解锁请求
+  `{"username":"zhao","ip":"203.0.113.10"}`，成功后该账号从这个来源立即可登录。
+  目标不存在或已过期返回 `404 login_lock_not_found`；缺字段返回 `422 login_lock_required`。
+  来源 IP 与登录限流一致：回环反代带来的 `X-Forwarded-For` 取最右侧一段，非回环直连忽略该头。
 
 ## 工单（#29：建单与读取；#30：回复、修订、关闭与时间线）
 
