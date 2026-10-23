@@ -1,5 +1,7 @@
 # 桌面客户端由 taskboard 服务端代管分发与更新
 
+状态：**已被 [ADR 0011](0011-desktop-client-standalone-distribution.md) 取代**。客户端改为从 GitHub Release 下载、自己检查更新，服务端不再代管。
+
 桌面客户端沿用 ADR 0002 的发布方式（`client/v*` tag，GitHub Release 与 UpdateHub 双发布源，manifest 带 SHA256），但成员电脑不直接访问这两个源：管理员更新平台时，服务端按已配置的更新源把客户端包一起拉回、校验后存进数据目录，再由服务端提供版本查询和下载。客户端只和自己登录的服务端通信，首次安装和自动更新都从这里取。这样同事电脑不需要能访问 GitHub 或 UpdateHub，也不用配置镜像和代理；客户端什么时候换版本，跟着管理员手动更新的节奏走，和 ADR 0002 一致。
 
 ## Considered Options

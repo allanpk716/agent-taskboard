@@ -4,7 +4,7 @@
 
 ## 状态
 
-已接受。
+已接受。部分被取代：镜像携带桌面客户端的部分由 [ADR 0011](0011-desktop-client-standalone-distribution.md) 取代；回滚方式由 [ADR 0010](0010-cloud-release-and-deploy.md) 取代（换回旧 tag 的同时恢复升级前备份）。
 
 ## 背景
 
