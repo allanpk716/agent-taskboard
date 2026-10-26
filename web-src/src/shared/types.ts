@@ -102,6 +102,12 @@ export interface DraftView {
 
 export interface CreateDraftView extends Omit<DraftView, 'request'> {
   request: CreateDraftRequest
+  /** 模板草稿：服务端按发出时同一路径渲染的说明预览（只读，PUT 时忽略）。 */
+  rendered_brief_md?: string
+  /** 模板草稿：当前模板版本的字段定义（只读，PUT 时忽略）。 */
+  template_fields?: DraftTemplateField[]
+  /** 模板草稿：模板已不存在等导致预览退化时的提示。 */
+  template_warning?: string
   warnings?: { field: string; message: string }[]
 }
 
@@ -121,6 +127,16 @@ export interface CreateDraftRequest {
     expires_at?: string
     can_edit_brief: boolean
   } | null
+}
+
+/** 模板建单草稿的服务端计算字段定义（只读）：供网页逐字段编辑 fields。 */
+export interface DraftTemplateField {
+  key: string
+  title: string
+  required: boolean
+  type: 'text' | 'radio' | 'dimension'
+  options?: string[]
+  dimension?: string
 }
 
 export interface DraftHistoryVersion {

@@ -459,10 +459,19 @@ spec 用户故事 84），没有 `inbox`：
 | `POST /api/v1/drafts/{id}/send` | 网页会话发出：`{"version":N,"confirm_through_seq?":S,"deliver?":bool}`，成功 201。 |
 
 - 草稿对象含 `id, kind(create|reply|brief_revision), status(pending|sent), version,
-  ticket, request, author, versions, base, new_events, warnings, preview_url, url, result?`。
+  ticket, request, author, versions, base, new_events, warnings, preview_url, url, result?`；
+  pending 的模板建单草稿另带只读计算字段 `rendered_brief_md?, template_fields?, template_warning?`
+  （见下条）。
   `author` 是最后一版执笔者；`versions` 是起草过程元数据；`base.brief_revision`
   只在说明修订草稿上出现。同一成员一方在同一张工单上只有一个 pending 草稿位，
   回复与说明修订共用。
+- pending 的模板建单草稿（`request.template` 非空）视图带三个**只读的服务端计算字段**：
+  `rendered_brief_md` 按发出时的同一条路径（当前模板版本的字段定义 + 说明渲染）
+  算出，与发出后的工单说明 `brief.markdown` 逐字一致；`template_fields` 是当前
+  模板版本字段定义的精简列表（`key,title,required,type,options?,dimension?`，
+  单选/维度字段连同候选值），供网页逐字段编辑 `request.fields`；两者**PUT 时忽略**、
+  不落库。模板已不存在时不报错：`rendered_brief_md` 退化为按已填字段的键值原样
+  拼出（键作标题），并以 `template_warning` 说明——该草稿此时无法发出。
 - `PUT` 缺 `base_version` 返回 `422 base_version_required`；版本过期返回
   `409 draft_version_conflict`（附 `current_version`、`last_author`）；已发出返回
   `409 draft_already_sent`。成员本人 PUT 记为一版「某成员 修改」。

@@ -165,7 +165,15 @@ func (a *API) templateFieldsView(r *http.Request, t templates.Template) []templa
 // 的别名。候选值随字典变化，读取时现取（#39：补全说明与反馈入口的表单下拉框
 // 按别名搜索；字典端点仅成员可用，别名随字段定义一并下发）。
 func (a *API) fillDimensionOptions(ctx context.Context, fv *templateFieldView) {
-	dict, err := a.tickets.Labels().Dictionary(ctx, fv.Dimension)
+	values, aliases := a.dimensionOptions(ctx, fv.Dimension)
+	fv.Options = values
+	fv.OptionAliases = aliases
+}
+
+// dimensionOptions 读一个维度当前的候选值（末尾带「不确定」）与各候选值的别名。
+// 候选值随字典变化，读取时现取。
+func (a *API) dimensionOptions(ctx context.Context, dimension string) ([]string, map[string][]string) {
+	dict, err := a.tickets.Labels().Dictionary(ctx, dimension)
 	if err != nil {
 		panic(err)
 	}
@@ -182,8 +190,7 @@ func (a *API) fillDimensionOptions(ctx context.Context, fv *templateFieldView) {
 			}
 		}
 	}
-	fv.Options = append(values, template.UnsureOption)
-	fv.OptionAliases = aliases
+	return append(values, template.UnsureOption), aliases
 }
 
 func (a *API) readTemplate(w http.ResponseWriter, r *http.Request, key string) {
