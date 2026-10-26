@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/allanpk716/agent-taskboard/internal/fslink"
@@ -92,4 +93,36 @@ func Test在途请求能取到切回current版本的哈希资源(t *testing.T) {
 	}
 
 	h.release(vrA)
+}
+
+// 普通目录是文件系统不支持目录链接时的回退形态（#239 的容器 overlayfs）。
+// Handler 必须仍以这个目录本身为站点根，而不是以它的父目录为根。
+func Test普通目录回退时仍从目录本身服务SPA路由(t *testing.T) {
+	parent := t.TempDir()
+	web := makeVersion(t, parent, "initial")
+	h, err := New(web)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+
+	// Windows 单测文件系统支持链接，New 会成功链接化。这里显式模拟
+	// overlayfs rename EXDEV 后的普通目录回退形态。
+	h.linkMode = false
+	for _, urlPath := range []string{"/", "/login", "/assets/app-initial.js"} {
+		vr := h.acquire()
+		name, f, err := h.resolve(vr, urlPath)
+		if err != nil {
+			t.Fatalf("resolve %s 失败：%v", urlPath, err)
+		}
+		defer f.Close()
+		h.release(vr)
+		want := "index.html"
+		if urlPath == "/assets/app-initial.js" {
+			want = strings.TrimPrefix(urlPath, "/")
+		}
+		if name != want {
+			t.Fatalf("resolve %s = %q，想 %q", urlPath, name, want)
+		}
+	}
 }

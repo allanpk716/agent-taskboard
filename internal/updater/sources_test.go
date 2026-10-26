@@ -154,7 +154,7 @@ func TestGitHub源经镜像取得最新版本并校验产物(t *testing.T) {
 	}
 }
 
-func TestGitHub源把客户端当作可选组件(t *testing.T) {
+func TestGitHub源忽略客户端组件(t *testing.T) {
 	fx := newGitHubFixture("1.0.0", "1.0.0", "1.0.0")
 	files := map[string][]byte{"taskboard-client.exe": []byte("client exe")}
 	m := testManifest("client", "1.0.0", "", files)
@@ -172,11 +172,8 @@ func TestGitHub源把客户端当作可选组件(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if latest.Client == nil || latest.Client.Manifest.Version != "1.0.0" {
-		t.Fatalf("client 最新版本 = %+v", latest.Client)
-	}
-	if latest.Client.Manifest.MinServer != "" {
-		t.Fatalf("client 的 min_server 应为空：%q", latest.Client.Manifest.MinServer)
+	if latest.Server == nil || latest.Web == nil {
+		t.Fatalf("应解析平台组件：%+v", latest)
 	}
 }
 
@@ -189,7 +186,7 @@ func Test客户端尚未发布不影响其余组件(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if latest.Client != nil || latest.Server == nil || latest.Web == nil {
+	if latest.Server == nil || latest.Web == nil {
 		t.Fatalf("client 未发布不应导致整体失败：%+v", latest)
 	}
 }

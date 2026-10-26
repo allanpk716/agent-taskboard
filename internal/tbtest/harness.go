@@ -48,21 +48,20 @@ type Server struct {
 type Option func(*options)
 
 type options struct {
-	webDir                 string
-	dataDir                string
-	clockStart             time.Time
-	attachments            config.Attachments
-	backup                 config.Backup
-	update                 config.Update
-	intake                 config.Intake
-	publicURL              string
-	minClient              string
-	deploy                 string
-	clientImage            string
-	captcha                captcha.Source
-	captchaAnswer          string
-	listenHost             string
-	startupErr             *error
+	webDir        string
+	dataDir       string
+	clockStart    time.Time
+	attachments   config.Attachments
+	backup        config.Backup
+	update        config.Update
+	intake        config.Intake
+	publicURL     string
+	deploy        string
+	captcha       captcha.Source
+	captchaAnswer string
+	listenHost    string
+	startupErr    *error
+
 	withoutGuestLinkCipher bool
 }
 
@@ -94,20 +93,11 @@ func WithBackup(b config.Backup) Option { return func(o *options) { o.backup = b
 // 回绝对地址）；默认留空（相对路径）。
 func WithPublicURL(url string) Option { return func(o *options) { o.publicURL = url } }
 
-// WithMinClientVersion 指定平台要求的最低桌面客户端版本；默认空字符串。
-func WithMinClientVersion(version string) Option {
-	return func(o *options) {
-		o.minClient = version
-	}
-}
-
-// WithContainer 以容器模式启动服务。publicURL 是容器模式必填的对外地址；
-// clientImageDir 为空时使用默认镜像客户端目录（目录可以不存在）。
-func WithContainer(publicURL, clientImageDir string) Option {
+// WithContainer 以容器模式启动服务。publicURL 是容器模式必填的对外地址。
+func WithContainer(publicURL string) Option {
 	return func(o *options) {
 		o.deploy = config.DeployContainer
 		o.publicURL = publicURL
-		o.clientImage = clientImageDir
 	}
 }
 
@@ -192,9 +182,7 @@ func Start(t testing.TB, opts ...Option) *Server {
 	if o.publicURL != "" {
 		cfg.Server.PublicURL = o.publicURL
 	}
-	cfg.Server.MinClientVersion = o.minClient
 	cfg.Server.Deploy = o.deploy
-	cfg.Server.ClientImageDir = o.clientImage
 	config.ApplyDefaults(&cfg) // 与 config.Load 一致：端口、附件上限等补默认值
 	clk := clock.NewFake(o.clockStart)
 	srvOpts := make([]server.Option, 0, 2)

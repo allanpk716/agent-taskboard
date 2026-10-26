@@ -21,7 +21,7 @@ func Test客户端下载不受普通请求总超时限制(t *testing.T) {
 		streamClient: &http.Client{},
 	}
 
-	sum, size, err := a.downloadClient(t.Context(), "token", server.URL+"/download", filepath.Join(t.TempDir(), "client.exe"))
+	sum, size, err := a.downloadClient(t.Context(), server.URL+"/download", filepath.Join(t.TempDir(), "client.exe"))
 	if err != nil {
 		t.Fatal(err)
 	}

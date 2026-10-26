@@ -20,3 +20,15 @@ func (*System) Dependencies() client.Dependencies { return client.Dependencies{}
 
 // NewLifecycle 在非 Windows 平台没有可用实现。
 func NewLifecycle() *client.LifecycleDependencies { return nil }
+
+// NewLifecycleWithConfigKey 在非 Windows 平台没有可用实现。
+func NewLifecycleWithConfigKey(string) *client.LifecycleDependencies { return nil }
+
+// NewServerURLPrompter 在非 Windows 平台没有可用实现。
+func NewServerURLPrompter() client.ServerURLPrompter { return unsupportedPrompter{} }
+
+type unsupportedPrompter struct{}
+
+func (unsupportedPrompter) PromptServerURL(string, error) (string, bool, error) {
+	return "", false, ErrUnsupportedDesktop
+}

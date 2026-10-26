@@ -71,7 +71,11 @@ jobs:
             -tag "$GITHUB_REF_NAME" -repo "$GITHUB_REPOSITORY" -file latest.json
           if ! gh release view channel-stable -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create channel-stable --target "$GITHUB_SHA" --title channel-stable \
-              --notes "固定 tag：latest.json 记录后端、前端、桌面客户端各自的最新版本" \
+              --notes "固定 tag：latest.json 记录平台和桌面客户端的最新版本，并附最新的 taskboard-client.exe" \
               -R "$GITHUB_REPOSITORY"
           fi
+          gh release edit channel-stable \
+            --notes "固定 tag：latest.json 记录平台和桌面客户端的最新版本，并附最新的 taskboard-client.exe" \
+            -R "$GITHUB_REPOSITORY"
+          gh release upload channel-stable dist/taskboard-client.exe --clobber -R "$GITHUB_REPOSITORY"
           gh release upload channel-stable latest.json --clobber -R "$GITHUB_REPOSITORY"

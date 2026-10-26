@@ -210,6 +210,23 @@ func Test命令行备份命名正确并通过完整性校验(t *testing.T) {
 	}
 }
 
+func Test更新前备份输出最后一行是文件名(t *testing.T) {
+	if testing.Short() {
+		t.Skip("短模式跳过：需要编译真实二进制")
+	}
+	f := startCLIEnvironment(t)
+	out := runTaskboard(t, f.bin, "backup", "-preupdate", "-config", f.configPath)
+	lines := strings.Split(strings.TrimRight(out, "\r\n"), "\n")
+	filename := strings.TrimRight(lines[len(lines)-1], "\r")
+	if filename == "" || strings.ContainsAny(filename, `/\`) {
+		t.Fatalf("backup -preupdate 最后一行应是不带路径的文件名：%q（输出 %s）", filename, out)
+	}
+	matches := globBackupFiles(t, f.target, "preupdate")
+	if len(matches) != 1 || matches[0] != filename {
+		t.Fatalf("更新前备份文件 = %v，想 [%s]（输出 %s）", matches, filename, out)
+	}
+}
+
 // 恢复演练（黑盒全流程）：数据写入 → 备份 → 抹掉 → 恢复 → 工单数一致、附件能打开。
 func Test命令行恢复后工单数一致附件能打开(t *testing.T) {
 	if testing.Short() {

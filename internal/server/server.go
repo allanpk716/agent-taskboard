@@ -3,13 +3,10 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -28,7 +25,6 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/labels"
 	"github.com/allanpk716/agent-taskboard/internal/notifications"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
-	"github.com/allanpk716/agent-taskboard/internal/release"
 	"github.com/allanpk716/agent-taskboard/internal/store"
 	"github.com/allanpk716/agent-taskboard/internal/templates"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
@@ -79,11 +75,6 @@ func WithGuestLinkCipherUnavailable() Option {
 func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Server, error) {
 	if cfg.Server.Deploy == config.DeployContainer && strings.TrimSpace(cfg.Server.PublicURL) == "" {
 		return nil, fmt.Errorf("容器模式必须配置 [server] public_url：对外链接不能依赖可被请求头篡改的地址")
-	}
-	if cfg.Server.Deploy == config.DeployContainer {
-		if err := installImageClient(cfg); err != nil {
-			return nil, err
-		}
 	}
 	o := options{}
 	for _, opt := range opts {
@@ -173,42 +164,6 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 		httpSrv:       &http.Server{Handler: mux},
 		web:           web,
 	}, nil
-}
-
-// installImageClient 把镜像自带的桌面客户端安装包装入数据目录。目录不存在
-// 表示镜像没有携带客户端；目录存在但清单或安装包无效时拒绝启动。
-func installImageClient(cfg config.Config) error {
-	manifestPath := filepath.Join(cfg.Server.ClientImageDir, "manifest.json")
-	raw, err := os.ReadFile(manifestPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("读取镜像客户端清单 %s 失败：%w", manifestPath, err)
-	}
-	var manifest release.Manifest
-	if err := json.Unmarshal(raw, &manifest); err != nil {
-		return fmt.Errorf("解析镜像客户端清单 %s 失败：%w", manifestPath, err)
-	}
-	if manifest.Component != release.ComponentClient {
-		return fmt.Errorf("镜像客户端清单的 component = %q, 想 client", manifest.Component)
-	}
-	entry := manifest.FileEntry("taskboard-client.exe")
-	if entry == nil {
-		return fmt.Errorf("镜像客户端清单缺少 taskboard-client.exe")
-	}
-	if current := updater.ClientVersion(cfg.DataDir); !version.Less(current, manifest.Version) {
-		return nil
-	}
-	data, err := os.ReadFile(filepath.Join(cfg.Server.ClientImageDir, "taskboard-client.exe"))
-	if err != nil {
-		return fmt.Errorf("读取镜像客户端安装包失败：%w", err)
-	}
-	pkg := updater.ClientPackage{Version: manifest.Version, Sha256: entry.Sha256, Size: entry.Size}
-	if err := updater.InstallClient(cfg.DataDir, data, pkg); err != nil {
-		return fmt.Errorf("装入镜像客户端安装包失败：%w", err)
-	}
-	return nil
 }
 
 // Handler 返回完整路由（测试和反向代理调试用）。

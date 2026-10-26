@@ -32,27 +32,25 @@ const GuestDeviceCookieName = "tb_guest_device"
 
 // API 挂载 /api/v1 下的接口。
 type API struct {
-	ident           *identity.Manager
-	tickets         *tickets.Manager
-	templates       *templates.Manager
-	idem            *idempotency.Manager
-	atts            *attachments.Manager
-	backups         *ops.Backups
-	notifications   *notifications.Manager
-	accessRecords   *accessrecords.Manager
-	drafts          *drafts.Manager
-	cfg             config.Config
-	clk             clock.Clock
-	intakeUploads   *requestRateLimiter
-	stampedClientMu sync.Mutex
-	stampedClients  map[string]*stampedClient
-	clientOnlineMu  sync.Mutex
-	clientOnline    map[int64]int
-	captchaSource   captcha.Source
-	captchaMu       sync.Mutex
-	captchas        map[string]captchaRecord
-	loginLimits     *requestRateLimiter
-	loginLocks      *loginLockStore
+	ident          *identity.Manager
+	tickets        *tickets.Manager
+	templates      *templates.Manager
+	idem           *idempotency.Manager
+	atts           *attachments.Manager
+	backups        *ops.Backups
+	notifications  *notifications.Manager
+	accessRecords  *accessrecords.Manager
+	drafts         *drafts.Manager
+	cfg            config.Config
+	clk            clock.Clock
+	intakeUploads  *requestRateLimiter
+	clientOnlineMu sync.Mutex
+	clientOnline   map[int64]int
+	captchaSource  captcha.Source
+	captchaMu      sync.Mutex
+	captchas       map[string]captchaRecord
+	loginLimits    *requestRateLimiter
+	loginLocks     *loginLockStore
 }
 
 // SetCaptchaSource 装配登录验证码来源（生产固定随机，测试可注入）。
@@ -78,10 +76,9 @@ type captchaRecord struct {
 func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager, backups *ops.Backups, accessRecs *accessrecords.Manager, draftStore *drafts.Manager, cfg config.Config, clk clock.Clock) *API {
 	return &API{ident: ident, tickets: tk, templates: tpl, idem: idem, atts: atts, backups: backups,
 		accessRecords: accessRecs, drafts: draftStore, cfg: cfg, clk: clk,
-		intakeUploads:  newRequestRateLimiter(cfg.Intake.UploadRatePerMin, clk),
-		stampedClients: make(map[string]*stampedClient),
-		clientOnline:   make(map[int64]int),
-		captchaSource:  captcha.Random{}, captchas: make(map[string]captchaRecord),
+		intakeUploads: newRequestRateLimiter(cfg.Intake.UploadRatePerMin, clk),
+		clientOnline:  make(map[int64]int),
+		captchaSource: captcha.Random{}, captchas: make(map[string]captchaRecord),
 		loginLimits: newRequestRateLimiter(loginRatePerMinute, clk),
 		loginLocks:  newLoginLockStore()}
 }
@@ -109,8 +106,6 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/notifications/stream", a.handleNotificationsStream)
 	mux.HandleFunc("/api/v1/client/connect", a.handleClientConnect)
 	mux.HandleFunc("/api/v1/client/token", a.handleClientToken)
-	mux.HandleFunc("/api/v1/client/latest", a.handleClientLatest)
-	mux.HandleFunc("/api/v1/client/download", a.handleClientDownload)
 	mux.HandleFunc("/api/v1/me/clients", a.handleClients)
 	mux.HandleFunc("/api/v1/me/clients/", a.handleClient)
 	mux.HandleFunc("/api/v1/members", a.handleMembersRoot)
@@ -154,7 +149,6 @@ func (a *API) clientScopeMiddleware(next http.Handler) http.Handler {
 		}
 		allowed := strings.HasPrefix(r.URL.Path, "/api/v1/notifications") ||
 			(r.Method == http.MethodGet && r.URL.Path == "/api/v1/session") ||
-			(r.Method == http.MethodGet && (r.URL.Path == "/api/v1/client/latest" || r.URL.Path == "/api/v1/client/download")) ||
 			(r.Method == http.MethodDelete && r.URL.Path == "/api/v1/me/clients/self")
 		if !allowed {
 			WriteError(w, http.StatusForbidden, CodeClientScope, "客户端凭证只能读取通知和身份",
@@ -370,12 +364,11 @@ type sessionTicketView struct {
 // sessionView 是 GET /api/v1/session 和登录响应的结构：成员带 inbox，
 // 访客（#32）改带链接指向的工单。
 type sessionView struct {
-	Viewer           viewerView         `json:"viewer"`
-	Inbox            string             `json:"inbox,omitempty"`
-	Ticket           *sessionTicketView `json:"ticket,omitempty"`
-	MinClientVersion string             `json:"min_client_version"`
-	Drafts           *draftsSummaryView `json:"drafts,omitempty"`
-	Notices          []string           `json:"notices,omitempty"`
+	Viewer  viewerView         `json:"viewer"`
+	Inbox   string             `json:"inbox,omitempty"`
+	Ticket  *sessionTicketView `json:"ticket,omitempty"`
+	Drafts  *draftsSummaryView `json:"drafts,omitempty"`
+	Notices []string           `json:"notices,omitempty"`
 }
 
 func (a *API) newSessionView(v identity.Viewer) sessionView {
@@ -387,7 +380,7 @@ func (a *API) newSessionView(v identity.Viewer) sessionView {
 		vv.LinkNote = &note
 		vv.LinkExpiresAt = &expiresAt
 		vv.CanEditBrief = &canEdit
-		return sessionView{Viewer: vv, MinClientVersion: a.cfg.Server.MinClientVersion}
+		return sessionView{Viewer: vv}
 	}
 	member := v.Member
 	vv.Member = &member
@@ -401,7 +394,7 @@ func (a *API) newSessionView(v identity.Viewer) sessionView {
 	if list, err := a.drafts.List(context.Background(), v); err == nil {
 		count = len(list)
 	}
-	view := sessionView{Viewer: vv, Inbox: "/api/v1/inbox", MinClientVersion: a.cfg.Server.MinClientVersion,
+	view := sessionView{Viewer: vv, Inbox: "/api/v1/inbox",
 		Drafts: &draftsSummaryView{Count: count, URL: "/api/v1/drafts"}, Notices: []string{}}
 	if v.IsWebSession() {
 		notices, err := a.ident.UnseenWebNotices(context.Background(), v.Member)
