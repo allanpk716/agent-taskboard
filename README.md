@@ -15,6 +15,13 @@
 - 开发:[`docs/dev.md`](docs/dev.md);部署与发版:[`docs/deploy-and-release.md`](docs/deploy-and-release.md);桌面客户端:[`docs/desktop-client.md`](docs/desktop-client.md)
 - 架构决定:[`docs/adr/`](docs/adr/)
 
+## 添加到手机主屏
+
+成员可以在手机浏览器里把平台添加为「手机主屏应用」，之后点主屏上的「工单」图标即可全屏进入平台首页，没有浏览器地址栏。手机主屏应用使用的是在线网页，必须联网；iPhone 上它与 Safari 各自保持登录，第一次使用时需要在里面单独登录一次。
+
+- **iPhone**:用 Safari 打开平台,选择「分享 → 添加到主屏幕」。
+- **Android**:用 Chrome 打开平台,在菜单里选择「安装应用」或「添加到主屏幕」。
+
 ## 本地构建镜像
 
 镜像内的桌面客户端下载自已发布的客户端 Release，构建时必须同时提供后端版本和客户端版本：
