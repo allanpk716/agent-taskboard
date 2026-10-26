@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/drafts"
+	"github.com/allanpk716/agent-taskboard/internal/guestlinkkey"
 	"github.com/allanpk716/agent-taskboard/internal/httpapi"
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
@@ -122,6 +124,13 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	backups.SetNotifier(notificationStore)
 	accessRecords := accessrecords.NewManager(st.DB, c)
 	ticketStore := tickets.NewManager(st.DB, c, labelDict, templateDict, atts)
+	guestCipher, err := guestlinkkey.LoadOrCreate(cfg.DataDir)
+	if err != nil {
+		// 密钥不可用不阻断启动：哈希鉴权照常可用，已有链接表现为老链接。
+		log.Printf("访客链接加密密钥不可用，转发文案降级为不可直接复制：%v", err)
+	} else {
+		ticketStore.SetGuestLinkCipher(guestCipher)
+	}
 	ticketStore.SetIntakeDailyLimit(cfg.Intake.DailyLimit)
 	ticketStore.SetNotifier(notificationStore)
 	ticketStore.SetSystemNotifier(notificationStore)

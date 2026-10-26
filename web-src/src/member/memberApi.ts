@@ -723,6 +723,7 @@ export interface GuestLink {
   created_by: { member?: { name: string }; agent?: { name: string } | null }
   created_at: string
   use_count?: number
+  share_text_available?: boolean
   status: 'unclaimed' | 'claimed' | 'access_code_locked' | 'revoked'
   claim_name?: string
   claimed_at?: string
@@ -749,6 +750,15 @@ export async function createGuestLink(
   return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links`, {
     method: 'POST',
     body: JSON.stringify(body),
+  })
+}
+
+export async function copyGuestLinkShareText(
+  number: string,
+  id: number,
+): Promise<{ share_text: string }> {
+  return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}/share-text`, {
+    method: 'POST',
   })
 }
 

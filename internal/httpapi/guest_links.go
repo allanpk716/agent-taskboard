@@ -1,5 +1,6 @@
 // 访客链接的 HTTP 侧（#32）：创建、列表、撤销与延期。任何成员（含成员 Agent）
-// 都能操作；访客 403 members_only。密钥只在创建响应里出现一次。
+// 都能操作；访客 403 members_only。列表不回显密钥；转发文案接口只在成员
+// 请求时还原同一条链接。
 package httpapi
 
 import (
@@ -39,13 +40,14 @@ type guestLinkBase struct {
 // guestLinkView 是访客链接的对外结构（列表项不含密钥）。
 type guestLinkView struct {
 	guestLinkBase
-	RevokedAt   *string    `json:"revoked_at,omitempty"`
-	Status      string     `json:"status"`
-	ClaimName   *string    `json:"claim_name,omitempty"`
-	ClaimedAt   *string    `json:"claimed_at,omitempty"`
-	DeviceCount int        `json:"device_count"`
-	CreatedBy   authorView `json:"created_by"`
-	CreatedAt   string     `json:"created_at"`
+	ShareTextAvailable bool       `json:"share_text_available"`
+	RevokedAt          *string    `json:"revoked_at,omitempty"`
+	Status             string     `json:"status"`
+	ClaimName          *string    `json:"claim_name,omitempty"`
+	ClaimedAt          *string    `json:"claimed_at,omitempty"`
+	DeviceCount        int        `json:"device_count"`
+	CreatedBy          authorView `json:"created_by"`
+	CreatedAt          string     `json:"created_at"`
 }
 
 // handleGuestLinks 处理 …/guest-links 与 …/guest-links/{id}[/extend]：
@@ -55,6 +57,7 @@ type guestLinkView struct {
 //	DELETE /api/v1/tickets/{id}/guest-links/{链接id}    撤销（立即生效，幂等 204）
 //	POST   /api/v1/tickets/{id}/guest-links/{链接id}/extend  延期（已失效的不能延期）
 //	POST   /api/v1/tickets/{id}/guest-links/{链接id}/reset-access-code  重置访问码
+//	POST   /api/v1/tickets/{id}/guest-links/{链接id}/share-text       再次复制转发文案
 func (a *API) handleGuestLinks(w http.ResponseWriter, r *http.Request, ref string, rest []string) {
 	if len(rest) == 0 {
 		switch r.Method {
@@ -95,8 +98,43 @@ func (a *API) handleGuestLinks(w http.ResponseWriter, r *http.Request, ref strin
 		a.resetGuestAccessCode(w, r, ref, id)
 		return
 	}
+	if len(rest) == 2 && rest[1] == "share-text" {
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "复制访客转发文案用 POST")
+			return
+		}
+		a.copyGuestShareText(w, r, ref, id)
+		return
+	}
 	WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
-		"访客链接接口：POST …/guest-links、GET …/guest-links、DELETE …/guest-links/{id}、POST …/guest-links/{id}/extend、POST …/guest-links/{id}/reset-access-code")
+		"访客链接接口：POST …/guest-links、GET …/guest-links、DELETE …/guest-links/{id}、POST …/guest-links/{id}/extend、POST …/guest-links/{id}/reset-access-code、POST …/guest-links/{id}/share-text")
+}
+
+func (a *API) copyGuestShareText(w http.ResponseWriter, r *http.Request, ref string, id int64) {
+	w.Header().Set("Cache-Control", "no-store")
+	viewer, ok := a.memberFromRequestFor(w, r, "访客不能管理访客链接")
+	if !ok {
+		return
+	}
+	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
+		a.writeTicketError(w, r, ref, err)
+		return
+	}
+	link, err := a.tickets.RecoverGuestLink(r.Context(), viewer, ref, id)
+	if err != nil {
+		switch {
+		case errors.Is(err, tickets.ErrGuestShareTextUnavailable):
+			WriteError(w, http.StatusConflict, CodeShareTextUnavailable, err.Error(),
+				"这是老访客链接，请换一个新地址后再复制")
+		default:
+			a.writeTicketError(w, r, ref, err)
+		}
+		return
+	}
+	url := a.absURL("/g/" + link.Key)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"share_text": tickets.GuestShareText(link.Note, link.Title, url, link.ExpiresAt, link.Claimed),
+	})
 }
 
 func (a *API) resetGuestAccessCode(w http.ResponseWriter, r *http.Request, ref string, id int64) {
@@ -232,8 +270,9 @@ func newGuestLinkView(l tickets.GuestLinkInfo) guestLinkView {
 			CanEditBrief: l.CanEditBrief,
 			UseCount:     l.UseCount,
 		},
-		CreatedBy: newAuthorView(l.CreatedBy, false),
-		CreatedAt: l.CreatedAt.Format(time.RFC3339Nano),
+		ShareTextAvailable: l.ShareTextAvailable,
+		CreatedBy:          newAuthorView(l.CreatedBy, false),
+		CreatedAt:          l.CreatedAt.Format(time.RFC3339Nano),
 	}
 	if l.RevokedAt != nil {
 		t := l.RevokedAt.Format(time.RFC3339Nano)

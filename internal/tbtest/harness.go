@@ -264,6 +264,15 @@ func (s *Server) Identity() *identity.Manager { return s.srv.Ident }
 // 断言外部行为仍应走 HTTP 接口）。
 func (s *Server) Store() *store.Store { return s.srv.Store }
 
+// ForgetGuestLinkKey 把一条链接构造成上线前的老链接（没有可恢复密钥）。
+// 这是造数据的快路径；断言仍应通过 HTTP 观察外部行为。
+func (s *Server) ForgetGuestLinkKey(t testing.TB, id int64) {
+	t.Helper()
+	if _, err := s.srv.Store.DB.Exec(`UPDATE guest_links SET key_ciphertext = NULL WHERE id = ?`, id); err != nil {
+		t.Fatalf("构造老访客链接失败：%v", err)
+	}
+}
+
 // Attachments 暴露附件模块（#33）：测试里直接触发 24 小时清除任务
 // （服务里由定时器周期调用；测试不睡真实时间，用注入时钟推进后手动跑）。
 func (s *Server) Attachments() *attachments.Manager { return s.srv.Atts }

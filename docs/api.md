@@ -869,11 +869,12 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 
 | 方法与路径 | 说明 |
 |---|---|
-| `POST /api/v1/tickets/{id}/guest-links` | 创建：`{"note", "valid_days"?, "expires_at"?, "can_edit_brief"}`；支持 `Idempotency-Key`（地址里的密钥只出现一次，重放返回首次结果）。 |
-| `GET /api/v1/tickets/{id}/guest-links` | 列表（可见范围内的成员；**不回显密钥**）。 |
+| `POST /api/v1/tickets/{id}/guest-links` | 创建：`{"note", "valid_days"?, "expires_at"?, "can_edit_brief"}`；支持 `Idempotency-Key`（首次创建响应返回完整地址，重放返回首次结果）。 |
+| `GET /api/v1/tickets/{id}/guest-links` | 列表（可见范围内的成员；**不回显密钥**，每项带 `share_text_available`）。 |
 | `DELETE /api/v1/tickets/{id}/guest-links/{链接id}` | 撤销（立即生效，幂等 204）。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/extend` | 延期：`{"valid_days"|"expires_at"}`（二选一，必填其一）。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/reset-access-code` | 重置访问码：作废旧设备与新码，成功返回一次 `{access_code}`。 |
+| `POST /api/v1/tickets/{id}/guest-links/{链接id}/share-text` | 再次复制同一条有效链接的转发文案，成功 `{share_text}`；响应带 `Cache-Control: no-store`。 |
 | `GET /api/v1/guest-link` | 用 `tbg_` 密钥读取认领页信息：邀请人、备注、有效期、可见范围提示；未认领时不返回工单内容。 |
 | `POST /api/v1/guest-links/claim` | 用 `tbg_` 密钥认领：`{"author_name"}`；成功返回一次 `device_token` 并写 `guest_link_claimed` 事件。 |
 | `POST /api/v1/guest-links/enter` | 用 `tbg_` 密钥凭访问码进入：`{"access_code"}`；成功返回一次新 `device_token`。 |
@@ -887,9 +888,16 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   `invalid_expires_at`）。`can_edit_brief` 授予「可填写说明」权限（默认 false）。
 - 创建成功 `201`：`{id, url: "/g/<密钥>", note, expires_at, can_edit_brief, use_count, status: "unclaimed"}`。配置了
   `[server] public_url` 时 `url` 是绝对地址（`https://…/g/<密钥>`，评审 P2-7）。
-  完整密钥只在创建响应里出现一次（库中只存 SHA-256 哈希）；列表项是
-  `{id, note, expires_at, revoked_at?, can_edit_brief, use_count, status, claim_name?, claimed_at?, device_count?, created_by, created_at}`；
+  新链接的密钥会另外用服务端密钥做 AEAD 加密保存，鉴权仍只查 SHA-256 哈希；服务端
+  首次启动会在数据目录自动生成独立密钥文件，不提供配置项。列表项是
+  `{id, note, expires_at, revoked_at?, can_edit_brief, use_count, share_text_available, status, claim_name?, claimed_at?, device_count?, created_by, created_at}`；
   `use_count` 是经这条链接写入的回复 / 说明修订数量（从时间线溯源，不记录单纯打开页面）。
+- `POST …/share-text` 按工单当前标题、链接当前有效期和认领状态重新生成文案，并返回
+  **同一条链接**；已认领时末尾提醒换设备要输入当初的访问码。带 `guest_link` 建单响应里的
+  `guest_link.share_text` 与这个接口使用同一份生成规则。只限可见范围内、有
+  `manage_guest_links` 能力的成员凭证（访客 403 `members_only`），响应带
+  `Cache-Control: no-store`。已撤销或已过期返回 409 `link_not_extendable`；上线前没有
+  加密密钥的老链接返回 409 `share_text_unavailable`，hint 提示换一个新地址。复制本身不写时间线。
 - `status` 为 `unclaimed` / `claimed` / `access_code_locked` / `revoked`；已认领时带自报称呼、认领时间和设备数，锁定时仍保持已认领语义。
   存量链接迁移后 `claimed_at` 为空，一律按未认领处理。
 - 访问码是认领时生成的 6 位数字，只在认领响应里出现一次，库里只存哈希。浏览器换设备

@@ -29,6 +29,10 @@ var (
 	ErrLinkCannotEditBrief = errors.New("这条访客链接没有「可填写说明」权限")
 	// ErrTicketClosed 表示工单已关闭，访客链接只读。
 	ErrTicketClosed = errors.New("工单已关闭，访客链接只读")
+	// ErrGuestLinkCipherUnavailable 表示服务端加密密钥不可用，不能创建可再次复制的链接。
+	ErrGuestLinkCipherUnavailable = errors.New("访客链接加密密钥不可用，暂不能创建可再次复制的链接")
+	// ErrGuestShareTextUnavailable 表示老链接没有可恢复的密钥，不能直接复制转发文案。
+	ErrGuestShareTextUnavailable = errors.New("这是老访客链接，平台没有保存可恢复的密钥")
 )
 
 // LinkNotExtendableError 是对已撤销或已过期的链接延期（409）。
@@ -85,7 +89,8 @@ func (spec GuestLinkSpec) validate(now time.Time) (time.Time, error) {
 	}
 }
 
-// GuestLinkCreated 是创建访客链接的结果。Key 是明文密钥，只在创建响应里出现一次。
+// GuestLinkCreated 是创建访客链接的结果。Key 给 HTTP 创建响应还原一次完整地址；
+// 服务端另存加密密钥，供之后再次生成转发文案。
 type GuestLinkCreated struct {
 	ID           int64
 	Key          string
@@ -132,17 +137,24 @@ func (m *Manager) createGuestLinkTx(ctx context.Context, tx *sql.Tx, ticketSeq i
 	if err != nil {
 		return nil, err
 	}
+	if m.guestLinkCipher == nil {
+		return nil, ErrGuestLinkCipherUnavailable
+	}
+	keyCiphertext, err := m.guestLinkCipher.Encrypt(key)
+	if err != nil {
+		return nil, err
+	}
 	var agentID any
 	if actor.AgentID != 0 {
 		agentID = actor.AgentID
 	}
 	var id int64
 	if err := tx.QueryRowContext(ctx, `
-		INSERT INTO guest_links (ticket_seq, key_hash, note, expires_at, can_edit_brief,
+		INSERT INTO guest_links (ticket_seq, key_hash, key_ciphertext, note, expires_at, can_edit_brief,
 		                         created_by_member_id, created_by_agent_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id`,
-		ticketSeq, identity.CredentialHash(key), spec.Note, expiresAt.Format(time.RFC3339Nano),
+		ticketSeq, identity.CredentialHash(key), keyCiphertext, spec.Note, expiresAt.Format(time.RFC3339Nano),
 		boolToInt(spec.CanEditBrief), actor.MemberID, agentID, now.Format(time.RFC3339Nano),
 	).Scan(&id); err != nil {
 		return nil, fmt.Errorf("写入访客链接失败：%w", err)
@@ -156,7 +168,8 @@ func (m *Manager) createGuestLinkTx(ctx context.Context, tx *sql.Tx, ticketSeq i
 	}, nil
 }
 
-// GuestLinkInfo 是访客链接的列表项：不含密钥（明文只在创建响应里出现一次）。
+// GuestLinkInfo 是访客链接的列表项：不含明文密钥。keyCiphertext 只在服务端
+// 内部用来判断能否再次复制，不进入 HTTP 响应。
 type GuestLinkInfo struct {
 	ID                 int64
 	Note               string
@@ -170,6 +183,8 @@ type GuestLinkInfo struct {
 	CreatedAt          time.Time
 	UseCount           int
 	DeviceCount        int
+	keyCiphertext      string
+	ShareTextAvailable bool
 }
 
 // GuestLinks 列出 ref 指向的工单的全部访客链接（成员视角；访客 403 members_only
@@ -179,14 +194,24 @@ func (m *Manager) GuestLinks(ctx context.Context, ref string) ([]GuestLinkInfo, 
 	if err != nil {
 		return nil, err
 	}
-	return GuestLinksForTicket(ctx, m.db, full.Seq)
+	links, err := GuestLinksForTicket(ctx, m.db, full.Seq)
+	if err != nil {
+		return nil, err
+	}
+	now := m.clk.Now()
+	for i := range links {
+		links[i].ShareTextAvailable = links[i].RevokedAt == nil &&
+			now.Before(links[i].ExpiresAt) && m.guestLinkCipher != nil &&
+			m.guestLinkCipher.CanDecrypt(links[i].keyCiphertext)
+	}
+	return links, nil
 }
 
 // GuestLinksForTicket 读取一张工单的全部访客链接状态；db 与写事务都可以传入，
 // 通知和等待方推导因此在同一事务快照上工作。
 func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]GuestLinkInfo, error) {
 	rows, err := q.QueryContext(ctx, `
-		SELECT g.id, g.note, g.expires_at, g.revoked_at, g.claimed_at, g.claim_name,
+		SELECT g.id, g.key_ciphertext, g.note, g.expires_at, g.revoked_at, g.claimed_at, g.claim_name,
 		       g.access_code_locked_at,
 		       g.can_edit_brief, g.created_at,
 		       m.id, m.name, a.id, a.name, a.revoked_at,
@@ -217,8 +242,9 @@ func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]Gue
 			claimedAt    sql.NullString
 			claimName    sql.NullString
 			lockedAt     sql.NullString
+			keyCipher    sql.NullString
 		)
-		if err := rows.Scan(&info.ID, &info.Note, &expiresAt, &revokedAt, &claimedAt, &claimName,
+		if err := rows.Scan(&info.ID, &keyCipher, &info.Note, &expiresAt, &revokedAt, &claimedAt, &claimName,
 			&lockedAt, &canEdit, &createdAt, &memberID, &memberName, &agentID, &agentName, &agentRevoked,
 			&info.UseCount, &info.DeviceCount); err != nil {
 			return nil, err
@@ -230,6 +256,7 @@ func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]Gue
 			return nil, err
 		}
 		info.ClaimName = claimName.String
+		info.keyCiphertext = keyCipher.String
 		if claimedAt.Valid {
 			t, err := parseTime(claimedAt.String)
 			if err != nil {

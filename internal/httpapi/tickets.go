@@ -442,7 +442,7 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 					ExpiresAt:    link.ExpiresAt.Format(time.RFC3339Nano),
 					CanEditBrief: link.CanEditBrief,
 				},
-				ShareText: tickets.GuestShareText(link.Note, full.Title, url, link.ExpiresAt),
+				ShareText: tickets.GuestShareText(link.Note, full.Title, url, link.ExpiresAt, false),
 			}
 		}
 		writeJSON(w, http.StatusCreated, res)

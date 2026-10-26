@@ -210,6 +210,7 @@ type Manager struct {
 	labels           *labels.Manager
 	templates        *templates.Manager
 	atts             *attachments.Manager // 附件认领在回复/说明修订的同一事务里（#33）
+	guestLinkCipher  GuestLinkCipher
 	notifier         Notifier
 	systemNotifier   SystemNotifier
 	dailyIntakeLimit int
@@ -236,11 +237,21 @@ type Notifier interface {
 	Wake([]int64)
 }
 
+// GuestLinkCipher 加密保存新访客链接的明文密钥；当前密钥解不开的旧密文
+// 一律按老链接处理，不影响哈希鉴权。
+type GuestLinkCipher interface {
+	Encrypt(string) (string, error)
+	Decrypt(string) (string, error)
+	CanDecrypt(string) bool
+}
+
 func NewManager(db *sql.DB, c clock.Clock, lm *labels.Manager, tm *templates.Manager, am *attachments.Manager) *Manager {
 	return &Manager{db: db, clk: c, labels: lm, templates: tm, atts: am}
 }
 
 func (m *Manager) SetNotifier(n Notifier) { m.notifier = n }
+
+func (m *Manager) SetGuestLinkCipher(c GuestLinkCipher) { m.guestLinkCipher = c }
 
 // SystemNotifier 发不挂工单的系统通知（反馈入口每日暂停告警）。
 type SystemNotifier interface {

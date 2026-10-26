@@ -13,6 +13,7 @@ import {
   changeLabels,
   closeTicket,
   createGuestLink,
+  copyGuestLinkShareText,
   discardDraft,
   extendGuestLink,
   fetchBriefDrafting,
@@ -402,6 +403,16 @@ function CollaboratorsDialog({
 
 /* ---------------- 弹窗：访客链接 ---------------- */
 
+async function copyGuestShareTextToClipboard(number: string, id: number) {
+  try {
+    const result = await copyGuestLinkShareText(number, id)
+    const ok = await copyText(result.share_text)
+    toast(ok ? '✓ 转发文案已复制' : '复制失败，请手动选择文字复制')
+  } catch (e) {
+    toast(e instanceof ApiError ? `${e.code}：${e.message}` : '复制转发文案失败')
+  }
+}
+
 function LinksDialog({
   ticket,
   links,
@@ -425,6 +436,7 @@ function LinksDialog({
   const [resetCode, setResetCode] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [extendDates, setExtendDates] = useState<Record<number, string>>({}) // 每条链接「延期到该日」的日期
+  const canManageLinks = ticket.viewer.can?.manage_guest_links !== false
 
   async function create() {
     if (!note.trim()) {
@@ -496,6 +508,16 @@ function LinksDialog({
                       <span className="hint">{g.revoked_at ? '已失效，不能延期' : '已过期，不能延期'}</span>
                     ) : (
                       <>
+                        {canManageLinks && g.share_text_available && (
+                          <button
+                            className="btn sm ghost"
+                            onClick={() => {
+                              void copyGuestShareTextToClipboard(ticket.number, g.id)
+                            }}
+                          >
+                            复制转发文案
+                          </button>
+                        )}{' '}
                         <button
                           className="btn sm ghost"
                           onClick={() => {
@@ -773,6 +795,7 @@ function TicketInfoColumn({
   onLabelToggle: (label: string) => void
 }) {
   const open = ticket.status === 'open'
+  const canManageLinks = ticket.viewer.can?.manage_guest_links !== false
   return (
     <aside className="dinfo" role="region" aria-label="工单信息">
       <section>
@@ -849,6 +872,16 @@ function TicketInfoColumn({
                 <button className="btn sm ghost" onClick={onLinks}>
                   管理
                 </button>
+                {canManageLinks && link.share_text_available && (
+                  <button
+                    className="btn sm ghost"
+                    onClick={() => {
+                      void copyGuestShareTextToClipboard(ticket.number, link.id)
+                    }}
+                  >
+                    复制转发文案
+                  </button>
+                )}
               </article>
             )
           })
