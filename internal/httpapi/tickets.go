@@ -13,7 +13,6 @@ import (
 
 	accessrecords "github.com/allanpk716/agent-taskboard/internal/accessrecords"
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
-	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/drafts"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/labels"
@@ -443,21 +442,11 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 					ExpiresAt:    link.ExpiresAt.Format(time.RFC3339Nano),
 					CanEditBrief: link.CanEditBrief,
 				},
-				ShareText: a.guestShareText(link.Note, full.Title, url, link.ExpiresAt),
+				ShareText: tickets.GuestShareText(link.Note, full.Title, url, link.ExpiresAt),
 			}
 		}
 		writeJSON(w, http.StatusCreated, res)
 	})
-}
-
-// guestShareText 是「请人反馈」面向访客的转发文案（#64）：称呼对方 + 标题 +
-// 请按提示写详细、可传日志照片 + 链接 + 不用登录、有效期至某日。服务端生成，
-// 网页与成员 Agent 用同一份（与指派给被指派人的顶层 share_text 互不混用）。
-func (a *API) guestShareText(note, title, url string, expiresAt time.Time) string {
-	return note + "：想请你帮忙反馈「" + title + "」的详细情况。打开这个链接，按提示把情况写具体一些" +
-		"（什么时候、做了什么、看到什么），可以上传日志和照片：" + url +
-		"。不用登录，有效期至 " + expiresAt.In(clock.Beijing).Format("2006-01-02") +
-		"。链接只归第一位打开并确认的人，请不要转发"
 }
 
 // readTicket 处理 GET /api/v1/tickets/{id}[?format=markdown]。访客链接只能
