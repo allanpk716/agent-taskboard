@@ -1,7 +1,8 @@
 # 构建产物
 /bin/
-/web/
-/web-initial/
+# web 可能是指向 web-initial* 的软链接（internal/webapp 首次启动时转换，#254）
+/web
+/web-initial*/
 /web-[0-9]*.*.*/
 *.exe
 

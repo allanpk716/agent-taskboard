@@ -16,6 +16,16 @@ async function issueRequiredAgent(request: APIRequestContext): Promise<string> {
   return ((await res.json()) as { token: string }).token
 }
 
+// discardMyDrafts 丢弃当前登录成员的全部待确认草稿。草稿徽章和「N 份待确认」
+// 是全局计数，断言它们之前先清场，免得被别的 spec 留下的草稿干扰（#255）。
+async function discardMyDrafts(request: APIRequestContext): Promise<void> {
+  const res = await request.get('/api/v1/drafts')
+  expect(res.status(), `读取草稿失败：${await res.text()}`).toBe(200)
+  for (const draft of ((await res.json()) as { drafts: { id: string }[] }).drafts) {
+    expect((await request.delete(`/api/v1/drafts/${draft.id}`)).status()).toBe(204)
+  }
+}
+
 async function draftReply(
   request: APIRequestContext,
   token: string,
@@ -33,6 +43,7 @@ test('桌面「我的草稿」列出待确认草稿并跳到工单草稿处', as
   const first = await createTicket(request, { title: '草稿列表第一张', assignee: '王工' })
   const second = await createTicket(request, { title: '草稿列表第二张', assignee: '王工' })
   const token = await issueRequiredAgent(request)
+  await discardMyDrafts(request)
   await draftReply(request, token, first, '第一张工单的草稿。')
   await draftReply(request, token, second, '第二张工单的草稿。')
 
@@ -73,12 +84,7 @@ test('发出和丢弃草稿后徽章与列表更新', async ({ page, request }) 
   const wangUser = await wang()
   const wangLogin = await loginWithRequest(request, wangUser)
   expect(wangLogin.status()).toBe(200)
-  const existing = await request.get('/api/v1/drafts')
-  expect(existing.status(), `读取草稿失败：${await existing.text()}`).toBe(200)
-  for (const draft of ((await existing.json()) as { drafts: { id: string }[] }).drafts) {
-    const discarded = await request.delete(`/api/v1/drafts/${draft.id}`)
-    expect(discarded.status()).toBe(204)
-  }
+  await discardMyDrafts(request)
 
   const sendNumber = await createTicket(request, { title: '列表发出草稿', assignee: '王工' })
   const discardNumber = await createTicket(request, { title: '列表丢弃草稿', assignee: '王工' })
@@ -130,11 +136,7 @@ test.describe('手机视口', () => {
     await expect(page.locator('h1', { hasText: '我的草稿' })).toBeVisible()
     await expect(page.locator('section[aria-label="工单上的草稿"]')).toContainText('手机草稿入口')
 
-    const drafts = await request.get('/api/v1/drafts')
-    expect(drafts.status()).toBe(200)
-    for (const draft of ((await drafts.json()) as { drafts: { id: string }[] }).drafts) {
-      expect((await request.delete(`/api/v1/drafts/${draft.id}`)).status()).toBe(204)
-    }
+    await discardMyDrafts(request)
     const tokens = await request.get('/api/v1/me/agent-tokens')
     expect(tokens.status()).toBe(200)
     for (const token of ((await tokens.json()) as { tokens: { id: number; revoked_at?: string | null }[] }).tokens) {
