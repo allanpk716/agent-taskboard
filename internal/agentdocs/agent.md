@@ -25,6 +25,22 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
 3. 之后的待办看收件箱：`{{BASE}}/api/v1/inbox`。
 4. 用变更序号增量轮询：列表接口的 `changed_after=<上次拿到的最大 change>`，只处理之后变化的工单。
 
+## 访客链接转发文案
+
+- 主人让你把某张工单的访客链接再发给对方时，先读
+  `GET {{BASE}}/api/v1/tickets/<工单编号>/guest-links`，找到备注对应的链接并确认
+  `share_text_available` 为 true；再 `POST {{BASE}}/api/v1/tickets/<工单编号>/guest-links/<链接id>/share-text`。
+- 响应只有 `{share_text}`，里面是**同一条链接**，并按当前标题、有效期和认领状态生成；已认领时会提醒对方换设备要输入当初的访问码。把这段文案原样交给主人或指定的访客，不要改写链接，也不要写入日志、无关工单或其他系统。
+- `409 share_text_unavailable` 表示这是上线前的老链接，平台没有可恢复的密钥；告诉主人需要换一个新地址，不要伪造旧文案。已撤销或已过期会返回 `409 link_not_extendable`。
+- `rotate-key` 一般只在 `share_text_available` 为 false 时使用（老链接或服务端加密密钥丢失）；链接疑似外泄时也可以用来换地址。无论哪种情况，都要先向主人说明后果并取得确认。
+  主人明确确认要换新地址后，再带 `Idempotency-Key` 调用
+  `POST {{BASE}}/api/v1/tickets/<工单编号>/guest-links/<链接id>/rotate-key`。
+  **换新地址会让对方手里的旧地址立即失效**，操作前必须先把这句话告诉主人并取得确认；
+  确认文案是「对方手里的旧地址会失效，请把新文案发过去」。
+- 响应 `{url, share_text}` 是同一条链接的新地址和新转发文案；备注、认领状态、设备凭证、
+  访问码、有效期和「可填写说明」权限不变。把 `share_text` 原样交给主人或指定的访客，
+  不要改写链接。重试复用同一个 `Idempotency-Key`，会返回首次结果，不会再次换地址。
+
 ## 草稿
 
 - 模式：主人可以把你设为「必须走草稿」或「可直接发」。新签发的 token 和上线前已有的 token，都是必须走草稿。用 `GET {{BASE}}/api/v1/session` 查看自己的模式：`viewer.agent.draft_mode` 为 `required` 或 `direct`。

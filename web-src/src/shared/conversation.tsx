@@ -38,6 +38,8 @@ export function eventText(e: TimelineEvent): string {
       return `撤销了访客链接「${e.note}」`
     case 'guest_link_extended':
       return `延长了访客链接「${e.note}」${e.expires_at ? `至 ${fmtDateCN(e.expires_at)}` : ''}`
+    case 'guest_link_rotated':
+      return `更换了访客链接「${e.note}」的地址`
     case 'brief_revised':
       return `修订了说明（第 ${e.revision} 版）`
     case 'closed':

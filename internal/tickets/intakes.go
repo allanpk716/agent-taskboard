@@ -392,6 +392,10 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	if err != nil {
 		return SubmissionResult{}, err
 	}
+	keyCiphertext, err := m.encryptedGuestLinkKey(key)
+	if err != nil {
+		return SubmissionResult{}, err
+	}
 	note := "反馈入口「" + intake.Name + "」提交人"
 	now := m.clk.Now()
 	date := now.Format("20060102")
@@ -455,11 +459,11 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	// 交给提交者的访客链接：30 天、「可填写说明」（提交者视同创建者，靠它修订说明）。
 	var linkID int64
 	if err := tx.QueryRowContext(ctx, `
-		INSERT INTO guest_links (ticket_seq, key_hash, note, expires_at, can_edit_brief,
+		INSERT INTO guest_links (ticket_seq, key_hash, key_ciphertext, note, expires_at, can_edit_brief,
 		                         created_by_member_id, created_at)
-		VALUES (?, ?, ?, ?, 1, ?, ?)
+		VALUES (?, ?, ?, ?, ?, 1, ?, ?)
 		RETURNING id`,
-		t.Seq, identity.CredentialHash(key), note,
+		t.Seq, identity.CredentialHash(key), keyCiphertext, note,
 		now.Add(30*24*time.Hour).Format(time.RFC3339Nano),
 		intake.CreatedBy.MemberID, now.Format(time.RFC3339Nano)).Scan(&linkID); err != nil {
 		return SubmissionResult{}, fmt.Errorf("写入提交者的访客链接失败：%w", err)

@@ -186,7 +186,7 @@ type Event struct {
 	Revision       int64    // brief_revised 修订后的版本号
 	Reason         string   // closed 的原因：done | wontfix | duplicate
 	DuplicateOf    string   // closed=重复时另一张工单的编号（"" = 无）
-	Note           string   // guest_link_created / guest_link_revoked 的备注（#32）
+	Note           string   // guest_link_created / guest_link_revoked / guest_link_rotated 的备注（#32）
 	LinkExpires    string   // guest_link_extended 的新到期时刻（RFC3339，#32）
 	AttachmentIDs  []string // reply 引用的附件（attachment_ids 与正文 att: 合并去重，#33）
 	AssignFrom     string   // assigned 事件的改派前指派人；空 = 创建时指派（#36）
@@ -210,6 +210,7 @@ type Manager struct {
 	labels           *labels.Manager
 	templates        *templates.Manager
 	atts             *attachments.Manager // 附件认领在回复/说明修订的同一事务里（#33）
+	guestLinkCipher  GuestLinkCipher
 	notifier         Notifier
 	systemNotifier   SystemNotifier
 	dailyIntakeLimit int
@@ -236,11 +237,21 @@ type Notifier interface {
 	Wake([]int64)
 }
 
+// GuestLinkCipher 加密保存新访客链接的明文密钥；当前密钥解不开的旧密文
+// 一律按老链接处理，不影响哈希鉴权。
+type GuestLinkCipher interface {
+	Encrypt(string) (string, error)
+	Decrypt(string) (string, error)
+	CanDecrypt(string) bool
+}
+
 func NewManager(db *sql.DB, c clock.Clock, lm *labels.Manager, tm *templates.Manager, am *attachments.Manager) *Manager {
 	return &Manager{db: db, clk: c, labels: lm, templates: tm, atts: am}
 }
 
 func (m *Manager) SetNotifier(n Notifier) { m.notifier = n }
+
+func (m *Manager) SetGuestLinkCipher(c GuestLinkCipher) { m.guestLinkCipher = c }
 
 // SystemNotifier 发不挂工单的系统通知（反馈入口每日暂停告警）。
 type SystemNotifier interface {

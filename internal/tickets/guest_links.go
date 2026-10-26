@@ -1,5 +1,5 @@
 // 访客链接的生命周期（#32）：创建、列表、撤销与延期。都由成员（含成员 Agent）
-// 操作，任何成员都能为任意工单创建；创建、撤销、延期各记一条时间线事件，
+// 操作，任何成员都能为任意工单创建；创建、撤销、延期、换新地址各记一条时间线事件，
 // 与链接行的写入在同一个事务里推进全局变更序号。
 package tickets
 
@@ -29,6 +29,10 @@ var (
 	ErrLinkCannotEditBrief = errors.New("这条访客链接没有「可填写说明」权限")
 	// ErrTicketClosed 表示工单已关闭，访客链接只读。
 	ErrTicketClosed = errors.New("工单已关闭，访客链接只读")
+	// ErrGuestLinkCipherUnavailable 表示服务端加密密钥不可用，不能加密或解密可再次复制的链接。
+	ErrGuestLinkCipherUnavailable = errors.New("访客链接加密密钥不可用，暂不能直接复制或换新地址")
+	// ErrGuestShareTextUnavailable 表示老链接没有可恢复的密钥，不能直接复制转发文案。
+	ErrGuestShareTextUnavailable = errors.New("这是老访客链接，平台没有保存可恢复的密钥")
 )
 
 // LinkNotExtendableError 是对已撤销或已过期的链接延期（409）。
@@ -85,7 +89,8 @@ func (spec GuestLinkSpec) validate(now time.Time) (time.Time, error) {
 	}
 }
 
-// GuestLinkCreated 是创建访客链接的结果。Key 是明文密钥，只在创建响应里出现一次。
+// GuestLinkCreated 是创建访客链接的结果。Key 给 HTTP 创建响应还原一次完整地址；
+// 服务端另存加密密钥，供之后再次生成转发文案。
 type GuestLinkCreated struct {
 	ID           int64
 	Key          string
@@ -132,17 +137,21 @@ func (m *Manager) createGuestLinkTx(ctx context.Context, tx *sql.Tx, ticketSeq i
 	if err != nil {
 		return nil, err
 	}
+	keyCiphertext, err := m.encryptedGuestLinkKey(key)
+	if err != nil {
+		return nil, err
+	}
 	var agentID any
 	if actor.AgentID != 0 {
 		agentID = actor.AgentID
 	}
 	var id int64
 	if err := tx.QueryRowContext(ctx, `
-		INSERT INTO guest_links (ticket_seq, key_hash, note, expires_at, can_edit_brief,
+		INSERT INTO guest_links (ticket_seq, key_hash, key_ciphertext, note, expires_at, can_edit_brief,
 		                         created_by_member_id, created_by_agent_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id`,
-		ticketSeq, identity.CredentialHash(key), spec.Note, expiresAt.Format(time.RFC3339Nano),
+		ticketSeq, identity.CredentialHash(key), keyCiphertext, spec.Note, expiresAt.Format(time.RFC3339Nano),
 		boolToInt(spec.CanEditBrief), actor.MemberID, agentID, now.Format(time.RFC3339Nano),
 	).Scan(&id); err != nil {
 		return nil, fmt.Errorf("写入访客链接失败：%w", err)
@@ -156,7 +165,8 @@ func (m *Manager) createGuestLinkTx(ctx context.Context, tx *sql.Tx, ticketSeq i
 	}, nil
 }
 
-// GuestLinkInfo 是访客链接的列表项：不含密钥（明文只在创建响应里出现一次）。
+// GuestLinkInfo 是访客链接的列表项：不含明文密钥。keyCiphertext 只在服务端
+// 内部用来判断能否再次复制，不进入 HTTP 响应。
 type GuestLinkInfo struct {
 	ID                 int64
 	Note               string
@@ -170,6 +180,8 @@ type GuestLinkInfo struct {
 	CreatedAt          time.Time
 	UseCount           int
 	DeviceCount        int
+	keyCiphertext      string
+	ShareTextAvailable bool
 }
 
 // GuestLinks 列出 ref 指向的工单的全部访客链接（成员视角；访客 403 members_only
@@ -179,14 +191,24 @@ func (m *Manager) GuestLinks(ctx context.Context, ref string) ([]GuestLinkInfo, 
 	if err != nil {
 		return nil, err
 	}
-	return GuestLinksForTicket(ctx, m.db, full.Seq)
+	links, err := GuestLinksForTicket(ctx, m.db, full.Seq)
+	if err != nil {
+		return nil, err
+	}
+	now := m.clk.Now()
+	for i := range links {
+		links[i].ShareTextAvailable = links[i].RevokedAt == nil &&
+			now.Before(links[i].ExpiresAt) && m.guestLinkCipher != nil &&
+			m.guestLinkCipher.CanDecrypt(links[i].keyCiphertext)
+	}
+	return links, nil
 }
 
 // GuestLinksForTicket 读取一张工单的全部访客链接状态；db 与写事务都可以传入，
 // 通知和等待方推导因此在同一事务快照上工作。
 func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]GuestLinkInfo, error) {
 	rows, err := q.QueryContext(ctx, `
-		SELECT g.id, g.note, g.expires_at, g.revoked_at, g.claimed_at, g.claim_name,
+		SELECT g.id, g.key_ciphertext, g.note, g.expires_at, g.revoked_at, g.claimed_at, g.claim_name,
 		       g.access_code_locked_at,
 		       g.can_edit_brief, g.created_at,
 		       m.id, m.name, a.id, a.name, a.revoked_at,
@@ -217,8 +239,9 @@ func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]Gue
 			claimedAt    sql.NullString
 			claimName    sql.NullString
 			lockedAt     sql.NullString
+			keyCipher    sql.NullString
 		)
-		if err := rows.Scan(&info.ID, &info.Note, &expiresAt, &revokedAt, &claimedAt, &claimName,
+		if err := rows.Scan(&info.ID, &keyCipher, &info.Note, &expiresAt, &revokedAt, &claimedAt, &claimName,
 			&lockedAt, &canEdit, &createdAt, &memberID, &memberName, &agentID, &agentName, &agentRevoked,
 			&info.UseCount, &info.DeviceCount); err != nil {
 			return nil, err
@@ -230,6 +253,7 @@ func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]Gue
 			return nil, err
 		}
 		info.ClaimName = claimName.String
+		info.keyCiphertext = keyCipher.String
 		if claimedAt.Valid {
 			t, err := parseTime(claimedAt.String)
 			if err != nil {
@@ -275,18 +299,18 @@ func (m *Manager) RevokeGuestLink(ctx context.Context, viewer identity.Viewer, r
 	}
 	defer tx.Rollback()
 
-	note, revokedAt, err := m.linkForTicketTx(ctx, tx, full.Seq, id)
+	row, err := m.linkForTicketTx(ctx, tx, full.Seq, id)
 	if err != nil {
 		return err
 	}
-	if !revokedAt.Valid {
+	if !row.RevokedAt.Valid {
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE guest_links SET revoked_at = ? WHERE id = ?`,
 			now.Format(time.RFC3339Nano), id); err != nil {
 			return err
 		}
 		if err := m.insertLinkEvent(ctx, tx, full.Seq, authorOf(viewer), "guest_link_revoked",
-			note, "", now); err != nil {
+			row.Note, "", now); err != nil {
 			return err
 		}
 	}
@@ -311,20 +335,9 @@ func (m *Manager) ExtendGuestLink(ctx context.Context, viewer identity.Viewer, r
 	}
 	defer tx.Rollback()
 
-	var currentExpiresAt string
-	note, revokedAt, err := m.linkRowForTicketTx(ctx, tx, full.Seq, id, &currentExpiresAt)
+	row, err := m.activeLinkRowForTicketTx(ctx, tx, full.Seq, id, now)
 	if err != nil {
 		return GuestLinkInfo{}, err
-	}
-	if revokedAt.Valid {
-		return GuestLinkInfo{}, &LinkNotExtendableError{Reason: "revoked"}
-	}
-	oldExpiry, err := parseTime(currentExpiresAt)
-	if err != nil {
-		return GuestLinkInfo{}, err
-	}
-	if !now.Before(oldExpiry) {
-		return GuestLinkInfo{}, &LinkNotExtendableError{Reason: "expired"}
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE guest_links SET expires_at = ? WHERE id = ?`,
@@ -332,7 +345,7 @@ func (m *Manager) ExtendGuestLink(ctx context.Context, viewer identity.Viewer, r
 		return GuestLinkInfo{}, err
 	}
 	if err := m.insertLinkEvent(ctx, tx, full.Seq, authorOf(viewer), "guest_link_extended",
-		note, expiresAt.Format(time.RFC3339Nano), now); err != nil {
+		row.Note, expiresAt.Format(time.RFC3339Nano), now); err != nil {
 		return GuestLinkInfo{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -350,32 +363,54 @@ func (m *Manager) ExtendGuestLink(ctx context.Context, viewer identity.Viewer, r
 	return GuestLinkInfo{}, ErrGuestLinkNotFound
 }
 
-// linkForTicketTx 取属于该工单的一条链接（note 与撤销时刻）；不属于或不存在报
-// ErrGuestLinkNotFound（避免跨工单误操作别的链接）。
-func (m *Manager) linkForTicketTx(ctx context.Context, tx *sql.Tx, ticketSeq, id int64) (string, sql.NullString, error) {
-	var currentExpiresAt string
-	return m.linkRowForTicketTx(ctx, tx, ticketSeq, id, &currentExpiresAt)
+// guestLinkRow 是复制转发文案、换新地址、撤销和延期共用的链接行。
+type guestLinkRow struct {
+	Note          string
+	ExpiresAt     string
+	RevokedAt     sql.NullString
+	ClaimedAt     sql.NullString
+	KeyCiphertext sql.NullString
+	ExpiresAtTime time.Time
 }
 
-func (m *Manager) linkRowForTicketTx(ctx context.Context, tx *sql.Tx, ticketSeq, id int64, expiresAtOut *string) (string, sql.NullString, error) {
+// linkForTicketTx 取属于该工单的一条链接；不属于或不存在报 ErrGuestLinkNotFound
+// （避免跨工单误操作别的链接）。
+func (m *Manager) linkForTicketTx(ctx context.Context, q Queryer, ticketSeq, id int64) (guestLinkRow, error) {
 	var (
-		note      string
-		expiresAt string
-		revokedAt sql.NullString
+		row guestLinkRow
 	)
-	err := tx.QueryRowContext(ctx,
-		`SELECT note, expires_at, revoked_at FROM guest_links WHERE id = ? AND ticket_seq = ?`,
-		id, ticketSeq).Scan(&note, &expiresAt, &revokedAt)
+	err := q.QueryRowContext(ctx, `
+		SELECT note, expires_at, revoked_at, claimed_at, key_ciphertext
+		FROM guest_links WHERE id = ? AND ticket_seq = ?`, id, ticketSeq).
+		Scan(&row.Note, &row.ExpiresAt, &row.RevokedAt, &row.ClaimedAt, &row.KeyCiphertext)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", sql.NullString{}, ErrGuestLinkNotFound
+		return guestLinkRow{}, ErrGuestLinkNotFound
 	}
 	if err != nil {
-		return "", sql.NullString{}, err
+		return guestLinkRow{}, err
 	}
-	if expiresAtOut != nil {
-		*expiresAtOut = expiresAt
+	return row, nil
+}
+
+// activeLinkRowForTicketTx 在 linkForTicketTx 的基础上解析有效期，并统一
+// 拒绝已撤销或已过期的链接。
+func (m *Manager) activeLinkRowForTicketTx(ctx context.Context, q Queryer, ticketSeq, id int64, now time.Time) (guestLinkRow, error) {
+	row, err := m.linkForTicketTx(ctx, q, ticketSeq, id)
+	if err != nil {
+		return guestLinkRow{}, err
 	}
-	return note, revokedAt, nil
+	expiresAt, err := parseTime(row.ExpiresAt)
+	if err != nil {
+		return guestLinkRow{}, err
+	}
+	if row.RevokedAt.Valid {
+		return guestLinkRow{}, &LinkNotExtendableError{Reason: "revoked"}
+	}
+	if !now.Before(expiresAt) {
+		return guestLinkRow{}, &LinkNotExtendableError{Reason: "expired"}
+	}
+	row.ExpiresAtTime = expiresAt
+	return row, nil
 }
 
 // insertLinkEvent 写一条访客链接事件（guest_link_created / revoked / extended），

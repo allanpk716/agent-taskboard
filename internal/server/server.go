@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/drafts"
+	"github.com/allanpk716/agent-taskboard/internal/guestlinkkey"
 	"github.com/allanpk716/agent-taskboard/internal/httpapi"
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
@@ -53,12 +55,19 @@ type Server struct {
 type Option func(*options)
 
 type options struct {
-	captchaSource captcha.Source
+	captchaSource              captcha.Source
+	guestLinkCipherUnavailable bool
 }
 
 // WithCaptchaSource 指定登录验证码来源。
 func WithCaptchaSource(source captcha.Source) Option {
 	return func(o *options) { o.captchaSource = source }
+}
+
+// WithGuestLinkCipherUnavailable 供测试装配无服务端加密密钥的降级模式；
+// 生产装配仍然总是尝试读取或生成密钥。
+func WithGuestLinkCipherUnavailable() Option {
+	return func(o *options) { o.guestLinkCipherUnavailable = true }
 }
 
 // New 打开数据库、装配 API 与静态站点。webDir 不存在会报错。
@@ -113,6 +122,15 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	backups.SetNotifier(notificationStore)
 	accessRecords := accessrecords.NewManager(st.DB, c)
 	ticketStore := tickets.NewManager(st.DB, c, labelDict, templateDict, atts)
+	if !o.guestLinkCipherUnavailable {
+		guestCipher, err := guestlinkkey.LoadOrCreate(cfg.DataDir)
+		if err != nil {
+			// 密钥不可用不阻断启动：哈希鉴权照常可用，已有链接表现为老链接。
+			log.Printf("访客链接加密密钥不可用，转发文案降级为不可直接复制：%v", err)
+		} else {
+			ticketStore.SetGuestLinkCipher(guestCipher)
+		}
+	}
 	ticketStore.SetIntakeDailyLimit(cfg.Intake.DailyLimit)
 	ticketStore.SetNotifier(notificationStore)
 	ticketStore.SetSystemNotifier(notificationStore)

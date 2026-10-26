@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/guestlinkkey"
 	"github.com/allanpk716/agent-taskboard/internal/store"
 	_ "modernc.org/sqlite" // 副本的完整性校验用
 )
@@ -231,6 +232,10 @@ func (b *Backups) BackupNow(ctx context.Context, kind Kind) (Record, error) {
 		_ = os.Remove(filepath.Join(b.opts.Target, name))
 		return b.fallbackLocal(ctx, rec, staging, localDir, name, err)
 	}
+	if err := b.syncGuestLinkKey(b.opts.Target); err != nil {
+		_ = os.Remove(filepath.Join(b.opts.Target, name))
+		return b.fallbackLocal(ctx, rec, staging, localDir, name, err)
+	}
 	rec.FilesAdded = added
 	rec.IntegrityOK = true
 
@@ -259,6 +264,9 @@ func (b *Backups) fallbackLocal(ctx context.Context, rec Record, staging, localD
 	if err := os.Rename(staging, filepath.Join(localDir, name)); err != nil {
 		_ = os.Remove(staging)
 		return b.fail(ctx, rec, fmt.Errorf("备份目标不可达 %s：%w；本机兜底也失败：%v", b.opts.Target, cause, err))
+	}
+	if err := b.syncGuestLinkKey(localDir); err != nil {
+		return b.fail(ctx, rec, fmt.Errorf("备份目标不可达 %s：%w；本机兜底访客链接加密密钥失败：%v", b.opts.Target, cause, err))
 	}
 	rec.Location = LocationLocal
 	rec.Err = wrapped.Error()
@@ -292,6 +300,9 @@ func (b *Backups) backupLocalOnly(ctx context.Context, now time.Time, kind Kind)
 
 	added, err := b.syncMirror()
 	if err != nil {
+		return b.fail(ctx, rec, err)
+	}
+	if err := b.syncGuestLinkKey(dir); err != nil {
 		return b.fail(ctx, rec, err)
 	}
 	rec.FilesAdded = added
@@ -494,6 +505,24 @@ func (b *Backups) syncMirror() (int, error) {
 		added++
 	}
 	return added, nil
+}
+
+// syncGuestLinkKey 把数据目录里的访客链接加密密钥文件复制到备份目录（原子替换），
+// 与库副本放在一起。密钥文件还不存在（更早版本的数据目录，或启动时降级）时
+// 跳过：没有密钥可备份，备份本身不因此失败。
+func (b *Backups) syncGuestLinkKey(dir string) error {
+	from := filepath.Join(b.dataDir, guestlinkkey.FileName)
+	info, err := os.Stat(from)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("读访客链接加密密钥 %s 失败：%w", from, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("访客链接加密密钥 %s 是个目录，不是密钥文件", from)
+	}
+	return copyFile(from, filepath.Join(dir, guestlinkkey.FileName))
 }
 
 // sweepAndRotate 清点目标里既有的副本：损坏的改名 .bad（不参与轮换，好副本

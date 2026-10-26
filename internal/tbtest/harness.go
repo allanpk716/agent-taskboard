@@ -61,6 +61,8 @@ type options struct {
 	captchaAnswer string
 	listenHost    string
 	startupErr    *error
+
+	withoutGuestLinkCipher bool
 }
 
 // WithWebDir 指定前端目录（默认用临时目录里的一页 index.html 占位）。
@@ -111,6 +113,12 @@ func WithCaptchaSource(source captcha.Source, answer string) Option {
 
 // WithListenHost 指定测试服务监听的地址，供需要真实非回环来源 IP 的黑盒测试使用。
 func WithListenHost(host string) Option { return func(o *options) { o.listenHost = host } }
+
+// WithGuestLinkCipherUnavailable 构造服务端加密密钥不可用的降级模式（内部
+// 测试专用；生产由 guestlinkkey.LoadOrCreate 的结果决定）。
+func WithGuestLinkCipherUnavailable() Option {
+	return func(o *options) { o.withoutGuestLinkCipher = true }
+}
 
 // WithUpdate 指定更新源配置（#45；默认不配置任何源：管理端点会明确报
 // “没有配置更新源”，测试里指向本地假源，不碰真实 GitHub/UpdateHub）。
@@ -177,9 +185,12 @@ func Start(t testing.TB, opts ...Option) *Server {
 	cfg.Server.Deploy = o.deploy
 	config.ApplyDefaults(&cfg) // 与 config.Load 一致：端口、附件上限等补默认值
 	clk := clock.NewFake(o.clockStart)
-	srvOpts := make([]server.Option, 0, 1)
+	srvOpts := make([]server.Option, 0, 2)
 	if o.captcha != nil {
 		srvOpts = append(srvOpts, server.WithCaptchaSource(o.captcha))
+	}
+	if o.withoutGuestLinkCipher {
+		srvOpts = append(srvOpts, server.WithGuestLinkCipherUnavailable())
 	}
 	srv, err := server.New(cfg, st, clk, srvOpts...)
 	if err != nil {
@@ -250,6 +261,15 @@ func (s *Server) Identity() *identity.Manager { return s.srv.Ident }
 // Store 暴露数据库（测试造数据的快路径，如给「第 1000 张」编号测试预置占位工单；
 // 断言外部行为仍应走 HTTP 接口）。
 func (s *Server) Store() *store.Store { return s.srv.Store }
+
+// ForgetGuestLinkKey 把一条链接构造成上线前的老链接（没有可恢复密钥）。
+// 这是造数据的快路径；断言仍应通过 HTTP 观察外部行为。
+func (s *Server) ForgetGuestLinkKey(t testing.TB, id int64) {
+	t.Helper()
+	if _, err := s.srv.Store.DB.Exec(`UPDATE guest_links SET key_ciphertext = NULL WHERE id = ?`, id); err != nil {
+		t.Fatalf("构造老访客链接失败：%v", err)
+	}
+}
 
 // Attachments 暴露附件模块（#33）：测试里直接触发 24 小时清除任务
 // （服务里由定时器周期调用；测试不睡真实时间，用注入时钟推进后手动跑）。
