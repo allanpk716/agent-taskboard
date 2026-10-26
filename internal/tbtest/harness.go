@@ -48,21 +48,22 @@ type Server struct {
 type Option func(*options)
 
 type options struct {
-	webDir        string
-	dataDir       string
-	clockStart    time.Time
-	attachments   config.Attachments
-	backup        config.Backup
-	update        config.Update
-	intake        config.Intake
-	publicURL     string
-	minClient     string
-	deploy        string
-	clientImage   string
-	captcha       captcha.Source
-	captchaAnswer string
-	listenHost    string
-	startupErr    *error
+	webDir                 string
+	dataDir                string
+	clockStart             time.Time
+	attachments            config.Attachments
+	backup                 config.Backup
+	update                 config.Update
+	intake                 config.Intake
+	publicURL              string
+	minClient              string
+	deploy                 string
+	clientImage            string
+	captcha                captcha.Source
+	captchaAnswer          string
+	listenHost             string
+	startupErr             *error
+	withoutGuestLinkCipher bool
 }
 
 // WithWebDir 指定前端目录（默认用临时目录里的一页 index.html 占位）。
@@ -122,6 +123,12 @@ func WithCaptchaSource(source captcha.Source, answer string) Option {
 
 // WithListenHost 指定测试服务监听的地址，供需要真实非回环来源 IP 的黑盒测试使用。
 func WithListenHost(host string) Option { return func(o *options) { o.listenHost = host } }
+
+// WithGuestLinkCipherUnavailable 构造服务端加密密钥不可用的降级模式（内部
+// 测试专用；生产由 guestlinkkey.LoadOrCreate 的结果决定）。
+func WithGuestLinkCipherUnavailable() Option {
+	return func(o *options) { o.withoutGuestLinkCipher = true }
+}
 
 // WithUpdate 指定更新源配置（#45；默认不配置任何源：管理端点会明确报
 // “没有配置更新源”，测试里指向本地假源，不碰真实 GitHub/UpdateHub）。
@@ -190,9 +197,12 @@ func Start(t testing.TB, opts ...Option) *Server {
 	cfg.Server.ClientImageDir = o.clientImage
 	config.ApplyDefaults(&cfg) // 与 config.Load 一致：端口、附件上限等补默认值
 	clk := clock.NewFake(o.clockStart)
-	srvOpts := make([]server.Option, 0, 1)
+	srvOpts := make([]server.Option, 0, 2)
 	if o.captcha != nil {
 		srvOpts = append(srvOpts, server.WithCaptchaSource(o.captcha))
+	}
+	if o.withoutGuestLinkCipher {
+		srvOpts = append(srvOpts, server.WithGuestLinkCipherUnavailable())
 	}
 	srv, err := server.New(cfg, st, clk, srvOpts...)
 	if err != nil {

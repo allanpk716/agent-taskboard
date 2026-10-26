@@ -18,7 +18,8 @@ import (
 )
 
 const (
-	fileName = "guest-link-key.bin"
+	// FileName 是访客链接加密密钥文件在数据目录、备份目录中的固定文件名。
+	FileName = "guest-link-key.bin"
 	keySize  = 32
 	nonceLen = 12
 	version  = "v1:"
@@ -37,7 +38,7 @@ type Cipher struct {
 // 照常使用——旧密文解不开，一律由调用方按“老链接”处理。只有坏文件留存不了
 // 或新密钥写不进去时才返回错误，由调用方降级为无密钥模式。
 func LoadOrCreate(dataDir string) (*Cipher, error) {
-	path := filepath.Join(dataDir, fileName)
+	path := filepath.Join(dataDir, FileName)
 	key, readErr := os.ReadFile(path)
 	if readErr == nil {
 		c, err := New(key)

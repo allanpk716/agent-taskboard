@@ -392,10 +392,7 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	if err != nil {
 		return SubmissionResult{}, err
 	}
-	if m.guestLinkCipher == nil {
-		return SubmissionResult{}, ErrGuestLinkCipherUnavailable
-	}
-	keyCiphertext, err := m.guestLinkCipher.Encrypt(key)
+	keyCiphertext, err := m.encryptedGuestLinkKey(key)
 	if err != nil {
 		return SubmissionResult{}, err
 	}

@@ -3,15 +3,14 @@ package tickets
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 )
 
-// RecoveredGuestLink 是可再次生成转发文案所需的当前链接状态。
-type RecoveredGuestLink struct {
+// GuestLinkShare 是可再次生成转发文案所需的当前链接状态。
+type GuestLinkShare struct {
 	Key       string
 	Note      string
 	Title     string
@@ -22,119 +21,93 @@ type RecoveredGuestLink struct {
 // RecoverGuestLink 校验成员能管理这张工单上的这条有效链接，并用服务端密钥
 // 还原同一条访客链接。老链接（没有密文或当前密钥解不开）返回 409 用的
 // ErrGuestShareTextUnavailable；哈希鉴权不受影响。
-func (m *Manager) RecoverGuestLink(ctx context.Context, viewer identity.Viewer, ref string, id int64) (RecoveredGuestLink, error) {
+func (m *Manager) RecoverGuestLink(ctx context.Context, viewer identity.Viewer, ref string, id int64) (GuestLinkShare, error) {
 	full, err := m.ForViewer(ctx, viewer, ref)
 	if err != nil {
-		return RecoveredGuestLink{}, err
+		return GuestLinkShare{}, err
 	}
-	var (
-		note         string
-		expiresAtRaw string
-		revokedAt    sql.NullString
-		claimedAt    sql.NullString
-		keyCipher    sql.NullString
-	)
-	err = m.db.QueryRowContext(ctx, `
-		SELECT note, expires_at, revoked_at, claimed_at, key_ciphertext
-		FROM guest_links WHERE id = ? AND ticket_seq = ?`, id, full.Seq).
-		Scan(&note, &expiresAtRaw, &revokedAt, &claimedAt, &keyCipher)
-	if errors.Is(err, sql.ErrNoRows) {
-		return RecoveredGuestLink{}, ErrGuestLinkNotFound
-	}
+	row, err := m.activeLinkRowForTicketTx(ctx, m.db, full.Seq, id, m.clk.Now())
 	if err != nil {
-		return RecoveredGuestLink{}, err
+		return GuestLinkShare{}, err
 	}
-	expiresAt, err := parseTime(expiresAtRaw)
+	if m.guestLinkCipher == nil {
+		return GuestLinkShare{}, ErrGuestLinkCipherUnavailable
+	}
+	if !row.KeyCiphertext.Valid {
+		return GuestLinkShare{}, ErrGuestShareTextUnavailable
+	}
+	key, err := m.guestLinkCipher.Decrypt(row.KeyCiphertext.String)
 	if err != nil {
-		return RecoveredGuestLink{}, err
+		return GuestLinkShare{}, ErrGuestShareTextUnavailable
 	}
-	if revokedAt.Valid {
-		return RecoveredGuestLink{}, &LinkNotExtendableError{Reason: "revoked"}
-	}
-	if !m.clk.Now().Before(expiresAt) {
-		return RecoveredGuestLink{}, &LinkNotExtendableError{Reason: "expired"}
-	}
-	if m.guestLinkCipher == nil || !keyCipher.Valid {
-		return RecoveredGuestLink{}, ErrGuestShareTextUnavailable
-	}
-	key, err := m.guestLinkCipher.Decrypt(keyCipher.String)
-	if err != nil {
-		return RecoveredGuestLink{}, ErrGuestShareTextUnavailable
-	}
-	return RecoveredGuestLink{
-		Key: key, Note: note, Title: full.Title, ExpiresAt: expiresAt, Claimed: claimedAt.Valid,
+	return GuestLinkShare{
+		Key: key, Note: row.Note, Title: full.Title, ExpiresAt: row.ExpiresAtTime, Claimed: row.ClaimedAt.Valid,
 	}, nil
 }
 
 // RotateGuestLinkKey 给 ref 工单下的一条有效链接换新密钥：哈希、加密密钥与
 // guest_link_rotated 事件在同一事务里写入。除地址本身外，备注、有效期、认领
 // 状态、设备凭证与访问码都不变。
-func (m *Manager) RotateGuestLinkKey(ctx context.Context, viewer identity.Viewer, ref string, id int64) (RecoveredGuestLink, error) {
+func (m *Manager) RotateGuestLinkKey(ctx context.Context, viewer identity.Viewer, ref string, id int64) (GuestLinkShare, error) {
 	full, err := m.ForViewer(ctx, viewer, ref)
 	if err != nil {
-		return RecoveredGuestLink{}, err
+		return GuestLinkShare{}, err
 	}
 	if m.guestLinkCipher == nil {
-		return RecoveredGuestLink{}, ErrGuestLinkCipherUnavailable
+		return GuestLinkShare{}, ErrGuestLinkCipherUnavailable
 	}
 	now := m.clk.Now()
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
-		return RecoveredGuestLink{}, err
+		return GuestLinkShare{}, err
 	}
 	defer tx.Rollback()
 
-	var (
-		note         string
-		expiresAtRaw string
-		revokedAt    sql.NullString
-		claimedAt    sql.NullString
-	)
-	err = tx.QueryRowContext(ctx, `
-		SELECT note, expires_at, revoked_at, claimed_at
-		FROM guest_links WHERE id = ? AND ticket_seq = ?`, id, full.Seq).
-		Scan(&note, &expiresAtRaw, &revokedAt, &claimedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return RecoveredGuestLink{}, ErrGuestLinkNotFound
-	}
+	row, err := m.activeLinkRowForTicketTx(ctx, tx, full.Seq, id, now)
 	if err != nil {
-		return RecoveredGuestLink{}, err
-	}
-	expiresAt, err := parseTime(expiresAtRaw)
-	if err != nil {
-		return RecoveredGuestLink{}, err
-	}
-	if revokedAt.Valid {
-		return RecoveredGuestLink{}, &LinkNotExtendableError{Reason: "revoked"}
-	}
-	if !now.Before(expiresAt) {
-		return RecoveredGuestLink{}, &LinkNotExtendableError{Reason: "expired"}
+		return GuestLinkShare{}, err
 	}
 
 	key, err := identity.NewGuestKey()
 	if err != nil {
-		return RecoveredGuestLink{}, err
+		return GuestLinkShare{}, err
 	}
-	keyCiphertext, err := m.guestLinkCipher.Encrypt(key)
+	keyCiphertext, err := m.encryptedGuestLinkKey(key)
 	if err != nil {
-		return RecoveredGuestLink{}, err
+		return GuestLinkShare{}, err
+	}
+	if !keyCiphertext.Valid {
+		return GuestLinkShare{}, ErrGuestLinkCipherUnavailable
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE guest_links SET key_hash = ?, key_ciphertext = ?
 		WHERE id = ? AND ticket_seq = ?`,
 		identity.CredentialHash(key), keyCiphertext, id, full.Seq); err != nil {
-		return RecoveredGuestLink{}, err
+		return GuestLinkShare{}, err
 	}
 	if err := m.insertLinkEvent(ctx, tx, full.Seq, authorOf(viewer), "guest_link_rotated",
-		note, "", now); err != nil {
-		return RecoveredGuestLink{}, err
+		row.Note, "", now); err != nil {
+		return GuestLinkShare{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		return RecoveredGuestLink{}, err
+		return GuestLinkShare{}, err
 	}
-	return RecoveredGuestLink{
-		Key: key, Note: note, Title: full.Title, ExpiresAt: expiresAt, Claimed: claimedAt.Valid,
+	return GuestLinkShare{
+		Key: key, Note: row.Note, Title: full.Title, ExpiresAt: row.ExpiresAtTime, Claimed: row.ClaimedAt.Valid,
 	}, nil
+}
+
+// encryptedGuestLinkKey 加密新链接密钥；服务端加密密钥不可用时返回空密文，
+// 让链接按老链接创建。需要密文的换新地址由调用方自行拒绝。
+func (m *Manager) encryptedGuestLinkKey(key string) (sql.NullString, error) {
+	if m.guestLinkCipher == nil {
+		return sql.NullString{}, nil
+	}
+	ciphertext, err := m.guestLinkCipher.Encrypt(key)
+	if err != nil {
+		return sql.NullString{}, err
+	}
+	return sql.NullString{String: ciphertext, Valid: true}, nil
 }
 
 // GuestShareText 生成面向访客的转发文案：称呼对方、当前标题、写详细并传

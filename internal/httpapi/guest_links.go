@@ -132,6 +132,9 @@ func (a *API) copyGuestShareText(w http.ResponseWriter, r *http.Request, ref str
 	link, err := a.tickets.RecoverGuestLink(r.Context(), viewer, ref, id)
 	if err != nil {
 		switch {
+		case errors.Is(err, tickets.ErrGuestLinkCipherUnavailable):
+			WriteError(w, http.StatusConflict, CodeShareTextUnavailable, err.Error(),
+				"服务端加密密钥不可用，请管理员检查数据目录后重启服务")
 		case errors.Is(err, tickets.ErrGuestShareTextUnavailable):
 			WriteError(w, http.StatusConflict, CodeShareTextUnavailable, err.Error(),
 				"这是老访客链接，请换一个新地址后再复制")

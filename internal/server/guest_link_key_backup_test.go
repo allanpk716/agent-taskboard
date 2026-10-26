@@ -16,7 +16,7 @@ import (
 
 // 备份不只是库快照（还镜像附件），转发文案的服务端密钥文件也随备份保存、
 // 随恢复还原：恢复后链接不需要换新地址就能再次直接复制转发文案。
-func Test备份恢复还原转发文案密钥文件(t *testing.T) {
+func Test备份恢复还原访客链接加密密钥文件(t *testing.T) {
 	dataDir := t.TempDir()
 	target := t.TempDir()
 	s := tbtest.Start(t, tbtest.WithDataDir(dataDir), tbtest.WithBackup(config.Backup{
@@ -54,7 +54,7 @@ func Test备份恢复还原转发文案密钥文件(t *testing.T) {
 	}
 	s.Shutdown(t)
 
-	// 服务停止后恢复备份：库和转发文案密钥都从备份回来。
+	// 服务停止后恢复备份：库和访客链接加密密钥都从备份回来。
 	if _, err := ops.Restore(dataDir, 0, filepath.Join(target, rec.Filename), now); err != nil {
 		t.Fatalf("恢复备份失败：%v", err)
 	}

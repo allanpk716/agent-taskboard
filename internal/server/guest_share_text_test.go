@@ -199,6 +199,136 @@ func Test反馈入口生成的链接也能再次复制并提醒访问码(t *test
 	}
 }
 
+func Test无服务端加密密钥时单建访客链接仍成功并按老链接处理(t *testing.T) {
+	s := tbtest.Start(t, tbtest.WithGuestLinkCipherUnavailable())
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	number := mustCreateTicket(t, s, web, "无服务端加密密钥也能建链接")
+
+	res := s.Do(t, web, http.MethodPost, "/api/v1/tickets/"+number+"/guest-links",
+		map[string]any{"note": "检验科-张三"}, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("无服务端加密密钥时创建访客链接状态码 = %d, 想 201", res.StatusCode)
+	}
+	var link guestLinkResponse
+	tbtest.DecodeJSON(t, res, &link)
+	if !strings.HasPrefix(link.URL, "/g/tbg_") {
+		t.Fatalf("创建响应仍应返回链接地址：%q", link.URL)
+	}
+
+	guest := s.Do(t, s.AgentClient(guestKeyOf(t, link)), http.MethodGet, "/api/v1/guest-link", nil, nil)
+	if guest.StatusCode != http.StatusOK {
+		t.Fatalf("无密文链接应能打开认领页：状态码 = %d", guest.StatusCode)
+	}
+
+	var list struct {
+		Links []struct {
+			ShareTextAvailable bool `json:"share_text_available"`
+		} `json:"links"`
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number+"/guest-links", nil, &list)
+	if len(list.Links) != 1 || list.Links[0].ShareTextAvailable {
+		t.Fatalf("无服务端加密密钥时新链接应按老链接列出：%+v", list.Links)
+	}
+
+	res = s.Do(t, web, http.MethodPost,
+		"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(link.ID, 10)+"/share-text", nil, nil)
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("无服务端加密密钥时再次复制状态码 = %d, 想 409", res.StatusCode)
+	}
+	var got errorBody
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "share_text_unavailable" {
+		t.Fatalf("错误码 = %q, 想 share_text_unavailable", got.Error.Code)
+	}
+	if !strings.Contains(got.Error.Hint, "服务端加密密钥不可用") ||
+		!strings.Contains(got.Error.Hint, "管理员") ||
+		strings.Contains(got.Error.Hint, "换一个新地址") {
+		t.Errorf("无服务端加密密钥时提示应请管理员检查，而不是换新地址：%q", got.Error.Hint)
+	}
+
+	res = s.Do(t, web, http.MethodPost,
+		"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(link.ID, 10)+"/rotate-key", nil, nil)
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("无服务端加密密钥时换新地址状态码 = %d, 想 503", res.StatusCode)
+	}
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "guest_link_cipher_unavailable" {
+		t.Fatalf("换新地址错误码 = %q, 想 guest_link_cipher_unavailable", got.Error.Code)
+	}
+}
+
+func Test无服务端加密密钥时发链接请人填写仍成功(t *testing.T) {
+	s := tbtest.Start(t, tbtest.WithGuestLinkCipherUnavailable())
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+
+	created := createWithGuestLink(t, s, web, map[string]any{
+		"template": "bug-report",
+		"title":    "无加密密钥的请人填写",
+		"fields":   map[string]string{},
+		"labels":   []string{},
+		"guest_link": map[string]any{
+			"note":           "检验科-张三",
+			"can_edit_brief": true,
+		},
+	})
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("无服务端加密密钥时建单状态码 = %d, 想 201", created.StatusCode)
+	}
+	var first feedbackCreateResponse
+	tbtest.DecodeJSON(t, created, &first)
+	if first.GuestLink == nil || !strings.Contains(first.GuestLink.ShareText, first.GuestLink.URL) {
+		t.Fatalf("建单响应仍应带可用链接和转发文案：%+v", first.GuestLink)
+	}
+
+	res := s.Do(t, s.AgentClient(strings.TrimPrefix(first.GuestLink.URL, "/g/")),
+		http.MethodGet, "/api/v1/guest-link", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("无密文链接应能打开认领页：状态码 = %d", res.StatusCode)
+	}
+
+	var list struct {
+		Links []struct {
+			ShareTextAvailable bool `json:"share_text_available"`
+		} `json:"links"`
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+first.Number+"/guest-links", nil, &list)
+	if len(list.Links) != 1 || list.Links[0].ShareTextAvailable {
+		t.Fatalf("无服务端加密密钥时新链接应按老链接列出：%+v", list.Links)
+	}
+}
+
+func Test无服务端加密密钥时反馈入口提交仍成功(t *testing.T) {
+	s := tbtest.Start(t, tbtest.WithGuestLinkCipherUnavailable())
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+
+	submitted := submitToIntake(t, s, "bug", map[string]any{
+		"title": "无加密密钥的入口反馈", "fields": bugFields(),
+	})
+	if !strings.HasPrefix(submitted.GuestLink.URL, "/g/tbg_") {
+		t.Fatalf("入口提交响应仍应返回链接地址：%q", submitted.GuestLink.URL)
+	}
+
+	res := s.Do(t, s.AgentClient(strings.TrimPrefix(submitted.GuestLink.URL, "/g/")),
+		http.MethodGet, "/api/v1/guest-link", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("无密文链接应能打开：状态码 = %d", res.StatusCode)
+	}
+
+	var list struct {
+		Links []struct {
+			ShareTextAvailable bool `json:"share_text_available"`
+		} `json:"links"`
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+submitted.Ticket.Number+"/guest-links", nil, &list)
+	if len(list.Links) != 1 || list.Links[0].ShareTextAvailable {
+		t.Fatalf("无服务端加密密钥时入口链接应按老链接列出：%+v", list.Links)
+	}
+}
+
 func Test失效链接不能复制且访客无管理权限(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")

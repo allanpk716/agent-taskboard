@@ -426,6 +426,59 @@ async function rotateGuestShareTextToClipboard(number: string, id: number): Prom
   }
 }
 
+function useGuestLinkShareActions(
+  number: string,
+  onRotated: (id: number, url: string) => void,
+) {
+  const [rotating, setRotating] = useState<GuestLink | null>(null)
+
+  function renderActions(link: GuestLink, canManageLinks: boolean, dead = false) {
+    return (
+      <>
+        {canManageLinks && link.share_text_available && (
+          <button
+            className="btn sm ghost"
+            onClick={() => {
+              void copyGuestShareTextToClipboard(number, link.id)
+            }}
+          >
+            复制转发文案
+          </button>
+        )}
+        {canManageLinks && !dead && !link.share_text_available && (
+          <button
+            className="btn sm ghost"
+            onClick={() => {
+              setRotating(link)
+            }}
+          >
+            换新地址并复制
+          </button>
+        )}
+      </>
+    )
+  }
+
+  const confirmDialog = rotating ? (
+    <Confirm
+      title="换新地址并复制？"
+      body={<div>对方手里的旧地址会失效，请把新文案发过去。备注、认领状态、访问码和有效期都保持不变。</div>}
+      yesLabel="换新地址并复制"
+      danger
+      onYes={() => {
+        const target = rotating
+        setRotating(null)
+        void rotateGuestShareTextToClipboard(number, target.id).then((url) => {
+          if (url) onRotated(target.id, url)
+        })
+      }}
+      onCancel={() => setRotating(null)}
+    />
+  ) : null
+
+  return { renderActions, confirmDialog }
+}
+
 function LinksDialog({
   ticket,
   links,
@@ -449,10 +502,10 @@ function LinksDialog({
   const [canEdit, setCanEdit] = useState(false)
   const [created, setCreated] = useState<{ url: string } | null>(null)
   const [resetCode, setResetCode] = useState<string | null>(null)
-  const [rotating, setRotating] = useState<GuestLink | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [extendDates, setExtendDates] = useState<Record<number, string>>({}) // 每条链接「延期到该日」的日期
   const canManageLinks = ticket.viewer.can?.manage_guest_links !== false
+  const shareActions = useGuestLinkShareActions(ticket.number, onRotated)
 
   async function create() {
     if (!note.trim()) {
@@ -524,26 +577,7 @@ function LinksDialog({
                       <span className="hint">{g.revoked_at ? '已失效，不能延期' : '已过期，不能延期'}</span>
                     ) : (
                       <>
-                        {canManageLinks && g.share_text_available && (
-                          <button
-                            className="btn sm ghost"
-                            onClick={() => {
-                              void copyGuestShareTextToClipboard(ticket.number, g.id)
-                            }}
-                          >
-                            复制转发文案
-                          </button>
-                        )}{' '}
-                        {canManageLinks && !g.share_text_available && (
-                          <button
-                            className="btn sm ghost"
-                            onClick={() => {
-                              setRotating(g)
-                            }}
-                          >
-                            换新地址并复制
-                          </button>
-                        )}{' '}
+                        {shareActions.renderActions(g, canManageLinks)}{' '}
                         <button
                           className="btn sm ghost"
                           onClick={() => {
@@ -621,22 +655,7 @@ function LinksDialog({
           )}
         </tbody>
       </table>
-      {rotating && (
-        <Confirm
-          title="换新地址并复制？"
-          body={<div>对方手里的旧地址会失效，请把新文案发过去。备注、认领状态、访问码和有效期都保持不变。</div>}
-          yesLabel="换新地址并复制"
-          danger
-          onYes={() => {
-            const target = rotating
-            setRotating(null)
-            void rotateGuestShareTextToClipboard(ticket.number, target.id).then((url) => {
-              if (url) onRotated(target.id, url)
-            })
-          }}
-          onCancel={() => setRotating(null)}
-        />
-      )}
+      {shareActions.confirmDialog}
       <div className="sec-t">创建新链接</div>
       <div className="inrow">
         <input
@@ -840,7 +859,7 @@ function TicketInfoColumn({
 }) {
   const open = ticket.status === 'open'
   const canManageLinks = ticket.viewer.can?.manage_guest_links !== false
-  const [rotating, setRotating] = useState<GuestLink | null>(null)
+  const shareActions = useGuestLinkShareActions(ticket.number, onRotated)
   return (
     <aside className="dinfo" role="region" aria-label="工单信息">
       <section>
@@ -917,47 +936,13 @@ function TicketInfoColumn({
                 <button className="btn sm ghost" onClick={onLinks}>
                   管理
                 </button>
-                {canManageLinks && link.share_text_available && (
-                  <button
-                    className="btn sm ghost"
-                    onClick={() => {
-                      void copyGuestShareTextToClipboard(ticket.number, link.id)
-                    }}
-                  >
-                    复制转发文案
-                  </button>
-                )}
-                {canManageLinks && !dead && !link.share_text_available && (
-                  <button
-                    className="btn sm ghost"
-                    onClick={() => {
-                      setRotating(link)
-                    }}
-                  >
-                    换新地址并复制
-                  </button>
-                )}
+                {shareActions.renderActions(link, canManageLinks, dead)}
               </article>
             )
           })
         )}
       </section>
-      {rotating && (
-        <Confirm
-          title="换新地址并复制？"
-          body={<div>对方手里的旧地址会失效，请把新文案发过去。备注、认领状态、访问码和有效期都保持不变。</div>}
-          yesLabel="换新地址并复制"
-          danger
-          onYes={() => {
-            const target = rotating
-            setRotating(null)
-            void rotateGuestShareTextToClipboard(ticket.number, target.id).then((url) => {
-              if (url) onRotated(target.id, url)
-            })
-          }}
-          onCancel={() => setRotating(null)}
-        />
-      )}
+      {shareActions.confirmDialog}
       <AccessRecordsPanel data={accessRecords} />
     </aside>
   )

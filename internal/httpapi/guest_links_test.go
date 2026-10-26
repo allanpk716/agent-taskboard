@@ -10,7 +10,7 @@ import (
 )
 
 // 服务端加密密钥写不出来（如数据目录只读）时，平台进入无密钥降级模式：
-// 新建链接、换新地址都不能静默失败成 500，要给出明确的错误码。
+// 换新地址不能静默失败成 500，要给出明确的错误码。
 func Test无密钥降级模式返回明确错误(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/tickets/1/guest-links/1/rotate-key", nil)

@@ -876,7 +876,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/extend` | 延期：`{"valid_days"|"expires_at"}`（二选一，必填其一）。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/reset-access-code` | 重置访问码：作废旧设备与新码，成功返回一次 `{access_code}`。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/share-text` | 再次复制同一条有效链接的转发文案，成功 `{share_text}`；响应带 `Cache-Control: no-store`。 |
-| `POST /api/v1/tickets/{id}/guest-links/{链接id}/rotate-key` | 老链接换新地址，成功 `{url, share_text}`；旧地址立即失效，响应带 `Cache-Control: no-store`，支持 `Idempotency-Key`。 |
+| `POST /api/v1/tickets/{id}/guest-links/{链接id}/rotate-key` | 换新地址（一般用于老链接，也可用于疑似外泄），成功 `{url, share_text}`；旧地址立即失效，响应带 `Cache-Control: no-store`，支持 `Idempotency-Key`。 |
 | `GET /api/v1/guest-link` | 用 `tbg_` 密钥读取认领页信息：邀请人、备注、有效期、可见范围提示；未认领时不返回工单内容。 |
 | `POST /api/v1/guest-links/claim` | 用 `tbg_` 密钥认领：`{"author_name"}`；成功返回一次 `device_token` 并写 `guest_link_claimed` 事件。 |
 | `POST /api/v1/guest-links/enter` | 用 `tbg_` 密钥凭访问码进入：`{"access_code"}`；成功返回一次新 `device_token`。 |
@@ -890,7 +890,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   `invalid_expires_at`）。`can_edit_brief` 授予「可填写说明」权限（默认 false）。
 - 创建成功 `201`：`{id, url: "/g/<密钥>", note, expires_at, can_edit_brief, use_count, status: "unclaimed"}`。配置了
   `[server] public_url` 时 `url` 是绝对地址（`https://…/g/<密钥>`，评审 P2-7）。
-  新链接的密钥会另外用服务端密钥做 AEAD 加密保存，鉴权仍只查 SHA-256 哈希；服务端
+  新链接的密钥会另外用服务端密钥做 AEAD 加密保存，鉴权仍只查 SHA-256 哈希；服务端密钥不可用时仍会创建老链接；服务端
   首次启动会在数据目录自动生成独立密钥文件，不提供配置项。列表项是
   `{id, note, expires_at, revoked_at?, can_edit_brief, use_count, share_text_available, status, claim_name?, claimed_at?, device_count?, created_by, created_at}`；
   `use_count` 是经这条链接写入的回复 / 说明修订数量（从时间线溯源，不记录单纯打开页面）。
@@ -899,11 +899,13 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   `guest_link.share_text` 与这个接口使用同一份生成规则。只限可见范围内、有
   `manage_guest_links` 能力的成员凭证（访客 403 `members_only`），响应带
   `Cache-Control: no-store`。已撤销或已过期返回 409 `link_not_extendable`；上线前没有
-  加密密钥的老链接返回 409 `share_text_unavailable`，hint 提示换一个新地址。复制本身不写时间线。
+  加密密钥的老链接返回 409 `share_text_unavailable`，hint 提示换一个新地址；服务端加密密钥本身不可用时仍返回这个错误码，但 hint 改为请管理员检查。复制本身不写时间线。
   服务端密钥文件丢失或换过后解不开的密文同样按老链接处理，返回同一个 409。
 - `POST …/rotate-key` 给同一条链接写入新的哈希与加密密钥并返回新的 `{url, share_text}`；
   旧地址立即失效，新文案按当前标题、有效期和认领状态生成。备注、认领状态、设备凭证、
-  访问码、有效期与「可填写说明」权限都保持不变。只限可见范围内、有 `manage_guest_links`
+  访问码、有效期与「可填写说明」权限都保持不变。一般只在 `share_text_available` 为 false 时
+  使用（老链接或服务端加密密钥丢失）；链接疑似外泄时也可以换地址，但无论哪种情况都应先和成员确认。
+  只限可见范围内、有 `manage_guest_links`
   能力的成员凭证（访客 403 `members_only`）；已撤销或已过期返回 409
   `link_not_extendable`；服务端连新密钥文件都写不出来（如数据目录只读）时返回 503
   `guest_link_cipher_unavailable`，不会静默变成 500。请求带 `Idempotency-Key` 时，重放返回首次结果，不会再次换地址；

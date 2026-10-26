@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/guestlinkkey"
 	"github.com/allanpk716/agent-taskboard/internal/store"
 	_ "modernc.org/sqlite" // 副本的完整性校验用
 )
@@ -120,10 +121,6 @@ const DefaultScheduleTick = 15 * time.Second
 
 // 备份文件名（含 .bad 改名后不带 .db 的部分）的解析。
 var backupNameRe = regexp.MustCompile(`^taskboard-(\d{8})-(\d{6})-(daily|monthly|preupdate)\.db$`)
-
-// guestLinkKeyFile 是转发文案的服务端加密密钥文件（#244）：与库副本分开存放，
-// 但一起备份/恢复——恢复后链接才能继续直接复制。
-const guestLinkKeyFile = "guest-link-key.bin"
 
 // Backups 是备份与恢复的入口：手动备份（Now）、更新前备份（Preupdate，#45）、
 // 内置定时调度（RunSchedule / CheckSchedule）和状态查询（Status）。
@@ -269,7 +266,7 @@ func (b *Backups) fallbackLocal(ctx context.Context, rec Record, staging, localD
 		return b.fail(ctx, rec, fmt.Errorf("备份目标不可达 %s：%w；本机兜底也失败：%v", b.opts.Target, cause, err))
 	}
 	if err := b.syncGuestLinkKey(localDir); err != nil {
-		return b.fail(ctx, rec, fmt.Errorf("备份目标不可达 %s：%w；本机兜底转发文案密钥失败：%v", b.opts.Target, cause, err))
+		return b.fail(ctx, rec, fmt.Errorf("备份目标不可达 %s：%w；本机兜底访客链接加密密钥失败：%v", b.opts.Target, cause, err))
 	}
 	rec.Location = LocationLocal
 	rec.Err = wrapped.Error()
@@ -510,22 +507,22 @@ func (b *Backups) syncMirror() (int, error) {
 	return added, nil
 }
 
-// syncGuestLinkKey 把数据目录里的转发文案密钥文件复制到备份目录（原子替换），
+// syncGuestLinkKey 把数据目录里的访客链接加密密钥文件复制到备份目录（原子替换），
 // 与库副本放在一起。密钥文件还不存在（更早版本的数据目录，或启动时降级）时
 // 跳过：没有密钥可备份，备份本身不因此失败。
 func (b *Backups) syncGuestLinkKey(dir string) error {
-	from := filepath.Join(b.dataDir, guestLinkKeyFile)
+	from := filepath.Join(b.dataDir, guestlinkkey.FileName)
 	info, err := os.Stat(from)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("读转发文案密钥 %s 失败：%w", from, err)
+		return fmt.Errorf("读访客链接加密密钥 %s 失败：%w", from, err)
 	}
 	if info.IsDir() {
-		return fmt.Errorf("转发文案密钥 %s 是个目录，不是密钥文件", from)
+		return fmt.Errorf("访客链接加密密钥 %s 是个目录，不是密钥文件", from)
 	}
-	return copyFile(from, filepath.Join(dir, guestLinkKeyFile))
+	return copyFile(from, filepath.Join(dir, guestlinkkey.FileName))
 }
 
 // sweepAndRotate 清点目标里既有的副本：损坏的改名 .bad（不参与轮换，好副本
