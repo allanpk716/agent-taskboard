@@ -20,6 +20,7 @@ async function expectImage(response: APIResponse, path: string) {
   expect(response.headers()['content-type'], `${path} 应是图片`).toMatch(/^image\//)
 }
 
+// #246：页面可添加为手机主屏应用（manifest、图标、不缓存的 service worker）。
 test('手机主屏应用的安装声明和 service worker 可用', async ({ page, request }) => {
   const homeResponse = await request.get('/')
   expect(homeResponse.status(), '首页应返回 200').toBe(200)
@@ -29,7 +30,7 @@ test('手机主屏应用的安装声明和 service worker 可用', async ({ page
   expect(manifestHref).toBe('/manifest.json')
   await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
     'content',
-    '#2563eb',
+    '#2a6fdb',
   )
   const appleTouchIconHref = await page
     .locator('link[rel="apple-touch-icon"]')
@@ -41,6 +42,7 @@ test('手机主屏应用的安装声明和 service worker 可用', async ({ page
   expect(manifestResponse.headers()['content-type'], 'manifest 应是 JSON').toMatch(
     /^application\/json\b/,
   )
+  expect(manifestResponse.headers()['cache-control']).toBe('no-cache')
   const manifest = (await manifestResponse.json()) as Manifest
   expect(manifest).toMatchObject({
     name: '部门工单平台',
@@ -69,7 +71,9 @@ test('手机主屏应用的安装声明和 service worker 可用', async ({ page
   })
   expect(new URL(registration.scope).pathname).toBe('/')
 
-  expect(manifestResponse.headers()['cache-control']).toBe('no-cache')
+  // 未知路径会回退到 index.html（同样 200 + no-cache），所以还要看类型确认是脚本本身。
   const serviceWorkerResponse = await request.get('/service-worker.js')
+  expect(serviceWorkerResponse.status(), 'service worker 应返回 200').toBe(200)
+  expect(serviceWorkerResponse.headers()['content-type']).toMatch(/javascript/)
   expect(serviceWorkerResponse.headers()['cache-control']).toBe('no-cache')
 })
