@@ -186,7 +186,7 @@ type Event struct {
 	Revision       int64    // brief_revised 修订后的版本号
 	Reason         string   // closed 的原因：done | wontfix | duplicate
 	DuplicateOf    string   // closed=重复时另一张工单的编号（"" = 无）
-	Note           string   // guest_link_created / guest_link_revoked 的备注（#32）
+	Note           string   // guest_link_created / guest_link_revoked / guest_link_rotated 的备注（#32）
 	LinkExpires    string   // guest_link_extended 的新到期时刻（RFC3339，#32）
 	AttachmentIDs  []string // reply 引用的附件（attachment_ids 与正文 att: 合并去重，#33）
 	AssignFrom     string   // assigned 事件的改派前指派人；空 = 创建时指派（#36）

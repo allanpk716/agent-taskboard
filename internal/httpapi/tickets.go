@@ -874,7 +874,7 @@ type eventView struct {
 	Actor  authorView `json:"actor"`
 	Type   string     `json:"type"`
 	Label  string     `json:"label,omitempty"` // label_added / label_removed 事件带（#31）
-	Note   string     `json:"note,omitempty"`  // guest_link_created / guest_link_revoked 的备注（#32）
+	Note   string     `json:"note,omitempty"`  // guest_link_created / guest_link_revoked / guest_link_rotated 的备注（#32）
 
 	// 附加字段按事件类型出现（只追加）。
 	ReplyNo     int64  `json:"reply_no,omitempty"`

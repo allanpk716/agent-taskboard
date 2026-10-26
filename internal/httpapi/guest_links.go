@@ -58,6 +58,7 @@ type guestLinkView struct {
 //	POST   /api/v1/tickets/{id}/guest-links/{链接id}/extend  延期（已失效的不能延期）
 //	POST   /api/v1/tickets/{id}/guest-links/{链接id}/reset-access-code  重置访问码
 //	POST   /api/v1/tickets/{id}/guest-links/{链接id}/share-text       再次复制转发文案
+//	POST   /api/v1/tickets/{id}/guest-links/{链接id}/rotate-key       老链接换新地址
 func (a *API) handleGuestLinks(w http.ResponseWriter, r *http.Request, ref string, rest []string) {
 	if len(rest) == 0 {
 		switch r.Method {
@@ -106,8 +107,16 @@ func (a *API) handleGuestLinks(w http.ResponseWriter, r *http.Request, ref strin
 		a.copyGuestShareText(w, r, ref, id)
 		return
 	}
+	if len(rest) == 2 && rest[1] == "rotate-key" {
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "换新地址用 POST")
+			return
+		}
+		a.rotateGuestLinkKey(w, r, ref, id)
+		return
+	}
 	WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
-		"访客链接接口：POST …/guest-links、GET …/guest-links、DELETE …/guest-links/{id}、POST …/guest-links/{id}/extend、POST …/guest-links/{id}/reset-access-code、POST …/guest-links/{id}/share-text")
+		"访客链接接口：POST …/guest-links、GET …/guest-links、DELETE …/guest-links/{id}、POST …/guest-links/{id}/extend、POST …/guest-links/{id}/reset-access-code、POST …/guest-links/{id}/share-text、POST …/guest-links/{id}/rotate-key")
 }
 
 func (a *API) copyGuestShareText(w http.ResponseWriter, r *http.Request, ref string, id int64) {
@@ -134,6 +143,30 @@ func (a *API) copyGuestShareText(w http.ResponseWriter, r *http.Request, ref str
 	url := a.absURL("/g/" + link.Key)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"share_text": tickets.GuestShareText(link.Note, link.Title, url, link.ExpiresAt, link.Claimed),
+	})
+}
+
+func (a *API) rotateGuestLinkKey(w http.ResponseWriter, r *http.Request, ref string, id int64) {
+	w.Header().Set("Cache-Control", "no-store")
+	viewer, ok := a.memberFromRequestFor(w, r, "访客不能管理访客链接")
+	if !ok {
+		return
+	}
+	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
+		a.writeTicketError(w, r, ref, err)
+		return
+	}
+	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
+		link, err := a.tickets.RotateGuestLinkKey(r.Context(), viewer, ref, id)
+		if err != nil {
+			a.writeTicketError(w, r, ref, err)
+			return
+		}
+		url := a.absURL("/g/" + link.Key)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"url":        url,
+			"share_text": tickets.GuestShareText(link.Note, link.Title, url, link.ExpiresAt, link.Claimed),
+		})
 	})
 }
 

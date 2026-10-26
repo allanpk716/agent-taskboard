@@ -426,8 +426,9 @@ spec 用户故事 84），没有 `inbox`：
 - 事件结构：`{seq, change, at, actor, type}` + 按类型出现的附加字段
   （`reply` 带 `reply_no`/`body_md`/`deliver`，`brief_revised` 带 `revision`，
   `closed` 带 `reason`/`duplicate_of`，`assigned` 带 `from`/`to`（from 为 null 表示
-  创建时指派，否则是改派），`guest_link_created`/`guest_link_revoked` 带
-  `note`，`guest_link_extended` 带 `note` 与 `expires_at`，协作者事件带
+  创建时指派，否则是改派），`guest_link_created`/`guest_link_revoked`/
+  `guest_link_rotated` 带 `note`，`guest_link_extended` 带 `note` 与
+  `expires_at`，协作者事件带
   `collaborator`）。时间线只追加：每条都记录
   作者与时间，旧事件永不改动。访客可见性过滤（跳过标签事件）在 #32 已生效；
   访客的 `cursor` 是它可见的最后一条事件 `seq`（跳过的序号不会当作增量重发）。
@@ -875,6 +876,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/extend` | 延期：`{"valid_days"|"expires_at"}`（二选一，必填其一）。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/reset-access-code` | 重置访问码：作废旧设备与新码，成功返回一次 `{access_code}`。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/share-text` | 再次复制同一条有效链接的转发文案，成功 `{share_text}`；响应带 `Cache-Control: no-store`。 |
+| `POST /api/v1/tickets/{id}/guest-links/{链接id}/rotate-key` | 老链接换新地址，成功 `{url, share_text}`；旧地址立即失效，响应带 `Cache-Control: no-store`，支持 `Idempotency-Key`。 |
 | `GET /api/v1/guest-link` | 用 `tbg_` 密钥读取认领页信息：邀请人、备注、有效期、可见范围提示；未认领时不返回工单内容。 |
 | `POST /api/v1/guest-links/claim` | 用 `tbg_` 密钥认领：`{"author_name"}`；成功返回一次 `device_token` 并写 `guest_link_claimed` 事件。 |
 | `POST /api/v1/guest-links/enter` | 用 `tbg_` 密钥凭访问码进入：`{"access_code"}`；成功返回一次新 `device_token`。 |
@@ -898,6 +900,12 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   `manage_guest_links` 能力的成员凭证（访客 403 `members_only`），响应带
   `Cache-Control: no-store`。已撤销或已过期返回 409 `link_not_extendable`；上线前没有
   加密密钥的老链接返回 409 `share_text_unavailable`，hint 提示换一个新地址。复制本身不写时间线。
+- `POST …/rotate-key` 给同一条链接写入新的哈希与加密密钥并返回新的 `{url, share_text}`；
+  旧地址立即失效，新文案按当前标题、有效期和认领状态生成。备注、认领状态、设备凭证、
+  访问码、有效期与「可填写说明」权限都保持不变。只限可见范围内、有 `manage_guest_links`
+  能力的成员凭证（访客 403 `members_only`）；已撤销或已过期返回 409
+  `link_not_extendable`。请求带 `Idempotency-Key` 时，重放返回首次结果，不会再次换地址；
+  响应带 `Cache-Control: no-store`。
 - `status` 为 `unclaimed` / `claimed` / `access_code_locked` / `revoked`；已认领时带自报称呼、认领时间和设备数，锁定时仍保持已认领语义。
   存量链接迁移后 `claimed_at` 为空，一律按未认领处理。
 - 访问码是认领时生成的 6 位数字，只在认领响应里出现一次，库里只存哈希。浏览器换设备
@@ -905,8 +913,9 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   连续第 5 次输错即锁定并写 `guest_access_locked` 事件，已登录设备不受影响。
 - 成员重置访问码会删除这条链接的全部 `tbgd_` 设备凭证、生成新 6 位码并解除锁定；
   链接不会重新开放认领。新码只在重置响应里出现一次，并写 `guest_access_reset` 事件。
-- 创建、撤销、延期各记一条时间线事件（`guest_link_created` / `guest_link_revoked` /
-  `guest_link_extended`，都带 `note`；延期另带新 `expires_at`），访问码锁定与重置分别记
+- 创建、撤销、换新地址、延期各记一条时间线事件（`guest_link_created` /
+  `guest_link_revoked` / `guest_link_rotated` / `guest_link_extended`，都带 `note`；
+  延期另带新 `expires_at`），访问码锁定与重置分别记
   `guest_access_locked` / `guest_access_reset`，并推进全局变更序号。
   这些事件对访客也可见（访客看不到的只有标签事件）。
 - 撤销立即生效：之后用这条密钥的任何请求 401 `link_revoked`。已撤销的再撤销是

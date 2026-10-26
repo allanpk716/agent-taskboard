@@ -227,6 +227,22 @@ func Test失效链接不能复制且访客无管理权限(t *testing.T) {
 		}
 	}
 
+	for name, id := range map[string]int64{"已撤销": revoked.ID, "已过期": expiring.ID} {
+		res := s.Do(t, web, http.MethodPost,
+			"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(id, 10)+"/rotate-key", nil, nil)
+		if res.StatusCode != http.StatusConflict {
+			t.Fatalf("[%s] 换新地址状态码 = %d, 想 409", name, res.StatusCode)
+		}
+		if got := res.Header.Get("Cache-Control"); got != "no-store" {
+			t.Errorf("[%s] Cache-Control = %q, 想 no-store", name, got)
+		}
+		var got errorBody
+		tbtest.DecodeJSON(t, res, &got)
+		if got.Error.Code != "link_not_extendable" {
+			t.Errorf("[%s] 换新地址错误码 = %q, 想 link_not_extendable", name, got.Error.Code)
+		}
+	}
+
 	var list struct {
 		Links []struct {
 			ID                 int64 `json:"id"`
@@ -262,6 +278,15 @@ func Test失效链接不能复制且访客无管理权限(t *testing.T) {
 	tbtest.DecodeJSON(t, res, &got)
 	if got.Error.Code != "members_only" {
 		t.Errorf("访客错误码 = %q, 想 members_only", got.Error.Code)
+	}
+	res = s.Do(t, s.AgentClient(claimed.DeviceToken), http.MethodPost,
+		"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(active.ID, 10)+"/rotate-key", nil, nil)
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("访客换新地址状态码 = %d, 想 403", res.StatusCode)
+	}
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "members_only" {
+		t.Errorf("访客换新地址错误码 = %q, 想 members_only", got.Error.Code)
 	}
 }
 
@@ -302,6 +327,135 @@ func Test老链接不能直接复制但不影响访问(t *testing.T) {
 	res = s.Do(t, s.AgentClient(guestKeyOf(t, link)), http.MethodGet, "/api/v1/guest-link", nil, nil)
 	if res.StatusCode != http.StatusOK {
 		t.Errorf("老链接仍应能打开认领页：状态码 = %d, 想 200", res.StatusCode)
+	}
+}
+
+func Test老访客链接换新地址保留认领并记入时间线(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	number := mustCreateTicket(t, s, web, "老链接换新地址")
+	link := mustCreateGuestLink(t, s, web, number, map[string]any{
+		"note": "检验科-张三", "can_edit_brief": true,
+	})
+
+	var claim struct {
+		DeviceToken string `json:"device_token"`
+		AccessCode  string `json:"access_code"`
+	}
+	res := s.Do(t, s.AgentClient(guestKeyOf(t, link)), http.MethodPost, "/api/v1/guest-links/claim",
+		map[string]string{"author_name": "张三"}, &claim)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("认领状态码 = %d, 想 201", res.StatusCode)
+	}
+	s.ForgetGuestLinkKey(t, link.ID)
+
+	var before ticketResponseBody
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number, nil, &before)
+
+	idem := map[string]string{"Idempotency-Key": "rotate-guest-link-once"}
+	rotatePath := "/api/v1/tickets/" + number + "/guest-links/" + strconv.FormatInt(link.ID, 10) + "/rotate-key"
+	res = s.DoWithHeaders(t, web, http.MethodPost, rotatePath, idem, nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("老链接换新地址状态码 = %d, 想 200", res.StatusCode)
+	}
+	if got := res.Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, 想 no-store", got)
+	}
+	first := readAll(t, res)
+	var rotated struct {
+		URL       string `json:"url"`
+		ShareText string `json:"share_text"`
+	}
+	if err := json.Unmarshal(first, &rotated); err != nil {
+		t.Fatalf("解码换新地址响应失败：%v", err)
+	}
+	if rotated.URL == link.URL || !strings.HasPrefix(rotated.URL, "/g/tbg_") {
+		t.Fatalf("应换成一个新地址：old %q, new %q", link.URL, rotated.URL)
+	}
+	if !strings.Contains(rotated.ShareText, rotated.URL) ||
+		!strings.Contains(rotated.ShareText, "换了设备需要输入当初的访问码") {
+		t.Errorf("新转发文案应包含新地址与访问码提醒：%q", rotated.ShareText)
+	}
+
+	res = s.DoWithHeaders(t, web, http.MethodPost, rotatePath, idem, nil, nil)
+	if res.StatusCode != http.StatusOK || string(first) != string(readAll(t, res)) {
+		t.Fatalf("幂等重放应返回首次结果：%d / %d", res.StatusCode, http.StatusOK)
+	}
+
+	if res := s.Do(t, s.AgentClient(guestKeyOf(t, link)), http.MethodGet, "/api/v1/guest-link", nil, nil); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("旧地址应立即失效：状态码 = %d, 想 401", res.StatusCode)
+	}
+	if res := s.Do(t, s.AgentClient(claim.DeviceToken), http.MethodGet, "/api/v1/session", nil, nil); res.StatusCode != http.StatusOK {
+		t.Errorf("已认领设备应继续访问：状态码 = %d, 想 200", res.StatusCode)
+	}
+	newKey := strings.TrimPrefix(rotated.URL, "/g/")
+	res = s.Do(t, s.AgentClient(newKey), http.MethodPost, "/api/v1/guest-links/enter",
+		map[string]string{"access_code": claim.AccessCode}, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Errorf("旧访问码应继续可用：状态码 = %d, 想 201", res.StatusCode)
+	}
+
+	var list struct {
+		Links []struct {
+			Note               string `json:"note"`
+			ExpiresAt          string `json:"expires_at"`
+			CanEditBrief       bool   `json:"can_edit_brief"`
+			ShareTextAvailable bool   `json:"share_text_available"`
+			Status             string `json:"status"`
+			ClaimName          string `json:"claim_name"`
+		} `json:"links"`
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number+"/guest-links", nil, &list)
+	if len(list.Links) != 1 {
+		t.Fatalf("换新地址不应新增链接，现有 %d 条", len(list.Links))
+	}
+	got := list.Links[0]
+	if got.Note != link.Note || got.ExpiresAt != link.ExpiresAt || !got.CanEditBrief ||
+		got.Status != "claimed" || got.ClaimName != "张三" || !got.ShareTextAvailable {
+		t.Errorf("链接备注、有效期、权限、认领状态或可复制状态不对：%+v", got)
+	}
+
+	res = s.Do(t, web, http.MethodPost,
+		"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(link.ID, 10)+"/share-text", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("换新地址后应能直接复制：状态码 = %d, 想 200", res.StatusCode)
+	}
+	var copied struct {
+		ShareText string `json:"share_text"`
+	}
+	tbtest.DecodeJSON(t, res, &copied)
+	if copied.ShareText != rotated.ShareText {
+		t.Errorf("直接复制文案应与换新地址响应一致：\ngot  %q\nwant %q", copied.ShareText, rotated.ShareText)
+	}
+
+	var after ticketResponseBody
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number, nil, &after)
+	var event *timelineEventBody
+	for i := range after.Timeline {
+		if after.Timeline[i].Type == "guest_link_rotated" {
+			if event != nil {
+				t.Fatalf("guest_link_rotated 事件有多条")
+			}
+			event = &after.Timeline[i]
+		}
+	}
+	if event == nil {
+		t.Fatal("时间线应有 guest_link_rotated 事件")
+	}
+	if event.Note != link.Note || event.Change <= before.Timeline[len(before.Timeline)-1].Change {
+		t.Errorf("换新地址事件应带备注并推进全局变更序号：%+v", event)
+	}
+	var guestView ticketResponseBody
+	s.Do(t, s.AgentClient(claim.DeviceToken), http.MethodGet, "/api/v1/tickets/"+number, nil, &guestView)
+	found := false
+	for _, ev := range guestView.Timeline {
+		if ev.Type == "guest_link_rotated" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("访客时间线也应看到换新地址事件")
 	}
 }
 

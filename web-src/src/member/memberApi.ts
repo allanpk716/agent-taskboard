@@ -762,6 +762,17 @@ export async function copyGuestLinkShareText(
   })
 }
 
+export async function rotateGuestLinkKey(
+  number: string,
+  id: number,
+  idemKey: string = crypto.randomUUID(),
+): Promise<{ url: string; share_text: string }> {
+  return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}/rotate-key`, {
+    method: 'POST',
+    idempotencyKey: idemKey,
+  })
+}
+
 export async function revokeGuestLink(number: string, id: number): Promise<void> {
   await api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}`, { method: 'DELETE' })
 }

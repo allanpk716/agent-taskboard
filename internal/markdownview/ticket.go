@@ -307,6 +307,8 @@ func eventText(e Event) string {
 		return "撤销访客链接「" + e.Note + "」"
 	case "guest_link_extended":
 		return "延期访客链接「" + e.Note + "」至 " + e.LinkExpiresAt
+	case "guest_link_rotated":
+		return "更换访客链接「" + e.Note + "」的地址"
 	case "brief_revised":
 		return "修订说明（第 " + strconv.FormatInt(e.Revision, 10) + " 版）"
 	case "closed":

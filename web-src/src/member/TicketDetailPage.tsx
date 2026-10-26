@@ -14,6 +14,7 @@ import {
   closeTicket,
   createGuestLink,
   copyGuestLinkShareText,
+  rotateGuestLinkKey,
   discardDraft,
   extendGuestLink,
   fetchBriefDrafting,
@@ -413,11 +414,24 @@ async function copyGuestShareTextToClipboard(number: string, id: number) {
   }
 }
 
+async function rotateGuestShareTextToClipboard(number: string, id: number): Promise<string | null> {
+  try {
+    const result = await rotateGuestLinkKey(number, id)
+    const ok = await copyText(result.share_text)
+    toast(ok ? '✓ 新转发文案已复制' : '复制失败，请手动选择文字复制')
+    return ok ? result.url : null
+  } catch (e) {
+    toast(e instanceof ApiError ? `${e.code}：${e.message}` : '换新地址失败')
+    return null
+  }
+}
+
 function LinksDialog({
   ticket,
   links,
   reload,
   onCreated,
+  onRotated,
   onChanged,
   onClose,
 }: {
@@ -425,6 +439,7 @@ function LinksDialog({
   links: GuestLink[] | null
   reload: () => Promise<void>
   onCreated: (link: CreatedGuestLink) => void
+  onRotated: (id: number, url: string) => void
   onChanged: () => void
   onClose: () => void
 }) {
@@ -434,6 +449,7 @@ function LinksDialog({
   const [canEdit, setCanEdit] = useState(false)
   const [created, setCreated] = useState<{ url: string } | null>(null)
   const [resetCode, setResetCode] = useState<string | null>(null)
+  const [rotating, setRotating] = useState<GuestLink | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [extendDates, setExtendDates] = useState<Record<number, string>>({}) // 每条链接「延期到该日」的日期
   const canManageLinks = ticket.viewer.can?.manage_guest_links !== false
@@ -518,6 +534,16 @@ function LinksDialog({
                             复制转发文案
                           </button>
                         )}{' '}
+                        {canManageLinks && !g.share_text_available && (
+                          <button
+                            className="btn sm ghost"
+                            onClick={() => {
+                              setRotating(g)
+                            }}
+                          >
+                            换新地址并复制
+                          </button>
+                        )}{' '}
                         <button
                           className="btn sm ghost"
                           onClick={() => {
@@ -595,6 +621,22 @@ function LinksDialog({
           )}
         </tbody>
       </table>
+      {rotating && (
+        <Confirm
+          title="换新地址并复制？"
+          body={<div>对方手里的旧地址会失效，请把新文案发过去。备注、认领状态、访问码和有效期都保持不变。</div>}
+          yesLabel="换新地址并复制"
+          danger
+          onYes={() => {
+            const target = rotating
+            setRotating(null)
+            void rotateGuestShareTextToClipboard(ticket.number, target.id).then((url) => {
+              if (url) onRotated(target.id, url)
+            })
+          }}
+          onCancel={() => setRotating(null)}
+        />
+      )}
       <div className="sec-t">创建新链接</div>
       <div className="inrow">
         <input
@@ -778,6 +820,7 @@ function TicketInfoColumn({
   links,
   knownUrls,
   accessRecords,
+  onRotated,
   onAssign,
   onCollaborators,
   onLabels,
@@ -788,6 +831,7 @@ function TicketInfoColumn({
   links: GuestLink[] | null
   knownUrls: Record<number, string>
   accessRecords: AccessRecordsResponse | null
+  onRotated: (id: number, url: string) => void
   onAssign: () => void
   onCollaborators: () => void
   onLabels: () => void
@@ -796,6 +840,7 @@ function TicketInfoColumn({
 }) {
   const open = ticket.status === 'open'
   const canManageLinks = ticket.viewer.can?.manage_guest_links !== false
+  const [rotating, setRotating] = useState<GuestLink | null>(null)
   return (
     <aside className="dinfo" role="region" aria-label="工单信息">
       <section>
@@ -882,11 +927,37 @@ function TicketInfoColumn({
                     复制转发文案
                   </button>
                 )}
+                {canManageLinks && !dead && !link.share_text_available && (
+                  <button
+                    className="btn sm ghost"
+                    onClick={() => {
+                      setRotating(link)
+                    }}
+                  >
+                    换新地址并复制
+                  </button>
+                )}
               </article>
             )
           })
         )}
       </section>
+      {rotating && (
+        <Confirm
+          title="换新地址并复制？"
+          body={<div>对方手里的旧地址会失效，请把新文案发过去。备注、认领状态、访问码和有效期都保持不变。</div>}
+          yesLabel="换新地址并复制"
+          danger
+          onYes={() => {
+            const target = rotating
+            setRotating(null)
+            void rotateGuestShareTextToClipboard(ticket.number, target.id).then((url) => {
+              if (url) onRotated(target.id, url)
+            })
+          }}
+          onCancel={() => setRotating(null)}
+        />
+      )}
       <AccessRecordsPanel data={accessRecords} />
     </aside>
   )
@@ -1094,6 +1165,12 @@ export function TicketDetailPage({
     void load()
     invalidate()
     if (ticket) window.dispatchEvent(new CustomEvent('tb:ticket-changed', { detail: ticket.number }))
+  }
+
+  function guestLinkRotated(id: number, url: string) {
+    setKnownLinkUrls((m) => ({ ...m, [id]: absoluteUrl(url) }))
+    void reloadGuestLinks()
+    changed()
   }
 
   if (error) {
@@ -1439,6 +1516,7 @@ export function TicketDetailPage({
           links={guestLinks}
           knownUrls={knownLinkUrls}
           accessRecords={accessRecords}
+          onRotated={guestLinkRotated}
           onAssign={() => setDialog('assign')}
           onCollaborators={() => setDialog('collaborators')}
           onLabels={() => setDialog('label')}
@@ -1455,6 +1533,7 @@ export function TicketDetailPage({
             links={guestLinks}
             knownUrls={knownLinkUrls}
             accessRecords={accessRecords}
+            onRotated={guestLinkRotated}
             onAssign={() => setDialog('assign')}
             onCollaborators={() => setDialog('collaborators')}
             onLabels={() => setDialog('label')}
@@ -1494,6 +1573,7 @@ export function TicketDetailPage({
           onCreated={(link) => {
             setKnownLinkUrls((m) => ({ ...m, [link.id]: absoluteUrl(link.url) }))
           }}
+          onRotated={guestLinkRotated}
           onChanged={changed}
           onClose={() => setDialog(null)}
         />
