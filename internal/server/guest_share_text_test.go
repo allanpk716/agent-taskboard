@@ -3,6 +3,8 @@ package server_test
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -482,6 +484,160 @@ func Test服务重启后仍能再次复制同一条链接(t *testing.T) {
 	tbtest.DecodeJSON(t, res, &copied)
 	if !strings.Contains(copied.ShareText, link.URL) {
 		t.Fatalf("重启后应还原同一条链接：%q\nwant %q", copied.ShareText, link.URL)
+	}
+}
+
+// 密钥文件内容损坏时重启：服务照常启动，已有链接照常访问（鉴权只看哈希），
+// 但全部按老链接处理；换新地址后恢复可复制。重启后新建的链接用新密钥，
+// 可以直接复制。
+func Test密钥文件内容损坏时按老链接降级且新链接可直接复制(t *testing.T) {
+	dataDir := t.TempDir()
+	s := tbtest.Start(t, tbtest.WithDataDir(dataDir))
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	number := mustCreateTicket(t, s, web, "密钥损坏后链接还能用")
+	first := mustCreateGuestLink(t, s, web, number, map[string]any{"note": "检验科-张三"})
+	second := mustCreateGuestLink(t, s, web, number, map[string]any{"note": "设备科-李四"})
+	now := s.Clock().Now()
+	s.Shutdown(t)
+
+	if err := os.WriteFile(filepath.Join(dataDir, "guest-link-key.bin"), []byte("not-a-key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s = tbtest.Start(t, tbtest.WithDataDir(dataDir), tbtest.WithClockStart(now))
+	web = s.Login("陈工", "secret-pass")
+
+	kept, err := filepath.Glob(filepath.Join(dataDir, "guest-link-key.bin.corrupt-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kept) != 1 {
+		t.Fatalf("坏密钥文件应改名留存且不删除，找到 %d 个：%v", len(kept), kept)
+	}
+	if got, err := os.ReadFile(kept[0]); err != nil || string(got) != "not-a-key" {
+		t.Errorf("留存的坏密钥文件内容应保持原样：got %q, err %v", got, err)
+	}
+
+	res := s.Do(t, s.AgentClient(guestKeyOf(t, first)), http.MethodGet, "/api/v1/guest-link", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("密钥损坏后旧链接应照常访问：状态码 = %d, 想 200", res.StatusCode)
+	}
+
+	var list struct {
+		Links []struct {
+			ID                 int64  `json:"id"`
+			Note               string `json:"note"`
+			ShareTextAvailable bool   `json:"share_text_available"`
+		} `json:"links"`
+	}
+	res = s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number+"/guest-links", nil, &list)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("读访客链接列表状态码 = %d, 想 200", res.StatusCode)
+	}
+	if len(list.Links) != 2 {
+		t.Fatalf("列表有 %d 条链接, 想 2", len(list.Links))
+	}
+	for _, link := range list.Links {
+		if link.ShareTextAvailable {
+			t.Errorf("链接 %s 应按老链接处理，share_text_available 应为假", link.Note)
+		}
+	}
+
+	for _, id := range []int64{first.ID, second.ID} {
+		res := s.Do(t, web, http.MethodPost,
+			"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(id, 10)+"/share-text", nil, nil)
+		if res.StatusCode != http.StatusConflict {
+			t.Fatalf("旧密文复制状态码 = %d, 想 409", res.StatusCode)
+		}
+		var got errorBody
+		tbtest.DecodeJSON(t, res, &got)
+		if got.Error.Code != "share_text_unavailable" {
+			t.Errorf("错误码 = %q, 想 share_text_unavailable", got.Error.Code)
+		}
+	}
+
+	fresh := mustCreateGuestLink(t, s, web, number, map[string]any{"note": "检验科-王五"})
+	res = s.Do(t, web, http.MethodPost,
+		"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(fresh.ID, 10)+"/share-text", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("重启后新建的链接应能直接复制：状态码 = %d, 想 200", res.StatusCode)
+	}
+	var copied struct {
+		ShareText string `json:"share_text"`
+	}
+	tbtest.DecodeJSON(t, res, &copied)
+	if !strings.Contains(copied.ShareText, fresh.URL) {
+		t.Fatalf("新链接文案应含同一条链接：%q\nwant %q", copied.ShareText, fresh.URL)
+	}
+
+	res = s.Do(t, web, http.MethodPost,
+		"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(first.ID, 10)+"/rotate-key", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("老链接换新地址状态码 = %d, 想 200", res.StatusCode)
+	}
+	res = s.Do(t, web, http.MethodPost,
+		"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(first.ID, 10)+"/share-text", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("换新地址后应恢复可复制：状态码 = %d, 想 200", res.StatusCode)
+	}
+}
+
+// 删掉密钥文件后重启：首次启动逻辑会生成新密钥，旧链接照常访问（鉴权只看
+// 哈希），旧密文全部按老链接处理；换新地址后恢复可复制。
+func Test删掉密钥文件后重启旧链接按老链接处理(t *testing.T) {
+	dataDir := t.TempDir()
+	s := tbtest.Start(t, tbtest.WithDataDir(dataDir))
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	number := mustCreateTicket(t, s, web, "密钥丢失后链接还能用")
+	link := mustCreateGuestLink(t, s, web, number, map[string]any{"note": "检验科-张三"})
+	now := s.Clock().Now()
+	s.Shutdown(t)
+
+	if err := os.Remove(filepath.Join(dataDir, "guest-link-key.bin")); err != nil {
+		t.Fatal(err)
+	}
+	s = tbtest.Start(t, tbtest.WithDataDir(dataDir), tbtest.WithClockStart(now))
+	web = s.Login("陈工", "secret-pass")
+
+	res := s.Do(t, s.AgentClient(guestKeyOf(t, link)), http.MethodGet, "/api/v1/guest-link", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("密钥丢失后旧链接应照常访问：状态码 = %d, 想 200", res.StatusCode)
+	}
+
+	var list struct {
+		Links []struct {
+			ShareTextAvailable bool `json:"share_text_available"`
+		} `json:"links"`
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number+"/guest-links", nil, &list)
+	if len(list.Links) != 1 {
+		t.Fatalf("列表有 %d 条链接, 想 1", len(list.Links))
+	}
+	if list.Links[0].ShareTextAvailable {
+		t.Error("密钥丢失后 share_text_available 应为假")
+	}
+
+	res = s.Do(t, web, http.MethodPost,
+		"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(link.ID, 10)+"/share-text", nil, nil)
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("复制状态码 = %d, 想 409", res.StatusCode)
+	}
+	var got errorBody
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "share_text_unavailable" {
+		t.Errorf("错误码 = %q, 想 share_text_unavailable", got.Error.Code)
+	}
+
+	res = s.Do(t, web, http.MethodPost,
+		"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(link.ID, 10)+"/rotate-key", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("换新地址状态码 = %d, 想 200", res.StatusCode)
+	}
+	res = s.Do(t, web, http.MethodPost,
+		"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(link.ID, 10)+"/share-text", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("换新地址后应恢复可复制：状态码 = %d, 想 200", res.StatusCode)
 	}
 }
 

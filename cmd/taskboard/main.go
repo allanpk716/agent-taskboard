@@ -219,11 +219,19 @@ func cmdRestore(args []string) error {
 	if res.SavedCurrentAs != "" {
 		fmt.Printf("已另存当前库：%s\n", filepath.Base(res.SavedCurrentAs))
 	}
+	if res.SavedGuestLinkKeyAs != "" {
+		fmt.Printf("已另存当前转发文案密钥：%s\n", filepath.Base(res.SavedGuestLinkKeyAs))
+	}
 	fmt.Printf("已换上备份：%s，从镜像补齐附件 %d 个", filepath.Base(res.BackupFile), res.AttachmentsRestored)
 	if len(res.MissingAttachments) > 0 {
 		fmt.Printf("（镜像里也缺 %d 个：%s）", len(res.MissingAttachments), strings.Join(res.MissingAttachments, "、"))
 	}
 	fmt.Println()
+	if res.GuestLinkKeyRestored {
+		fmt.Println("已还原转发文案密钥：恢复后的访客链接可继续直接复制转发文案")
+	} else {
+		fmt.Println("备份里没有转发文案密钥：恢复后的访客链接按老链接处理，照常可用，需换新地址后才能再次复制")
+	}
 	fmt.Println("恢复完成：请启动服务（NSSM 下执行 nssm start <服务名>，或直接 taskboard serve）")
 	return nil
 }

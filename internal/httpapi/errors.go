@@ -92,22 +92,23 @@ const (
 	CodeBriefMDWithTemplate   = "brief_md_with_template"  // 模板工单用 brief_md 修订
 
 	// #32：访客链接与访客视角。
-	CodeLinkRevoked          = "link_revoked"           // 访客链接已被撤销（401，即时生效）
-	CodeLinkExpired          = "link_expired"           // 访客链接已过期（401，即时生效）
-	CodeLinkUnclaimed        = "link_unclaimed"         // 访客链接尚未认领（401）
-	CodeLinkClaimed          = "link_claimed"           // 访客链接已被认领，链接密钥不再可用
-	CodeClaimNameRequired    = "claim_name_required"    // 认领访客链接时称呼为空
-	CodeAccessCodeRequired   = "access_code_required"   // 凭访问码进入时访问码为空
-	CodeAccessCodeInvalid    = "access_code_invalid"    // 访问码不正确
-	CodeAccessCodeLocked     = "access_code_locked"     // 连续输错后访问码已锁定
-	CodeNoteRequired         = "note_required"          // 创建访客链接缺备注
-	CodeInvalidValidDays     = "invalid_valid_days"     // 有效期不是 7/30/90 或与 expires_at 并存
-	CodeInvalidExpiresAt     = "invalid_expires_at"     // expires_at 不是合法的将来时刻
-	CodeGuestLinkNotFound    = "guest_link_not_found"   // 这个工单下没有这条访客链接
-	CodeLinkNotExtendable    = "link_not_extendable"    // 已撤销或已过期的链接不能延期
-	CodeShareTextUnavailable = "share_text_unavailable" // 老访客链接没有可恢复密钥，不能直接复制转发文案
-	CodeLinkCannotEditBrief  = "link_cannot_edit_brief" // 链接没有「可填写说明」权限
-	CodeTicketClosed         = "ticket_closed"          // 工单已关闭，访客链接只读；成员回复草稿保存/发出同样使用
+	CodeLinkRevoked                = "link_revoked"                  // 访客链接已被撤销（401，即时生效）
+	CodeLinkExpired                = "link_expired"                  // 访客链接已过期（401，即时生效）
+	CodeLinkUnclaimed              = "link_unclaimed"                // 访客链接尚未认领（401）
+	CodeLinkClaimed                = "link_claimed"                  // 访客链接已被认领，链接密钥不再可用
+	CodeClaimNameRequired          = "claim_name_required"           // 认领访客链接时称呼为空
+	CodeAccessCodeRequired         = "access_code_required"          // 凭访问码进入时访问码为空
+	CodeAccessCodeInvalid          = "access_code_invalid"           // 访问码不正确
+	CodeAccessCodeLocked           = "access_code_locked"            // 连续输错后访问码已锁定
+	CodeNoteRequired               = "note_required"                 // 创建访客链接缺备注
+	CodeInvalidValidDays           = "invalid_valid_days"            // 有效期不是 7/30/90 或与 expires_at 并存
+	CodeInvalidExpiresAt           = "invalid_expires_at"            // expires_at 不是合法的将来时刻
+	CodeGuestLinkNotFound          = "guest_link_not_found"          // 这个工单下没有这条访客链接
+	CodeLinkNotExtendable          = "link_not_extendable"           // 已撤销或已过期的链接不能延期
+	CodeShareTextUnavailable       = "share_text_unavailable"        // 老访客链接没有可恢复密钥，不能直接复制转发文案
+	CodeGuestLinkCipherUnavailable = "guest_link_cipher_unavailable" // 服务端加密密钥写不出来（503），新建链接/换新地址暂不可用
+	CodeLinkCannotEditBrief        = "link_cannot_edit_brief"        // 链接没有「可填写说明」权限
+	CodeTicketClosed               = "ticket_closed"                 // 工单已关闭，访客链接只读；成员回复草稿保存/发出同样使用
 
 	// #211：草稿。
 	CodeInvalidDraftMode     = "invalid_draft_mode"     // draft_mode 不是 required/direct

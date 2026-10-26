@@ -1,5 +1,6 @@
 // 恢复（#43）：taskboard restore <备份文件> 的五步依次是确认服务已停止、
-// 另存当前库、换成指定的备份、从镜像中补齐附件、（由 NSSM 或操作员）启动服务。
+// 另存当前库、换成指定的备份、还原转发文案密钥并从镜像中补齐附件、
+// （由 NSSM 或操作员）启动服务。
 // 服务本身不在本进程里启停：Windows 上对运行中的库做热替换不安全（文件也被
 // 占用），所以恢复要求服务已停止（端口上仍在监听时拒绝执行），完成后由 NSSM
 // 或操作员重新启动。
@@ -27,14 +28,19 @@ type RestoreResult struct {
 	DBPath string
 	// AttachmentsRestored 是从镜像补齐的附件文件数。
 	AttachmentsRestored int
+	// GuestLinkKeyRestored 表示备份目录里有转发文案密钥并已还原（#244）；
+	// 旧备份没有这个文件时为假，恢复后链接按老链接降级。
+	GuestLinkKeyRestored bool
+	// SavedGuestLinkKeyAs 是还原前另存的当前转发文案密钥路径（原文件没丢）。
+	SavedGuestLinkKeyAs string
 	// MissingAttachments 是镜像里也补不回来的附件 id（库里有记录、两边都没有
 	// 文件；恢复不因此中止，列出来让人处理）。
 	MissingAttachments []string
 }
 
-// Restore 把 dataDir 的库换成 backupFile，并从备份文件旁的镜像目录
-// （<备份所在目录>\attachments\，与备份时写的镜像同源）补齐主存储里缺的
-// 附件文件。port 上有服务在监听时拒绝执行。
+// Restore 把 dataDir 的库换成 backupFile，还原备份目录里的转发文案密钥
+// （#244），并从备份文件旁的镜像目录（<备份所在目录>\attachments\，与备份时
+// 写的镜像同源）补齐主存储里缺的附件文件。port 上有服务在监听时拒绝执行。
 func Restore(dataDir string, port int, backupFile string, now time.Time) (RestoreResult, error) {
 	res := RestoreResult{BackupFile: backupFile, DBPath: filepath.Join(dataDir, "taskboard.db")}
 
@@ -85,7 +91,29 @@ func Restore(dataDir string, port int, backupFile string, now time.Time) (Restor
 		return res, err
 	}
 
-	// 4. 从镜像中补齐附件：库里有记录、主存储里缺文件的，从备份旁边的镜像拷回。
+	// 4. 还原转发文案密钥（#244）：备份目录里有时，当前密钥先另存，再换回
+	// 备份时的那份；没有时保持现状，链接按老链接降级但照常可用。
+	keyBackup := filepath.Join(filepath.Dir(backupFile), guestLinkKeyFile)
+	if _, err := os.Stat(keyBackup); err == nil {
+		keyPath := filepath.Join(dataDir, guestLinkKeyFile)
+		if _, err := os.Stat(keyPath); err == nil {
+			saved := keyPath + "." + suffix
+			if err := os.Rename(keyPath, saved); err != nil {
+				return res, fmt.Errorf("另存当前转发文案密钥 %s 失败：%w", keyPath, err)
+			}
+			res.SavedGuestLinkKeyAs = saved
+		} else if !os.IsNotExist(err) {
+			return res, fmt.Errorf("读当前转发文案密钥 %s 失败：%w", keyPath, err)
+		}
+		if err := copyFile(keyBackup, keyPath); err != nil {
+			return res, fmt.Errorf("还原转发文案密钥失败：%w", err)
+		}
+		res.GuestLinkKeyRestored = true
+	} else if !os.IsNotExist(err) {
+		return res, fmt.Errorf("读备份里的转发文案密钥 %s 失败：%w", keyBackup, err)
+	}
+
+	// 5. 从镜像中补齐附件：库里有记录、主存储里缺文件的，从备份旁边的镜像拷回。
 	// store.Open 会执行迁移：用旧备份配上新二进制时，库会升到当前版本的表结构。
 	st, err := store.Open(dataDir)
 	if err != nil {

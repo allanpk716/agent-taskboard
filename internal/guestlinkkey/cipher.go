@@ -10,9 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -31,15 +33,28 @@ type Cipher struct {
 }
 
 // LoadOrCreate 在数据目录读取服务端密钥；文件不存在时生成一个独立密钥文件。
-// 文件存在但不可读、长度不对时返回错误，由调用方降级为“老链接”模式。
+// 文件存在但读不出来或长度不对时，把坏文件改名留存（不删除）后生成新密钥
+// 照常使用——旧密文解不开，一律由调用方按“老链接”处理。只有坏文件留存不了
+// 或新密钥写不进去时才返回错误，由调用方降级为无密钥模式。
 func LoadOrCreate(dataDir string) (*Cipher, error) {
 	path := filepath.Join(dataDir, fileName)
-	key, err := os.ReadFile(path)
-	if err == nil {
-		return New(key)
+	key, readErr := os.ReadFile(path)
+	if readErr == nil {
+		c, err := New(key)
+		if err == nil {
+			return c, nil
+		}
+		readErr = err // 内容无效，同样按密钥丢失处理。
+	} else if os.IsNotExist(readErr) {
+		readErr = nil // 文件不存在：首次启动，正常生成。
 	}
-	if !os.IsNotExist(err) {
-		return nil, fmt.Errorf("读取访客链接加密密钥 %s 失败：%w", path, err)
+	if readErr != nil {
+		corrupt := path + ".corrupt-" + time.Now().Format("20060102-150405.000000000")
+		if err := os.Rename(path, corrupt); err != nil {
+			return nil, fmt.Errorf("访客链接加密密钥 %s 不可用（%v），且改名留存失败：%w", path, readErr, err)
+		}
+		log.Printf("访客链接加密密钥 %s 不可用（%v），已改名留存为 %s；生成新密钥，旧链接按老链接处理",
+			path, readErr, corrupt)
 	}
 	key = make([]byte, keySize)
 	if _, err := io.ReadFull(rand.Reader, key); err != nil {

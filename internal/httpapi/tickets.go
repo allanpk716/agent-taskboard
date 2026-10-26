@@ -633,6 +633,9 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, ref strin
 		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidExpiresAt, err.Error(), "写成日期（2026-12-01）或时刻（2026-12-01T18:00:00+08:00）")
 	case errors.Is(err, tickets.ErrGuestLinkNotFound):
 		WriteError(w, http.StatusNotFound, CodeGuestLinkNotFound, err.Error(), "链接 id 是创建响应里的数字 id；列表见 GET /api/v1/tickets/{id}/guest-links")
+	case errors.Is(err, tickets.ErrGuestLinkCipherUnavailable):
+		WriteError(w, http.StatusServiceUnavailable, CodeGuestLinkCipherUnavailable, err.Error(),
+			"检查数据目录是否可写并重启服务；已有访客链接照常可用，密文按老链接处理")
 	case isLinkNotExtendable(err):
 		WriteError(w, http.StatusConflict, CodeLinkNotExtendable, err.Error(),
 			"需要对方继续参与时创建一条新的访客链接，并重新发给对方")

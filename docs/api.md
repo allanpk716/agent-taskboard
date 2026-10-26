@@ -900,11 +900,13 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   `manage_guest_links` 能力的成员凭证（访客 403 `members_only`），响应带
   `Cache-Control: no-store`。已撤销或已过期返回 409 `link_not_extendable`；上线前没有
   加密密钥的老链接返回 409 `share_text_unavailable`，hint 提示换一个新地址。复制本身不写时间线。
+  服务端密钥文件丢失或换过后解不开的密文同样按老链接处理，返回同一个 409。
 - `POST …/rotate-key` 给同一条链接写入新的哈希与加密密钥并返回新的 `{url, share_text}`；
   旧地址立即失效，新文案按当前标题、有效期和认领状态生成。备注、认领状态、设备凭证、
   访问码、有效期与「可填写说明」权限都保持不变。只限可见范围内、有 `manage_guest_links`
   能力的成员凭证（访客 403 `members_only`）；已撤销或已过期返回 409
-  `link_not_extendable`。请求带 `Idempotency-Key` 时，重放返回首次结果，不会再次换地址；
+  `link_not_extendable`；服务端连新密钥文件都写不出来（如数据目录只读）时返回 503
+  `guest_link_cipher_unavailable`，不会静默变成 500。请求带 `Idempotency-Key` 时，重放返回首次结果，不会再次换地址；
   响应带 `Cache-Control: no-store`。
 - `status` 为 `unclaimed` / `claimed` / `access_code_locked` / `revoked`；已认领时带自报称呼、认领时间和设备数，锁定时仍保持已认领语义。
   存量链接迁移后 `claimed_at` 为空，一律按未认领处理。
