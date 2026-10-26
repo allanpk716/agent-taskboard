@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ApiError } from '../api'
 import type { AnyDraftView, CreateDraftRequest, CreateDraftView } from '../shared/types'
 import { absoluteUrl } from '../shared/format'
+import { Markdown } from '../shared/markdown'
 import {
   discardDraft,
   fetchDraft,
@@ -94,6 +95,7 @@ export function CreateDraftPage({ id }: { id: string }) {
 
   const { draft, request } = stage
   const dirty = JSON.stringify(request) !== JSON.stringify(draft.request)
+  const attachments = new Map(draft.attachments.map((attachment) => [attachment.id, attachment]))
 
   function patch(next: Partial<CreateDraftRequest>) {
     if (stage.phase !== 'ready') return
@@ -180,9 +182,11 @@ export function CreateDraftPage({ id }: { id: string }) {
               onChange={(e) => patch({ brief_md: e.target.value })}
             />
           ) : (
-            <div className="md">
-              {request.brief_md || '（说明未填写）'}
-            </div>
+            request.brief_md ? (
+              <Markdown body={request.brief_md} attachments={attachments} />
+            ) : (
+              <div className="md">（说明未填写）</div>
+            )
           )}
           {draft.warnings?.length ? (
             <div className="warnbox">必填项未填写：{draft.warnings.map((w) => w.field).join('、')}</div>

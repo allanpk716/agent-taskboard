@@ -113,11 +113,17 @@ test('草稿通知出现在铃铛并定位到草稿处', async ({ page, request 
 test('成员直接修改回复草稿并发出后署名注明修改', async ({ page, request }) => {
   const number = await createTicket(request, { title: '成员手改草稿', assignee: '王工' })
   const token = await issueRequiredAgent(request)
-  await replyDraft(request, token, number)
+  const markdown = '**已定位问题**\n- 复现步骤可靠\n- 影响范围确认'
+  await replyDraft(request, token, number, markdown)
 
   await login(page, await wang())
   await page.goto(`/t/${number}#draft`)
+  const draftBody = page.locator('.draft-body')
+  await expect(draftBody.locator('strong')).toHaveText('已定位问题')
+  await expect(draftBody.locator('li')).toHaveCount(2)
+  await expect(draftBody).not.toContainText('**')
   await page.getByRole('button', { name: '直接修改' }).click()
+  await expect(page.getByLabel('草稿内容')).toHaveValue(markdown)
   await page.getByLabel('草稿内容').fill('这是成员修改后的回复。')
   await page.getByRole('button', { name: '保存草稿' }).click()
   await expect(page.getByLabel('回复草稿')).toContainText('第 2 版')

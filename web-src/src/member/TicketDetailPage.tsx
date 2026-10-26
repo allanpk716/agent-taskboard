@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, ApiError } from '../api'
 import type { MemberTicket } from './memberApi'
-import type { DraftView } from '../shared/types'
+import type { Attachment, DraftView } from '../shared/types'
 import {
   addCollaborator,
   assignTicket,
@@ -40,6 +40,7 @@ import {
   type Collaborator,
 } from './memberApi'
 import { BriefBubble, EventLine, ReplyBubble, eventText } from '../shared/conversation'
+import { Markdown, inlineImageIds } from '../shared/markdown'
 import { DimensionSelect } from '../guest/DimensionSelect'
 import { AttachmentChips, DeactivatedBadge, Lightbox } from '../shared/widgets'
 import { absoluteUrl, authorName, closeReasonText, fmtBeijing, fmtLinkExpiry, fmtShort, linkExpired } from '../shared/format'
@@ -1280,7 +1281,14 @@ export function TicketDetailPage({
             />
           ),
         )}
-        {ticket.my_draft && <DraftCard draft={ticket.my_draft} ticket={ticket} onChanged={changed} />}
+        {ticket.my_draft && (
+          <DraftCard
+            draft={ticket.my_draft}
+            ticket={ticket}
+            onChanged={changed}
+            onImageClick={setLightbox}
+          />
+        )}
       </div>
 
       {ticket.my_draft ? (
@@ -1596,14 +1604,24 @@ export function TicketDetailPage({
 }
 
 /* ---------------- 回复输入区（带交付标记与附件） ---------------- */
+function draftAttachments(draft: DraftView, ticket: MemberTicket): Map<string, Attachment> {
+  const attachments = new Map(draft.attachments.map((attachment) => [attachment.id, attachment]))
+  for (const attachment of ticket.attachments) {
+    if (!attachments.has(attachment.id)) attachments.set(attachment.id, attachment)
+  }
+  return attachments
+}
+
 function DraftCard({
   draft,
   ticket,
   onChanged,
+  onImageClick,
 }: {
   draft: DraftView
   ticket: MemberTicket
   onChanged: () => void
+  onImageClick: (url: string) => void
 }) {
   const [confirmDiscard, setConfirmDiscard] = useState(false)
   const [changed, setChanged] = useState<{ throughSeq: number; count: number } | null>(null)
@@ -1626,6 +1644,8 @@ function DraftCard({
   const brief = draft.kind === 'brief_revision'
   const revisionStale = brief && ticket.brief.revision !== draft.base.brief_revision
   const newEvents = ticket.timeline.filter((e) => e.seq > draft.base.timeline_seq)
+  const attachments = draftAttachments(draft, ticket)
+  const inlineReplyImages = brief ? null : inlineImageIds(draft.request.body_md)
 
   async function send(confirmThroughSeq?: number) {
     setBusy(true)
@@ -1750,11 +1770,26 @@ function DraftCard({
       ) : (
         <>
           {brief ? (
-            <DraftBriefChanges draft={draft} ticket={ticket} />
+            <DraftBriefChanges
+              draft={draft}
+              ticket={ticket}
+              attachments={attachments}
+              onImageClick={onImageClick}
+            />
           ) : (
             <>
-              <div className="draft-body">{draft.request.body_md}</div>
-              <AttachmentChips attachments={draft.attachments} />
+              <div className="draft-body">
+                <Markdown
+                  body={draft.request.body_md}
+                  attachments={attachments}
+                  onImageClick={onImageClick}
+                />
+              </div>
+              <AttachmentChips
+                attachments={draft.attachments.filter(
+                  (attachment) => !inlineReplyImages?.has(attachment.id),
+                )}
+              />
             </>
           )}
           <div className="draft-actions">
@@ -1841,7 +1876,17 @@ function DraftCard({
   )
 }
 
-function DraftBriefChanges({ draft, ticket }: { draft: DraftView; ticket: MemberTicket }) {
+function DraftBriefChanges({
+  draft,
+  ticket,
+  attachments,
+  onImageClick,
+}: {
+  draft: DraftView
+  ticket: MemberTicket
+  attachments: Map<string, Attachment>
+  onImageClick: (url: string) => void
+}) {
   const oldFields = ticket.brief.fields ?? {}
   const newFields = { ...oldFields, ...(draft.request.fields ?? {}) }
   const oldIDs = new Set(ticket.brief.attachment_ids)
@@ -1849,15 +1894,27 @@ function DraftBriefChanges({ draft, ticket }: { draft: DraftView; ticket: Member
   const attachmentName = (id: string) =>
     ticket.attachments.find((a) => a.id === id)?.filename ??
     draft.attachments.find((a) => a.id === id)?.filename ?? id
-  const row = (label: string, oldText: string, newText: string) => (
+  const row = (label: string, oldText: string, newText: string, markdown = false) => (
     <div className="draft-field-change" key={label}>
       <span className="name">{label}</span>
       {oldText === newText ? (
         <span className="unchanged">（未改）</span>
       ) : (
         <>
-          <span className="old">{oldText || '（空）'}</span>
-          <span className="new">{newText || '（空）'}</span>
+          <div className="old">
+            {markdown && oldText ? (
+              <Markdown body={oldText} attachments={attachments} onImageClick={onImageClick} />
+            ) : (
+              oldText || '（空）'
+            )}
+          </div>
+          <div className="new">
+            {markdown && newText ? (
+              <Markdown body={newText} attachments={attachments} onImageClick={onImageClick} />
+            ) : (
+              newText || '（空）'
+            )}
+          </div>
         </>
       )}
     </div>
@@ -1867,9 +1924,9 @@ function DraftBriefChanges({ draft, ticket }: { draft: DraftView; ticket: Member
       {row('标题', ticket.title, draft.request.title ?? ticket.title)}
       {(ticket.brief.template_fields ?? []).length > 0
         ? (ticket.brief.template_fields ?? []).map((field) =>
-            row(field.title, oldFields[field.key] ?? '', newFields[field.key] ?? ''),
+            row(field.title, oldFields[field.key] ?? '', newFields[field.key] ?? '', true),
           )
-        : row('说明', ticket.brief.markdown, draft.request.brief_md ?? ticket.brief.markdown)}
+        : row('说明', ticket.brief.markdown, draft.request.brief_md ?? ticket.brief.markdown, true)}
       {[...new Set([...oldIDs, ...newIDs])].map((id) =>
         row(`附件：${attachmentName(id)}`, oldIDs.has(id) ? '有' : '无', newIDs.has(id) ? '有' : '无'),
       )}

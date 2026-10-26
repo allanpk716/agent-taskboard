@@ -1662,7 +1662,6 @@
 }
 
 .draft-body {
-  white-space: pre-wrap;
   margin-bottom: 10px;
 }
 
@@ -1674,7 +1673,7 @@
 
 .draft-field-change {
   display: grid;
-  grid-template-columns: 120px 1fr;
+  grid-template-columns: 100px minmax(0, 1fr) minmax(0, 1fr);
   gap: 6px 10px;
   align-items: start;
   font-size: 13px;
@@ -1687,7 +1686,7 @@
 
 .draft-field-change .old,
 .draft-field-change .new {
-  white-space: pre-wrap;
+  min-width: 0;
   border-radius: 4px;
   padding: 3px 6px;
 }
@@ -1701,6 +1700,17 @@
 .draft-field-change .new {
   background: #e6ffec;
   color: #14532d;
+}
+
+@media (max-width: 700px) {
+  .draft-field-change {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .draft-field-change .name,
+  .draft-field-change .unchanged {
+    grid-column: 1 / -1;
+  }
 }
 
 .draft-edit-field {
