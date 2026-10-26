@@ -94,10 +94,15 @@ export function CreateDraftPage({ id }: { id: string }) {
 
   const { draft, request } = stage
   const dirty = JSON.stringify(request) !== JSON.stringify(draft.request)
+  const isTemplate = !!request.template
 
   function patch(next: Partial<CreateDraftRequest>) {
     if (stage.phase !== 'ready') return
     setStage({ ...stage, request: { ...stage.request, ...next } })
+  }
+
+  function patchField(key: string, value: string) {
+    patch({ fields: { ...(request.fields ?? {}), [key]: value } })
   }
 
   async function saveChanges(): Promise<CreateDraftView | null> {
@@ -174,16 +179,56 @@ export function CreateDraftPage({ id }: { id: string }) {
             )}
           </header>
           {stage.editing ? (
-            <textarea
-              aria-label="说明"
-              value={request.brief_md}
-              onChange={(e) => patch({ brief_md: e.target.value })}
-            />
+            isTemplate ? (
+              // 模板草稿的 brief_md 发出时不会被采用：逐个字段编辑 fields，
+              // 不给改 brief_md 的大文本框。
+              (draft.template_fields ?? []).map((field) => {
+                const value = request.fields?.[field.key] ?? ''
+                const options = field.options ?? []
+                return (
+                  <label className="draft-edit-field" key={field.key}>
+                    <span>
+                      {field.title}
+                      {field.required ? '（必填）' : ''}
+                    </span>
+                    {field.type !== 'text' && options.length > 0 ? (
+                      <select
+                        aria-label={field.title}
+                        value={value}
+                        onChange={(e) => patchField(field.key, e.target.value)}
+                      >
+                        <option value="">（未填）</option>
+                        {(!value || options.includes(value) ? options : [...options, value]).map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <textarea
+                        aria-label={field.title}
+                        value={value}
+                        onChange={(e) => patchField(field.key, e.target.value)}
+                      />
+                    )}
+                  </label>
+                )
+              })
+            ) : (
+              <textarea
+                aria-label="说明"
+                value={request.brief_md}
+                onChange={(e) => patch({ brief_md: e.target.value })}
+              />
+            )
           ) : (
             <div className="md">
-              {request.brief_md || '（说明未填写）'}
+              {(isTemplate ? draft.rendered_brief_md : request.brief_md) || '（说明未填写）'}
             </div>
           )}
+          {isTemplate && draft.template_warning ? (
+            <div className="warnbox">{draft.template_warning}</div>
+          ) : null}
           {draft.warnings?.length ? (
             <div className="warnbox">必填项未填写：{draft.warnings.map((w) => w.field).join('、')}</div>
           ) : null}

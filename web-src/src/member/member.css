@@ -1576,6 +1576,28 @@
   min-height: 220px;
 }
 
+/* 模板建单草稿逐字段编辑：每个字段一块小输入区，不共用上面的大文本框。 */
+.create-draft-main .draft-edit-field {
+  display: block;
+  margin-bottom: 10px;
+}
+
+.create-draft-main .draft-edit-field span {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  color: #4b5563;
+  margin-bottom: 4px;
+}
+
+.create-draft-main .draft-edit-field textarea {
+  min-height: 72px;
+}
+
+.create-draft-main .draft-edit-field select {
+  width: 100%;
+}
+
 .create-draft-actions {
   margin-top: 12px;
 }

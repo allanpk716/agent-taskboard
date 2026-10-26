@@ -1,15 +1,19 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/drafts"
+	"github.com/allanpk716/agent-taskboard/internal/template"
+	"github.com/allanpk716/agent-taskboard/internal/templates"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
 
@@ -251,6 +255,13 @@ type draftView struct {
 	URL         string                 `json:"url"`
 	Result      any                    `json:"result,omitempty"`
 	Warnings    []tickets.FieldWarning `json:"warnings,omitempty"`
+	// 模板建单草稿的服务端计算字段（只读，PUT 时忽略）：rendered_brief_md
+	// 与发出时生成的工单说明同一条路径算出；template_fields 是当前模板版本的
+	// 字段定义，供网页逐字段编辑。模板已不存在时退化为按字段键值原样拼出，
+	// template_warning 说明原因。
+	RenderedBriefMD string                   `json:"rendered_brief_md,omitempty"`
+	TemplateFields  []draftTemplateFieldView `json:"template_fields,omitempty"`
+	TemplateWarning string                   `json:"template_warning,omitempty"`
 }
 
 func draftAttachmentViews(atts []attachments.AttachmentInfo) []attachmentView {
@@ -276,6 +287,17 @@ type draftBaseView struct {
 	BriefRevision int64 `json:"brief_revision,omitempty"`
 }
 
+// draftTemplateFieldView 是模板建单草稿视图里的字段定义精简版：网页按它逐字段
+// 编辑 fields；维度/单选字段连同候选值一起下发。
+type draftTemplateFieldView struct {
+	Key       string   `json:"key"`
+	Title     string   `json:"title"`
+	Required  bool     `json:"required"`
+	Type      string   `json:"type"` // text | radio | dimension
+	Options   []string `json:"options,omitempty"`
+	Dimension string   `json:"dimension,omitempty"`
+}
+
 type draftVersionView struct {
 	Version int64  `json:"version"`
 	Author  string `json:"author"`
@@ -290,9 +312,16 @@ func newDraftView(a *API, r *http.Request, d drafts.Draft) draftView {
 	request := any(d.Request)
 	var ticket *draftTicketView
 	previewURL := d.TicketURL + "#draft"
+	view := draftView{}
 	if d.Kind == drafts.KindCreate {
 		request = d.CreateRequest
 		previewURL = "/drafts/" + d.ID
+		// 只给 pending 草稿算预览：已发出的说明存的是发出那一刻的快照，
+		// 模板之后改版不应让“预览”变得与已发出的工单说明不一致。
+		if d.CreateRequest.Template != "" && d.Status == "pending" {
+			view.RenderedBriefMD, view.TemplateFields, view.TemplateWarning =
+				a.renderCreateTemplateBrief(r.Context(), d.CreateRequest)
+		}
 	}
 	if d.TicketNumber != "" {
 		ticket = &draftTicketView{Number: d.TicketNumber, Seq: d.TicketSeq, Title: d.TicketTitle, URL: d.TicketURL}
@@ -315,14 +344,51 @@ func newDraftView(a *API, r *http.Request, d drafts.Draft) draftView {
 			break
 		}
 	}
-	return draftView{
-		ID: d.ID, Kind: d.Kind, Status: d.Status, Version: d.Version,
-		Ticket: ticket, Request: request, Attachments: draftAttachmentViews(d.Attachments),
-		Author: author, Versions: newDraftVersions(d.Versions),
-		Base: draftBaseView{TimelineSeq: d.BaseTimelineSeq, BriefRevision: d.BaseBriefRevision}, NewEvents: d.NewEvents,
-		PreviewURL: previewURL, URL: "/api/v1/drafts/" + d.ID, Result: result,
-		Warnings: d.Warnings,
+	view.ID, view.Kind, view.Status, view.Version = d.ID, d.Kind, d.Status, d.Version
+	view.Ticket, view.Request, view.Attachments = ticket, request, draftAttachmentViews(d.Attachments)
+	view.Author, view.Versions = author, newDraftVersions(d.Versions)
+	view.Base, view.NewEvents = draftBaseView{TimelineSeq: d.BaseTimelineSeq, BriefRevision: d.BaseBriefRevision}, d.NewEvents
+	view.PreviewURL, view.URL, view.Result, view.Warnings = previewURL, "/api/v1/drafts/"+d.ID, result, d.Warnings
+	return view
+}
+
+// renderCreateTemplateBrief 用发出时同一条路径渲染模板建单草稿的说明预览：
+// 取模板当前版本的字段定义（发出时也是现取当前版本），交给 template.RenderBrief。
+// 模板不存在时不报错：按已填字段的键值原样拼出（键作标题、按键排序），并给出
+// 一条 warning——发出本会失败，但预览不能因此 500。
+func (a *API) renderCreateTemplateBrief(ctx context.Context, req drafts.CreateRequest) (string, []draftTemplateFieldView, string) {
+	tmpl, err := a.templates.Get(ctx, req.Template)
+	if errors.Is(err, templates.ErrNotFound) {
+		keys := make([]string, 0, len(req.Fields))
+		for k, v := range req.Fields {
+			if strings.TrimSpace(v) == "" {
+				continue
+			}
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, "### "+k+"\n\n"+strings.TrimSpace(req.Fields[k]))
+		}
+		warning := "模板 " + req.Template + " 已不存在，预览按已填字段原样拼出；这份草稿无法直接发出，请先重建模板或另建草稿。"
+		return strings.Join(parts, "\n\n"), nil, warning
 	}
+	if err != nil {
+		panic(err)
+	}
+	fields := make([]draftTemplateFieldView, 0, len(tmpl.Fields))
+	for _, f := range tmpl.Fields {
+		fv := draftTemplateFieldView{
+			Key: f.Key, Title: f.Title, Required: f.Required, Type: f.Type,
+			Options: nonNil(f.Options), Dimension: f.Dimension,
+		}
+		if f.Type == template.TypeDimension {
+			fv.Options, _ = a.dimensionOptions(ctx, f.Dimension)
+		}
+		fields = append(fields, fv)
+	}
+	return template.RenderBrief(req.Fields, tmpl.Fields), fields, ""
 }
 
 func newDraftVersions(vs []drafts.Version) []draftVersionView {
