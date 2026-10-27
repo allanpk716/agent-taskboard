@@ -206,6 +206,12 @@ export interface TicketView {
     can: Record<string, boolean>
   }
   timeline: TimelineEvent[]
+  /** 工单指令：成员视角总有；访客视角没有（访客用 guest_agent_instruction）。 */
+  handoff_text?: string
+  /** 中性交接文案：不点名、不含凭证，成员与访客视角都有。 */
+  handoff_share_text?: string | null
+  /** 访客 Agent 指令：仅访客视角；链接地址是 {GUEST_LINK_URL} 占位符，由网页替换。 */
+  guest_agent_instruction?: string
 }
 
 export interface GuestSession {

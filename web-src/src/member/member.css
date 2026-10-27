@@ -1390,53 +1390,6 @@
   margin-top: 8px;
 }
 
-/* #110：手机详情顶栏的「⋯」菜单；宽屏按钮在 actrow 里。 */
-.dmore {
-  display: none;
-}
-@media (max-width: 639px) {
-  .detail .dhead {
-    padding-right: 40px;
-  }
-  .dmore {
-    display: block;
-    position: absolute;
-    top: 12px;
-    right: 4px;
-    border: 0;
-    background: none;
-    color: #55607a;
-    font-size: 20px;
-    line-height: 1;
-    padding: 4px 8px;
-    cursor: pointer;
-  }
-  .dmenu {
-    position: absolute;
-    top: 46px;
-    right: 4px;
-    z-index: 35;
-    background: #fff;
-    border: 1px solid #dfe4ee;
-    border-radius: 8px;
-    box-shadow: 0 8px 20px rgba(20, 30, 50, 0.14);
-    min-width: 150px;
-    overflow: hidden;
-  }
-  .dmenu button {
-    display: block;
-    width: 100%;
-    border: 0;
-    background: none;
-    text-align: left;
-    padding: 10px 12px;
-    font-size: 14px;
-    cursor: pointer;
-  }
-  .actrow .handoff-btn {
-    display: none;
-  }
-}
 .conv {
   background: #eef1f6;
   border-radius: 14px;
@@ -2134,6 +2087,19 @@
   color: #4b5563;
   font-size: 12.5px;
   margin: -2px 0 8px;
+}
+.peer-choice {
+  align-items: center;
+  margin-bottom: 10px;
+  gap: 16px;
+}
+.peer-choice input:disabled + span {
+  color: #9aa3b2;
+}
+.peer-create {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px dashed #dfe4ee;
 }
 .handoff-onboarding {
   margin-top: 0;

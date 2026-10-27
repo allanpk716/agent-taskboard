@@ -44,7 +44,7 @@ import { DimensionSelect } from '../guest/DimensionSelect'
 import { AttachmentChips, DeactivatedBadge, Lightbox } from '../shared/widgets'
 import { absoluteUrl, authorName, closeReasonText, fmtBeijing, fmtLinkExpiry, fmtShort, linkExpired } from '../shared/format'
 import { Confirm, Modal, copyText, invalidate, nav, toast, useLocationSearch } from './ui'
-import { HandoffDialog } from './HandoffDialog'
+import { HandoffDialog, PeerHandoffDialog, type HandoffPeer } from './HandoffDialog'
 import { LabelChips, chipClass, turnLabel } from './TicketsPage'
 import { detailListSource, filtersFromSearch, toQuery, toggleLabelCondition } from './listFilters'
 import { useLayoutTier } from './useLayoutTier'
@@ -1096,7 +1096,6 @@ export function TicketDetailPage({
   const [lightbox, setLightbox] = useState<string | null>(null)
   const [actor, setActor] = useState<ActorFilter>('all')
   const [dialog, setDialog] = useState<'label' | 'brief' | 'assign' | 'collaborators' | 'links' | 'close' | 'reopen' | 'agent' | 'share' | null>(null)
-  const [mobileMenu, setMobileMenu] = useState(false)
   const [members, setMembers] = useState<MemberRef[]>([])
   const [guestLinks, setGuestLinks] = useState<GuestLink[] | null>(null)
   const [knownLinkUrls, setKnownLinkUrls] = useState<Record<number, string>>({})
@@ -1180,6 +1179,19 @@ export function TicketDetailPage({
     open && ticket.viewer.your_turn && ticket.waiting_on.reason.includes('交付') && ticket.waiting_on.reason.includes('验收')
   const hasActiveGuestLink =
     guestLinks?.some((link) => !link.revoked_at && !linkExpired(link.expires_at)) ?? false
+  // 「复制给对方的 Agent」默认选访客的两个判据：工单由访客创建（反馈/入口
+  // 提交，creator 只有链接备注）；或有仍有效的「可填写说明」链接且时间线上
+  // 还没有访客的说明修订（说明仍等访客补全）。
+  const guestCreatedTicket = !!ticket.creator.link_note
+  const guestHasPendingEditableLink =
+    (guestLinks ?? []).some(
+      (link) => !link.revoked_at && !linkExpired(link.expires_at) && link.can_edit_brief,
+    ) &&
+    !ticket.timeline.some(
+      (e) => e.type === 'brief_revised' && !e.actor.member && !e.actor.agent,
+    )
+  const defaultPeer: HandoffPeer =
+    guestCreatedTicket || guestHasPendingEditableLink ? 'guest' : 'member'
 
   function toggleDetailLabel(label: string) {
     const { fromInbox, query: sourceQuery } = detailListSource(search)
@@ -1347,41 +1359,6 @@ export function TicketDetailPage({
             </span>
           )}
         </div>
-        <button
-          type="button"
-          className="dmore"
-          aria-label="更多操作"
-          aria-expanded={mobileMenu}
-          onClick={() => setMobileMenu((v) => !v)}
-        >
-          ⋯
-        </button>
-        {mobileMenu && (
-          <div className="dmenu" role="menu" aria-label="工单操作">
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setMobileMenu(false)
-                setDialog('agent')
-              }}
-            >
-              🤖 让我的 Agent 处理
-            </button>
-            {ticket.assignee?.member && ticket.assignee.member.id !== me?.id && (
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setMobileMenu(false)
-                  setDialog('share')
-                }}
-              >
-                📨 发给 {ticket.assignee.member.name}
-              </button>
-            )}
-          </div>
-        )}
         {(tier === 'mobile' || tier === 'narrow') && (
           <details className="mmeta">
             <summary>标签 · 指派 · 访客链接</summary>
@@ -1455,13 +1432,11 @@ export function TicketDetailPage({
             👤 {ticket.assignee?.member ? '改派' : '指派'}
           </button>
           <button className="btn sm ghost handoff-btn" onClick={() => setDialog('agent')}>
-            🤖 让我的 Agent 处理
+            🤖 复制给我的 Agent
           </button>
-          {ticket.assignee?.member && ticket.assignee.member.id !== me?.id && (
-            <button className="btn sm ghost handoff-btn" onClick={() => setDialog('share')}>
-              📨 发给 {ticket.assignee.member.name}
-            </button>
-          )}
+          <button className="btn sm ghost handoff-btn" onClick={() => setDialog('share')}>
+            📨 复制给对方的 Agent
+          </button>
           <button className="btn sm ghost" onClick={() => setDialog('links')}>
             🔗 访客链接
           </button>
@@ -1563,12 +1538,24 @@ export function TicketDetailPage({
           onClose={() => setDialog(null)}
         />
       )}
-      {(dialog === 'agent' || dialog === 'share') && (
+      {dialog === 'agent' && (
         <HandoffDialog
           handoffText={ticket.handoff_text ?? ''}
           handoffShareText={ticket.handoff_share_text}
           assigneeName={ticket.assignee?.member?.name ?? null}
-          mode={dialog}
+          mode="agent"
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === 'share' && (
+        <PeerHandoffDialog
+          ticketNumber={ticket.number}
+          handoffShareText={ticket.handoff_share_text}
+          links={guestLinks}
+          canManageGuestLinks={ticket.viewer.can?.manage_guest_links !== false}
+          defaultPeer={defaultPeer}
+          reloadLinks={reloadGuestLinks}
+          onChanged={changed}
           onClose={() => setDialog(null)}
         />
       )}
