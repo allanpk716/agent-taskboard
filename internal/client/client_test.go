@@ -356,9 +356,14 @@ func Test凭证撤销后需要登录点击托盘后重新连接(t *testing.T) {
 	done := fake.startClient(t, ctx, s.URL())
 	fake.waitState(t, client.TrayNormal)
 
-	revokeOnlyClient(t, s, webLi)
+	// 先退出再撤销：运行中撤销会让第一个客户端先察觉并清空本机凭证，
+	// 第二个客户端就成了“首次连接”而自动登录，场景不再是“带着失效凭证启动”。
 	cancel()
 	waitClient(t, done)
+	revokeOnlyClient(t, s, webLi)
+	if fake.store.current(t) == "" {
+		t.Fatal("第一个客户端退出后本机凭证不应被清空")
+	}
 	drainChannel(fake.store.saved)
 
 	ctx2, cancel2 := context.WithCancel(context.Background())
