@@ -38,10 +38,20 @@ func (h handoffText) onboarding(memberName, agentName, token string) string {
    setx TASKBOARD_URL "%s"
    setx TASKBOARD_TOKEN "%s"
    新变量要到新开的终端才生效，本次会话先直接用这两个值。
-2. 读说明书：%s/agent.md
-3. 验证：curl -H "Authorization: Bearer %s" "%s/api/v1/inbox"
-   能返回就回复我「接入成功」。
+2. 安装技能：从 %s/skills/agent-taskboard/SKILL.md 下载，装成你自己的用户级（全局）技能，名字叫 agent-taskboard（目录按你的类型决定，例如 Claude Code 的 ~/.claude/skills/agent-taskboard/SKILL.md）；已装过就覆盖更新。不支持技能就跳过这一步，这不算接入失败。
+3. 读说明书：%s/agent.md
+4. 验证：curl -H "Authorization: Bearer %s" "%s/api/v1/inbox"
+   能返回就回复我「接入成功，技能已安装」；无法安装技能时回复「接入成功，无法安装技能」。
 以后我发来工单指令，就用 TASKBOARD_TOKEN 处理；读不到或返回 401 时停下来告诉我，不要用密码登录。
 如果你不能执行命令，请把第 1 步的两条命令原样转告我，我自己在终端里执行。`,
-		memberName, agentName, h.baseURL, token, h.baseURL, token, h.baseURL)
+		memberName, agentName, h.baseURL, token, h.baseURL, h.baseURL, token, h.baseURL)
+}
+
+// skillInstall 生成「我的 → Agent」常驻的技能安装文字：给已接入的 Agent
+// 补装或重装技能；不含任何凭证。
+func (h handoffText) skillInstall() string {
+	return fmt.Sprintf(`请安装 agent-taskboard 的 Agent 技能：
+1. 从 %s/skills/agent-taskboard/SKILL.md 下载，装成你自己的用户级（全局）技能，名字叫 agent-taskboard（目录按你的类型决定，例如 Claude Code 的 ~/.claude/skills/agent-taskboard/SKILL.md）；已装过就覆盖更新。
+2. 凭证仍用已保存的 TASKBOARD_TOKEN；读不到或返回 401 时，停下来让我去「我的 → Agent」换新。`,
+		h.baseURL)
 }

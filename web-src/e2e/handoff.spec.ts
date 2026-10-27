@@ -209,6 +209,13 @@ test('我的页面显示接入文案并支持换新', async ({ page, request }) 
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
   await login(page, ADMIN)
   await page.locator('.b-tabs').getByRole('link', { name: '我的' }).click()
+  // 常驻的安装技能文字：含技能地址，不含 token（补装/更新技能用）。
+  const skillButton = page.getByRole('button', { name: '复制安装技能文字' })
+  await expect(skillButton).toBeVisible()
+  await skillButton.click()
+  const skillText = await page.evaluate(() => navigator.clipboard.readText())
+  expect(skillText).toContain('/skills/agent-taskboard/SKILL.md')
+  expect(skillText).not.toMatch(/tbag_/)
   const agentName = `接入${Date.now().toString(36)}`
   await page.getByRole('button', { name: '＋ 生成新 token' }).click()
   await page.getByLabel('名字').fill(agentName)
