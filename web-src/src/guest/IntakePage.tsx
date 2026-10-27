@@ -14,6 +14,8 @@ import type { IntakeSubmitResult, IntakeView, MissingFieldHint, TemplateField } 
 import { uploadIntakeAttachment } from './upload'
 import { fmtDateCN, absoluteUrl } from '../shared/format'
 import { draftFieldAttachments, joinFieldValue, splitFormDraftValues } from './fieldAttachments'
+import { VersionBanner } from '../shared/VersionBanner'
+import { useVersionCheck } from '../shared/versionCheck'
 
 const RETRY_FIRST_MS = 1500
 const RETRY_MS = 4000
@@ -45,6 +47,9 @@ export function IntakePage({ slug }: { slug: string }) {
   const [showMiss, setShowMiss] = useState(false)
   const [touched, setTouched] = useState<ReadonlySet<string>>(new Set())
   const [submitting, setSubmitting] = useState(false)
+  // 版本检查（#262）：与成员端共用同一个 hook 与横幅。
+  const versionCheck = useVersionCheck()
+  const banner = <VersionBanner check={versionCheck} />
 
   // 重试与提交要用最新状态，一律走 ref（定时器里的闭包会过期）。
   const stateRef = useRef({ title, values, author, files })
@@ -275,54 +280,63 @@ export function IntakePage({ slug }: { slug: string }) {
 
   if (phase.kind === 'loading') {
     return (
-      <main className="guest-root">
-        <p className="muted center">加载中…</p>
-      </main>
+      <>
+        {banner}
+        <main className="guest-root">
+          <p className="muted center">加载中…</p>
+        </main>
+      </>
     )
   }
   if (phase.kind === 'missing') {
     return (
-      <main className="guest-root">
-        <div className="full">
-          <div style={{ fontSize: 42 }}>🔍</div>
-          <h2>没有这个反馈入口</h2>
-          <p className="muted">入口可能已停用，或地址已轮换。请联系部门成员，索取当前的入口地址。</p>
-        </div>
-      </main>
+      <>
+        {banner}
+        <main className="guest-root">
+          <div className="full">
+            <div style={{ fontSize: 42 }}>🔍</div>
+            <h2>没有这个反馈入口</h2>
+            <p className="muted">入口可能已停用，或地址已轮换。请联系部门成员，索取当前的入口地址。</p>
+          </div>
+        </main>
+      </>
     )
   }
   if (phase.kind === 'done') {
     const url = absoluteUrl(phase.result.guest_link.url)
     return (
-      <main className="guest-root">
-        <div className="full intake-done">
-          <div style={{ fontSize: 42 }}>✅</div>
-          <h2>已提交，编号 {phase.result.ticket.number}</h2>
-          <p>
-            这是你的专属链接，<b>请收藏或保存</b>，之后在这里查看回复、补充信息：
-          </p>
-          <div className="linkbox">{url}</div>
-          <div className="linkbox mono" data-access-code>
-            {phase.result.access_code}
+      <>
+        {banner}
+        <main className="guest-root">
+          <div className="full intake-done">
+            <div style={{ fontSize: 42 }}>✅</div>
+            <h2>已提交，编号 {phase.result.ticket.number}</h2>
+            <p>
+              这是你的专属链接，<b>请收藏或保存</b>，之后在这里查看回复、补充信息：
+            </p>
+            <div className="linkbox">{url}</div>
+            <div className="linkbox mono" data-access-code>
+              {phase.result.access_code}
+            </div>
+            <p>
+              <b>访问码只显示这一次</b>，请截图或记下来；丢失访问码请联系本部门：
+              {phase.result.department_contact || '请联系给你入口地址的部门'}
+            </p>
+            <button type="button" className="btn" onClick={() => void navigator.clipboard?.writeText(url)}>
+              复制链接
+            </button>
+            <p>
+              <a className="att-link" href={phase.result.guest_link.url}>
+                打开这条反馈
+              </a>
+            </p>
+            <p className="muted" style={{ fontSize: 13 }}>
+              部门回复后，轮到你时页面顶部会显示「现在轮到你回复」。链接{' '}
+              {fmtDateCN(phase.result.guest_link.expires_at)}到期。
+            </p>
           </div>
-          <p>
-            <b>访问码只显示这一次</b>，请截图或记下来；丢失访问码请联系本部门：
-            {phase.result.department_contact || '请联系给你入口地址的部门'}
-          </p>
-          <button type="button" className="btn" onClick={() => void navigator.clipboard?.writeText(url)}>
-            复制链接
-          </button>
-          <p>
-            <a className="att-link" href={phase.result.guest_link.url}>
-              打开这条反馈
-            </a>
-          </p>
-          <p className="muted" style={{ fontSize: 13 }}>
-            部门回复后，轮到你时页面顶部会显示「现在轮到你回复」。链接{' '}
-            {fmtDateCN(phase.result.guest_link.expires_at)}到期。
-          </p>
-        </div>
-      </main>
+        </main>
+      </>
     )
   }
 
@@ -333,6 +347,7 @@ export function IntakePage({ slug }: { slug: string }) {
 
   return (
     <main className="guest-root intake-page">
+      {banner}
       <div className="guest-app">
         <header className="head">
           <div className="meta">部门工单平台 · 反馈入口</div>

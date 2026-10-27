@@ -23,7 +23,7 @@ test('wide viewport shows sidebar, version and centered main area', async ({ pag
   await expect(sidebar.getByRole('link', { name: '请人反馈' })).toHaveCount(0)
   await expect(sidebar.getByRole('link', { name: '建单（高级）' })).toHaveCount(0)
   await expect(sidebar).toContainText('管理员 · 管理员')
-  await expect(sidebar).toContainText(`工单板 v${health.server_version}`)
+  await expect(sidebar).toContainText(`服务器 v${health.server_version}`)
 
   await sidebar.getByRole('link', { name: '工具' }).click()
   await expect(page).toHaveURL('/tools')
@@ -51,7 +51,7 @@ test('medium viewport shows the icon rail', async ({ page }) => {
   }
   await expect(sidebar.getByRole('link', { name: '请人反馈' })).toHaveCount(0)
   await expect(sidebar.getByRole('link', { name: '建单（高级）' })).toHaveCount(0)
-  await expect(sidebar).toContainText('工单板 v')
+  await expect(sidebar).toContainText('服务器 v')
   await expect(page.getByRole('banner')).toHaveCount(0)
 })
 
@@ -70,6 +70,6 @@ test('mobile keeps the phone shell and shows version on my page', async ({ page 
 
   await tabs.getByRole('link', { name: '我的' }).click()
   await expect(page).toHaveURL('/me')
-  await expect(page.getByTestId('member-version')).toContainText(/^工单板 v\d+\.\d+\.\d+$/)
+  await expect(page.getByTestId('member-version')).toContainText(/^服务器 v\d+\.\d+\.\d+(\s·\s网页 v.+)?$/)
   await expect(page.getByRole('navigation', { name: '侧栏' })).toHaveCount(0)
 })

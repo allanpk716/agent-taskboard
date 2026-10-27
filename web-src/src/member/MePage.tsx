@@ -22,8 +22,17 @@ import {
 import { fmtShort } from '../shared/format'
 import { copyText, nav, toast } from './ui'
 import { Confirm, Modal } from './ui'
+import { versionFooterText } from '../shared/versionCheck'
 
-export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }) {
+export function MePage({
+  me,
+  serverVersion,
+  webVersion,
+}: {
+  me: Me
+  serverVersion?: string
+  webVersion?: string
+}) {
   const [tokens, setTokens] = useState<AgentTokenRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [issuing, setIssuing] = useState(false)
@@ -330,9 +339,9 @@ export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }
         </div>
       </div>
 
-      {serverVersion && (
+      {versionFooterText(serverVersion, webVersion) && (
         <div className="member-version" data-testid="member-version">
-          工单板 v{serverVersion}
+          {versionFooterText(serverVersion, webVersion)}
         </div>
       )}
 

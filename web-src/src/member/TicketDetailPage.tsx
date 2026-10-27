@@ -49,6 +49,15 @@ import { HandoffDialog, PeerHandoffDialog, type HandoffPeer } from './HandoffDia
 import { LabelChips, chipClass, turnLabel } from './TicketsPage'
 import { detailListSource, filtersFromSearch, toQuery, toggleLabelCondition } from './listFilters'
 import { useLayoutTier } from './useLayoutTier'
+import {
+  clearUnsent,
+  loadUnsentBrief,
+  loadUnsentReply,
+  saveUnsentBrief,
+  saveUnsentReply,
+  unsentBriefKey,
+  unsentReplyKey,
+} from '../shared/unsentInput'
 
 /* ---------------- 弹窗：打标签 ---------------- */
 
@@ -954,22 +963,47 @@ function TicketInfoColumn({
 type ActorFilter = 'all' | 'member' | 'agent'
 
 function BriefEditDialog({
+  me,
   ticket,
   onChanged,
   onClose,
 }: {
+  me: Me
   ticket: MemberTicket
   onChanged: () => void
   onClose: () => void
 }) {
   const templateFields = ticket.brief.template_fields ?? []
-  const [fields, setFields] = useState<Record<string, string>>(ticket.brief.fields ?? {})
-  const [markdown, setMarkdown] = useState(ticket.brief.markdown)
-  const [attachmentIds, setAttachmentIds] = useState(ticket.brief.attachment_ids)
-  const [uploadedNames, setUploadedNames] = useState<Record<string, string>>({})
+  // 未提交的说明修订（#262）：挂载时读回本机保存的内容；键按成员和工单区分。
+  const unsentKey = unsentBriefKey(me.id, ticket.number)
+  const [unsent] = useState(() => loadUnsentBrief(unsentKey))
+  const [baseRevision] = useState(unsent?.baseRevision ?? ticket.brief.revision)
+  const [fields, setFields] = useState<Record<string, string>>(unsent?.fields ?? ticket.brief.fields ?? {})
+  const [markdown, setMarkdown] = useState(unsent?.markdown ?? ticket.brief.markdown)
+  const [attachmentIds, setAttachmentIds] = useState(unsent?.attachmentIds ?? ticket.brief.attachment_ids)
+  const [uploadedNames, setUploadedNames] = useState<Record<string, string>>(unsent?.attachmentNames ?? {})
   const [uploading, setUploading] = useState(0)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+
+  // 修订内容实时写进本机；改回与当前说明一致即视为没有未提交的内容，直接清除。
+  useEffect(() => {
+    const fieldsChanged =
+      templateFields.length > 0 && JSON.stringify(fields) !== JSON.stringify(ticket.brief.fields ?? {})
+    const markdownChanged = templateFields.length === 0 && markdown !== ticket.brief.markdown
+    const attachmentsChanged =
+      JSON.stringify(attachmentIds) !== JSON.stringify(ticket.brief.attachment_ids)
+    if (!fieldsChanged && !markdownChanged && !attachmentsChanged) {
+      clearUnsent(unsentKey)
+      return
+    }
+    saveUnsentBrief(unsentKey, {
+      baseRevision,
+      ...(templateFields.length > 0 ? { fields } : { markdown }),
+      attachmentIds,
+      attachmentNames: uploadedNames,
+    })
+  }, [unsentKey, baseRevision, fields, markdown, attachmentIds, uploadedNames, ticket.brief])
 
   async function addFiles(files: File[]) {
     for (const file of files) {
@@ -991,13 +1025,14 @@ function BriefEditDialog({
     setErr(null)
     try {
       const body = templateFields.length
-        ? { fields, attachment_ids: attachmentIds, base_revision: ticket.brief.revision }
-        : { brief_md: markdown, attachment_ids: attachmentIds, base_revision: ticket.brief.revision }
+        ? { fields, attachment_ids: attachmentIds, base_revision: baseRevision }
+        : { brief_md: markdown, attachment_ids: attachmentIds, base_revision: baseRevision }
       await api(`/api/v1/tickets/${encodeURIComponent(ticket.number)}`, {
         method: 'PATCH',
         body: JSON.stringify(body),
         idempotencyKey: crypto.randomUUID(),
       })
+      clearUnsent(unsentKey) // 保存成功（2xx）：本机保存的未提交修订随之清除
       onChanged()
       onClose()
     } catch (e) {
@@ -1011,6 +1046,11 @@ function BriefEditDialog({
   return (
     <Modal title={`修改说明 · ${ticket.number}`} onClose={onClose} wide>
       <div className="brief-edit-dialog">
+        {unsent?.baseRevision !== undefined && unsent.baseRevision !== ticket.brief.revision && (
+          <div className="errbox">
+            说明在你上次编辑后已被修改过，下面是你本机保存的修订；直接保存会提示冲突，请先复制好你的内容。
+          </div>
+        )}
         {templateFields.length > 0 ? (
           templateFields.map((f) => (
             <div className="fld" key={f.key}>
@@ -1066,7 +1106,14 @@ function BriefEditDialog({
         </div>
         {err && <div className="errbox">{err}</div>}
         <div className="mrow">
-          <button type="button" className="btn ghost" onClick={onClose}>
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={() => {
+              clearUnsent(unsentKey)
+              onClose()
+            }}
+          >
             取消
           </button>
           <span className="sp" />
@@ -1085,7 +1132,7 @@ export function TicketDetailPage({
   returnTo = '/tickets',
 }: {
   ticketRef: string
-  me?: Me
+  me: Me
   returnTo?: string
 }) {
   const actorHelp =
@@ -1318,7 +1365,7 @@ export function TicketDetailPage({
               </button>
             </div>
           )}
-          <Composer ticket={ticket} canDeliver={!!can.deliver} onSent={changed} />
+          <Composer me={me} ticket={ticket} canDeliver={!!can.deliver} onSent={changed} />
         </>
       ) : (
         <div className="composer ro">
@@ -1514,7 +1561,9 @@ export function TicketDetailPage({
       )}
 
       {dialog === 'label' && <LabelDialog ticket={ticket} onChanged={changed} onClose={() => setDialog(null)} />}
-      {dialog === 'brief' && <BriefEditDialog ticket={ticket} onChanged={changed} onClose={() => setDialog(null)} />}
+      {dialog === 'brief' && (
+        <BriefEditDialog me={me} ticket={ticket} onChanged={changed} onClose={() => setDialog(null)} />
+      )}
       {dialog === 'assign' && (
         <AssignDialog
           ticket={ticket}
@@ -1922,16 +1971,21 @@ function DraftBriefChanges({
 }
 
 function Composer({
+  me,
   ticket,
   canDeliver,
   onSent,
 }: {
+  me: Me
   ticket: MemberTicket
   canDeliver: boolean
   onSent: () => void
 }) {
-  const [body, setBody] = useState('')
-  const [deliver, setDeliver] = useState(false)
+  // 未提交的回复（#262）：挂载时读回本机保存的内容；键按成员和工单区分。
+  const unsentKey = unsentReplyKey(me.id, ticket.number)
+  const [unsent] = useState(() => loadUnsentReply(unsentKey))
+  const [body, setBody] = useState(unsent?.body ?? '')
+  const [deliver, setDeliver] = useState(unsent?.deliver ?? false)
   const [notice, setNotice] = useState<string | null>(null)
   const [down, setDown] = useState<string | null>(null)
   const [uploading, setUploading] = useState(0)
@@ -1949,6 +2003,16 @@ function Composer({
       if (retryTimer.current) clearTimeout(retryTimer.current)
     }
   }, [])
+
+  // 未提交的回复实时写进本机；正文清空（且未标记交付）即视为没有未提交的内容。
+  // 附件上传成功后在正文里留下 att: 引用，随正文一起保存。
+  useEffect(() => {
+    if (body.trim() === '' && !deliver) {
+      clearUnsent(unsentKey)
+      return
+    }
+    saveUnsentReply(unsentKey, { body, deliver })
+  }, [unsentKey, body, deliver])
 
   function scheduleRetry() {
     if (retryTimer.current) clearTimeout(retryTimer.current)
@@ -1978,6 +2042,7 @@ function Composer({
       await replyTicket(ticket.number, { body_md: text, ...(mark ? { deliver: true } : {}) }, idemKeyRef.current)
       // 成功：这次动作结束，下一次发送是新动作（新 key）。
       idemKeyRef.current = undefined
+      clearUnsent(unsentKey) // 发送成功（2xx）：本机保存的未提交回复随之清除
       setBody('')
       setDeliver(false)
       setNotice(null)
