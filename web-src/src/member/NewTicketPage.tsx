@@ -20,6 +20,12 @@ import { HandoffPanel } from './HandoffDialog'
 import { Confirm, invalidate, nav, toast } from './ui'
 import { chipClass } from './TicketsPage'
 import { FieldForm, appendRef, missingRequired, type StagedFile } from '../guest/FieldForm'
+import {
+  clearUnsent,
+  loadUnsentNewTicket,
+  saveUnsentNewTicket,
+  unsentNewTicketKey,
+} from '../shared/unsentInput'
 
 interface TemplateDetail {
   key: string
@@ -262,6 +268,7 @@ export function NewTicketPage({
 
   return (
     <NewTicketForm
+      me={me}
       template={step.template}
       onDone={(created, title, assignee) => setStep({ phase: 'done', created, title, assignee })}
     />
@@ -329,21 +336,26 @@ async function attachStagedFiles(
 }
 
 function NewTicketForm({
+  me,
   template,
   onDone,
 }: {
+  me: Me
   template: TemplateDetail | null
   onDone: (created: Created, title: string, assignee: string) => void
 }) {
-  const [title, setTitle] = useState('')
-  const [kind, setKind] = useState('task')
-  const [brief, setBrief] = useState('')
-  const [values, setValues] = useState<Record<string, string>>({})
+  // 未提交的输入（#262）：挂载时读回本机保存的内容；键按成员和模板区分。
+  const unsentKey = unsentNewTicketKey(me.id, template?.key ?? null)
+  const [unsent] = useState(() => loadUnsentNewTicket(unsentKey))
+  const [title, setTitle] = useState(unsent?.title ?? '')
+  const [kind, setKind] = useState(unsent?.kind ?? 'task')
+  const [brief, setBrief] = useState(unsent?.brief ?? '')
+  const [values, setValues] = useState<Record<string, string>>(unsent?.values ?? {})
   const [files, setFiles] = useState<StagedFile[]>([])
-  const [labels, setLabels] = useState<string[]>([])
-  const [labelInput, setLabelInput] = useState('')
+  const [labels, setLabels] = useState<string[]>(unsent?.labels ?? [])
+  const [labelInput, setLabelInput] = useState(unsent?.labelInput ?? '')
   const [labelErr, setLabelErr] = useState<string | null>(null)
-  const [assignee, setAssignee] = useState('')
+  const [assignee, setAssignee] = useState(unsent?.assignee ?? '')
   const [members, setMembers] = useState<MemberRef[]>([])
   const [submitErr, setSubmitErr] = useState<string | null>(null)
   const [missing, setMissing] = useState<string[] | null>(null)
@@ -368,6 +380,24 @@ function NewTicketForm({
       .then(setMembers)
       .catch(() => {})
   }, [])
+
+  // 文字内容实时写进本机；全部清空即视为没有未提交的内容，直接清除。
+  // 暂存附件还是本机文件对象，没法跨刷新保存（建单成功后才上传）。
+  useEffect(() => {
+    const empty =
+      title.trim() === '' &&
+      brief.trim() === '' &&
+      labelInput.trim() === '' &&
+      assignee === '' &&
+      kind === 'task' &&
+      labels.length === 0 &&
+      Object.values(values).every((v) => !v.trim())
+    if (empty) {
+      clearUnsent(unsentKey)
+      return
+    }
+    saveUnsentNewTicket(unsentKey, { title, kind, brief, values, labels, labelInput, assignee })
+  }, [unsentKey, title, kind, brief, values, labels, labelInput, assignee])
 
   function paintLabels(next: string[]) {
     setLabels(next)
@@ -473,6 +503,7 @@ function NewTicketForm({
         idempotencyKey: idemKeyRef.current,
       })
       idemKeyRef.current = undefined // 成功：下一次建单是新动作
+      clearUnsent(unsentKey) // 工单已建出（2xx）：本机保存的未提交内容随之清除
       // 暂存的附件此刻上传并挂到整张工单的附件（建单本身不带附件）。
       const warnings = await attachStagedFiles(created.number, files)
       created.warnings = [...created.warnings, ...warnings]

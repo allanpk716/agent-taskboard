@@ -1,7 +1,6 @@
 // 成员网页调用的 API（网页会话 cookie；错误结构见 api.ts）。
 import { api } from '../api'
 import { compressImage } from '../shared/compress'
-import { fetchServerVersion } from '../shared/health'
 import type {
   Author,
   Collaborator,
@@ -142,8 +141,6 @@ export async function fetchInbox(): Promise<InboxResponse> {
 export async function fetchDrafts(): Promise<{ count: number; drafts: DraftView[] }> {
   return api('/api/v1/drafts')
 }
-
-export { fetchServerVersion }
 
 export async function fetchMembers(): Promise<MemberRef[]> {
   const body = await api('/api/v1/members')

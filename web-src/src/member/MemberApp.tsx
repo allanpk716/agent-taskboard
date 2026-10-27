@@ -8,7 +8,6 @@ import {
   fetchAgentTokens,
   fetchDrafts,
   fetchInbox,
-  fetchServerVersion,
   fetchSession,
   markDraftsIntroSeen,
   type Me,
@@ -28,6 +27,8 @@ import { NotificationBell } from './NotificationBell'
 import { detailListSource } from './listFilters'
 import { Modal, nav, useLocationSearch, useNavSeq, useRoute, type Route } from './ui'
 import { useLayoutTier } from './useLayoutTier'
+import { VersionBanner } from '../shared/VersionBanner'
+import { useVersionCheck, versionFooterText } from '../shared/versionCheck'
 
 function pageTitle(route: Route, newTicketTitle: string): string {
   switch (route.page) {
@@ -118,9 +119,10 @@ export function MemberApp() {
   const [denied, setDenied] = useState(false)
   const [inboxCount, setInboxCount] = useState(0)
   const [draftCount, setDraftCount] = useState(0)
-  const [serverVersion, setServerVersion] = useState<string | undefined>()
   const [newTicketTitle, setNewTicketTitle] = useState('建单')
   const [draftIntro, setDraftIntro] = useState(false)
+  // 版本检查（#262）：新网页版本提示横幅 + 底部双版本号共用这一份数据。
+  const versionCheck = useVersionCheck()
 
   useEffect(() => {
     fetchSession()
@@ -135,10 +137,6 @@ export function MemberApp() {
         }
         setDenied(true)
       })
-  }, [])
-
-  useEffect(() => {
-    fetchServerVersion().then(setServerVersion).catch(() => {})
   }, [])
 
   const refreshInbox = useCallback(() => {
@@ -163,6 +161,7 @@ export function MemberApp() {
   if (denied) {
     return (
       <main className="member-root">
+        <VersionBanner check={versionCheck} />
         <div className="bpage">
           <div className="ecard">无法连接服务，请刷新重试。</div>
         </div>
@@ -172,6 +171,7 @@ export function MemberApp() {
   if (!me) {
     return (
       <main className="member-root">
+        <VersionBanner check={versionCheck} />
         <div className="bpage">
           <div className="ecard">加载中…</div>
         </div>
@@ -215,7 +215,14 @@ export function MemberApp() {
       )}
       {route.page === 'draft' && <CreateDraftPage key={navSeq} id={route.id} />}
       {route.page === 'tools' && <ToolsPage key={navSeq} />}
-      {route.page === 'me' && <MePage key={navSeq} me={me} serverVersion={serverVersion} />}
+      {route.page === 'me' && (
+        <MePage
+          key={navSeq}
+          me={me}
+          serverVersion={versionCheck.serverVersion}
+          webVersion={versionCheck.webVersion}
+        />
+      )}
       {route.page === 'templates' && <TemplatesPage key={navSeq} />}
       {route.page === 'templateEdit' && <TemplateEditPage key={navSeq} templateKey={route.key} />}
       {route.page === 'admin' && <AdminPage key={navSeq} me={me} />}
@@ -287,7 +294,9 @@ export function MemberApp() {
               {me.name} · {me.is_admin ? '管理员' : '成员'}
             </div>
           )}
-          {serverVersion && <small>工单板 v{serverVersion}</small>}
+          {versionFooterText(versionCheck.serverVersion, versionCheck.webVersion) && (
+            <small>{versionFooterText(versionCheck.serverVersion, versionCheck.webVersion)}</small>
+          )}
         </div>
       </nav>
     )
@@ -295,6 +304,7 @@ export function MemberApp() {
     if (listish && (tier === 'wide' || tier === 'medium')) {
       return (
         <>
+          <VersionBanner check={versionCheck} />
           {bell}
           {intro}
           <div className={`pc-shell${compact ? ' compact' : ''}`}>
@@ -319,6 +329,7 @@ export function MemberApp() {
     }
     return (
       <>
+        <VersionBanner check={versionCheck} />
         {bell}
         {intro}
         <div className={`pc-shell${compact ? ' compact' : ''}`}>
@@ -341,6 +352,7 @@ export function MemberApp() {
 
   return (
     <main className="member-root">
+      <VersionBanner check={versionCheck} />
       {intro}
       <div className="b-app">
         <header className="b-top">

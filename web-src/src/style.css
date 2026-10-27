@@ -115,3 +115,51 @@ form button:disabled {
   font-weight: 500;
   vertical-align: middle;
 }
+
+/* 新版本提示横幅（#262）：固定在页面最上方，成员端与访客端共用。 */
+.version-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 9px 44px;
+  background: #1d4ed8;
+  color: #fff;
+  font-size: 13px;
+  box-shadow: 0 2px 12px rgb(15 23 42 / 22%);
+}
+
+.version-banner-refresh {
+  border: none;
+  padding: 2px 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.version-banner-close {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 18%);
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.version-banner-close:hover {
+  background: rgb(255 255 255 / 30%);
+}

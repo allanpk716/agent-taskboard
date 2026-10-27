@@ -12,7 +12,8 @@ import { LandingPage } from './LandingPage'
 import { guestApi } from './guestApi'
 import { guestDeviceToken, guestRawApi, saveGuestDeviceToken } from './guestApi'
 import { fmtDateCN } from '../shared/format'
-import { fetchServerVersion } from '../shared/health'
+import { VersionBanner } from '../shared/VersionBanner'
+import { useVersionCheck } from '../shared/versionCheck'
 import { Modal, copyText } from '../member/ui'
 import type { GuestSession, TicketView } from '../shared/types'
 
@@ -126,8 +127,10 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
   const decidedRef = useRef(false)
   // 落地页「你的称呼」带进填写页的署名初值。
   const [authorSeed, setAuthorSeed] = useState<string | undefined>()
-  const [serverVersion, setServerVersion] = useState<string | null>(null)
   const [handoff, setHandoff] = useState<'agent' | 'peer' | null>(null)
+  // 版本检查（#262）：与成员端共用同一个 hook 与横幅。
+  const versionCheck = useVersionCheck()
+  const banner = <VersionBanner check={versionCheck} />
 
   const load = useCallback(async () => {
     try {
@@ -164,50 +167,56 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
     void load()
   }, [load])
 
-  useEffect(() => {
-    fetchServerVersion()
-      .then(setServerVersion)
-      .catch(() => setServerVersion(null))
-  }, [])
-
   if (phase.kind === 'invalid') {
     return (
-      <main className="guest-root">
-        <LinkInvalidPage code={phase.code} expiresAt={expiresAt} />
-      </main>
+      <>
+        {banner}
+        <main className="guest-root">
+          <LinkInvalidPage code={phase.code} expiresAt={expiresAt} />
+        </main>
+      </>
     )
   }
   if (phase.kind === 'claim') {
     return (
-      <ClaimPage
-        info={phase.info}
-        linkKey={linkKey}
-        onClaimed={(token) => {
-          saveGuestDeviceToken(linkKey, token)
-          setPhase({ kind: 'loading' })
-          void load()
-        }}
-      />
+      <>
+        {banner}
+        <ClaimPage
+          info={phase.info}
+          linkKey={linkKey}
+          onClaimed={(token) => {
+            saveGuestDeviceToken(linkKey, token)
+            setPhase({ kind: 'loading' })
+            void load()
+          }}
+        />
+      </>
     )
   }
   if (phase.kind === 'enter') {
     return (
-      <AccessCodePage
-        info={phase.info}
-        linkKey={linkKey}
-        onEntered={(token) => {
-          saveGuestDeviceToken(linkKey, token)
-          setPhase({ kind: 'loading' })
-          void load()
-        }}
-      />
+      <>
+        {banner}
+        <AccessCodePage
+          info={phase.info}
+          linkKey={linkKey}
+          onEntered={(token) => {
+            saveGuestDeviceToken(linkKey, token)
+            setPhase({ kind: 'loading' })
+            void load()
+          }}
+        />
+      </>
     )
   }
   if (phase.kind !== 'ready') {
     return (
-      <main className="guest-root">
-        <p className="muted center">加载中…</p>
-      </main>
+      <>
+        {banner}
+        <main className="guest-root">
+          <p className="muted center">加载中…</p>
+        </main>
+      </>
     )
   }
 
@@ -221,17 +230,20 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
 
   if (mode === 'land') {
     return (
-      <main className="guest-root landing-root">
-        <LandingPage
-          ticket={ticket}
-          linkKey={linkKey}
-          onStart={(author) => {
-            setAuthorSeed(author)
-            setMode('fill')
-          }}
-          onTalk={() => setMode('talk')}
-        />
-      </main>
+      <>
+        {banner}
+        <main className="guest-root landing-root">
+          <LandingPage
+            ticket={ticket}
+            linkKey={linkKey}
+            onStart={(author) => {
+              setAuthorSeed(author)
+              setMode('fill')
+            }}
+            onTalk={() => setMode('talk')}
+          />
+        </main>
+      </>
     )
   }
 
@@ -242,55 +254,63 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
       setMode('talk')
     }
     return (
-      <main className="guest-root fillroot">
-        <GroupedBriefForm
-          linkKey={linkKey}
-          ticket={ticket}
-          initialAuthor={authorSeed}
-          onSaved={() => {
-            leaveFill()
-            void load()
-          }}
-          onBack={leaveFill}
-          onLinkDead={(code) => setPhase({ kind: 'invalid', code })}
-        />
-      </main>
+      <>
+        {banner}
+        <main className="guest-root fillroot">
+          <GroupedBriefForm
+            linkKey={linkKey}
+            ticket={ticket}
+            initialAuthor={authorSeed}
+            onSaved={() => {
+              leaveFill()
+              void load()
+            }}
+            onBack={leaveFill}
+            onLinkDead={(code) => setPhase({ kind: 'invalid', code })}
+          />
+        </main>
+      </>
     )
   }
 
   return (
-    <main className={`guest-root${closed || !ticket.viewer.can.reply ? ' readonly' : ''}`}>
-      <div className="guest-handoff-bar" role="region" aria-label="Agent 入口">
-        <button type="button" className="btn sm ghost" onClick={() => setHandoff('agent')}>
-          🤖 复制给我的 Agent
-        </button>
-        <button type="button" className="btn sm ghost" onClick={() => setHandoff('peer')}>
-          📨 复制给对方的 Agent
-        </button>
-      </div>
-      {/* 工单关闭后不能再修订说明（服务端 409 ticket_closed），入口随之隐藏 */}
-      <Conversation
-        ticket={ticket}
-        onEditBrief={ticket.viewer.can.edit_brief && ticket.status !== 'closed' ? () => setMode('fill') : undefined}
-        fetchBriefVersions={async () =>
-          guestApi(linkKey, `/api/v1/tickets/${encodeURIComponent(ticket.number)}/brief-versions`)
-        }
-      />
-      {closed || !ticket.viewer.can.reply ? (
-        <div className="ro">工单已关闭，只能查看。如还有问题，请联系 {contact}。</div>
-      ) : (
-        <Composer
-          linkKey={linkKey}
-          ticketNumber={ticket.number}
-          onSent={load}
-          onTicketClosed={load}
-          onLinkDead={(code) => setPhase({ kind: 'invalid', code })}
+    <>
+      {banner}
+      <main className={`guest-root${closed || !ticket.viewer.can.reply ? ' readonly' : ''}`}>
+        <div className="guest-handoff-bar" role="region" aria-label="Agent 入口">
+          <button type="button" className="btn sm ghost" onClick={() => setHandoff('agent')}>
+            🤖 复制给我的 Agent
+          </button>
+          <button type="button" className="btn sm ghost" onClick={() => setHandoff('peer')}>
+            📨 复制给对方的 Agent
+          </button>
+        </div>
+        {/* 工单关闭后不能再修订说明（服务端 409 ticket_closed），入口随之隐藏 */}
+        <Conversation
+          ticket={ticket}
+          onEditBrief={ticket.viewer.can.edit_brief && ticket.status !== 'closed' ? () => setMode('fill') : undefined}
+          fetchBriefVersions={async () =>
+            guestApi(linkKey, `/api/v1/tickets/${encodeURIComponent(ticket.number)}/brief-versions`)
+          }
         />
-      )}
-      {handoff && (
-        <GuestHandoffDialog ticket={ticket} linkKey={linkKey} which={handoff} onClose={() => setHandoff(null)} />
-      )}
-      {serverVersion && <footer className="guest-version">工单板 v{serverVersion}</footer>}
-    </main>
+        {closed || !ticket.viewer.can.reply ? (
+          <div className="ro">工单已关闭，只能查看。如还有问题，请联系 {contact}。</div>
+        ) : (
+          <Composer
+            linkKey={linkKey}
+            ticketNumber={ticket.number}
+            onSent={load}
+            onTicketClosed={load}
+            onLinkDead={(code) => setPhase({ kind: 'invalid', code })}
+          />
+        )}
+        {handoff && (
+          <GuestHandoffDialog ticket={ticket} linkKey={linkKey} which={handoff} onClose={() => setHandoff(null)} />
+        )}
+        {versionCheck.serverVersion && (
+          <footer className="guest-version">工单板 v{versionCheck.serverVersion}</footer>
+        )}
+      </main>
+    </>
   )
 }
