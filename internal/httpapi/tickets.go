@@ -943,9 +943,12 @@ type ticketView struct {
 	Timeline      []eventView        `json:"timeline"`
 	MyDraft       *draftView         `json:"my_draft"`
 
-	// 成员交接文案（#98）：访客视角不出现这两个字段。
-	HandoffText      *string `json:"handoff_text,omitempty"`
-	HandoffShareText any     `json:"handoff_share_text,omitempty"`
+	// 交接文案（#98）：成员总有工单指令与中性交接文案；访客视角只有中性的
+	// handoff_share_text（发给对方成员）和带访客链接的 guest_agent_instruction，
+	// 不出现成员自己的 handoff_text。
+	HandoffText           *string `json:"handoff_text,omitempty"`
+	HandoffShareText      any     `json:"handoff_share_text,omitempty"`
+	GuestAgentInstruction *string `json:"guest_agent_instruction,omitempty"`
 }
 
 // attachmentView 是附件列表项（#33）：id 是 att: 引用，url 是下载地址
@@ -993,15 +996,15 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 		}, !isGuest)
 		v.Assignee = &assignee
 	}
+	text := newHandoffText(a.requestBaseURL(r))
+	share := text.neutralShare(full.Number, full.Title)
+	v.HandoffShareText = &share
 	if !isGuest {
-		text := newHandoffText(a.requestBaseURL(r))
 		handoff := text.instruction(full.Number, full.Title)
 		v.HandoffText = &handoff
-		v.HandoffShareText = (*string)(nil)
-		if full.AssigneeID != 0 {
-			share := text.share(false, full.AssigneeName, full.Number, full.Title)
-			v.HandoffShareText = &share
-		}
+	} else {
+		guestInstruction := text.guestAgentInstruction(full.Number, full.Title)
+		v.GuestAgentInstruction = &guestInstruction
 	}
 	if full.TemplateKey != "" {
 		key := full.TemplateKey

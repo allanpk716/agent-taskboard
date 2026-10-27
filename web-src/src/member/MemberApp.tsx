@@ -63,7 +63,7 @@ function DraftsIntroDialog({ onDone }: { onDone: () => void }) {
 
   useEffect(() => {
     fetchAgentTokens()
-      .then((tokens) =>
+      .then(({ tokens }) =>
         setAgents(
           tokens
             .filter((token) => !token.revoked_at && token.draft_mode_switched_by_launch)

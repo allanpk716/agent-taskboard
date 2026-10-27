@@ -13,6 +13,9 @@ import (
 //go:embed agent.md
 var agentMarkdown string
 
+//go:embed skill.md
+var skillMarkdown string
+
 // Handler 挂公开文档路由，其余路径交给 next（SPA 回退仍在文档之后）。
 func Handler(publicURL string, next http.Handler) http.Handler {
 	mux := http.NewServeMux()
@@ -23,6 +26,9 @@ func Handler(publicURL string, next http.Handler) http.Handler {
 		return strings.ReplaceAll(agentMarkdown, "{{BASE}}", base)
 	}))
 	mux.HandleFunc("/api.md", serveMarkdown(publicURL, func(string) string { return docs.APIMarkdown }))
+	mux.HandleFunc("/skills/agent-taskboard/SKILL.md", serveMarkdown(publicURL, func(base string) string {
+		return strings.ReplaceAll(skillMarkdown, "{{BASE}}", base)
+	}))
 	mux.Handle("/", next)
 	return mux
 }

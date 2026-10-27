@@ -35,6 +35,7 @@ test('登录页显示锁定提示且管理员可解锁', async ({ page, request 
   await row.getByRole('button', { name: '解锁' }).click()
   await expect(row).toHaveCount(0)
 
+  await page.context().clearCookies({ name: 'tb_session' })
   await page.goto('/login')
   await page.getByLabel('用户名').fill(member.username)
   await page.getByLabel('密码').fill(member.password)

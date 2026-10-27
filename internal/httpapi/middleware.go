@@ -60,6 +60,12 @@ func (t *writeTracker) Flush() {
 
 func timeZero() time.Time { return time.Time{}.UTC() }
 
+// logSessionEvent 记一行网页会话事件（登录/退出/cookie 失效），排查"为什么掉登录"用。
+// 会话 ID 是密钥，只记前 6 位用于和 sessions 表对照。
+func logSessionEvent(r *http.Request, event, sessionID string) {
+	log.Printf("session: %s sid=%.6s ip=%s ua=%q", event, sessionID, clientIP(r), r.UserAgent())
+}
+
 // sessionCookie 构造网页会话 cookie：HttpOnly、Secure、SameSite=Lax。
 // Secure 始终设置：生产环境经 Caddy 提供 HTTPS，后端只听 127.0.0.1 看不到 TLS。
 func sessionCookie(sess identity.Session, expires time.Time) *http.Cookie {

@@ -13,6 +13,7 @@ import { guestApi } from './guestApi'
 import { guestDeviceToken, guestRawApi, saveGuestDeviceToken } from './guestApi'
 import { fmtDateCN } from '../shared/format'
 import { fetchServerVersion } from '../shared/health'
+import { Modal, copyText } from '../member/ui'
 import type { GuestSession, TicketView } from '../shared/types'
 
 type Mode = 'land' | 'talk' | 'fill'
@@ -23,6 +24,67 @@ type Phase =
   | { kind: 'claim'; info: ClaimInfo }
   | { kind: 'enter'; info: ClaimInfo }
   | { kind: 'ready'; ticket: TicketView }
+
+/** 访客侧的两个常驻 Agent 入口；开启与关闭的工单都显示。 */
+function GuestHandoffDialog({
+  ticket,
+  linkKey,
+  which,
+  onClose,
+}: {
+  ticket: TicketView
+  linkKey: string
+  which: 'agent' | 'peer'
+  onClose: () => void
+}) {
+  const [copied, setCopied] = useState(false)
+  // 后端只保存链接密钥的哈希，拿不到明文地址；访客网页用当前页面地址拼。
+  const guestLinkURL = `${window.location.origin}/g/${linkKey}`
+  const text =
+    which === 'agent'
+      ? (ticket.guest_agent_instruction ?? '').replaceAll('{GUEST_LINK_URL}', guestLinkURL)
+      : (ticket.handoff_share_text ?? '')
+
+  async function copy() {
+    const ok = await copyText(text)
+    setCopied(ok)
+    if (ok) setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <Modal
+      title={which === 'agent' ? '🤖 复制给我的 Agent' : '📨 复制给对方的 Agent'}
+      onClose={onClose}
+    >
+      {which === 'agent' ? (
+        <div className="warnbox" data-guest-agent-warning>
+          内含访问凭证（访客链接），只给你自己的 Agent，不要转发给其他人。
+        </div>
+      ) : (
+        <div className="handoff-who">
+          发给本部门处理这张工单的成员，对方的 Agent 用对方自己的 token；这段文案不带凭证。
+        </div>
+      )}
+      <pre className="handoff-pre" data-handoff-preview>
+        {text}
+      </pre>
+      <button type="button" className="btn handoff-copy" onClick={() => void copy()}>
+        {copied ? '已复制' : which === 'agent' ? '复制访客 Agent 指令' : '复制交接文案'}
+      </button>
+      <div className="mrow handoff-foot">
+        <span className="hint">
+          {which === 'agent'
+            ? '访问码不在文案里，复制后请自己补上或另行私下告诉你的 Agent。'
+            : '对方看不到这张工单时，他的 Agent 打开会被拒绝。'}
+        </span>
+        <span className="sp" />
+        <button className="btn ghost" onClick={onClose}>
+          关闭
+        </button>
+      </div>
+    </Modal>
+  )
+}
 
 /** 链接失效整页提示（prototype a.html 的 expired 状态）。 */
 function LinkInvalidPage({ code, expiresAt }: { code: string; expiresAt?: string }) {
@@ -65,6 +127,7 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
   // 落地页「你的称呼」带进填写页的署名初值。
   const [authorSeed, setAuthorSeed] = useState<string | undefined>()
   const [serverVersion, setServerVersion] = useState<string | null>(null)
+  const [handoff, setHandoff] = useState<'agent' | 'peer' | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -197,6 +260,14 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
 
   return (
     <main className={`guest-root${closed || !ticket.viewer.can.reply ? ' readonly' : ''}`}>
+      <div className="guest-handoff-bar" role="region" aria-label="Agent 入口">
+        <button type="button" className="btn sm ghost" onClick={() => setHandoff('agent')}>
+          🤖 复制给我的 Agent
+        </button>
+        <button type="button" className="btn sm ghost" onClick={() => setHandoff('peer')}>
+          📨 复制给对方的 Agent
+        </button>
+      </div>
       {/* 工单关闭后不能再修订说明（服务端 409 ticket_closed），入口随之隐藏 */}
       <Conversation
         ticket={ticket}
@@ -215,6 +286,9 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
           onTicketClosed={load}
           onLinkDead={(code) => setPhase({ kind: 'invalid', code })}
         />
+      )}
+      {handoff && (
+        <GuestHandoffDialog ticket={ticket} linkKey={linkKey} which={handoff} onClose={() => setHandoff(null)} />
       )}
       {serverVersion && <footer className="guest-version">工单板 v{serverVersion}</footer>}
     </main>

@@ -79,7 +79,10 @@ func Test网页会话签发具名AgentToken后session区分本人与Agent(t *tes
 	if !strings.HasPrefix(issued.OnboardingText, wantOnboard) ||
 		!strings.Contains(issued.OnboardingText, `setx TASKBOARD_URL "`+s.URL()+`"`) ||
 		!strings.Contains(issued.OnboardingText, `setx TASKBOARD_TOKEN "`+issued.Token+`"`) ||
-		!strings.Contains(issued.OnboardingText, `curl -H "Authorization: Bearer `+issued.Token+`"`) {
+		!strings.Contains(issued.OnboardingText, `curl -H "Authorization: Bearer `+issued.Token+`"`) ||
+		!strings.Contains(issued.OnboardingText, s.URL()+`/skills/agent-taskboard/SKILL.md`) ||
+		!strings.Contains(issued.OnboardingText, "「接入成功，技能已安装」") ||
+		!strings.Contains(issued.OnboardingText, "「接入成功，无法安装技能」") {
 		t.Fatalf("签发响应 onboarding_text 不对：\n%q", issued.OnboardingText)
 	}
 
@@ -101,6 +104,30 @@ func Test网页会话签发具名AgentToken后session区分本人与Agent(t *tes
 	}
 	if agentMe.Viewer.Agent.ID != issued.ID || agentMe.Viewer.Agent.Name != "笔记本" {
 		t.Errorf("Agent 信息不对：%+v", agentMe.Viewer.Agent)
+	}
+}
+
+// Agent token 列表带后端生成的常驻技能安装文字：含技能地址，供「我的 →
+// Agent」随时复制；不包含任何 token 明文（补装技能不需要重新签发）。
+func TestAgentToken列表带不含凭证的技能安装文字(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("chen", "secret-pass")
+	web := s.Login("chen", "secret-pass")
+	_, token1 := s.IssueAgentToken(t, web, "笔记本")
+	_, token2 := s.IssueAgentToken(t, web, "工位")
+
+	var list struct {
+		SkillInstallText string `json:"skill_install_text"`
+	}
+	res := s.Do(t, web, http.MethodGet, "/api/v1/me/agent-tokens", nil, &list)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("列表状态码 = %d，想 200", res.StatusCode)
+	}
+	if !strings.Contains(list.SkillInstallText, s.URL()+"/skills/agent-taskboard/SKILL.md") {
+		t.Fatalf("技能安装文字缺少技能地址：\n%q", list.SkillInstallText)
+	}
+	if strings.Contains(list.SkillInstallText, token1) || strings.Contains(list.SkillInstallText, token2) {
+		t.Fatalf("技能安装文字不应包含 token 明文：\n%q", list.SkillInstallText)
 	}
 }
 

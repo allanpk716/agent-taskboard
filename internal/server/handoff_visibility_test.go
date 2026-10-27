@@ -50,19 +50,43 @@ func Test访客与Markdown不出现交接字段(t *testing.T) {
 	}
 	var unassigned map[string]any
 	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+unassignedCreated.Number, nil, &unassigned)
-	if unassigned["handoff_text"] == "" || unassigned["handoff_share_text"] != nil {
-		t.Fatalf("未指派 handoff_text/handoff_share_text = %v/%v, 想 Agent 段/null",
+	if unassigned["handoff_text"] == "" || unassigned["handoff_share_text"] == nil {
+		t.Fatalf("未指派 handoff_text/handoff_share_text = %v/%v, 想 Agent 段/中性交接文案",
 			unassigned["handoff_text"], unassigned["handoff_share_text"])
 	}
 	if _, ok := unassigned["handoff_share_text"]; !ok {
 		t.Fatal("未指派成员 JSON 也应出现 handoff_share_text 键")
 	}
+	if share, ok := unassigned["handoff_share_text"].(string); !ok ||
+		!strings.HasPrefix(share, "请让你的 Agent 处理工单 "+unassignedCreated.Number+"「未指派」") {
+		t.Fatalf("未指派 handoff_share_text = %v, 想不点名的中性交接文案", unassigned["handoff_share_text"])
+	}
 
 	var guest map[string]any
 	s.Do(t, s.GuestClient(key), http.MethodGet, "/api/v1/tickets/"+created.Number, nil, &guest)
-	for _, field := range []string{"handoff_text", "handoff_share_text"} {
+	for _, field := range []string{"handoff_text"} {
 		if _, ok := guest[field]; ok {
 			t.Errorf("访客 JSON 不应出现 %s 字段", field)
+		}
+	}
+	for _, field := range []string{"handoff_share_text", "guest_agent_instruction"} {
+		if _, ok := guest[field]; !ok {
+			t.Errorf("访客 JSON 应出现 %s 字段", field)
+		}
+	}
+	guestShare, _ := guest["handoff_share_text"].(string)
+	guestInstruction, _ := guest["guest_agent_instruction"].(string)
+	if !strings.HasPrefix(guestShare, "请让你的 Agent 处理工单 "+created.Number+"「已指派」") {
+		t.Fatalf("访客 handoff_share_text = %q, 想与成员一致的中性交接文案", guestShare)
+	}
+	if !strings.Contains(guestInstruction, "{GUEST_LINK_URL}") ||
+		!strings.Contains(guestInstruction, "访问码：<请填入你的 6 位访问码>") ||
+		!strings.Contains(guestInstruction, "Authorization: Bearer tbg_<链接密钥>:<访问码>") {
+		t.Fatalf("访客 guest_agent_instruction 缺少链接占位、访问码占位或鉴权说明：\n%q", guestInstruction)
+	}
+	for name, secret := range map[string]string{"成员 token": token, "访客密钥": key} {
+		if strings.Contains(guestShare, secret) || strings.Contains(guestInstruction, secret) {
+			t.Errorf("%s 泄露进访客交接文案", name)
 		}
 	}
 

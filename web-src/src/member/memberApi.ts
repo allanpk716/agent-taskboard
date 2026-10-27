@@ -393,9 +393,17 @@ export interface IssuedToken {
   onboarding_text: string
 }
 
-export async function fetchAgentTokens(): Promise<AgentTokenRow[]> {
+export interface AgentTokensView {
+  tokens: AgentTokenRow[]
+  skill_install_text: string
+}
+
+export async function fetchAgentTokens(): Promise<AgentTokensView> {
   const body = await api('/api/v1/me/agent-tokens')
-  return (body.tokens ?? []) as AgentTokenRow[]
+  return {
+    tokens: (body.tokens ?? []) as AgentTokenRow[],
+    skill_install_text: (body.skill_install_text ?? '') as string,
+  }
 }
 
 export async function issueAgentToken(

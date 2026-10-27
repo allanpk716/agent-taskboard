@@ -19,8 +19,8 @@ test('wide detail keeps actions in the header and shows ordered ticket informati
   await expect(actions).toHaveText([
     '🏷 标签',
     '👤 改派',
-    '🤖 让我的 Agent 处理',
-    '📨 发给 王工',
+    '🤖 复制给我的 Agent',
+    '📨 复制给对方的 Agent',
     '🔗 访客链接',
     '🤝 协作者',
     '✔ 关闭',
@@ -48,7 +48,7 @@ test('wide detail keeps actions in the header and shows ordered ticket informati
   await expect(info).toContainText(url)
   await expect(info).toContainText('剩余')
   await expect(info).toContainText('已使用 0 次')
-  await expect(info).not.toContainText('让我的 Agent 处理')
+  await expect(info).not.toContainText('复制给我的 Agent')
 
   const token = new URL(url).pathname.slice(3)
   const deviceToken = await claimGuestLink(request, token)

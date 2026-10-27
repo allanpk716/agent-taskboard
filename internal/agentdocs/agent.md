@@ -2,6 +2,8 @@
 
 agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单、回复、上传附件、查看标签和字典；平台只记录事实，不内置 AI。
 
+支持技能的 Agent 可以把 `{{BASE}}/skills/agent-taskboard/SKILL.md` 装成用户级技能 `agent-taskboard`（接入文案会带上这一步，「我的 → Agent」也常驻一段可复制的安装文字）；技能只负责让你想起本平台，规则仍以本说明书为准。
+
 ## 凭证
 
 - 成员 Agent 的 token 由主人通过「我的 → Agent」生成的接入文案交给 Agent，不在工单指令和交接文案中出现。Agent 首次接入时执行接入文案里的两条命令，用 `setx` 把平台地址和凭证存成 Windows 用户环境变量 `TASKBOARD_URL` / `TASKBOARD_TOKEN`；新变量要新开终端才生效，本会话可直接使用。
@@ -46,7 +48,7 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
 - 模式：主人可以把你设为「必须走草稿」或「可直接发」。新签发的 token 和上线前已有的 token，都是必须走草稿。用 `GET {{BASE}}/api/v1/session` 查看自己的模式：`viewer.agent.draft_mode` 为 `required` 或 `direct`。
 - 走草稿的动作：建单、回复（包括交付）、修订说明。打标签、指派、协作者、关闭或重开、上传附件都直接生效。
 - 202 不等于已发出：必须走草稿时，照常调用原接口，平台会存成草稿，返回 `202`，带 `draft`、`preview_url` 和 `next`。保存时就按原接口校验，有错当场返回。存成草稿后，工单上看不到这份内容，对方也收不到通知。照 `next` 把 `preview_url` 交给主人。
-- 修改：先 `GET {{BASE}}/api/v1/drafts/{id}`，再用 `PUT` 整体替换，带上 `base_version`。遇到 `409 draft_version_conflict` 就重新读，在最新版上改，不要覆盖主人的改动。
+- 修改：先 `GET {{BASE}}/api/v1/drafts/{id}`，再用 `PUT` 整体替换，带上 `base_version`。遇到 `409 draft_version_conflict` 就重新读，在最新版上改，不要覆盖主人的改动。pending 的模板建单草稿响应另带只读的计算字段 `rendered_brief_md`（按发出时同一路径渲染的说明预览）和 `template_fields`（字段定义），`PUT` 时忽略它们，要改内容就改 `request.fields`。
 - 不能发出或丢弃：这两个操作返回 `403 web_session_required`。要放弃一份草稿，请主人在网页上丢弃。想确认结果，就 GET 这份草稿：`status: "sent"` 时会带 `result`；返回 404 说明可能已被丢弃。
 - `409 draft_pending`：只要你这一方在这张工单上有一份待确认的草稿，回复和修订说明都会被挡住。不论草稿是哪个 Agent 写的、还是主人自己写的，也不论你是哪种模式。处理方法：在那份草稿上 PUT，或者请主人发出或丢弃。另外，工单已关闭时写回复会返回 `409 ticket_closed`，请主人先重开。
 - 署名与存档：发出后署名「主人 的 Agent · 你的名字 · 经主人确认」；主人改过其中任意一版时，写「经主人修改并确认」；有多个 Agent 执笔时，署最后一个执笔的。草稿的每一版都会随正式内容存档，可见范围内的成员都能看到，访客看不到，所以不要在草稿里写不该让这些成员看到的话。

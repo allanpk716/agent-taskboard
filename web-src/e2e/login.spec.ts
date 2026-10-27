@@ -21,6 +21,15 @@ test('登录后进入成员网页的收件箱', async ({ page }) => {
   }
 })
 
+// iOS 主屏应用常以添加时所在的 /login 为启动地址：已登录再打开登录页应直接进站内。
+test('已登录时打开登录页直接跳回首页', async ({ page }) => {
+  await login(page)
+  await expect(page.getByRole('heading', { name: '收件箱' })).toBeVisible()
+  await page.goto('/login')
+  await expect(page).toHaveURL((u) => u.pathname === '/')
+  await expect(page.getByRole('heading', { name: '收件箱' })).toBeVisible()
+})
+
 test('登录页显示验证码，答错后提示并自动换一张', async ({ page }) => {
   await page.goto('/login')
   await expect(page.getByRole('img', { name: '验证码图片' })).toBeVisible()

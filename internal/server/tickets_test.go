@@ -376,9 +376,10 @@ type ticketResponseBody struct {
 		} `json:"request"`
 		Attachments []attachmentViewBody `json:"attachments"`
 	} `json:"my_draft"`
-	HandoffText      string              `json:"handoff_text"`
-	HandoffShareText *string             `json:"handoff_share_text"`
-	Timeline         []timelineEventBody `json:"timeline"`
+	HandoffText           string              `json:"handoff_text"`
+	HandoffShareText      *string             `json:"handoff_share_text"`
+	GuestAgentInstruction *string             `json:"guest_agent_instruction"`
+	Timeline              []timelineEventBody `json:"timeline"`
 }
 
 type lastRevisedBody struct {

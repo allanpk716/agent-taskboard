@@ -12,7 +12,9 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 - 错误一律写成 `{"error":{"code":"…","message":"…","hint":"…"}}`，`hint` 可选，告诉调用方下一步怎么做。
 - 成功创建资源返回 `201`。
 - 所有写请求建议带 `Idempotency-Key`；地址、凭证用法和起手流程见公开说明书
-  `GET /agent.md`（`/llms.txt` 是它的别名），完整接口清单见 `GET /api.md`。两份 Markdown
+  `GET /agent.md`（`/llms.txt` 是它的别名），完整接口清单见 `GET /api.md`；支持技能的
+  Agent 还可公开读取 `GET /skills/agent-taskboard/SKILL.md` 并装成用户级技能
+  `agent-taskboard`（技能只指向说明书，不带凭证）。这些 Markdown
   无需凭证，正文中的地址按 `[server] public_url`（未配置时按请求的 scheme/host）生成绝对地址。
 - 凭证四种，统一解析成一个 Viewer（`kind` 为 `member` / `guest`，成员带 `member` 与 `agent` / `client`，访客带 `guest_link`，见 spec「身份与凭证」模块）：
   1. **成员本人**：网页会话 cookie `tb_session`（HttpOnly + Secure + SameSite=Lax）。本人操作的唯一来源。
@@ -37,7 +39,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 {
   "name": "agent-taskboard",
   "version": "…",
-  "docs": {"agent": "…/agent.md", "api": "…/api.md"},
+  "docs": {"agent": "…/agent.md", "api": "…/api.md", "skill": "…/skills/agent-taskboard/SKILL.md"},
   "auth": "成员 Agent 用主人在网页「我的 → Agent」签发的 token：Authorization: Bearer <token>；访客用访客链接里的凭证",
   "entry_points": {"tickets": "…/api/v1/tickets", "inbox": "…/api/v1/inbox"}
 }
@@ -158,7 +160,8 @@ spec 用户故事 84），没有 `inbox`：
   ```
 
   明文 `token` 只在签发响应里出现一次，之后任何接口都不回显（库中只存 SHA-256 哈希）。
-- 列表响应 `{tokens: [{id, name, draft_mode, draft_mode_switched_by_launch, created_at, revoked_at?}]}`（新→旧）；撤销的保留在列表里，
+- 列表响应 `{tokens: [{id, name, draft_mode, draft_mode_switched_by_launch, created_at, revoked_at?}], skill_install_text}`（新→旧）；
+  `skill_install_text` 是后端生成、不含凭证的技能安装文字，供「我的 → Agent」常驻复制；撤销的 Agent 保留在列表里，
   页面标注「已停用」（历史署名不受影响）。
 - 撤销 Agent 后它的历史署名保留并标注「已停用」（时间线渲染见后续工单）；未撤销的同名不能重复，撤销后名字可复用。
 - 错误码：
@@ -459,10 +462,19 @@ spec 用户故事 84），没有 `inbox`：
 | `POST /api/v1/drafts/{id}/send` | 网页会话发出：`{"version":N,"confirm_through_seq?":S,"deliver?":bool}`，成功 201。 |
 
 - 草稿对象含 `id, kind(create|reply|brief_revision), status(pending|sent), version,
-  ticket, request, author, versions, base, new_events, warnings, preview_url, url, result?`。
+  ticket, request, author, versions, base, new_events, warnings, preview_url, url, result?`；
+  pending 的模板建单草稿另带只读计算字段 `rendered_brief_md?, template_fields?, template_warning?`
+  （见下条）。
   `author` 是最后一版执笔者；`versions` 是起草过程元数据；`base.brief_revision`
   只在说明修订草稿上出现。同一成员一方在同一张工单上只有一个 pending 草稿位，
   回复与说明修订共用。
+- pending 的模板建单草稿（`request.template` 非空）视图带三个**只读的服务端计算字段**：
+  `rendered_brief_md` 按发出时的同一条路径（当前模板版本的字段定义 + 说明渲染）
+  算出，与发出后的工单说明 `brief.markdown` 逐字一致；`template_fields` 是当前
+  模板版本字段定义的精简列表（`key,title,required,type,options?,dimension?`，
+  单选/维度字段连同候选值），供网页逐字段编辑 `request.fields`；两者**PUT 时忽略**、
+  不落库。模板已不存在时不报错：`rendered_brief_md` 退化为按已填字段的键值原样
+  拼出（键作标题），并以 `template_warning` 说明——该草稿此时无法发出。
 - `PUT` 缺 `base_version` 返回 `422 base_version_required`；版本过期返回
   `409 draft_version_conflict`（附 `current_version`、`last_author`）；已发出返回
   `409 draft_already_sent`。成员本人 PUT 记为一版「某成员 修改」。
