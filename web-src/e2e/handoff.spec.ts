@@ -29,7 +29,7 @@ async function createMemberWithoutAgentToken(
   }
 }
 
-test('发起人看到两个按钮，分别复制工单指令和交接文案', async ({ page, request }) => {
+test('发起人看到两个按钮，分别复制工单指令和中性交接文案', async ({ page, request }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
   const number = await createTicket(request, { title: '要交给王工Agent的工单', assignee: '王工' })
   await issueToken(request, ADMIN, '发起人交接')
@@ -37,9 +37,9 @@ test('发起人看到两个按钮，分别复制工单指令和交接文案', as
   await login(page, ADMIN)
   await page.goto(`/t/${number}`)
 
-  await page.locator('.actrow').getByRole('button', { name: '🤖 让我的 Agent 处理' }).click()
+  await page.locator('.actrow').getByRole('button', { name: '🤖 复制给我的 Agent' }).click()
   let dialog = page.locator('.modal')
-  await expect(dialog).toContainText('🤖 让我的 Agent 处理')
+  await expect(dialog).toContainText('🤖 复制给我的 Agent')
   await expect(dialog.locator('[data-handoff-preview]')).toContainText(
     '1. 凭证：用环境变量 TASKBOARD_TOKEN，请求头 Authorization: Bearer $TASKBOARD_TOKEN',
   )
@@ -50,10 +50,12 @@ test('发起人看到两个按钮，分别复制工单指令和交接文案', as
   expect(preview).not.toMatch(/tbg_|tbk_|Authorization: Bearer tbag_/)
   await dialog.getByRole('button', { name: '关闭' }).click()
 
-  await page.locator('.actrow').getByRole('button', { name: '📨 发给 王工' }).click()
+  await page.locator('.actrow').getByRole('button', { name: '📨 复制给对方的 Agent' }).click()
   dialog = page.locator('.modal')
-  await expect(dialog).toContainText('📨 发给 王工')
-  await expect(dialog.locator('[data-handoff-preview]')).toContainText('给你派了一张工单')
+  await expect(dialog).toContainText('📨 复制给对方的 Agent')
+  await expect(dialog.getByRole('radio', { name: '成员' })).toBeChecked()
+  await expect(dialog.locator('[data-handoff-preview]')).toContainText('请让你的 Agent 处理工单')
+  await expect(dialog.locator('[data-handoff-preview]')).not.toContainText('给你派了一张工单')
   await expect(dialog.locator('[data-handoff-preview]')).toContainText('下面这段交给你的 Agent')
   preview = ((await dialog.locator('[data-handoff-preview]').textContent()) ?? '').trim()
   await dialog.getByRole('button', { name: '复制交接文案' }).click()
@@ -62,15 +64,15 @@ test('发起人看到两个按钮，分别复制工单指令和交接文案', as
   expect(preview).not.toMatch(/tbg_|tbk_|Authorization: Bearer tbag_/)
 })
 
-test('指派人只看到让我的Agent处理', async ({ page, request }) => {
+test('指派给自己也常驻两个按钮', async ({ page, request }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
   const number = await createTicket(request, { title: '指派人自己的Agent工单', assignee: '王工' })
   await login(page, await wang())
   await page.goto(`/t/${number}`)
 
-  await expect(page.locator('.actrow').getByRole('button', { name: '让我的 Agent 处理' })).toBeVisible()
-  await expect(page.locator('.actrow').getByRole('button', { name: /发给 王工/ })).toHaveCount(0)
-  await page.locator('.actrow').getByRole('button', { name: '🤖 让我的 Agent 处理' }).click()
+  await expect(page.locator('.actrow').getByRole('button', { name: '🤖 复制给我的 Agent' })).toBeVisible()
+  await expect(page.locator('.actrow').getByRole('button', { name: '📨 复制给对方的 Agent' })).toBeVisible()
+  await page.locator('.actrow').getByRole('button', { name: '🤖 复制给我的 Agent' }).click()
   const dialog = page.locator('.modal')
   await expect(dialog.locator('[data-handoff-preview]')).toContainText('请处理 agent-taskboard 上的工单')
   await expect(dialog.locator('[data-handoff-preview]')).not.toContainText('给你派了一张工单')
@@ -83,7 +85,7 @@ test('没有Agent token时顶部两步引导但不阻止复制', async ({ page, 
   const number = await createTicket(request, { title: '还没签发token的成员工单', assignee: String(memberID) })
   await login(page, worker)
   await page.goto(`/t/${number}`)
-  await page.locator('.actrow').getByRole('button', { name: '🤖 让我的 Agent 处理' }).click()
+  await page.locator('.actrow').getByRole('button', { name: '🤖 复制给我的 Agent' }).click()
 
   const guide = page.locator('.handoff-onboarding')
   await expect(guide).toContainText('你的 Agent 还没接入，第一次需要两步')
@@ -94,25 +96,96 @@ test('没有Agent token时顶部两步引导但不阻止复制', async ({ page, 
 
   await issueToken(request, worker, '手机交接')
   await page.goto(`/t/${number}`)
-  await page.locator('.actrow').getByRole('button', { name: '🤖 让我的 Agent 处理' }).click()
+  await page.locator('.actrow').getByRole('button', { name: '🤖 复制给我的 Agent' }).click()
   await expect(page.locator('.handoff-onboarding')).toHaveCount(0)
 })
 
-test('手机菜单可以打开两个Agent入口', async ({ page, request }) => {
-  const number = await createTicket(request, { title: '手机抽屉打开的交接工单', assignee: '王工' })
-  await page.setViewportSize({ width: 375, height: 720 })
+test('手机视口操作行常驻两个Agent按钮', async ({ page, request }) => {
+  const number = await createTicket(request, { title: '手机操作行的交接工单', assignee: '王工' })
+  await page.setViewportSize({ width: 390, height: 844 })
   await login(page, ADMIN)
   await page.goto(`/t/${number}`)
 
-  await page.getByRole('button', { name: '更多操作' }).click()
-  await page.getByRole('menuitem', { name: '🤖 让我的 Agent 处理' }).click()
+  const agentButton = page.locator('.actrow').getByRole('button', { name: '🤖 复制给我的 Agent' })
+  const peerButton = page.locator('.actrow').getByRole('button', { name: '📨 复制给对方的 Agent' })
+  await expect(agentButton).toBeVisible()
+  await expect(peerButton).toBeVisible()
+  await agentButton.click()
   await expect(page.locator('.mask')).toBeVisible()
   await expect(page.locator('.modal')).toContainText('复制工单指令')
   await page.getByRole('button', { name: '关闭', exact: true }).click()
 
-  await page.getByRole('button', { name: '更多操作' }).click()
-  await page.getByRole('menuitem', { name: '📨 发给 王工' }).click()
+  await peerButton.click()
+  await expect(page.locator('.modal')).toContainText('📨 复制给对方的 Agent')
+  await expect(page.locator('.modal').getByRole('radio', { name: '成员' })).toBeChecked()
   await expect(page.locator('.modal')).toContainText('复制交接文案')
+})
+
+test('未指派与指派给自己时两个按钮都可见', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  const unassigned = await createTicket(request, { title: '未指派也有两个按钮的工单' })
+  await login(page, ADMIN)
+  await page.goto(`/t/${unassigned}`)
+  await expect(page.locator('.actrow').getByRole('button', { name: '🤖 复制给我的 Agent' })).toBeVisible()
+  await expect(page.locator('.actrow').getByRole('button', { name: '📨 复制给对方的 Agent' })).toBeVisible()
+
+  const mine = await createTicket(request, { title: '指派给我也有两个按钮的工单', assignee: '管理员' })
+  await page.goto(`/t/${mine}`)
+  await expect(page.locator('.actrow').getByRole('button', { name: '🤖 复制给我的 Agent' })).toBeVisible()
+  await expect(page.locator('.actrow').getByRole('button', { name: '📨 复制给对方的 Agent' })).toBeVisible()
+
+  await page.locator('.actrow').getByRole('button', { name: '📨 复制给对方的 Agent' }).click()
+  const dialog = page.locator('.modal')
+  await expect(dialog.getByRole('radio', { name: '成员' })).toBeChecked()
+  const preview = dialog.locator('[data-handoff-preview]')
+  await expect(preview).toContainText('请让你的 Agent 处理工单')
+  await expect(preview).not.toContainText('管理员')
+  await expect(preview).not.toContainText('给你派了')
+})
+
+test('复制给对方的Agent访客分支没有链接时能新建并显示转发文案', async ({ page, request }) => {
+  const number = await createTicket(request, { title: '访客分支新建链接的工单' })
+  await login(page, ADMIN)
+  await page.goto(`/t/${number}`)
+
+  await page.locator('.actrow').getByRole('button', { name: '📨 复制给对方的 Agent' }).click()
+  const dialog = page.locator('.modal')
+  await dialog.getByRole('radio', { name: '访客' }).check()
+  await expect(dialog.locator('.peer-create')).toBeVisible()
+  await dialog.getByLabel('备注').fill('检验科-张三')
+  await dialog.getByLabel('有效期').selectOption('7')
+  await dialog.getByLabel('可填写说明').check()
+  await dialog.getByRole('button', { name: '创建并显示转发文案' }).click()
+
+  const preview = dialog.locator('[data-handoff-preview]')
+  await expect(preview).toContainText('检验科-张三：想请你帮忙反馈「访客分支新建链接的工单」')
+  await expect(preview).toContainText('/g/')
+  await expect(dialog.getByRole('button', { name: '复制转发文案' })).toBeVisible()
+
+  const links = await (await request.get(`/api/v1/tickets/${number}/guest-links`)).json()
+  expect(links.links).toHaveLength(1)
+  expect(links.links[0].can_edit_brief).toBe(true)
+  expect(preview).toContainText(links.links[0].note)
+})
+
+test('不能管理访客链接时对方是访客选项置灰', async ({ page, request }) => {
+  const number = await createTicket(request, { title: '无链接管理权限的工单' })
+  await page.route(`**/api/v1/tickets/${number}`, async (route) => {
+    const response = await route.fetch()
+    const body = await response.json()
+    body.viewer.can.manage_guest_links = false
+    await route.fulfill({ response, json: body })
+  })
+  await login(page, ADMIN)
+  await page.goto(`/t/${number}`)
+
+  await page.locator('.actrow').getByRole('button', { name: '📨 复制给对方的 Agent' }).click()
+  const dialog = page.locator('.modal')
+  await expect(dialog.getByRole('radio', { name: '访客' })).toBeDisabled()
+  await expect(dialog.getByRole('radio', { name: '成员' })).toBeEnabled()
+  await expect(dialog.locator('[data-guest-link-denied]')).toContainText(
+    '你不能管理这张工单的访客链接，请找创建者或指派人',
+  )
 })
 
 test('改派确认后直接弹出发给指派人的交接文案', async ({ page, request }) => {
@@ -199,7 +272,7 @@ test('指派人按成员id判断而不是重名判断', async ({ page, request }
   await login(page, ADMIN)
   await page.goto(`/t/${number}`)
 
-  await page.locator('.actrow').getByRole('button', { name: '🤖 让我的 Agent 处理' }).click()
+  await page.locator('.actrow').getByRole('button', { name: '🤖 复制给我的 Agent' }).click()
   const dialog = page.locator('.modal')
   await expect(dialog.locator('[data-handoff-preview]')).toContainText('请处理 agent-taskboard 上的工单')
   await expect(dialog.getByRole('radio')).toHaveCount(0)

@@ -75,3 +75,95 @@ func Test读工单返回交接文案且与建单shareText一致(t *testing.T) {
 		}
 	}
 }
+
+func Test详情交接文案不点名且未指派也有(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("王工", "secret-pass")
+	s.CreateMember("李工", "secret-pass")
+	web := s.Login("王工", "secret-pass")
+
+	var assigned createAssignedResponse
+	res := s.Do(t, web, http.MethodPost, "/api/v1/tickets", map[string]any{
+		"title": "整理对照表", "brief_md": "背景：……", "labels": []string{"机型:UD-2300"},
+		"assignee": "李工",
+	}, &assigned)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("建单状态码 = %d, 想 201", res.StatusCode)
+	}
+
+	checkNeutral := func(number, title string) string {
+		var read ticketResponseBody
+		s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number, nil, &read)
+		if read.HandoffShareText == nil {
+			t.Fatalf("%s 的 handoff_share_text 不应为空", number)
+		}
+		want := fmt.Sprintf("请让你的 Agent 处理工单 %s「%s」，网页 %s/t/%s。\n下面这段交给你的 Agent（第一次用，先在「我的 → Agent」生成 token，把接入文案贴给它）：\n\n%s",
+			number, title, s.URL(), number, read.HandoffText)
+		if *read.HandoffShareText != want {
+			t.Fatalf("%s handoff_share_text = %q\n想 %q", number, *read.HandoffShareText, want)
+		}
+		if strings.Contains(*read.HandoffShareText, "李工：") || strings.Contains(*read.HandoffShareText, "给你派了") {
+			t.Fatalf("详情页交接文案不应点名指派人：\n%q", *read.HandoffShareText)
+		}
+		return *read.HandoffShareText
+	}
+	memberShare := checkNeutral(assigned.Number, "整理对照表")
+
+	var unassigned createAssignedResponse
+	res = s.Do(t, web, http.MethodPost, "/api/v1/tickets", map[string]any{
+		"title": "未指派对照表", "brief_md": "背景：……", "labels": []string{"机型:UD-2300"},
+	}, &unassigned)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("未指派建单状态码 = %d, 想 201", res.StatusCode)
+	}
+	checkNeutral(unassigned.Number, "未指派对照表")
+
+	link := s.CreateGuestLink(t, web, assigned.Number, map[string]any{"note": "检验科-张三"})
+	var guest ticketResponseBody
+	s.Do(t, s.GuestClient(link.Key(t)), http.MethodGet, "/api/v1/tickets/"+assigned.Number, nil, &guest)
+	if guest.HandoffText != "" {
+		t.Fatalf("访客不应拿到成员工单指令 handoff_text = %q", guest.HandoffText)
+	}
+	if guest.HandoffShareText == nil || *guest.HandoffShareText != memberShare {
+		t.Fatalf("访客 handoff_share_text = %v, 想与成员一致的中性交接文案", guest.HandoffShareText)
+	}
+}
+
+func Test访客Agent指令带链接占位与鉴权方法(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("王工", "secret-pass")
+	web := s.Login("王工", "secret-pass")
+
+	var created createAssignedResponse
+	res := s.Do(t, web, http.MethodPost, "/api/v1/tickets", map[string]any{
+		"title": "访客Agent的工单", "brief_md": "背景：……", "labels": []string{"机型:UD-2300"},
+	}, &created)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("建单状态码 = %d, 想 201", res.StatusCode)
+	}
+	link := s.CreateGuestLink(t, web, created.Number, map[string]any{"note": "检验科-张三"})
+	key := link.Key(t)
+
+	var guest ticketResponseBody
+	s.Do(t, s.GuestClient(key), http.MethodGet, "/api/v1/tickets/"+created.Number, nil, &guest)
+	if guest.GuestAgentInstruction == nil {
+		t.Fatal("访客视图应带 guest_agent_instruction")
+	}
+	want := fmt.Sprintf(`请处理 agent-taskboard 上的工单 %s「访客Agent的工单」。
+1. 凭证：下面这条访客链接只给你自己的 Agent，不要转发给其他人：
+   {GUEST_LINK_URL}
+   访问码：<请填入你的 6 位访问码>
+   请求头写 Authorization: Bearer tbg_<链接密钥>:<访问码>；「链接密钥」是上面链接 /g/ 后面那一串，访问码由我私下补给你。读不到访问码或返回 401/403 就停下来找我，不要使用别人的凭证。
+2. 不熟悉平台先读说明书：%s/agent.md
+3. 读工单：curl -H "Authorization: Bearer tbg_<链接密钥>:<访问码>" "%s/api/v1/tickets/%s?format=markdown"
+4. 照工单末尾「下一步」做。
+5. 你写的回复和说明修订会直接发出（访客 Agent 不走成员草稿流程）；署名如实写明由 Agent 写成，不要冒充我本人。
+6. 写完用一两句话告诉我做了什么。`,
+		created.Number, s.URL(), s.URL(), created.Number)
+	if *guest.GuestAgentInstruction != want {
+		t.Fatalf("guest_agent_instruction = %q\n想 %q", *guest.GuestAgentInstruction, want)
+	}
+	if strings.Contains(*guest.GuestAgentInstruction, key) {
+		t.Fatalf("后端拿不到明文链接密钥，指令里应只有占位符：\n%q", *guest.GuestAgentInstruction)
+	}
+}

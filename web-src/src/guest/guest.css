@@ -47,6 +47,14 @@
   text-align: center;
 }
 
+/* 访客页两个常驻 Agent 按钮：任何工单状态、任何宽度都显示。 */
+.guest-handoff-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 16px 0;
+}
+
 .claim-label {
   display: block;
   margin: 14px 0 6px;

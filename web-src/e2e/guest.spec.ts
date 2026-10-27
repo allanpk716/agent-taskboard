@@ -240,6 +240,34 @@ test('认领访客链接的时间线不重复显示署名', async ({ page, reque
   await expect(member.locator('.event').last()).toHaveText(expected)
 })
 
+test('访客页常驻两个Agent入口，我的Agent指令带链接与访问码占位', async ({ page, request }) => {
+  const seed = await seedGuestTicket(request, {})
+  await openGuestPage(page, request, seed.linkKey)
+
+  const bar = page.getByRole('region', { name: 'Agent 入口' })
+  await expect(bar.getByRole('button', { name: '🤖 复制给我的 Agent' })).toBeVisible()
+  await expect(bar.getByRole('button', { name: '📨 复制给对方的 Agent' })).toBeVisible()
+
+  await bar.getByRole('button', { name: '🤖 复制给我的 Agent' }).click()
+  const dialog = page.locator('.modal')
+  await expect(dialog).toContainText('🤖 复制给我的 Agent')
+  await expect(dialog.locator('[data-guest-agent-warning]')).toContainText('内含访问凭证')
+  const mine = dialog.locator('[data-handoff-preview]')
+  await expect(mine).toContainText(`请处理 agent-taskboard 上的工单 ${seed.number}`)
+  const origin = await page.evaluate(() => window.location.origin)
+  await expect(mine).toContainText(`${origin}/g/${seed.linkKey}`)
+  await expect(mine).toContainText('访问码：<请填入你的 6 位访问码>')
+  await expect(mine).toContainText('Authorization: Bearer tbg_<链接密钥>:<访问码>')
+  await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+
+  await bar.getByRole('button', { name: '📨 复制给对方的 Agent' }).click()
+  await expect(dialog).toContainText('📨 复制给对方的 Agent')
+  const theirs = dialog.locator('[data-handoff-preview]')
+  await expect(theirs).toContainText('请让你的 Agent 处理工单')
+  await expect(theirs).not.toContainText(seed.linkKey)
+  await expect(theirs).not.toContainText('tbg_')
+})
+
 // 2. 工单关闭后只读；链接撤销/过期后整页提示。
 test('工单关闭后只读；链接撤销或过期后显示整页提示', async ({ page, request }) => {
   const seed = await seedGuestTicket(request, { close: true })
