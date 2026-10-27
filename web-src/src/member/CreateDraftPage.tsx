@@ -96,6 +96,7 @@ export function CreateDraftPage({ id }: { id: string }) {
   const { draft, request } = stage
   const dirty = JSON.stringify(request) !== JSON.stringify(draft.request)
   const isTemplate = !!request.template
+  const attachments = new Map(draft.attachments.map((attachment) => [attachment.id, attachment]))
 
   function patch(next: Partial<CreateDraftRequest>) {
     if (stage.phase !== 'ready') return
@@ -225,7 +226,7 @@ export function CreateDraftPage({ id }: { id: string }) {
           ) : (
             <Markdown
               body={(isTemplate ? draft.rendered_brief_md : request.brief_md) || '（说明未填写）'}
-              attachments={new Map()}
+              attachments={attachments}
             />
           )}
           {isTemplate && draft.template_warning ? (

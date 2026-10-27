@@ -16,14 +16,15 @@ test('Agent 说明修订草稿按字段确认并保留起草过程', async ({ pa
   const created = await request.post('/api/v1/tickets', {
     data: {
       title: 'Agent 修订说明',
-      brief_md: 'Agent 修订说明 的说明。',
+      brief_md: '旧的**重点**说明。',
       labels: ['机型:UD-2300'],
     },
   })
   expect(created.status(), '王工建单失败').toBe(201)
   const number = ((await created.json()) as { number: string }).number
+  const markdown = '**修订后的说明。**\n- 第一处变化\n- 第二处变化'
   const drafted = await request.patch(`/api/v1/tickets/${number}`, {
-    data: { title: '新标题', brief_md: '修订后的说明。', base_revision: 1 },
+    data: { title: '新标题', brief_md: markdown, base_revision: 1 },
     headers: { Authorization: `Bearer ${token}` },
   })
   expect(drafted.status()).toBe(202)
@@ -34,7 +35,17 @@ test('Agent 说明修订草稿按字段确认并保留起草过程', async ({ pa
   await expect(card).toContainText('草稿 · 未发出 · 只有你能看到')
   await expect(card).toContainText('Agent 修订说明')
   await expect(card).toContainText('新标题')
-  await expect(card).toContainText('修订后的说明。')
+  const change = card.locator('.draft-field-change').filter({ hasText: /^说明/ })
+  await expect(change.locator('.old strong')).toHaveText('重点')
+  await expect(change.locator('.new strong')).toHaveText('修订后的说明。')
+  await expect(change.locator('.new li')).toHaveCount(2)
+  await expect(change).not.toContainText('**')
+
+  await card.getByRole('button', { name: '直接修改' }).click()
+  await expect(page.getByLabel('草稿内容')).toHaveValue(markdown)
+  await card.getByRole('button', { name: '取消', exact: true }).click()
+  await expect(change.locator('.new strong')).toHaveText('修订后的说明。')
+
   await card.getByRole('button', { name: '发出修订', exact: true }).click()
 
   const brief = page.locator('[data-bubble="brief"]')

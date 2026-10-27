@@ -32,10 +32,11 @@ test('Agent 建单草稿经通知确认后发出并展示访客文案', async ({
   const who = await wang()
   await login(page, who)
   const token = await issueRequiredAgent(request)
+  const markdown = '**请先确认这份草稿**\n- 检查标题\n- 检查指派'
   const drafted = await request.post('/api/v1/tickets', {
     data: {
       title: 'Agent 起草的建单',
-      brief_md: '请确认这份草稿后再发出。',
+      brief_md: markdown,
       labels: ['机型:UD-2300'],
       guest_link: { note: '检验科-张三', can_edit_brief: true },
     },
@@ -50,8 +51,17 @@ test('Agent 建单草稿经通知确认后发出并展示访客文案', async ({
   await row.click()
   await expect(page).toHaveURL(new RegExp(`/drafts/${draft.id}$`))
   await expect(page.locator('.create-draft-banner')).toContainText('草稿 · 未发布 · 只有你能看到')
-  await expect(page.getByLabel('建单草稿')).toContainText('编号在发出时分配')
-  await expect(page.getByLabel('建单草稿')).toContainText('请确认这份草稿后再发出。')
+  const draftCard = page.getByLabel('建单草稿')
+  await expect(draftCard).toContainText('编号在发出时分配')
+  const brief = draftCard.locator('> .md')
+  await expect(brief.locator('strong')).toHaveText('请先确认这份草稿')
+  await expect(brief.locator('li')).toHaveCount(2)
+  await expect(brief).not.toContainText('**')
+
+  await draftCard.getByRole('button', { name: '直接修改' }).click()
+  await expect(draftCard.getByLabel('说明')).toHaveValue(markdown)
+  await draftCard.getByRole('button', { name: '取消', exact: true }).click()
+  await expect(brief.locator('strong')).toHaveText('请先确认这份草稿')
 
   await page.getByLabel('标签').fill('机型:US-1680')
   await page.getByRole('button', { name: '发出', exact: true }).click()
