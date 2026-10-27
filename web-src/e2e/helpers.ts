@@ -29,6 +29,8 @@ export async function wang(): Promise<{ username: string; password: string }> {
 }
 
 export async function login(page: Page, who: { username: string; password: string }) {
+  // 已登录时打开 /login 会直接跳回首页，换账号前先清掉会话 cookie。
+  await page.context().clearCookies({ name: 'tb_session' })
   await page.goto('/login')
   await page.getByLabel('用户名').fill(who.username)
   await page.getByLabel('密码').fill(who.password)

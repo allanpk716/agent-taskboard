@@ -131,9 +131,10 @@ test('登录页和客户端连接页保留居中卡片', async ({ page, request 
   await page.setViewportSize({ width: 1440, height: 900 })
   await loginWithRequest(request, ADMIN)
   const cookies = (await request.storageState()).cookies
-  await page.context().addCookies(cookies)
 
+  // 登录页要未登录时看（已登录会跳回首页），客户端连接页要已登录时看。
   for (const path of ['/login', '/client/connect?port=1&state=x&code_challenge=y&hostname=E2E']) {
+    if (path !== '/login') await page.context().addCookies(cookies)
     await page.goto(path)
     const main = page.locator('main.login')
     await expect(main).toBeVisible()

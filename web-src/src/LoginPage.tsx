@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { ApiError, api } from './api'
 
+// 登录后去处：?next= 只接受站内路径，否则回首页。
+function nextPath(): string {
+  const next = new URLSearchParams(window.location.search).get('next')
+  return next && next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/\\') ? next : '/'
+}
+
 export function LoginPage() {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -22,6 +28,15 @@ export function LoginPage() {
     void refreshCaptcha()
   }, [refreshCaptcha])
 
+  // 已登录就别停在登录页：iOS 主屏应用常把添加时所在的 /login 当启动地址。
+  useEffect(() => {
+    api('/api/v1/session')
+      .then((s) => {
+        if (s?.viewer?.kind === 'member') window.location.replace(nextPath())
+      })
+      .catch(() => {})
+  }, [])
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     setBusy(true)
@@ -31,9 +46,7 @@ export function LoginPage() {
         method: 'POST',
         body: JSON.stringify({ username, password, captcha_id: captcha?.id, captcha_answer: captchaAnswer }),
       })
-      const next = new URLSearchParams(window.location.search).get('next')
-      window.location.href =
-        next && next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/\\') ? next : '/'
+      window.location.href = nextPath()
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.hint ? `${err.message}（${err.hint}）` : err.message)
