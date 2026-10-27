@@ -55,8 +55,9 @@ func (a *API) listAgentTokens(w http.ResponseWriter, r *http.Request) {
 		rows = append(rows, row)
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Tokens []agentTokenRow `json:"tokens"`
-	}{Tokens: rows})
+		Tokens           []agentTokenRow `json:"tokens"`
+		SkillInstallText string          `json:"skill_install_text"`
+	}{Tokens: rows, SkillInstallText: newHandoffText(a.requestBaseURL(r)).skillInstall()})
 }
 
 // handleAgentToken 处理单个 Agent token：

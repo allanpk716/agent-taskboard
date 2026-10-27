@@ -34,10 +34,13 @@ export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }
   const [draftCount, setDraftCount] = useState<number | null>(null)
   const [revokingClient, setRevokingClient] = useState<ClientCredentialRow | null>(null)
   const [changingPassword, setChangingPassword] = useState(false)
+  const [skillInstallText, setSkillInstallText] = useState('')
 
   async function refresh() {
     try {
-      setTokens(await fetchAgentTokens())
+      const tokenView = await fetchAgentTokens()
+      setTokens(tokenView.tokens)
+      setSkillInstallText(tokenView.skill_install_text)
       setClients(await fetchClients())
       const drafts = await fetchDrafts()
       setDraftCount(drafts.count)
@@ -239,6 +242,22 @@ export function MePage({ me, serverVersion }: { me: Me; serverVersion?: string }
           不能冒充本人，也不能签发 token；成员没有「本人 API token」——自己用命令行时，也建一个具名 Agent。
         </div>
         {error && <div className="errbox">{error}</div>}
+        {skillInstallText && (
+          <div className="btnrow">
+            <button
+              className="btn ghost"
+              data-testid="copy-skill-install"
+              onClick={() =>
+                void copyText(skillInstallText).then((ok) =>
+                  toast(ok ? '已复制' : '复制失败，请手动选择复制'),
+                )
+              }
+            >
+              复制安装技能文字
+            </button>
+            <span className="hint">已接入的 Agent 补装或更新技能用；不含 token</span>
+          </div>
+        )}
         <table className="mini-tbl">
           <tbody>
             {(tokens ?? []).map((tk) => (

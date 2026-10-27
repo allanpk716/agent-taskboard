@@ -36,7 +36,7 @@ export function HandoffPanel({
     if (mode !== 'agent') return
     let alive = true
     fetchAgentTokens()
-      .then((tokens) => {
+      .then(({ tokens }) => {
         if (alive) setNoToken(!tokens.some((t) => !t.revoked_at))
       })
       .catch(() => {})

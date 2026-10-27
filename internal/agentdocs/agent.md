@@ -2,6 +2,8 @@
 
 agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单、回复、上传附件、查看标签和字典；平台只记录事实，不内置 AI。
 
+支持技能的 Agent 可以把 `{{BASE}}/skills/agent-taskboard/SKILL.md` 装成用户级技能 `agent-taskboard`（接入文案会带上这一步，「我的 → Agent」也常驻一段可复制的安装文字）；技能只负责让你想起本平台，规则仍以本说明书为准。
+
 ## 凭证
 
 - 成员 Agent 的 token 由主人通过「我的 → Agent」生成的接入文案交给 Agent，不在工单指令和交接文案中出现。Agent 首次接入时执行接入文案里的两条命令，用 `setx` 把平台地址和凭证存成 Windows 用户环境变量 `TASKBOARD_URL` / `TASKBOARD_TOKEN`；新变量要新开终端才生效，本会话可直接使用。

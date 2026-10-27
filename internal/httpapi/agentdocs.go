@@ -17,6 +17,7 @@ type apiRootView struct {
 type apiRootDocs struct {
 	Agent string `json:"agent"`
 	API   string `json:"api"`
+	Skill string `json:"skill"`
 }
 
 func (a *API) handleAPIRoot(w http.ResponseWriter, r *http.Request) {
@@ -28,7 +29,7 @@ func (a *API) handleAPIRoot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, apiRootView{
 		Name:    "agent-taskboard",
 		Version: version.Server,
-		Docs:    apiRootDocs{Agent: base + "/agent.md", API: base + "/api.md"},
+		Docs:    apiRootDocs{Agent: base + "/agent.md", API: base + "/api.md", Skill: base + "/skills/agent-taskboard/SKILL.md"},
 		Auth: "成员 Agent 用主人在网页「我的 → Agent」签发的 token：Authorization: Bearer $TASKBOARD_TOKEN；" +
 			"访客用访客链接里的凭证",
 		EntryPoints: map[string]string{

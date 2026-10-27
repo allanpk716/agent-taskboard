@@ -12,7 +12,9 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 - 错误一律写成 `{"error":{"code":"…","message":"…","hint":"…"}}`，`hint` 可选，告诉调用方下一步怎么做。
 - 成功创建资源返回 `201`。
 - 所有写请求建议带 `Idempotency-Key`；地址、凭证用法和起手流程见公开说明书
-  `GET /agent.md`（`/llms.txt` 是它的别名），完整接口清单见 `GET /api.md`。两份 Markdown
+  `GET /agent.md`（`/llms.txt` 是它的别名），完整接口清单见 `GET /api.md`；支持技能的
+  Agent 还可公开读取 `GET /skills/agent-taskboard/SKILL.md` 并装成用户级技能
+  `agent-taskboard`（技能只指向说明书，不带凭证）。这些 Markdown
   无需凭证，正文中的地址按 `[server] public_url`（未配置时按请求的 scheme/host）生成绝对地址。
 - 凭证四种，统一解析成一个 Viewer（`kind` 为 `member` / `guest`，成员带 `member` 与 `agent` / `client`，访客带 `guest_link`，见 spec「身份与凭证」模块）：
   1. **成员本人**：网页会话 cookie `tb_session`（HttpOnly + Secure + SameSite=Lax）。本人操作的唯一来源。
@@ -37,7 +39,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 {
   "name": "agent-taskboard",
   "version": "…",
-  "docs": {"agent": "…/agent.md", "api": "…/api.md"},
+  "docs": {"agent": "…/agent.md", "api": "…/api.md", "skill": "…/skills/agent-taskboard/SKILL.md"},
   "auth": "成员 Agent 用主人在网页「我的 → Agent」签发的 token：Authorization: Bearer <token>；访客用访客链接里的凭证",
   "entry_points": {"tickets": "…/api/v1/tickets", "inbox": "…/api/v1/inbox"}
 }
@@ -158,7 +160,8 @@ spec 用户故事 84），没有 `inbox`：
   ```
 
   明文 `token` 只在签发响应里出现一次，之后任何接口都不回显（库中只存 SHA-256 哈希）。
-- 列表响应 `{tokens: [{id, name, draft_mode, draft_mode_switched_by_launch, created_at, revoked_at?}]}`（新→旧）；撤销的保留在列表里，
+- 列表响应 `{tokens: [{id, name, draft_mode, draft_mode_switched_by_launch, created_at, revoked_at?}], skill_install_text}`（新→旧）；
+  `skill_install_text` 是后端生成、不含凭证的技能安装文字，供「我的 → Agent」常驻复制；撤销的 Agent 保留在列表里，
   页面标注「已停用」（历史署名不受影响）。
 - 撤销 Agent 后它的历史署名保留并标注「已停用」（时间线渲染见后续工单）；未撤销的同名不能重复，撤销后名字可复用。
 - 错误码：

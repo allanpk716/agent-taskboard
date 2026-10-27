@@ -40,6 +40,44 @@ func Test公开说明书和接口参考无需凭证可读(t *testing.T) {
 	}
 }
 
+func Test公开技能Markdown无需凭证可读(t *testing.T) {
+	s := tbtest.Start(t)
+
+	res := s.Do(t, s.NewClient(), http.MethodGet, "/skills/agent-taskboard/SKILL.md", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("状态码 = %d，想 200", res.StatusCode)
+	}
+	if got := res.Header.Get("Content-Type"); got != "text/markdown; charset=utf-8" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(body)
+	if !strings.HasPrefix(got, "---") {
+		t.Fatalf("正文应以 frontmatter 开头：%q", truncateForTest(got))
+	}
+	for _, want := range []string{
+		"name: agent-taskboard",
+		s.URL() + "/agent.md",
+		s.URL() + "/api/v1/inbox",
+		s.URL() + "/skills/agent-taskboard/SKILL.md",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("技能正文缺少 %q", want)
+		}
+	}
+	if strings.Contains(got, "{{BASE}}") {
+		t.Errorf("技能正文不应残留 {{BASE}}：\n%s", truncateForTest(got))
+	}
+
+	res = s.Do(t, s.NewClient(), http.MethodPost, "/skills/agent-taskboard/SKILL.md", nil, nil)
+	if res.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("POST 状态码 = %d，想 405", res.StatusCode)
+	}
+}
+
 func Test说明书地址按public_url或请求地址生成(t *testing.T) {
 	s := tbtest.Start(t, tbtest.WithPublicURL("https://taskboard.example.com"))
 	assertAgentDocContains(t, s, "https://taskboard.example.com/api/v1/tickets")
@@ -75,6 +113,7 @@ func TestAPI自描述和未知路径提示(t *testing.T) {
 			Docs    struct {
 				Agent string `json:"agent"`
 				API   string `json:"api"`
+				Skill string `json:"skill"`
 			} `json:"docs"`
 			Auth        string            `json:"auth"`
 			EntryPoints map[string]string `json:"entry_points"`
@@ -84,7 +123,8 @@ func TestAPI自描述和未知路径提示(t *testing.T) {
 			t.Fatalf("名称或版本不对：%+v", got)
 		}
 		if got.Docs.Agent != "https://taskboard.example.com/agent.md" ||
-			got.Docs.API != "https://taskboard.example.com/api.md" {
+			got.Docs.API != "https://taskboard.example.com/api.md" ||
+			got.Docs.Skill != "https://taskboard.example.com/skills/agent-taskboard/SKILL.md" {
 			t.Fatalf("文档地址不对：%+v", got.Docs)
 		}
 		if !strings.Contains(got.Auth, "Authorization: Bearer") ||
