@@ -227,6 +227,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	}
 	a.loginLocks.reset(req.Username, ip)
 	http.SetCookie(w, sessionCookie(sess, sess.ExpiresAt))
+	logSessionEvent(r, "login user="+sess.Member.Username, sess.ID)
 	member := sess.Member
 	writeJSON(w, http.StatusOK, sessionView{Viewer: viewerView{Kind: "member", Member: &member}})
 }
@@ -261,6 +262,7 @@ func (a *API) logout(w http.ResponseWriter, r *http.Request) {
 			panic(err)
 		}
 		a.wakeMemberStreams(sess.Member.ID)
+		logSessionEvent(r, "logout user="+sess.Member.Username, sess.ID)
 	}
 	// 无论是否登录过，都清掉 cookie，幂等返回 204。
 	http.SetCookie(w, sessionCookie(identity.Session{}, timeZero()))

@@ -69,12 +69,14 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 			}
 			return viewer, true
 		}
+		logSessionEvent(r, "401 no-cookie path="+r.URL.Path, "")
 		WriteError(w, http.StatusUnauthorized, CodeUnauthenticated, "未登录", a.authHint(r))
 		return identity.Viewer{}, false
 	}
 	viewer, err := a.ident.ViewerFromSession(r.Context(), cookie.Value)
 	if err != nil {
 		if errors.Is(err, identity.ErrInvalidCredentials) {
+			logSessionEvent(r, "401 invalid-session path="+r.URL.Path, cookie.Value)
 			WriteError(w, http.StatusUnauthorized, CodeUnauthenticated, "会话不存在或已过期", a.authHint(r))
 			return identity.Viewer{}, false
 		}
