@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ApiError } from '../api'
 import type { AnyDraftView, CreateDraftRequest, CreateDraftView } from '../shared/types'
 import { absoluteUrl } from '../shared/format'
+import { Markdown } from '../shared/markdown'
 import {
   discardDraft,
   fetchDraft,
@@ -222,9 +223,10 @@ export function CreateDraftPage({ id }: { id: string }) {
               />
             )
           ) : (
-            <div className="md">
-              {(isTemplate ? draft.rendered_brief_md : request.brief_md) || '（说明未填写）'}
-            </div>
+            <Markdown
+              body={(isTemplate ? draft.rendered_brief_md : request.brief_md) || '（说明未填写）'}
+              attachments={new Map()}
+            />
           )}
           {isTemplate && draft.template_warning ? (
             <div className="warnbox">{draft.template_warning}</div>
