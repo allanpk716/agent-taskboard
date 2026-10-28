@@ -1,7 +1,7 @@
 // 对话流的共用气泡与事件行（#38 访客网页 / #41 成员工单详情都用）：
 // 说明 = 第一条气泡（按字段显示问句和回答）、回复气泡（头像 + 署名 + Markdown
 // + 附件条）、居中灰色系统事件行。成员视角比访客多看到标签事件。
-import { useCallback, useState } from 'react'
+import { useCallback, useState, type Ref } from 'react'
 import type { Author, BriefVersion, DraftHistoryVersion, TicketView, TimelineEvent } from './types'
 import { authorName, closeReasonText, fmtDateCN, fmtShort } from './format'
 import { Markdown, inlineImageIds } from './markdown'
@@ -250,6 +250,8 @@ export function ReplyBubble({
   draftingOpen = false,
   onToggleDrafting,
   fetchDrafting,
+  latestReply = false,
+  latestReplyRef,
 }: {
   event: TimelineEvent
   ticket: TicketView
@@ -257,6 +259,8 @@ export function ReplyBubble({
   draftingOpen?: boolean
   onToggleDrafting?: () => void
   fetchDrafting?: () => Promise<{ versions: DraftHistoryVersion[] }>
+  latestReply?: boolean
+  latestReplyRef?: Ref<HTMLDivElement>
 }) {
   const atts = attachmentsOf(ticket)
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null)
@@ -266,7 +270,13 @@ export function ReplyBubble({
     .map((id) => ticket.attachments.find((a) => a.id === id))
     .filter((a): a is Attachment => !!a)
   return (
-    <div className="bubble" data-bubble="reply" data-author-kind={event.actor.agent ? 'agent' : 'member'}>
+    <div
+      className="bubble"
+      data-bubble="reply"
+      data-author-kind={event.actor.agent ? 'agent' : 'member'}
+      data-latest-reply={latestReply ? '' : undefined}
+      ref={latestReply ? latestReplyRef : undefined}
+    >
       <Avatar author={event.actor} />
       <div className="card">
         <div className="who">
