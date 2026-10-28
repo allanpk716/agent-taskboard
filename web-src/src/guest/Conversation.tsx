@@ -1,11 +1,12 @@
 // 访客对话页的头部与整条对话（#38）：头部（部门平台 · 类型 · 编号 · 标题 ·
 // 状态徽标 · 链接备注与到期日）+ 共用的说明气泡、回复气泡与系统事件行
 //（shared/conversation，#41 成员工单详情同样使用）。
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { TicketView } from '../shared/types'
 import { closeReasonText, fmtDateCN } from '../shared/format'
 import { BriefBubble, EventLine, ReplyBubble } from '../shared/conversation'
 import { Lightbox } from '../shared/widgets'
+import { JumpToLatestReply } from '../shared/JumpToLatestReply'
 
 /** 状态徽标：「● 现在轮到你回复」/「● 等待……处理」/「已关闭 · 原因」。 */
 export function TurnBadge({ ticket }: { ticket: TicketView }) {
@@ -67,6 +68,14 @@ export function Conversation({
   fetchBriefVersions?: () => Promise<{ versions: import('../shared/types').BriefVersion[] }>
 }) {
   const [lightbox, setLightbox] = useState<string | null>(null)
+  const latestReplyRef = useRef<HTMLDivElement | null>(null)
+  let latestReplySeq: number | undefined
+  for (let i = ticket.timeline.length - 1; i >= 0; i--) {
+    if (ticket.timeline[i].type === 'reply') {
+      latestReplySeq = ticket.timeline[i].seq
+      break
+    }
+  }
   const body = useMemo(
     () => (
       <>
@@ -79,7 +88,14 @@ export function Conversation({
         />
         {ticket.timeline.map((e) =>
           e.type === 'reply' ? (
-            <ReplyBubble key={e.seq} event={e} ticket={ticket} onImageClick={setLightbox} />
+            <ReplyBubble
+              key={e.seq}
+              event={e}
+              ticket={ticket}
+              onImageClick={setLightbox}
+              latestReply={e.seq === latestReplySeq}
+              latestReplyRef={latestReplyRef}
+            />
           ) : (
             <EventLine
               key={e.seq}
@@ -97,6 +113,11 @@ export function Conversation({
   return (
     <div className="guest-app">
       {body}
+      <JumpToLatestReply
+        targetRef={latestReplyRef}
+        targetKey={latestReplySeq}
+        scrollTopOffset={52}
+      />
       {lightbox && <Lightbox url={lightbox} onClose={() => setLightbox(null)} />}
     </div>
   )

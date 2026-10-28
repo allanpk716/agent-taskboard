@@ -116,6 +116,34 @@ form button:disabled {
   vertical-align: middle;
 }
 
+/* 成员详情与访客对话共用：最新回复不在屏幕内时出现。统一抬高到底部输入区
+   上方，手机保持 44px 以上，避免挡住回复框或固定标签栏。 */
+.jump-latest {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: calc(220px + env(safe-area-inset-bottom));
+  z-index: 90;
+  min-height: 44px;
+  border: 1px solid rgb(37 99 235 / 35%);
+  border-radius: 999px;
+  background: #fff;
+  color: #1d4ed8;
+  padding: 10px 14px;
+  font: 700 14px/1.2 inherit;
+  font-family: inherit;
+  box-shadow: 0 8px 20px rgb(15 23 42 / 18%);
+  cursor: pointer;
+}
+
+.jump-latest:hover {
+  background: #eff6ff;
+}
+
+.jump-latest:focus-visible {
+  outline: 2px solid #1d4ed8;
+  outline-offset: 2px;
+}
+
 /* 新版本提示横幅（#262）：固定在页面最上方，成员端与访客端共用。 */
 .version-banner {
   position: fixed;

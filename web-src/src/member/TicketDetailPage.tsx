@@ -40,6 +40,7 @@ import {
   type Collaborator,
 } from './memberApi'
 import { BriefBubble, EventLine, ReplyBubble, eventText } from '../shared/conversation'
+import { JumpToLatestReply } from '../shared/JumpToLatestReply'
 import { Markdown, inlineImageIds } from '../shared/markdown'
 import { DimensionSelect } from '../guest/DimensionSelect'
 import { AttachmentChips, DeactivatedBadge, Lightbox } from '../shared/widgets'
@@ -1151,6 +1152,8 @@ export function TicketDetailPage({
   const [allInfoOpen, setAllInfoOpen] = useState(false)
   const [draftingSeq, setDraftingSeq] = useState<number | null>(null)
   const [briefDraftingOpen, setBriefDraftingOpen] = useState(false)
+  const conversationRef = useRef<HTMLDivElement | null>(null)
+  const latestReplyRef = useRef<HTMLDivElement | null>(null)
   const load = useCallback(async () => {
     try {
       const got = await fetchTicket(ticketRef)
@@ -1241,6 +1244,18 @@ export function TicketDetailPage({
   const defaultPeer: HandoffPeer =
     guestCreatedTicket || guestHasPendingEditableLink ? 'guest' : 'member'
 
+  let latestVisibleReplySeq: number | undefined
+  for (let i = ticket.timeline.length - 1; i >= 0; i--) {
+    const event = ticket.timeline[i]
+    if (
+      event.type === 'reply' &&
+      (actor === 'all' || (actor === 'agent') === (!!event.actor.agent || !!event.actor.via_agent))
+    ) {
+      latestVisibleReplySeq = event.seq
+      break
+    }
+  }
+
   function toggleDetailLabel(label: string) {
     const { fromInbox, query: sourceQuery } = detailListSource(search)
     const filters = fromInbox
@@ -1284,7 +1299,7 @@ export function TicketDetailPage({
         </div>
       )}
 
-      <div className="conv">
+      <div className="conv" ref={conversationRef}>
         <div className="tlfilter">
           <span className="lbl">操作方</span>
           <span role="group" aria-label="操作方">
@@ -1325,6 +1340,8 @@ export function TicketDetailPage({
                 event={e}
                 ticket={ticket}
                 onImageClick={setLightbox}
+                latestReply={e.seq === latestVisibleReplySeq}
+                latestReplyRef={latestReplyRef}
                 draftingOpen={draftingSeq === e.seq}
                 onToggleDrafting={() => setDraftingSeq((current) => (current === e.seq ? null : e.seq))}
                 fetchDrafting={() => fetchReplyDrafting(ticket.number, e.reply_no ?? 0)}
@@ -1348,6 +1365,15 @@ export function TicketDetailPage({
             onImageClick={setLightbox}
           />
         )}
+        <JumpToLatestReply
+          targetRef={latestReplyRef}
+          targetKey={latestVisibleReplySeq ?? `none-${actor}`}
+          scrollContainerRef={
+            tier === 'wide' || tier === 'medium' ? conversationRef : undefined
+          }
+          scrollContainerKey={tier}
+          scrollTopOffset={tier === 'wide' || tier === 'medium' ? 8 : 12}
+        />
       </div>
 
       {ticket.my_draft ? (
