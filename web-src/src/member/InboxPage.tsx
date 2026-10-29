@@ -5,6 +5,7 @@ import { fetchInbox, reasonClass, type InboxItem, type InboxResponse } from './m
 import { DeactivatedBadge } from '../shared/widgets'
 import { nav, useInvalidate, useLocationSearch } from './ui'
 import { TicketCard, ticketLabelFilterPath } from './TicketsPage'
+import { parsePasteLink } from './pasteLink'
 
 function inboxDetailPath(number: string, search: string): string {
   const params = new URLSearchParams(search)
@@ -24,6 +25,9 @@ export function InboxPage({
   const search = useLocationSearch()
   const [data, setData] = useState<InboxResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [pasteOpen, setPasteOpen] = useState(false)
+  const [pasteValue, setPasteValue] = useState('')
+  const [pasteNotice, setPasteNotice] = useState<string | null>(null)
   const params = new URLSearchParams(search)
   const mode = params.get('inbox') === 'guest' ? 'guest' : 'mine'
   const q = params.get('q') ?? ''
@@ -48,6 +52,69 @@ export function InboxPage({
     nav(`/?${params.toString()}`)
   }
 
+  function recognizePastedText(text: string) {
+    const result = parsePasteLink(text)
+    if (result.kind === 'path') {
+      setPasteOpen(false)
+      setPasteNotice(null)
+      nav(result.path)
+      return
+    }
+    setPasteOpen(true)
+    setPasteNotice(
+      result.kind === 'guest-link'
+        ? '这是访客链接，成员打开会把它认领掉'
+        : '剪贴板里没有找到工单链接',
+    )
+  }
+
+  // iOS 只把「粘贴」弹窗记在点击时的用户手势上；这里必须先发起 readText，再做其他异步工作。
+  function pasteFromClipboard() {
+    if (typeof navigator.clipboard?.readText !== 'function') {
+      setPasteOpen(true)
+      setPasteNotice('浏览器不允许读取剪贴板，请长按粘贴到下面')
+      return
+    }
+    try {
+      navigator.clipboard.readText().then(recognizePastedText, () => {
+        setPasteOpen(true)
+        setPasteNotice('没能读取剪贴板，请长按粘贴到下面')
+      })
+    } catch {
+      setPasteOpen(true)
+      setPasteNotice('没能读取剪贴板，请长按粘贴到下面')
+    }
+  }
+
+  const pasteButton = (
+    <button type="button" className="btn sm" onClick={pasteFromClipboard}>
+      📋 粘贴链接
+    </button>
+  )
+  const pasteFallback = pasteOpen && (
+    <form
+      className="mcard"
+      onSubmit={(e) => {
+        e.preventDefault()
+        recognizePastedText(pasteValue)
+      }}
+    >
+      <div className="hint">{pasteNotice}</div>
+      <div className="inrow">
+        <input
+          type="text"
+          aria-label="粘贴的链接"
+          placeholder="粘贴工单或草稿链接"
+          value={pasteValue}
+          onChange={(e) => setPasteValue(e.target.value)}
+        />
+        <button type="submit" className="btn">
+          打开
+        </button>
+      </div>
+    </form>
+  )
+
   if (desktop) {
     const filtered = (data?.items ?? []).filter((it) => {
       return mode === 'mine' || it.reason_code === 'guest_replied'
@@ -69,6 +136,8 @@ export function InboxPage({
           <div>
             <h2>收件箱</h2>
             <span>{data?.count ?? '…'} 张</span>
+            <span className="sp" />
+            {pasteButton}
           </div>
           <input
             placeholder="搜索"
@@ -82,6 +151,7 @@ export function InboxPage({
             }}
           />
         </header>
+        {pasteFallback}
         <div className="pc-filter-row">
           <button
             type="button"
@@ -136,6 +206,11 @@ export function InboxPage({
 
   return (
     <div className="bpage">
+      <div className="frow">
+        <span className="sp" />
+        {pasteButton}
+      </div>
+      {pasteFallback}
       <div className="mcard fr-card">
         <div className="fr-title">要建一张工单？</div>
         <div className="hint">派任务、提需求、问问题，或者请部门外的人来填，都从这里开始。</div>
