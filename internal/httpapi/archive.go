@@ -141,9 +141,14 @@ func (a *API) removeArchivePackage(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, archive.ErrPackageNotFound):
 		WriteError(w, http.StatusNotFound, CodeArchiveNotFound, "归档包不存在或已过期清除", "")
+	case writeNotArchivableError(w, err):
+		return
 	case errors.Is(err, archive.ErrAlreadyRemoved):
 		WriteError(w, http.StatusConflict, CodeArchiveRemoved,
 			"这个归档包对应的工单已经从服务器移除", "请用已保存的归档包导入需要恢复的工单")
+	case errors.Is(err, archive.ErrPackageStale):
+		WriteError(w, http.StatusConflict, CodeArchivePackageStale,
+			"工单在生成归档包后有变化", "请重新生成归档包后再从服务器移除")
 	case err != nil:
 		panic(err)
 	default:
@@ -256,14 +261,15 @@ func newArchivePreviewView(p archive.Preview) archivePreviewView {
 }
 
 type archivePackageView struct {
-	Name            string   `json:"name"`
-	TicketCount     int      `json:"ticket_count"`
-	AttachmentBytes int64    `json:"attachment_bytes"`
-	GeneratedAt     string   `json:"generated_at"`
-	ExpiresAt       string   `json:"expires_at"`
-	TicketNumbers   []string `json:"ticket_numbers"`
-	DownloadURL     string   `json:"download_url"`
-	OperatorName    string   `json:"operator_name"`
+	Name               string   `json:"name"`
+	TicketCount        int      `json:"ticket_count"`
+	AttachmentBytes    int64    `json:"attachment_bytes"`
+	GeneratedAt        string   `json:"generated_at"`
+	ExpiresAt          string   `json:"expires_at"`
+	TicketNumbers      []string `json:"ticket_numbers"`
+	DownloadURL        string   `json:"download_url"`
+	OperatorName       string   `json:"operator_name"`
+	RemovedTicketCount int      `json:"removed_ticket_count"`
 }
 
 func newArchivePackageView(pkg archive.PackageInfo) archivePackageView {
@@ -274,7 +280,7 @@ func newArchivePackageView(pkg archive.PackageInfo) archivePackageView {
 		AttachmentBytes: pkg.AttachmentBytes, GeneratedAt: pkg.GeneratedAt.Format(time.RFC3339),
 		ExpiresAt: pkg.ExpiresAt.Format(time.RFC3339), TicketNumbers: pkg.TicketNumbers,
 		DownloadURL:  "/api/v1/admin/archive/packages/" + url.PathEscape(pkg.Name) + "/download",
-		OperatorName: pkg.OperatorName}
+		OperatorName: pkg.OperatorName, RemovedTicketCount: pkg.RemovedTicketCount}
 }
 
 type archiveRemoveView struct {
@@ -283,6 +289,7 @@ type archiveRemoveView struct {
 	PackageName     string                 `json:"package_name"`
 	RemovedAt       string                 `json:"removed_at"`
 	Tombstones      []archiveTombstoneView `json:"tombstones"`
+	CleanupFailures int                    `json:"cleanup_failures"`
 }
 
 type archiveTombstoneView struct {
@@ -298,26 +305,24 @@ type archiveTombstoneView struct {
 func newArchiveRemoveView(removal archive.Removal) archiveRemoveView {
 	tombstones := make([]archiveTombstoneView, 0, len(removal.Tombstones))
 	for _, t := range removal.Tombstones {
-		tombstones = append(tombstones, archiveTombstoneView{
-			Seq: t.Seq, Number: t.Number, Title: t.Title,
-			ClosedAt: t.ClosedAt.Format(time.RFC3339), ArchivedAt: t.ArchivedAt.Format(time.RFC3339),
-			OperatorName: t.OperatorName, PackageName: t.PackageName,
-		})
+		tombstones = append(tombstones, newArchiveTombstoneView(t))
 	}
 	return archiveRemoveView{TicketCount: len(tombstones), AttachmentBytes: removal.AttachmentBytes,
 		PackageName: removal.PackageName, RemovedAt: removal.RemovedAt.Format(time.RFC3339),
-		Tombstones: tombstones}
+		Tombstones: tombstones, CleanupFailures: removal.CleanupFailures}
 }
 
 func writeArchivedTicket(w http.ResponseWriter, tombstone archive.Tombstone) {
 	WriteErrorExtra(w, http.StatusGone, CodeTicketArchived, "这张工单已归档并从服务器移除",
 		"需要查看时请联系管理员导入归档包 "+tombstone.PackageName, map[string]any{
-			"archived_ticket": archiveTombstoneView{
-				Seq: tombstone.Seq, Number: tombstone.Number, Title: tombstone.Title,
-				ClosedAt: tombstone.ClosedAt.Format(time.RFC3339), ArchivedAt: tombstone.ArchivedAt.Format(time.RFC3339),
-				OperatorName: tombstone.OperatorName, PackageName: tombstone.PackageName,
-			},
+			"archived_ticket": newArchiveTombstoneView(tombstone),
 		})
+}
+
+func newArchiveTombstoneView(tombstone archive.Tombstone) archiveTombstoneView {
+	return archiveTombstoneView{Seq: tombstone.Seq, Number: tombstone.Number, Title: tombstone.Title,
+		ClosedAt: tombstone.ClosedAt.Format(time.RFC3339), ArchivedAt: tombstone.ArchivedAt.Format(time.RFC3339),
+		OperatorName: tombstone.OperatorName, PackageName: tombstone.PackageName}
 }
 
 func (a *API) writeArchivedCredential(w http.ResponseWriter, r *http.Request, credential string) bool {

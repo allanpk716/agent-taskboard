@@ -1,5 +1,5 @@
 -- #236：从服务器移除归档工单后留下墓碑。通知条目保留，但不再外键约束
--- 工单本体；访客链接的密钥哈希随墓碑保留，旧链接只能得到“已归档”。
+-- 工单本体；访客凭证哈希与移除时的可见成员快照各用带索引的子表保存。
 CREATE TABLE archived_tickets (
     seq                INTEGER PRIMARY KEY,
     number             TEXT NOT NULL UNIQUE,
@@ -7,12 +7,27 @@ CREATE TABLE archived_tickets (
     closed_at          TEXT NOT NULL,
     archived_at        TEXT NOT NULL,
     operator_member_id INTEGER NOT NULL REFERENCES members(id),
-    package_name       TEXT NOT NULL,
-    guest_key_hashes    TEXT NOT NULL DEFAULT '[]',
-    guest_device_hashes TEXT NOT NULL DEFAULT '[]'
+    package_name       TEXT NOT NULL
 );
 
 CREATE INDEX idx_archived_tickets_archived_at ON archived_tickets(archived_at DESC);
+
+CREATE TABLE archived_ticket_credentials (
+    seq  INTEGER NOT NULL REFERENCES archived_tickets(seq) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('guest_key', 'guest_device')),
+    hash TEXT NOT NULL,
+    PRIMARY KEY (seq, kind, hash)
+);
+
+CREATE INDEX idx_archived_ticket_credentials_hash ON archived_ticket_credentials(hash, seq);
+
+CREATE TABLE archived_ticket_viewers (
+    seq       INTEGER NOT NULL REFERENCES archived_tickets(seq) ON DELETE CASCADE,
+    member_id INTEGER NOT NULL REFERENCES members(id),
+    PRIMARY KEY (seq, member_id)
+);
+
+CREATE INDEX idx_archived_ticket_viewers_member ON archived_ticket_viewers(member_id, seq);
 
 CREATE TABLE notifications_new (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,

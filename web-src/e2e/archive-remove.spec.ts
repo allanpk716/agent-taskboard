@@ -33,7 +33,8 @@ test('管理员归档移除后导入恢复工单', async ({ page, request }) => 
   await page.getByTestId(`archive-saved-${created}`).check()
   await page.getByTestId(`archive-remove-${created}`).click()
   await expect(page.getByTestId('archive-released')).toContainText('已释放')
-  await expect(row).toHaveCount(0)
+  await expect(row).toContainText('已从服务器移除 1 张工单')
+  await expect(page.getByTestId(`archive-remove-${created}`)).toBeDisabled()
 
   await page.goto(`/t/${number}`)
   const tombstone = page.getByTestId('ticket-tombstone')

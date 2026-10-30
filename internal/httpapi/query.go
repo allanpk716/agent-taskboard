@@ -9,6 +9,7 @@ package httpapi
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"net/url"
@@ -18,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/archive"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/labels"
@@ -33,6 +35,8 @@ var queryAllowedParams = []string{
 	"created_after", "created_before", "updated_after", "updated_before", "closed_after", "closed_before",
 	"changed_after", "sort", "limit", "page_token", "include", "format",
 }
+
+var archivedTicketNumberPattern = regexp.MustCompile(`^\d{8}-\d{3,}$`)
 
 // 计数不接受的列表参数（只做计数，不给排序与翻页）。
 var countsRejectedParams = []string{"sort", "limit", "page_token", "include", "format"}
@@ -110,6 +114,10 @@ func (a *API) handleTicketList(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		panic(err)
 	}
+	archived, err := a.archivedSearchHint(r.Context(), viewer, q.Get("q"))
+	if err != nil {
+		panic(err)
+	}
 	include := q.Get("include")
 	end := offset + limit
 	if end > len(rows) {
@@ -133,6 +141,9 @@ func (a *API) handleTicketList(w http.ResponseWriter, r *http.Request) {
 			Total: int64(len(rows)), Count: len(page), ResolvedAliases: resolved, Next: next, Cursor: cursor,
 			Rows: listMarkdownRows(page),
 		})
+		if archived != nil {
+			md = "编号 " + archived.Number + " 已归档，归档包 " + archived.PackageName + "。\n\n" + md
+		}
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(md))
@@ -148,6 +159,9 @@ func (a *API) handleTicketList(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(resolved) > 0 {
 		body["resolved_aliases"] = resolved
+	}
+	if archived != nil {
+		body["archived"] = newArchiveTombstoneView(*archived)
 	}
 	writeJSON(w, http.StatusOK, body)
 }
@@ -350,6 +364,21 @@ func cloneQuery(q url.Values) url.Values {
 		}
 	}
 	return nq
+}
+
+func (a *API) archivedSearchHint(ctx context.Context, viewer identity.Viewer, query string) (*archive.Tombstone, error) {
+	ref := strings.TrimSpace(query)
+	if !archivedTicketNumberPattern.MatchString(ref) {
+		return nil, nil
+	}
+	tombstone, err := a.archive.TombstoneForViewer(ctx, viewer, ref)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &tombstone, nil
 }
 
 // parseQueryFilters 解析列表与计数共用的筛选参数（status/kind/template、

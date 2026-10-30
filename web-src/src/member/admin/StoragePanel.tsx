@@ -362,6 +362,7 @@ export function StoragePanel() {
       {removal && (
         <div className="okbox" data-testid="archive-released">
           已移除 {removal.ticket_count} 张工单，已释放附件与备份镜像 {fmtBytes(removal.attachment_bytes)}。
+          {removal.cleanup_failures > 0 ? `有 ${removal.cleanup_failures} 个文件未能清理，服务会记录并可在下次处理。` : ''}
         </div>
       )}
       {packages.length === 0 ? (
@@ -376,12 +377,16 @@ export function StoragePanel() {
                   {pkg.ticket_count} 张工单 · {fmtBytes(pkg.attachment_bytes)}
                   <div className="mono hint">{pkg.ticket_numbers.join('、')}</div>
                   <div className="hint">{fmtBeijing(pkg.expires_at)} 到期</div>
+                  {pkg.removed_ticket_count > 0 && (
+                    <div className="warn">已从服务器移除 {pkg.removed_ticket_count} 张工单</div>
+                  )}
                 </td>
                 <td>
                   <label className="hint" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                     <input
                       type="checkbox"
                       checked={saved.has(pkg.name)}
+                      disabled={pkg.removed_ticket_count > 0}
                       onChange={(e) =>
                         setSaved((prev) => {
                           const next = new Set(prev)
@@ -405,7 +410,7 @@ export function StoragePanel() {
                   <button
                     type="button"
                     className="btn sm danger"
-                    disabled={!saved.has(pkg.name) || busy === 'remove'}
+                    disabled={pkg.removed_ticket_count > 0 || !saved.has(pkg.name) || busy === 'remove'}
                     onClick={() => void remove(pkg.name)}
                     data-testid={`archive-remove-${pkg.name}`}
                   >

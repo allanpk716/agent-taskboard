@@ -36,6 +36,7 @@ export interface ArchivePackage {
   ticket_numbers: string[]
   download_url: string
   operator_name: string
+  removed_ticket_count: number
 }
 
 export interface ArchiveTombstone {
@@ -54,6 +55,7 @@ export interface ArchiveRemoveResult {
   package_name: string
   removed_at: string
   tombstones: ArchiveTombstone[]
+  cleanup_failures: number
 }
 
 export interface ArchiveImportCandidate {

@@ -625,13 +625,16 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   - `q`：关键词，在标题、说明（含字段拼接）和回复正文里查找；规范化 = 忽略大小写、
     空格、连字符和下划线（`E203` 能找到 `E-203`）；命中项带 `matched_in`
     （标题/说明/回复 N）和 `snippet`（首个命中的前后片段）。
+    已归档工单不进入 `items`；若查询词精确等于一个 `YYYYMMDD-NNN` 编号、调用者
+    又能看见该工单墓碑，JSON 响应额外带 `archived` 墓碑对象，供搜索页显示
+    “编号已归档”的线索。无权调用者不得到这个字段。
   - `changed_after=<cursor>`：只返回变更序号大于它的工单（见下）。
 - 排序 `sort=-updated(默认；带 changed_after 时默认 change)|updated|-created|created|-closed|change`，
   同键时按工单序号倒序；`limit` 默认 50、最大 200（422 `invalid_limit`）；
   翻页用偏移量 `page_token=p<offset>`（已接受的取舍：翻页可能漏项/重复，
   需要完整拉取时用 `sort=created` 或 `changed_after`），跟着响应里的 `next` 走。
 - 响应：`{total, count, items, next(下一页完整地址，没有时为 null), cursor,
-  filters(解析后的标准条件，含 `label_any` + 实际 sort), resolved_aliases?}`。每项是**摘要**：
+  filters(解析后的标准条件，含 `label_any` + 实际 sort), resolved_aliases?, archived?}`。每项是**摘要**：
   `number, seq, url, kind, title, status, close_reason, template, creator, assignee,
   labels, waiting_on, created_at, updated_at, closed_at, reply_count, last_change,
   read_full, unread`（时间线不在列表里给）；`include=brief` 附带 `brief`（拼好的 Markdown、
@@ -1233,7 +1236,8 @@ Agent token 403 `web_session_required`，匿名 401。选择里的每张工单�
   "expires_at": "2026-11-06T10:00:00+08:00",
   "ticket_numbers": ["20260601-001"],
   "download_url": "/api/v1/admin/archive/packages/archive-.../download",
-  "operator_name": "陈工"
+  "operator_name": "陈工",
+  "removed_ticket_count": 0
 }
 ```
 
@@ -1252,7 +1256,9 @@ Agent token 403 `web_session_required`，匿名 401。选择里的每张工单�
   未发出草稿独占附件；存储统计接口仍按数据库中的全部附件计。
 - zip 根部有 `manifest.json`：格式版本（当前 `1`）、平台版本、生成时间、包名、操作人、
   工单列表，以及除 manifest 自身外每个文件的 SHA-256 与大小（manifest 不能自包含自己的
-  哈希）。检查与导入都会先校验 manifest 和全部列出的文件。
+  哈希）。工单列表里每张工单还记录 `content_sha256`，即当时 `ticket.json` 字节的
+  SHA-256；移除前平台会按同一导出逻辑重算并核对。检查与导入都会先校验 manifest
+  和全部列出的文件。
 - 每张工单有 `tickets/{工单编号}/ticket.json`（工单本体、说明各版本、回复、附件元数据、
   时间线、起草过程、访问记录、标签关联、协作者、成员已读位置、访客链接及已认领设备）、
   `README.md`（可直接阅读；
@@ -1275,8 +1281,17 @@ Agent token 403 `web_session_required`，匿名 401。选择里的每张工单�
 `saved` 缺失或为 `false` 时返回 `400 archive_saved_confirmation_required`。成功后，
 服务器在一个数据库事务里删除包内工单及说明版本、回复、附件元数据、时间线、
 访问记录、标签、协作者、访客链接、已认领设备、工单已读位置和草稿记录，写入墓碑
-与管理操作；事务提交后删除附件主文件、备份目录中的附件镜像和暂存包。若包不存在、
-已过期或已移除，分别返回 `404 archive_not_found` / `409 archive_package_removed`。
+与管理操作。移除前会逐张重算结构化导出指纹；包生成后只要访问记录、标签、说明、
+时间线等会进包的数据有任何变化，就返回 `409 archive_package_stale` 并保持平台数据
+不变（生成后有人查看也属于这种变化，需重新生成）。工单在生成后被重新开启时返回
+`400 ticket_not_archivable`。若包不存在或已移除，分别返回
+`404 archive_not_found` / `409 archive_package_removed`。
+
+事务提交后，平台尽力删除附件主文件与备份目录中的附件镜像；单个文件删除失败只记录
+日志并在响应 `cleanup_failures` 里计数，不把已成功的数据库移除改报为失败。暂存包
+仍是这份离线工单在服务器上的唯一副本，继续保留到原有 7 天到期后由清理任务删除；
+列表用 `removed_ticket_count` 标注已从服务器移除的工单数，此时下载仍可用，再次移除
+会被拒绝。
 
 移除响应：
 
@@ -1286,6 +1301,7 @@ Agent token 403 `web_session_required`，匿名 401。选择里的每张工单�
   "attachment_bytes": 256,
   "package_name": "archive-1790000000000000000-a1b2c3d4e5.zip",
   "removed_at": "2026-10-30T10:10:00+08:00",
+  "cleanup_failures": 0,
   "tombstones": [
     {
       "seq": 1,
@@ -1300,15 +1316,24 @@ Agent token 403 `web_session_required`，匿名 401。选择里的每张工单�
 }
 ```
 
-之后成员、成员 Agent、网页与访客旧链接读取这张工单都会得到
-`410 ticket_archived`，错误对象附带上面的 `archived_ticket` 墓碑字段。通知条目保留，
-点开同样显示墓碑；列表与搜索默认不出现已归档工单。工单编号分配会把墓碑计入，
-编号永不复用。
+`attachment_bytes` 是本次实际删除的附件主文件与备份镜像字节数；某个副本缺失时按 0
+计，删除失败时也不计入。
+
+之后，管理员、移除时按可见范围快照能看见原工单的成员（创建者、当时指派人、当时
+协作者；未指派时还有当时的有效初筛人）、仍持有该工单历史通知的成员，以及这些成员
+名下的成员 Agent 读取这张工单都会得到 `410 ticket_archived`，错误对象附带上面的
+`archived_ticket` 墓碑字段。其他成员得到与编号不存在一致的 `404 ticket_not_found`。
+通知条目保留，点开同样显示墓碑；列表与搜索默认不出现已归档工单。访客只有原工单
+自己的旧链接密钥或已认领设备凭证会命中 `410`；用其他编号查询得到原来的 401/404，
+不会泄露墓碑。工单编号分配会把墓碑计入，编号永不复用。
 
 ### 导入（#237）
 
 检查与导入都用 `multipart/form-data` 上传 zip，文件字段名 `package`，上传大小上限
-1 GB。检查接口只读平台数据；导入接口可重复附带 `ticket_numbers` 字段选择包内工单，
+1 GB（压缩后的请求体；超限 `413 attachment_too_large`，缺少文件字段
+`422 file_required`）。上传先流式落到归档暂存区的临时文件，处理结束即删除；解析、
+校验与附件写回都从该文件流式进行。检查接口只读平台数据；导入接口可重复附带
+`ticket_numbers` 字段选择包内工单，
 省略该字段表示导入选包时全部可导入的工单。
 
 ```text
@@ -1352,9 +1377,15 @@ ticket_numbers=20260601-001
 路径安全、大小和 SHA-256 完全一致，且不能有多余文件；任何一项不符返回
 `422 archive_package_invalid`。格式版本高于当前支持的 `1` 返回
 `422 archive_format_unsupported`；当前版本和更早版本可以继续处理。
+校验逐条流式进行：实际解压字节超过 manifest 声明立即拒绝；manifest 声明的全部条目
+总和不能超过 4 GB（压缩上传上限 1 GB 的 4 倍）；manifest 与 `ticket.json` 这类
+JSON 条目单条最大 16 MB。
 
 每张工单只有与墓碑的序号、编号和包名完全匹配且引用的成员、成员 Agent、标签、模板、
 访客链接等仍存在时才能导入；工单已在平台上或附件等恢复 ID 已被占用时拒绝该张。
+墓碑记录的是实际移除时核对过的包名，因此导入必须使用同一个包；重打包或改名的
+副本即使内容相同也会按“归档包与墓碑不匹配”拒绝。检查或导入过程中数据库本身出错
+时返回 500 并回滚/保持数据不变，不会把它伪装成某张工单的拒绝理由。
 被拒绝的工单保留墓碑，其他选中工单照常恢复。成功恢复的工单按原 ID、原编号和原
 时间线恢复全部关联数据并删除墓碑，附件文件按原附件 ID 写回；状态保持归档前的
 `closed`，之后可重新开启或再次归档。

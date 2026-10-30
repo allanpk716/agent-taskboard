@@ -30,6 +30,9 @@ var (
 	ErrFormatUnsupported = errors.New("archive format unsupported")
 )
 
+const maxArchiveJSONBytes int64 = 16 << 20
+const maxArchiveUncompressedBytes int64 = 4 << 30
+
 // ImportTicket 是检查归档包时的一张候选工单。
 type ImportTicket struct {
 	Seq             int64
@@ -63,13 +66,13 @@ type ImportResult struct {
 type parsedImportPackage struct {
 	Manifest  manifest
 	Tickets   map[string]ticketExport
-	Files     map[string][]byte
+	Files     map[string]*zip.File
 	Generated time.Time
 }
 
 // InspectImport 校验上传包的格式、清单与全部文件校验和，并逐张判断能否导入。
 func (s *Service) InspectImport(ctx context.Context, readerAt io.ReaderAt, size int64) (ImportInspection, error) {
-	parsed, err := parseImportPackage(readerAt, size)
+	parsed, err := s.parseImportPackage(readerAt, size)
 	if err != nil {
 		return ImportInspection{}, err
 	}
@@ -86,7 +89,11 @@ func (s *Service) InspectImport(ctx context.Context, readerAt io.ReaderAt, size 
 		ticket := ImportTicket{Number: meta.Number, Title: meta.Title,
 			ClosedAt: parseArchiveTime(meta.ClosedAt), AttachmentBytes: meta.AttachmentBytes}
 		ticket.Seq = importInt(export.Ticket, "seq")
-		if reason := s.canImportTicketTx(ctx, tx, parsed, meta, export); reason != "" {
+		reason, err := s.canImportTicketTx(ctx, tx, parsed, meta, export)
+		if err != nil {
+			return ImportInspection{}, err
+		}
+		if reason != "" {
 			ticket.Importable, ticket.Reason = false, reason
 		} else {
 			ticket.Importable = true
@@ -104,7 +111,7 @@ func (s *Service) Import(ctx context.Context, readerAt io.ReaderAt, size int64,
 	s.generateMu.Lock()
 	defer s.generateMu.Unlock()
 
-	parsed, err := parseImportPackage(readerAt, size)
+	parsed, err := s.parseImportPackage(readerAt, size)
 	if err != nil {
 		return ImportResult{}, err
 	}
@@ -140,7 +147,11 @@ func (s *Service) Import(ctx context.Context, readerAt io.ReaderAt, size int64,
 		if !want[meta.Number] {
 			continue
 		}
-		reason := s.canImportTicketTx(ctx, tx, parsed, meta, parsed.Tickets[meta.Number])
+		reason, err := s.canImportTicketTx(ctx, tx, parsed, meta, parsed.Tickets[meta.Number])
+		if err != nil {
+			removeImportFiles(written)
+			return ImportResult{}, err
+		}
 		if reason != "" {
 			candidate.Importable, candidate.Reason = false, reason
 			result.Rejected = append(result.Rejected, candidate)
@@ -171,8 +182,8 @@ func (s *Service) Import(ctx context.Context, readerAt io.ReaderAt, size int64,
 		}
 	}
 	if len(result.Imported) > 0 {
-		if err := insertImportOperation(ctx, tx, operator.Member.ID, now, importedNumbers,
-			parsed.Manifest.PackageName); err != nil {
+		if err := insertArchiveOperation(ctx, tx, "archive_import", operator.Member.ID, now,
+			importedNumbers, parsed.Manifest.PackageName); err != nil {
 			removeImportFiles(written)
 			return ImportResult{}, err
 		}
@@ -184,12 +195,13 @@ func (s *Service) Import(ctx context.Context, readerAt io.ReaderAt, size int64,
 	return result, nil
 }
 
-func parseImportPackage(readerAt io.ReaderAt, size int64) (*parsedImportPackage, error) {
+func (s *Service) parseImportPackage(readerAt io.ReaderAt, size int64) (*parsedImportPackage, error) {
 	zr, err := zip.NewReader(readerAt, size)
 	if err != nil {
 		return nil, fmt.Errorf("%w：不是合法 zip：%v", ErrPackageInvalid, err)
 	}
-	entries := make(map[string][]byte, len(zr.File))
+	entries := make(map[string]*zip.File, len(zr.File))
+	var manifestEntry *zip.File
 	for _, entry := range zr.File {
 		if entry.FileInfo().IsDir() {
 			continue
@@ -197,15 +209,17 @@ func parseImportPackage(readerAt io.ReaderAt, size int64) (*parsedImportPackage,
 		if _, exists := entries[entry.Name]; exists {
 			return nil, fmt.Errorf("%w：路径 %s 重复", ErrPackageInvalid, entry.Name)
 		}
-		body, err := readZipEntry(entry)
-		if err != nil {
-			return nil, err
+		if entry.Name == "manifest.json" {
+			manifestEntry = entry
 		}
-		entries[entry.Name] = body
+		entries[entry.Name] = entry
 	}
-	manifestBody, ok := entries["manifest.json"]
-	if !ok {
+	if manifestEntry == nil {
 		return nil, fmt.Errorf("%w：缺少 manifest.json", ErrPackageInvalid)
+	}
+	manifestBody, err := readBoundedZipEntry(manifestEntry, maxArchiveJSONBytes)
+	if err != nil {
+		return nil, err
 	}
 	var m manifest
 	decoder := json.NewDecoder(bytes.NewReader(manifestBody))
@@ -232,9 +246,11 @@ func parseImportPackage(readerAt io.ReaderAt, size int64) (*parsedImportPackage,
 	if _, err := time.ParseInLocation(time.RFC3339Nano, m.GeneratedAt, clock.Beijing); err != nil {
 		return nil, fmt.Errorf("%w：生成时间无效：%v", ErrPackageInvalid, err)
 	}
+
 	listed := make(map[string]manifestFile, len(m.Files))
+	totalSize := int64(0)
 	for _, file := range m.Files {
-		if !safeImportPath(file.Path) {
+		if !safeImportPath(file.Path) || file.Path == "manifest.json" {
 			return nil, fmt.Errorf("%w：文件路径 %q 不安全", ErrPackageInvalid, file.Path)
 		}
 		if len(file.SHA256) != sha256.Size*2 {
@@ -247,12 +263,17 @@ func parseImportPackage(readerAt io.ReaderAt, size int64) (*parsedImportPackage,
 			return nil, fmt.Errorf("%w：清单路径 %s 重复", ErrPackageInvalid, file.Path)
 		}
 		listed[file.Path] = file
+		if file.Size < 0 || file.Size > maxArchiveUncompressedBytes-totalSize {
+			return nil, fmt.Errorf("%w：清单声明的解压总量超过上限 %d 字节",
+				ErrPackageInvalid, maxArchiveUncompressedBytes)
+		}
+		totalSize += file.Size
 	}
 	if len(listed)+1 != len(entries) {
 		return nil, fmt.Errorf("%w：清单列出 %d 个文件，包里有 %d 个", ErrPackageInvalid,
 			len(listed), len(entries)-1)
 	}
-	for name, body := range entries {
+	for name, entry := range entries {
 		if name == "manifest.json" {
 			continue
 		}
@@ -260,12 +281,8 @@ func parseImportPackage(readerAt io.ReaderAt, size int64) (*parsedImportPackage,
 		if !ok {
 			return nil, fmt.Errorf("%w：包里的 %s 不在清单中", ErrPackageInvalid, name)
 		}
-		if int64(len(body)) != file.Size {
-			return nil, fmt.Errorf("%w：%s 大小不符", ErrPackageInvalid, name)
-		}
-		sum := sha256.Sum256(body)
-		if !strings.EqualFold(hex.EncodeToString(sum[:]), file.SHA256) {
-			return nil, fmt.Errorf("%w：%s SHA-256 不符", ErrPackageInvalid, name)
+		if err := verifyZipEntry(entry, file); err != nil {
+			return nil, err
 		}
 	}
 
@@ -281,20 +298,17 @@ func parseImportPackage(readerAt io.ReaderAt, size int64) (*parsedImportPackage,
 			return nil, fmt.Errorf("%w：%s 的关闭时间无效", ErrPackageInvalid, meta.Number)
 		}
 		name := "tickets/" + meta.Number + "/ticket.json"
-		body, ok := entries[name]
-		if !ok {
-			return nil, fmt.Errorf("%w：缺少 %s", ErrPackageInvalid, name)
-		}
-		if _, ok := entries["tickets/"+meta.Number+"/README.md"]; !ok {
-			return nil, fmt.Errorf("%w：缺少 %s/README.md", ErrPackageInvalid, meta.Number)
+		body, err := readBoundedZipEntry(entries[name], maxArchiveJSONBytes)
+		if err != nil {
+			return nil, err
 		}
 		var export ticketExport
-		decoder := json.NewDecoder(bytes.NewReader(body))
-		decoder.UseNumber()
-		if err := decoder.Decode(&export); err != nil {
+		exportDecoder := json.NewDecoder(bytes.NewReader(body))
+		exportDecoder.UseNumber()
+		if err := exportDecoder.Decode(&export); err != nil {
 			return nil, fmt.Errorf("%w：%s 不是合法 JSON：%v", ErrPackageInvalid, name, err)
 		}
-		if decoder.More() {
+		if exportDecoder.More() {
 			return nil, fmt.Errorf("%w：%s 后有多余内容", ErrPackageInvalid, name)
 		}
 		normalizeImportTicket(&export)
@@ -385,12 +399,15 @@ func validateManifestFiles(pkg *parsedImportPackage) error {
 	return nil
 }
 
-func readZipEntry(entry *zip.File) ([]byte, error) {
+func readBoundedZipEntry(entry *zip.File, limit int64) ([]byte, error) {
+	if entry == nil {
+		return nil, fmt.Errorf("%w：缺少 zip 条目", ErrPackageInvalid)
+	}
 	rc, err := entry.Open()
 	if err != nil {
 		return nil, fmt.Errorf("%w：读取 %s 失败：%v", ErrPackageInvalid, entry.Name, err)
 	}
-	body, err := io.ReadAll(rc)
+	body, err := io.ReadAll(io.LimitReader(rc, limit+1))
 	closeErr := rc.Close()
 	if err != nil {
 		return nil, fmt.Errorf("%w：读取 %s 失败：%v", ErrPackageInvalid, entry.Name, err)
@@ -398,7 +415,33 @@ func readZipEntry(entry *zip.File) ([]byte, error) {
 	if closeErr != nil {
 		return nil, fmt.Errorf("%w：关闭 %s 失败：%v", ErrPackageInvalid, entry.Name, closeErr)
 	}
+	if int64(len(body)) > limit {
+		return nil, fmt.Errorf("%w：%s 超过单条目读取上限 %d 字节", ErrPackageInvalid, entry.Name, limit)
+	}
 	return body, nil
+}
+
+func verifyZipEntry(entry *zip.File, want manifestFile) error {
+	rc, err := entry.Open()
+	if err != nil {
+		return fmt.Errorf("%w：读取 %s 失败：%v", ErrPackageInvalid, entry.Name, err)
+	}
+	sum := sha256.New()
+	written, copyErr := io.Copy(sum, io.LimitReader(rc, want.Size+1))
+	closeErr := rc.Close()
+	if copyErr != nil {
+		return fmt.Errorf("%w：读取 %s 失败：%v", ErrPackageInvalid, entry.Name, copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("%w：关闭 %s 失败：%v", ErrPackageInvalid, entry.Name, closeErr)
+	}
+	if written != want.Size {
+		return fmt.Errorf("%w：%s 大小不符", ErrPackageInvalid, entry.Name)
+	}
+	if !strings.EqualFold(hex.EncodeToString(sum.Sum(nil)), want.SHA256) {
+		return fmt.Errorf("%w：%s SHA-256 不符", ErrPackageInvalid, entry.Name)
+	}
+	return nil
 }
 
 func safeImportPath(name string) bool {
@@ -475,7 +518,7 @@ func parseArchiveTime(value string) time.Time {
 }
 
 func (s *Service) canImportTicketTx(ctx context.Context, tx *sql.Tx, pkg *parsedImportPackage,
-	meta manifestTicket, export ticketExport) string {
+	meta manifestTicket, export ticketExport) (string, error) {
 	var seq, tombstoneSeq int64
 	var number, title, packageName string
 	err := tx.QueryRowContext(ctx, `
@@ -485,32 +528,34 @@ func (s *Service) canImportTicketTx(ctx context.Context, tx *sql.Tx, pkg *parsed
 		var existing int64
 		if err := tx.QueryRowContext(ctx, `SELECT seq FROM tickets WHERE number = ?`,
 			meta.Number).Scan(&existing); err == nil {
-			return "工单已在平台上，不能重复导入"
+			return "工单已在平台上，不能重复导入", nil
 		} else if !errors.Is(err, sql.ErrNoRows) {
-			return "读取工单状态失败"
+			return "", fmt.Errorf("读取工单 %s 状态失败：%w", meta.Number, err)
 		}
-		return "工单当前不在墓碑状态，不能导入"
+		return "工单当前不在墓碑状态，不能导入", nil
 	}
 	if err != nil {
-		return "读取墓碑失败"
+		return "", fmt.Errorf("读取墓碑 %s 失败：%w", meta.Number, err)
 	}
 	seq = importInt(export.Ticket, "seq")
 	if tombstoneSeq != seq || packageName != pkg.Manifest.PackageName {
-		return "归档包与墓碑不匹配"
+		return "归档包与墓碑不匹配", nil
 	}
-	if reason := s.checkImportIDsTx(ctx, tx, export); reason != "" {
-		return reason
+	reason, err := s.checkImportIDsTx(ctx, tx, export)
+	if err != nil || reason != "" {
+		return reason, err
 	}
-	if reason := s.checkImportReferencesTx(ctx, tx, pkg, export); reason != "" {
-		return reason
+	reason, err = s.checkImportReferencesTx(ctx, tx, pkg, export)
+	if err != nil || reason != "" {
+		return reason, err
 	}
 	if reason := checkImportAttachments(pkg, meta, export); reason != "" {
-		return reason
+		return reason, nil
 	}
-	return ""
+	return "", nil
 }
 
-func (s *Service) checkImportIDsTx(ctx context.Context, tx *sql.Tx, export ticketExport) string {
+func (s *Service) checkImportIDsTx(ctx context.Context, tx *sql.Tx, export ticketExport) (string, error) {
 	type idRef struct {
 		table  string
 		id     int64
@@ -540,17 +585,17 @@ func (s *Service) checkImportIDsTx(ctx context.Context, tx *sql.Tx, export ticke
 		var exists int64
 		err := tx.QueryRowContext(ctx, `SELECT 1 FROM `+ref.table+` WHERE id = ?`, ref.id).Scan(&exists)
 		if err == nil {
-			return ref.reason
+			return ref.reason, nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
-			return "检查恢复数据的 ID 冲突失败"
+			return "", fmt.Errorf("检查恢复表 %s 的 ID 冲突失败：%w", ref.table, err)
 		}
 	}
-	return ""
+	return "", nil
 }
 
 func (s *Service) checkImportReferencesTx(ctx context.Context, tx *sql.Tx,
-	pkg *parsedImportPackage, export ticketExport) string {
+	pkg *parsedImportPackage, export ticketExport) (string, error) {
 	memberIDs := newIntSet()
 	agentIDs := newIntSet()
 	intakeIDs := newIntSet()
@@ -611,14 +656,17 @@ func (s *Service) checkImportReferencesTx(ctx context.Context, tx *sql.Tx,
 		ticketSeqs.add(value)
 	}
 
-	if reason := missingTx(ctx, tx, "members", "id", memberIDs.values(), "成员"); reason != "" {
-		return reason
+	reason, err := missingTx(ctx, tx, "members", "id", memberIDs.values(), "成员")
+	if err != nil || reason != "" {
+		return reason, err
 	}
-	if reason := missingTx(ctx, tx, "agent_tokens", "id", agentIDs.values(), "成员 Agent"); reason != "" {
-		return reason
+	reason, err = missingTx(ctx, tx, "agent_tokens", "id", agentIDs.values(), "成员 Agent")
+	if err != nil || reason != "" {
+		return reason, err
 	}
-	if reason := missingTx(ctx, tx, "intakes", "id", intakeIDs.values(), "反馈入口"); reason != "" {
-		return reason
+	reason, err = missingTx(ctx, tx, "intakes", "id", intakeIDs.values(), "反馈入口")
+	if err != nil || reason != "" {
+		return reason, err
 	}
 	for _, id := range linkIDs.values() {
 		if pkgHasLink(export, id) {
@@ -627,10 +675,10 @@ func (s *Service) checkImportReferencesTx(ctx context.Context, tx *sql.Tx,
 		var exists int64
 		err := tx.QueryRowContext(ctx, `SELECT 1 FROM guest_links WHERE id = ?`, id).Scan(&exists)
 		if errors.Is(err, sql.ErrNoRows) {
-			return "引用的访客链接缺失"
+			return "引用的访客链接缺失", nil
 		}
 		if err != nil {
-			return "检查访客链接引用失败"
+			return "", fmt.Errorf("检查访客链接引用失败：%w", err)
 		}
 	}
 	for _, seq := range ticketSeqs.values() {
@@ -640,10 +688,10 @@ func (s *Service) checkImportReferencesTx(ctx context.Context, tx *sql.Tx,
 		var exists int64
 		err := tx.QueryRowContext(ctx, `SELECT 1 FROM tickets WHERE seq = ?`, seq).Scan(&exists)
 		if errors.Is(err, sql.ErrNoRows) {
-			return "引用的工单缺失"
+			return "引用的工单缺失", nil
 		}
 		if err != nil {
-			return "检查工单引用失败"
+			return "", fmt.Errorf("检查工单引用失败：%w", err)
 		}
 	}
 	for _, row := range export.Labels {
@@ -653,29 +701,29 @@ func (s *Service) checkImportReferencesTx(ctx context.Context, tx *sql.Tx,
 			SELECT 1 WHERE EXISTS (SELECT 1 FROM label_values WHERE dimension || ':' || value = ?)
 			   OR EXISTS (SELECT 1 FROM plain_labels WHERE label = ?)`, label, label).Scan(&exists)
 		if errors.Is(err, sql.ErrNoRows) {
-			return "引用的标签缺失：" + label
+			return "引用的标签缺失：" + label, nil
 		}
 		if err != nil {
-			return "检查标签引用失败"
+			return "", fmt.Errorf("检查标签引用失败：%w", err)
 		}
 	}
 	if key, _ := export.Ticket["template_key"].(string); key != "" {
 		var exists int64
 		err := tx.QueryRowContext(ctx, `SELECT 1 FROM templates WHERE key = ?`, key).Scan(&exists)
 		if errors.Is(err, sql.ErrNoRows) {
-			return "引用的模板缺失：" + key
+			return "引用的模板缺失：" + key, nil
 		}
 		if err != nil {
-			return "检查模板引用失败"
+			return "", fmt.Errorf("检查模板引用失败：%w", err)
 		}
 	}
-	return ""
+	return "", nil
 }
 
 func checkImportAttachments(pkg *parsedImportPackage, meta manifestTicket, export ticketExport) string {
 	for _, row := range export.Attachments {
 		id := importInt(row, "id")
-		prefix := "tickets/" + meta.Number + "/attachments/att_" + strconv.FormatInt(id, 10) + "/"
+		prefix := archiveAttachmentPathPrefix(meta.Number, id)
 		found := []string{}
 		for _, file := range pkg.Manifest.Files {
 			if strings.HasPrefix(file.Path, prefix) {
@@ -749,18 +797,18 @@ func pkgHasTicket(pkg *parsedImportPackage, seq int64) bool {
 	return false
 }
 
-func missingTx(ctx context.Context, tx *sql.Tx, table, column string, ids []int64, noun string) string {
+func missingTx(ctx context.Context, tx *sql.Tx, table, column string, ids []int64, noun string) (string, error) {
 	for _, id := range ids {
 		var exists int64
 		err := tx.QueryRowContext(ctx, `SELECT 1 FROM `+table+` WHERE `+column+` = ?`, id).Scan(&exists)
 		if errors.Is(err, sql.ErrNoRows) {
-			return "引用的" + noun + "缺失"
+			return "引用的" + noun + "缺失", nil
 		}
 		if err != nil {
-			return "检查" + noun + "引用失败"
+			return "", fmt.Errorf("检查%s引用失败：%w", noun, err)
 		}
 	}
-	return ""
+	return "", nil
 }
 
 var importTableColumns = []struct {
@@ -887,7 +935,7 @@ func writeImportAttachments(dir string, pkg *parsedImportPackage, meta manifestT
 	written := []string{}
 	for _, row := range export.Attachments {
 		id := importInt(row, "id")
-		prefix := "tickets/" + meta.Number + "/attachments/att_" + strconv.FormatInt(id, 10) + "/"
+		prefix := archiveAttachmentPathPrefix(meta.Number, id)
 		var packagePath string
 		for _, file := range pkg.Manifest.Files {
 			if strings.HasPrefix(file.Path, prefix) {
@@ -899,12 +947,36 @@ func writeImportAttachments(dir string, pkg *parsedImportPackage, meta manifestT
 			return written, fmt.Errorf("归档包里缺少附件 %d", id)
 		}
 		target := filepath.Join(dir, strconv.FormatInt(id, 10))
-		if err := os.WriteFile(target, pkg.Files[packagePath], 0o644); err != nil {
+		if err := streamImportAttachment(pkg.Files[packagePath], target); err != nil {
 			return written, err
 		}
 		written = append(written, target)
 	}
 	return written, nil
+}
+
+func streamImportAttachment(entry *zip.File, target string) error {
+	rc, err := entry.Open()
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	dst, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	written, copyErr := io.Copy(dst, rc)
+	closeErr := dst.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if entry.FileInfo().Size() != 0 && written != entry.FileInfo().Size() {
+		return fmt.Errorf("附件 %s 写回大小不符：%d/%d", entry.Name, written, entry.FileInfo().Size())
+	}
+	return nil
 }
 
 func removeImportFiles(files []string) {
@@ -915,19 +987,6 @@ func removeImportFiles(files []string) {
 
 func deleteTombstoneTx(ctx context.Context, tx *sql.Tx, seq int64) error {
 	_, err := tx.ExecContext(ctx, `DELETE FROM archived_tickets WHERE seq = ?`, seq)
-	return err
-}
-
-func insertImportOperation(ctx context.Context, tx *sql.Tx, operatorID int64, at time.Time,
-	ticketNumbers []string, packageName string) error {
-	numbers, err := json.Marshal(ticketNumbers)
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO admin_operations(operation_type, operator_member_id, at, ticket_numbers, package_name)
-		VALUES ('archive_import', ?, ?, ?, ?)`, operatorID,
-		at.Format(time.RFC3339Nano), string(numbers), packageName)
 	return err
 }
 

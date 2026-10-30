@@ -51,13 +51,14 @@ type archiveDraftSummary struct {
 }
 
 type archivePackageBody struct {
-	Name            string   `json:"name"`
-	TicketCount     int      `json:"ticket_count"`
-	AttachmentBytes int64    `json:"attachment_bytes"`
-	GeneratedAt     string   `json:"generated_at"`
-	ExpiresAt       string   `json:"expires_at"`
-	TicketNumbers   []string `json:"ticket_numbers"`
-	DownloadURL     string   `json:"download_url"`
+	Name               string   `json:"name"`
+	TicketCount        int      `json:"ticket_count"`
+	AttachmentBytes    int64    `json:"attachment_bytes"`
+	GeneratedAt        string   `json:"generated_at"`
+	ExpiresAt          string   `json:"expires_at"`
+	TicketNumbers      []string `json:"ticket_numbers"`
+	DownloadURL        string   `json:"download_url"`
+	RemovedTicketCount int      `json:"removed_ticket_count"`
 }
 
 type archivePackageListBody struct {

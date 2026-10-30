@@ -113,6 +113,92 @@ func importArchive(t testing.TB, s *tbtest.Server, c *http.Client, pkg []byte, n
 	return res, out
 }
 
+func Test导入上传缺文件返回file_required(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	if err := mw.WriteField("ticket_numbers", "20260602-001"); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, s.URL()+"/api/v1/admin/archive/import/inspect", &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	res, err := admin.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var got errorBody
+	tbtest.DecodeJSON(t, res, &got)
+	if res.StatusCode != http.StatusUnprocessableEntity || got.Error.Code != "file_required" {
+		t.Fatalf("缺文件上传 = %d/%s, 想 422 file_required", res.StatusCode, got.Error.Code)
+	}
+}
+
+func Test导入会限制manifest声明解压总量并清理上传临时文件(t *testing.T) {
+	s := tbtest.Start(t, tbtest.WithAttachments(1, 5, 10, 1))
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	setStorageClock(t, s, 2026, time.June, 2)
+	number := mustCreateTicket(t, s, admin, "解压总量限制")
+	if res := closeTicket(t, s, admin, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d, 想 200", res.StatusCode)
+	}
+	s.Clock().Set(time.Date(2026, time.October, 30, 10, 0, 0, 0, clock.Beijing))
+	admin = s.Login("陈工", "secret-pass")
+	var pkg archivePackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/archive/packages",
+		map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, &pkg); res.StatusCode != http.StatusCreated {
+		t.Fatalf("生成归档包状态码 = %d, 想 201", res.StatusCode)
+	}
+	pkgRes := s.Do(t, admin, http.MethodGet, pkg.DownloadURL, nil, nil)
+	zipBytes, err := io.ReadAll(pkgRes.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := zipFiles(t, zipBytes)
+	files["tickets/"+number+"/README.md"] = bytes.Repeat([]byte("0"), 5<<20)
+	updateZipChecksums(t, files)
+	var manifest map[string]any
+	if err := json.Unmarshal(files["manifest.json"], &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifestFiles, _ := manifest["files"].([]any)
+	for _, item := range manifestFiles {
+		entry, _ := item.(map[string]any)
+		if path, _ := entry["path"].(string); path == "tickets/"+number+"/README.md" {
+			entry["size"] = 5 << 30
+		}
+	}
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files["manifest.json"] = encoded
+	bomb := writeZipFiles(t, files)
+
+	res, _ := inspectArchive(t, s, admin, bomb)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("解压总量超限检查状态码 = %d, 想 422", res.StatusCode)
+	}
+	entries, err := os.ReadDir(filepath.Join(s.DataDir(), "archive-packages"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Name(), ".tmp") {
+			t.Fatalf("上传临时文件未清理：%s", entry.Name())
+		}
+	}
+}
+
 func Test检查归档包列出可导入工单(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")
@@ -340,6 +426,22 @@ func Test归档导入完整恢复工单并保留访客链接(t *testing.T) {
 	}
 	if res := s.Do(t, admin, http.MethodPost, "/api/v1/tickets/"+number+"/reopen", nil, nil); res.StatusCode != http.StatusOK {
 		t.Fatalf("恢复后重新开启状态码 = %d, 想 200", res.StatusCode)
+	}
+	s.Clock().Set(time.Date(2026, time.August, 3, 10, 0, 0, 0, clock.Beijing))
+	admin = s.Login("陈工", "secret-pass")
+	if res := closeTicket(t, s, admin, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("再次关闭状态码 = %d, 想 200", res.StatusCode)
+	}
+	s.Clock().Set(time.Date(2026, time.September, 3, 10, 0, 0, 0, clock.Beijing))
+	admin = s.Login("陈工", "secret-pass")
+	var second archivePackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/archive/packages",
+		map[string]any{"closed_months": 1, "ticket_numbers": []string{number}}, &second); res.StatusCode != http.StatusCreated {
+		t.Fatalf("导入后再次生成归档包状态码 = %d, 想 201", res.StatusCode)
+	}
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/admin/archive/packages/"+second.Name+"/remove", map[string]any{"saved": true}, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("导入后再次移除状态码 = %d, 想 200", res.StatusCode)
 	}
 }
 
@@ -619,6 +721,77 @@ func Test导入归档包只对管理员网页会话开放(t *testing.T) {
 		tbtest.DecodeJSON(t, res, &got)
 		if got.Error.Code != tc.err {
 			t.Errorf("%s导入归档包错误码 = %q, 想 %q", name, got.Error.Code, tc.err)
+		}
+	}
+}
+
+func Test导入检查数据库错误返回500且数据不变(t *testing.T) {
+	build := func(withAgent, withAttachment bool) (*tbtest.Server, *http.Client, []string, []byte) {
+		t.Helper()
+		s := tbtest.Start(t)
+		s.CreateAdmin("陈工", "secret-pass")
+		admin := s.Login("陈工", "secret-pass")
+		creator := admin
+		if withAgent {
+			_, token := s.IssueAgentToken(t, admin, "建单Agent")
+			creator = s.AgentClient(token)
+		}
+		setStorageClock(t, s, 2026, time.June, 2)
+		number := mustCreateTicket(t, s, creator, "数据库错误整体失败")
+		if withAttachment {
+			att := mustUploadAttachment(t, s, admin, number, "日志.txt", []byte("db-error"))
+			if res := revise(t, s, admin, number, map[string]any{
+				"brief_md": "见日志。", "attachment_ids": []string{att.ID}, "base_revision": 1,
+			}); res.StatusCode != http.StatusOK {
+				t.Fatalf("挂附件状态码 = %d, 想 200", res.StatusCode)
+			}
+		}
+		if res := closeTicket(t, s, admin, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+			t.Fatalf("关闭工单状态码 = %d, 想 200", res.StatusCode)
+		}
+		s.Clock().Set(time.Date(2026, time.October, 30, 10, 0, 0, 0, clock.Beijing))
+		admin = s.Login("陈工", "secret-pass")
+		var pkg archivePackageBody
+		if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/archive/packages",
+			map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, &pkg); res.StatusCode != http.StatusCreated {
+			t.Fatalf("生成归档包状态码 = %d, 想 201", res.StatusCode)
+		}
+		pkgRes := s.Do(t, admin, http.MethodGet, pkg.DownloadURL, nil, nil)
+		body, err := io.ReadAll(pkgRes.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res := s.Do(t, admin, http.MethodPost,
+			"/api/v1/admin/archive/packages/"+pkg.Name+"/remove", map[string]any{"saved": true}, nil); res.StatusCode != http.StatusOK {
+			t.Fatalf("移除归档包状态码 = %d, 想 200", res.StatusCode)
+		}
+		return s, admin, []string{number}, body
+	}
+	for _, tc := range []struct {
+		name           string
+		table          string
+		withAgent      bool
+		withAttachment bool
+	}{
+		{name: "墓碑读取", table: "archived_tickets"},
+		{name: "引用检查", table: "agent_tokens", withAgent: true},
+		{name: "ID冲突", table: "attachments", withAttachment: true},
+	} {
+		s, admin, numbers, pkg := build(tc.withAgent, tc.withAttachment)
+		if _, err := s.Store().DB.Exec(`ALTER TABLE ` + tc.table + ` RENAME TO ` + tc.table + `_broken`); err != nil {
+			t.Fatalf("%s：构造数据库失败：%v", tc.name, err)
+		}
+		res, inspection := inspectArchive(t, s, admin, pkg)
+		if _, err := s.Store().DB.Exec(`ALTER TABLE ` + tc.table + `_broken RENAME TO ` + tc.table); err != nil {
+			t.Fatalf("%s：恢复表失败：%v", tc.name, err)
+		}
+		if res.StatusCode != http.StatusInternalServerError || len(inspection.Tickets) != 0 {
+			t.Fatalf("%s数据库错误 = %d/%+v, 想 500 且不返回逐张拒绝理由", tc.name, res.StatusCode, inspection)
+		}
+		for _, number := range numbers {
+			if res := s.Do(t, admin, http.MethodGet, "/api/v1/tickets/"+number, nil, nil); res.StatusCode != http.StatusGone {
+				t.Fatalf("%s后工单 %s 状态码 = %d, 想 410", tc.name, number, res.StatusCode)
+			}
 		}
 	}
 }
