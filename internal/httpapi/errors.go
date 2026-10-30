@@ -146,15 +146,16 @@ const (
 	CodeUpdateFailed               = "update_failed"                // 更新本身的失败（哈希不符、备份失败等）
 	CodeContainerUpdateUnsupported = "container_update_unsupported" // 容器部署不支持原地更新（409）
 	// #42：成员账号管理（网页上创建与停用，仅管理员）。
-	CodeUsernameRequired     = "username_required"      // 创建成员时登录名为空
-	CodeInvalidUsername      = "invalid_username"       // 登录名里有不适合的字符
-	CodeInvalidName          = "invalid_name"           // 显示名里含替换字符
-	CodeUsernameTaken        = "username_taken"         // 登录名已存在（409）
-	CodeMemberNotFound       = "member_not_found"       // 没有这位成员（404）
-	CodeMemberDeactivated    = "member_deactivated"     // 账号已停用（登录 401）
-	CodeMemberInactive       = "member_inactive"        // 重置密码的目标账号已停用（422）
-	CodePasswordUnchanged    = "password_unchanged"     // 新密码与旧密码相同（422）
-	CodeCannotDeactivateSelf = "cannot_deactivate_self" // 不能停用自己的账号
+	CodeUsernameRequired      = "username_required"        // 创建成员时登录名为空
+	CodeInvalidUsername       = "invalid_username"         // 登录名里有不适合的字符
+	CodeInvalidName           = "invalid_name"             // 显示名里含替换字符
+	CodeUsernameTaken         = "username_taken"           // 登录名已存在（409）
+	CodeMemberNotFound        = "member_not_found"         // 没有这位成员（404）
+	CodeMemberDeactivated     = "member_deactivated"       // 账号已停用（登录 401）
+	CodeMemberInactive        = "member_inactive"          // 重置密码的目标账号已停用（422）
+	CodePasswordUnchanged     = "password_unchanged"       // 新密码与旧密码相同（422）
+	CodeCannotDeactivateSelf  = "cannot_deactivate_self"   // 不能停用自己的账号
+	CodeCannotRevokeSelfAdmin = "cannot_revoke_self_admin" // 不能撤销自己的管理员身份（422）
 
 	// 幂等（评审修正）：同键并发重放。
 	CodeIdempotencyInProgress = "idempotency_in_progress" // 同一个 Idempotency-Key 的请求正在执行（409）

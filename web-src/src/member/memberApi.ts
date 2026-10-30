@@ -458,10 +458,11 @@ export interface MemberAccount {
   name: string
   active: boolean
   triager: boolean
+  is_admin: boolean
 }
 
 export interface CreatedMember {
-  member: MemberAccount & { is_admin: boolean }
+  member: MemberAccount
   initial_password: string
 }
 
@@ -516,6 +517,13 @@ export async function setMemberTriager(id: number, triager: boolean): Promise<vo
   await api(`/api/v1/members/${id}/triager`, {
     method: 'POST',
     body: JSON.stringify({ triager }),
+  })
+}
+
+export async function setMemberAdmin(id: number, admin: boolean): Promise<void> {
+  await api(`/api/v1/members/${id}/admin`, {
+    method: 'POST',
+    body: JSON.stringify({ admin }),
   })
 }
 

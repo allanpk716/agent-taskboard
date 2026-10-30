@@ -32,6 +32,10 @@ var ErrMemberNotFound = errors.New("没有这位成员")
 // ErrCannotDeactivateSelf 表示不能停用自己的账号（#42：防止管理员把自己锁在门外）。
 var ErrCannotDeactivateSelf = errors.New("不能停用自己的账号")
 
+// ErrCannotRevokeSelfAdmin 表示不能撤销自己的管理员身份（平台始终至少有一位
+// 在职管理员）。
+var ErrCannotRevokeSelfAdmin = errors.New("不能撤销自己的管理员身份")
+
 // ErrMemberInactive 表示目标账号已停用，不能执行当前管理操作。
 var ErrMemberInactive = errors.New("成员账号已停用")
 var ErrCannotResetSelf = errors.New("不能重置自己的密码")
@@ -169,6 +173,45 @@ func (m *Manager) SetTriager(ctx context.Context, id int64, triager bool) error 
 		return ErrMemberNotFound
 	}
 	return nil
+}
+
+// SetAdmin 授予或撤销成员的管理员身份：任何在职管理员可操作其他成员，
+// 不能撤销自己的（平台始终至少有一位在职管理员，GLOSSARY「管理员」）。
+// 已停用的成员不能被授予管理员；撤销停用成员的管理员身份允许（停用不清除
+// is_admin，恢复后仍是管理员）。幂等：状态不变时同样成功。
+func (m *Manager) SetAdmin(ctx context.Context, actorID, id int64, admin bool) error {
+	if !admin && actorID == id {
+		return ErrCannotRevokeSelfAdmin
+	}
+	stmt := `UPDATE members SET is_admin = ? WHERE id = ?`
+	if admin {
+		// 授予只对启用中的账号生效；撤销不受停用限制。
+		stmt += ` AND deactivated_at IS NULL`
+	}
+	res, err := m.db.ExecContext(ctx, stmt, boolToInt(admin), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	// 一行都没动：没有这位成员，或授予时目标已停用。
+	var deactivated sql.NullString
+	err = m.db.QueryRowContext(ctx, `SELECT deactivated_at FROM members WHERE id = ?`, id).Scan(&deactivated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrMemberNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if admin && nullStringSet(deactivated) {
+		return ErrMemberInactive
+	}
+	return ErrMemberNotFound
 }
 
 // GenerateInitialPassword 生成一位新成员的初始密码（创建成员账号时由服务器

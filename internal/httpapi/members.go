@@ -50,23 +50,27 @@ func (a *API) handleMembersRoot(w http.ResponseWriter, r *http.Request) {
 //	POST /api/v1/members/{id}/deactivate  停用（管理员网页会话，幂等）
 //	POST /api/v1/members/{id}/reactivate  恢复（管理员网页会话，幂等）
 //	POST /api/v1/members/{id}/triager     设置初筛人（管理员网页会话，幂等）
+//	POST /api/v1/members/{id}/admin       设置管理员（管理员网页会话，幂等）
 //	POST /api/v1/members/{id}/reset-password 重置密码（管理员网页会话）
 func (a *API) handleMembersRef(w http.ResponseWriter, r *http.Request) {
 	ref := strings.TrimPrefix(r.URL.Path, "/api/v1/members/")
 	id, sub, hasSub := strings.Cut(ref, "/")
 	if !hasSub {
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
-			"成员账号接口：GET|POST /api/v1/members、POST /api/v1/members/{id}/deactivate|reactivate|triager|reset-password")
+			"成员账号接口：GET|POST /api/v1/members、POST /api/v1/members/{id}/deactivate|reactivate|triager|admin|reset-password")
 		return
 	}
 	if r.Method != http.MethodPost {
 		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法",
-			"停用/恢复账号、设置初筛人和重置密码都用 POST")
+			"停用/恢复账号、设置初筛人、管理员身份和重置密码都用 POST")
 		return
 	}
 	switch sub {
 	case "triager":
 		a.setTriager(w, r, id)
+		return
+	case "admin":
+		a.setAdmin(w, r, id)
 		return
 	case "reset-password":
 		a.resetMemberPassword(w, r, id)
@@ -78,7 +82,7 @@ func (a *API) handleMembersRef(w http.ResponseWriter, r *http.Request) {
 		a.deactivateMember(w, r, id)
 	default:
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
-			"成员账号接口：GET|POST /api/v1/members、POST /api/v1/members/{id}/deactivate|reactivate|triager|reset-password")
+			"成员账号接口：GET|POST /api/v1/members、POST /api/v1/members/{id}/deactivate|reactivate|triager|admin|reset-password")
 	}
 }
 
@@ -118,6 +122,7 @@ type memberListItem struct {
 	Name     string `json:"name"`
 	Active   *bool  `json:"active,omitempty"`
 	Triager  bool   `json:"triager"`
+	IsAdmin  bool   `json:"is_admin"`
 }
 
 func (a *API) listMembers(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +142,10 @@ func (a *API) listMembers(w http.ResponseWriter, r *http.Request) {
 	refs := make([]memberListItem, 0, len(rows))
 	for _, m := range rows {
 		active := m.Active()
-		refs = append(refs, memberListItem{ID: m.ID, Username: m.Username, Name: m.Name, Active: &active, Triager: m.Triager})
+		refs = append(refs, memberListItem{
+			ID: m.ID, Username: m.Username, Name: m.Name,
+			Active: &active, Triager: m.Triager, IsAdmin: m.IsAdmin,
+		})
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Members []memberListItem `json:"members"`
@@ -167,6 +175,40 @@ func (a *API) setTriager(w http.ResponseWriter, r *http.Request, idStr string) {
 		panic(err)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "triager": req.Triager})
+}
+
+// setAdmin 授予/撤销成员的管理员身份：仅管理员本人的网页会话；不能撤销
+// 自己的，已停用的成员不能被授予（GLOSSARY「管理员」）。
+func (a *API) setAdmin(w http.ResponseWriter, r *http.Request, idStr string) {
+	admin, ok := a.adminWebSessionFromRequest(w, r, "管理员身份只能由管理员在网页上授予或撤销")
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		WriteError(w, http.StatusNotFound, CodeMemberNotFound, "没有这位成员", "")
+		return
+	}
+	var req struct {
+		Admin bool `json:"admin"`
+	}
+	if !decodeJSON(w, r, &req, `{"admin": true}`) {
+		return
+	}
+	switch err := a.ident.SetAdmin(r.Context(), admin.Member.ID, id, req.Admin); {
+	case errors.Is(err, identity.ErrCannotRevokeSelfAdmin):
+		WriteError(w, http.StatusUnprocessableEntity, CodeCannotRevokeSelfAdmin,
+			"不能撤销自己的管理员身份", "请另一位管理员来撤销")
+	case errors.Is(err, identity.ErrMemberNotFound):
+		WriteError(w, http.StatusNotFound, CodeMemberNotFound, "没有这位成员", "")
+	case errors.Is(err, identity.ErrMemberInactive):
+		WriteError(w, http.StatusUnprocessableEntity, CodeMemberInactive, "成员账号已停用",
+			"先恢复账号再授予管理员")
+	case err != nil:
+		panic(err)
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{"id": id, "admin": req.Admin})
+	}
 }
 
 // createMemberRequest 是 POST /api/v1/members 的请求体；密码不收（服务器生成
