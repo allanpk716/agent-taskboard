@@ -525,7 +525,7 @@ type FilterResolution struct {
 }
 
 // ResolveFilter 把筛选里的一个标签写法解析成标准值。与打标签不同：通配
-//（维度:*）在这里合法；解析范围包含已停用的值（历史工单上可能还带着，
+// （维度:*）在这里合法；解析范围包含已停用的值（历史工单上可能还带着，
 // 统计仍应能按它们分组）。解析不到返回 UnknownValueError（附近似值），
 // 维度不存在返回 ErrUnknownDimension。
 func (m *Manager) ResolveFilter(ctx context.Context, q string) (FilterResolution, error) {

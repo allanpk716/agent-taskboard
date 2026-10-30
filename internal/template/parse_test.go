@@ -313,7 +313,7 @@ func Test不分组模板没有groups(t *testing.T) {
 }
 
 // 「给 Agent 的说明」写在哪里都行：写在第一个分组之前不触发
-//「字段写在分组之前」的报错。
+// 「字段写在分组之前」的报错。
 func Test给Agent的说明可以写在分组之前(t *testing.T) {
 	def, err := Parse("---\n名称: x\n类型: 任务\n---\n## 给 Agent 的说明\n先看这里。\n# 组一\n副标题\n## 字段？\nx\n")
 	if err != nil {
