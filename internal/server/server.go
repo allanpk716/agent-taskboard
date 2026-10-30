@@ -13,6 +13,7 @@ import (
 
 	accessrecords "github.com/allanpk716/agent-taskboard/internal/accessrecords"
 	"github.com/allanpk716/agent-taskboard/internal/agentdocs"
+	"github.com/allanpk716/agent-taskboard/internal/archive"
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/captcha"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
@@ -45,6 +46,7 @@ type Server struct {
 	Notifications *notifications.Manager
 	AccessRecords *accessrecords.Manager
 	Drafts        *drafts.Manager
+	Archives      *archive.Service
 
 	handler  http.Handler
 	web      *webapp.Handler
@@ -137,9 +139,10 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	ticketStore.SetSystemNotifier(notificationStore)
 	draftStore := drafts.NewManager(st.DB, c, ticketStore, atts)
 	storageStats := storage.NewService(st.DB, cfg.DataDir, atts.Dir(), backups.TargetDir(), c)
+	archives := archive.NewService(st.DB, c)
 	draftStore.SetNotifier(notificationStore.DraftNotifier())
 	api := httpapi.NewAPI(ident, ticketStore,
-		templateDict, idem, atts, backups, accessRecords, draftStore, storageStats, cfg, c)
+		templateDict, idem, atts, backups, accessRecords, draftStore, storageStats, archives, cfg, c)
 	api.SetCaptchaSource(captchaSrc)
 	api.SetLoginRateLimit(loginRateLimit())
 	api.SetNotifications(notificationStore)
@@ -162,6 +165,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 		Notifications: notificationStore,
 		AccessRecords: accessRecords,
 		Drafts:        draftStore,
+		Archives:      archives,
 		handler:       mux,
 		httpSrv:       &http.Server{Handler: mux},
 		web:           web,
