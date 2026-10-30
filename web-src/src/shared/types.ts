@@ -224,6 +224,17 @@ export interface GuestSession {
   ticket: { number: string; seq: number; title: string; api: string }
 }
 
+// 410 ticket_archived 附加在 error.archived_ticket 里的墓碑信息（#236）。
+export interface ArchivedTicket {
+  seq: number
+  number: string
+  title: string
+  closed_at: string
+  archived_at: string
+  operator_name: string
+  package_name: string
+}
+
 // GET /api/v1/intakes/{slug}（匿名，#35/#39）的响应结构。
 export interface IntakeView {
   slug: string

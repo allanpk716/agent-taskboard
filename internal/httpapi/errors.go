@@ -189,6 +189,11 @@ const (
 	CodeArchiveNotFound         = "archive_not_found"            // 归档包不存在或已过期（404）
 	CodeArchiveGenerateConflict = "archive_generate_in_progress" // 已有归档生成正在执行（409）
 
+	// #236：归档移除与墓碑。
+	CodeArchiveSavedRequired = "archive_saved_confirmation_required" // 未勾选“我已保存归档包”（400）
+	CodeArchiveRemoved       = "archive_package_removed"             // 归档包对应的工单已移除（409）
+	CodeTicketArchived       = "ticket_archived"                     // 工单已归档移出平台（410）
+
 	// #80：桌面客户端凭证。
 	CodeInvalidClientPort        = "invalid_client_port"
 	CodeInvalidClientConnect     = "invalid_client_connect"

@@ -434,18 +434,10 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, err
 	}
 	defer tx.Rollback()
 
-	// 当日序号：已有的当天工单数 + 1；超过 999 时自动用 4 位。
-	var today int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM tickets WHERE number LIKE ?`, date+"-%").Scan(&today); err != nil {
+	// 当日序号：已有工单与墓碑一起计数；超过 999 时自动用 4 位。
+	number, err := nextTicketNumber(ctx, tx, date)
+	if err != nil {
 		return CreateResult{}, err
-	}
-	daily := today + 1
-	number := date + "-"
-	if daily > 999 {
-		number += fmt.Sprintf("%d", daily)
-	} else {
-		number += fmt.Sprintf("%03d", daily)
 	}
 
 	var agentID any

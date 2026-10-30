@@ -23,7 +23,10 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 	if token, ok := bearerToken(r); ok {
 		var viewer identity.Viewer
 		var err error
-		if guestCredential, ok := identity.ParseGuestAgentCredential(token); ok {
+		guestCredential, isGuestAgentCredential := identity.ParseGuestAgentCredential(token)
+		credentialForArchive := token
+		if isGuestAgentCredential {
+			credentialForArchive = guestCredential.Key
 			viewer, err = a.guestAgentViewer(r, guestCredential)
 		} else if identity.IsClientToken(token) {
 			viewer, err = a.ident.ViewerFromClientToken(r.Context(), token, r.UserAgent())
@@ -38,6 +41,9 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 		if err != nil {
 			switch {
 			case errors.Is(err, identity.ErrInvalidCredentials):
+				if a.writeArchivedCredential(w, r, credentialForArchive) {
+					return identity.Viewer{}, false
+				}
 				WriteError(w, http.StatusUnauthorized, CodeInvalidToken, "凭证无效或已撤销",
 					a.authHint(r))
 			case errors.Is(err, identity.ErrLinkRevoked),

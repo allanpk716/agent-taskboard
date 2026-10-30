@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, ApiError } from '../api'
 import type { MemberTicket } from './memberApi'
-import type { Attachment, DraftView } from '../shared/types'
+import type { ArchivedTicket, Attachment, DraftView } from '../shared/types'
 import {
   addCollaborator,
   assignTicket,
@@ -1142,6 +1142,7 @@ export function TicketDetailPage({
   const search = useLocationSearch()
   const [ticket, setTicket] = useState<MemberTicket | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [archived, setArchived] = useState<ArchivedTicket | null>(null)
   const [lightbox, setLightbox] = useState<string | null>(null)
   const [actor, setActor] = useState<ActorFilter>('all')
   const [dialog, setDialog] = useState<'label' | 'brief' | 'assign' | 'collaborators' | 'links' | 'close' | 'reopen' | 'agent' | 'share' | null>(null)
@@ -1159,7 +1160,16 @@ export function TicketDetailPage({
       const got = await fetchTicket(ticketRef)
       setTicket(got)
       setError(null)
+      setArchived(null)
     } catch (e) {
+      if (e instanceof ApiError && e.code === 'ticket_archived') {
+        const tombstone = (e.body as { archived_ticket?: ArchivedTicket } | undefined)?.archived_ticket
+        if (tombstone) {
+          setArchived(tombstone)
+          setError(null)
+          return
+        }
+      }
       setError(
         e instanceof ApiError && e.code === 'ticket_not_found'
           ? '找不到这张工单，或你没有权限查看'
@@ -1212,6 +1222,23 @@ export function TicketDetailPage({
     return (
       <div className="bpage detail">
         <div className="ecard">{error}</div>
+      </div>
+    )
+  }
+  if (archived) {
+    return (
+      <div className="bpage detail">
+        <div className="ecard" data-testid="ticket-tombstone">
+          <h2>这张工单已归档</h2>
+          <p className="mono">{archived.number}</p>
+          <p>{archived.title}</p>
+          <p className="muted">
+            已于 {fmtBeijing(archived.archived_at)} 由 {archived.operator_name} 归档；
+            关闭时间 {fmtBeijing(archived.closed_at)}。
+          </p>
+          <p className="muted">归档包：{archived.package_name}</p>
+          <p className="hint">如需查看，请联系管理员导入这个归档包。</p>
+        </div>
       </div>
     )
   }

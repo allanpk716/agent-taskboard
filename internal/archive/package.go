@@ -340,6 +340,9 @@ func (s *Service) infoFromZip(name string) (PackageInfo, error) {
 		numbers = append(numbers, t.Number)
 		attachmentBytes += t.AttachmentBytes
 	}
+	if m.PackageName != name {
+		return PackageInfo{}, ErrPackageNotFound
+	}
 	return PackageInfo{Name: name, TicketNumbers: numbers, TicketCount: len(numbers),
 		AttachmentBytes: attachmentBytes, GeneratedAt: generated, ExpiresAt: generated.Add(Retention),
 		OperatorName: m.Operator.Name}, nil

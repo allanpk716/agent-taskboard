@@ -51,17 +51,9 @@ func (m *Manager) CreateTx(ctx context.Context, tx *sql.Tx, prepared PreparedCre
 	warnings := prepared.Warnings
 	now := m.clk.Now()
 	date := now.Format("20060102")
-	var today int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM tickets WHERE number LIKE ?`, date+"-%").Scan(&today); err != nil {
+	number, err := nextTicketNumber(ctx, tx, date)
+	if err != nil {
 		return CreateResult{}, nil, err
-	}
-	daily := today + 1
-	number := date + "-"
-	if daily > 999 {
-		number += fmt.Sprintf("%d", daily)
-	} else {
-		number += fmt.Sprintf("%03d", daily)
 	}
 	creator := Author{MemberID: in.Creator.Member.ID, MemberName: in.Creator.Member.Name}
 	if in.Actor != nil {

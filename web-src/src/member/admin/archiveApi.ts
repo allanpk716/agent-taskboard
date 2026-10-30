@@ -38,6 +38,24 @@ export interface ArchivePackage {
   operator_name: string
 }
 
+export interface ArchiveTombstone {
+  seq: number
+  number: string
+  title: string
+  closed_at: string
+  archived_at: string
+  operator_name: string
+  package_name: string
+}
+
+export interface ArchiveRemoveResult {
+  ticket_count: number
+  attachment_bytes: number
+  package_name: string
+  removed_at: string
+  tombstones: ArchiveTombstone[]
+}
+
 export async function previewArchive(closedMonths: number, ticketNumbers: string[]): Promise<ArchivePreview> {
   return api('/api/v1/admin/archive/preview', {
     method: 'POST',
@@ -58,4 +76,11 @@ export async function createArchivePackage(
 export async function fetchArchivePackages(): Promise<ArchivePackage[]> {
   const body = await api('/api/v1/admin/archive/packages')
   return body.packages ?? []
+}
+
+export function removeArchivePackage(name: string): Promise<ArchiveRemoveResult> {
+  return api(`/api/v1/admin/archive/packages/${encodeURIComponent(name)}/remove`, {
+    method: 'POST',
+    body: JSON.stringify({ saved: true }),
+  })
 }

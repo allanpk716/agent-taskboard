@@ -245,7 +245,7 @@ func notUsable(id string) error {
 }
 
 // CleanupUnreferenced 清除上传超过 24 小时仍未引用的待用附件（行 + 文件），
-// 返回清除的个数。备份镜像只增不删，镜像里可能残留这类文件，可以接受。
+// 返回清除的个数。备份同步不删除，镜像里可能残留这类文件，可以接受。
 // 服务定时调用（时钟可注入，测试不睡真实时间）。
 func (m *Manager) CleanupUnreferenced(ctx context.Context) (int, error) {
 	cutoff := m.clk.Now().Add(-24 * time.Hour)

@@ -967,7 +967,8 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 两步上传（spec 用户故事 52）：先上传拿到 `att:` 引用与现成的 Markdown 片段，
 再在回复或说明中引用（正文 `att:` 引用或 `attachment_ids`）。未被引用的附件也
 计入配额，上传满 24 小时后由服务的周期任务清除（行与文件一并删除；备份镜像
-只增不删，残留可接受）。文件本体放在 `data_dir\attachments\<id>`，数据库只存
+同步时不删除，这类未引用文件会残留在镜像里；归档移除是唯一会从镜像删除附件的
+操作）。文件本体放在 `data_dir\attachments\<id>`，数据库只存
 元数据；服务端只检查上限，不压缩图片（压缩在前端做）。
 
 ### 上传（POST /api/v1/tickets/{id}/attachments）
@@ -1178,8 +1179,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   `ticket_count` / `attachment_bytes` 仍以整组为准。
 - `attachment_bytes` 是该月各工单附件（含待用附件）按数据库记录大小的合计；
   附件按 id 落盘，同一存储文件被多处引用只计一次。
-- 本接口只做统计，不移动、不删除任何数据；选中工单后的预览、生成与下载见下一节，
-  移除仍是后续 #236。
+- 本接口只做统计，不移动、不删除任何数据；选中工单后的预览、生成、下载与移除见下一节。
 
 ## 归档包（#235）
 
@@ -1194,6 +1194,7 @@ Agent token 403 `web_session_required`，匿名 401。选择里的每张工单�
 | `POST /api/v1/admin/archive/packages` | 生成 zip 归档包并暂存 7 天。 |
 | `GET /api/v1/admin/archive/packages` | 列出未过期暂存包（新包在前）。 |
 | `GET /api/v1/admin/archive/packages/{name}/download` | 重复下载一个暂存包（`application/zip`）。 |
+| `POST /api/v1/admin/archive/packages/{name}/remove` | 确认已保存后从服务器移除包内工单并写墓碑。 |
 
 预览与生成的请求体相同：
 
@@ -1261,6 +1262,47 @@ Agent token 403 `web_session_required`，匿名 401。选择里的每张工单�
 - manifest 同时是生成操作留痕：操作人、时间、工单编号列表和包名都在包内；暂存列表从
   manifest 读出这些元数据。
 
+### 移除与墓碑（#236）
+
+移除请求必须显式确认：
+
+```json
+{"saved": true}
+```
+
+`saved` 缺失或为 `false` 时返回 `400 archive_saved_confirmation_required`。成功后，
+服务器在一个数据库事务里删除包内工单及说明版本、回复、附件元数据、时间线、
+访问记录、标签、协作者、访客链接、已认领设备、工单已读位置和草稿记录，写入墓碑
+与管理操作；事务提交后删除附件主文件、备份目录中的附件镜像和暂存包。若包不存在、
+已过期或已移除，分别返回 `404 archive_not_found` / `409 archive_package_removed`。
+
+移除响应：
+
+```json
+{
+  "ticket_count": 1,
+  "attachment_bytes": 256,
+  "package_name": "archive-1790000000000000000-a1b2c3d4e5.zip",
+  "removed_at": "2026-10-30T10:10:00+08:00",
+  "tombstones": [
+    {
+      "seq": 1,
+      "number": "20260601-001",
+      "title": "旧工单",
+      "closed_at": "2026-06-01T10:00:00+08:00",
+      "archived_at": "2026-10-30T10:10:00+08:00",
+      "operator_name": "陈工",
+      "package_name": "archive-1790000000000000000-a1b2c3d4e5.zip"
+    }
+  ]
+}
+```
+
+之后成员、成员 Agent、网页与访客旧链接读取这张工单都会得到
+`410 ticket_archived`，错误对象附带上面的 `archived_ticket` 墓碑字段。通知条目保留，
+点开同样显示墓碑；列表与搜索默认不出现已归档工单。工单编号分配会把墓碑计入，
+编号永不复用。
+
 ## 管理操作记录（#235）
 
 只接受**管理员网页会话**；普通成员 403 `admin_required`，Agent token 403
@@ -1270,7 +1312,7 @@ Agent token 403 `web_session_required`，匿名 401。选择里的每张工单�
 |---|---|
 | `GET /api/v1/admin/operations` | 按时间倒序读取管理操作记录。 |
 
-当前记录类型只有 `archive_generate`；#236/#237 会继续加入 `archive_remove` /
+当前记录类型有 `archive_generate` / `archive_remove`；#237 会继续加入
 `archive_import`。响应结构：
 
 ```json

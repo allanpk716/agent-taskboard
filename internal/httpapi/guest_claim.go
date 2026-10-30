@@ -79,6 +79,9 @@ func (a *API) guestClaimLink(w http.ResponseWriter, r *http.Request, allowClaime
 	if err != nil {
 		switch {
 		case errors.Is(err, identity.ErrInvalidCredentials):
+			if a.writeArchivedCredential(w, r, token) {
+				return identity.GuestLink{}, false
+			}
 			WriteError(w, http.StatusUnauthorized, CodeInvalidToken, "凭证无效或已撤销", "")
 		case errors.Is(err, identity.ErrLinkRevoked), errors.Is(err, identity.ErrLinkExpired):
 			a.writeLinkStatusError(w, r, err)

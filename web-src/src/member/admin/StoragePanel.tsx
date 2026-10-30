@@ -1,6 +1,6 @@
-// 管理页「存储」面板（#234/#235）：三类空间占用、按关闭月份分组的可归档
-// 工单，以及选择 → 预览 → 生成 / 下载归档包。N 只是查询参数（默认 3，范围
-// 1–120），改动后重新请求；生成本工单只丢弃未发出草稿，不移除工单。
+// 管理页「存储」面板（#234/#235/#236）：三类空间占用、按关闭月份分组的可归档
+// 工单，以及选择 → 预览 → 生成 / 下载归档包 → 确认已保存后移除。N 只是查询
+// 参数（默认 3，范围 1–120），改动后重新请求。
 import { useEffect, useMemo, useState } from 'react'
 import { ApiError } from '../../api'
 import { fmtBeijing } from '../../shared/format'
@@ -8,7 +8,9 @@ import {
   createArchivePackage,
   fetchArchivePackages,
   previewArchive,
+  removeArchivePackage,
   type ArchivePackage,
+  type ArchiveRemoveResult,
   type ArchivePreview,
 } from './archiveApi'
 import { fetchStorageStats, type StorageStats, type StorageTicketStat } from './storageApi'
@@ -35,7 +37,9 @@ export function StoragePanel() {
   const [preview, setPreview] = useState<ArchivePreview | null>(null)
   const [packages, setPackages] = useState<ArchivePackage[]>([])
   const [packageError, setPackageError] = useState<string | null>(null)
-  const [busy, setBusy] = useState<'preview' | 'generate' | null>(null)
+  const [saved, setSaved] = useState<Set<string>>(new Set())
+  const [removal, setRemoval] = useState<ArchiveRemoveResult | null>(null)
+  const [busy, setBusy] = useState<'preview' | 'generate' | 'remove' | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -124,10 +128,32 @@ export function StoragePanel() {
     try {
       await createArchivePackage(months, selectedNumbers)
       setPreview(null)
+      setRemoval(null)
       setPackages(await fetchArchivePackages())
       setError(null)
     } catch (e) {
       setError(e instanceof ApiError ? `${e.message}（${e.code}）` : '生成归档包失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const remove = async (name: string) => {
+    if (!saved.has(name)) return
+    setBusy('remove')
+    try {
+      const result = await removeArchivePackage(name)
+      setRemoval(result)
+      setPackages(await fetchArchivePackages())
+      setStats(await fetchStorageStats(months))
+      setSaved((prev) => {
+        const next = new Set(prev)
+        next.delete(name)
+        return next
+      })
+      setPackageError(null)
+    } catch (e) {
+      setPackageError(e instanceof ApiError ? `${e.message}（${e.code}）` : '移除归档工单失败')
     } finally {
       setBusy(null)
     }
@@ -281,6 +307,11 @@ export function StoragePanel() {
         暂存归档包（7 天）
       </div>
       {packageError && <div className="errbox">{packageError}</div>}
+      {removal && (
+        <div className="okbox" data-testid="archive-released">
+          已移除 {removal.ticket_count} 张工单，已释放附件与备份镜像 {fmtBytes(removal.attachment_bytes)}。
+        </div>
+      )}
       {packages.length === 0 ? (
         <div className="hint">暂存区没有归档包。</div>
       ) : (
@@ -291,9 +322,26 @@ export function StoragePanel() {
                 <td className="mono">{pkg.name}</td>
                 <td>
                   {pkg.ticket_count} 张工单 · {fmtBytes(pkg.attachment_bytes)}
+                  <div className="mono hint">{pkg.ticket_numbers.join('、')}</div>
                   <div className="hint">{fmtBeijing(pkg.expires_at)} 到期</div>
                 </td>
                 <td>
+                  <label className="hint" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <input
+                      type="checkbox"
+                      checked={saved.has(pkg.name)}
+                      onChange={(e) =>
+                        setSaved((prev) => {
+                          const next = new Set(prev)
+                          if (e.target.checked) next.add(pkg.name)
+                          else next.delete(pkg.name)
+                          return next
+                        })
+                      }
+                      data-testid={`archive-saved-${pkg.name}`}
+                    />
+                    我已保存
+                  </label>
                   <a
                     className="btn sm ghost"
                     href={pkg.download_url}
@@ -302,13 +350,22 @@ export function StoragePanel() {
                   >
                     下载
                   </a>
+                  <button
+                    type="button"
+                    className="btn sm danger"
+                    disabled={!saved.has(pkg.name) || busy === 'remove'}
+                    onClick={() => void remove(pkg.name)}
+                    data-testid={`archive-remove-${pkg.name}`}
+                  >
+                    从服务器移除
+                  </button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
-      <div className="hint">生成包不会从服务器移除工单；移除与导入是后续工单。</div>
+      <div className="hint">移除会删除服务器上的工单数据与附件，只留下墓碑；导入是后续工单。</div>
     </div>
   )
 }
