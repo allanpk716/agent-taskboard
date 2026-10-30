@@ -12,9 +12,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
@@ -87,6 +89,39 @@ type archiveStructuredTicketBody struct {
 	GuestLinks    []map[string]any `json:"guest_links"`
 	GuestDevices  []map[string]any `json:"guest_devices"`
 	TicketReads   []map[string]any `json:"ticket_reads"`
+}
+
+func downloadArchiveFiles(t testing.TB, s *tbtest.Server, c *http.Client, url string) map[string][]byte {
+	t.Helper()
+	res := s.Do(t, c, http.MethodGet, url, nil, nil)
+	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "application/zip" {
+		t.Fatalf("下载归档包状态码/类型 = %d/%s, 想 200 application/zip", res.StatusCode, res.Header.Get("Content-Type"))
+	}
+	zipBytes, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	if err != nil {
+		t.Fatalf("打开归档包失败：%v", err)
+	}
+	files := map[string][]byte{}
+	for _, f := range reader.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(rc)
+		closeErr := rc.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if closeErr != nil {
+			t.Fatal(closeErr)
+		}
+		files[f.Name] = body
+	}
+	return files
 }
 
 func Test归档预览只接受可归档工单并列出未发出草稿(t *testing.T) {
@@ -299,13 +334,14 @@ func Test生成归档包可下载且校验和与Markdown有效(t *testing.T) {
 			t.Errorf("导出的访客设备缺少恢复列 %s：%+v", key, structured.GuestDevices[0])
 		}
 	}
-	relative := "attachments/" + log.ID + "/服务日志.txt"
+	markdownTarget := "attachments/" + log.ID + "/%E6%9C%8D%E5%8A%A1%E6%97%A5%E5%BF%97.txt"
+	zipPath := "tickets/" + number + "/attachments/" + log.ID + "/服务日志.txt"
 	md := string(files["tickets/"+number+"/README.md"])
-	if !strings.Contains(md, relative) {
-		t.Fatalf("Markdown 缺少附件相对链接 %s：\n%s", relative, md)
+	if !strings.Contains(md, markdownTarget) {
+		t.Fatalf("Markdown 缺少附件相对链接 %s：\n%s", markdownTarget, md)
 	}
-	if _, ok := files["tickets/"+number+"/"+relative]; !ok {
-		t.Fatalf("包里缺少 Markdown 指向的附件：%s", relative)
+	if _, ok := files[zipPath]; !ok {
+		t.Fatalf("包里缺少 Markdown 指向的附件：%s", zipPath)
 	}
 
 	var after ticketResponseBody
@@ -320,6 +356,89 @@ func Test生成归档包可下载且校验和与Markdown有效(t *testing.T) {
 	afterAccess := readAccessRecords(t, s, admin, number)
 	if len(afterAccess.Records) < len(beforeAccess.Records) {
 		t.Fatalf("访问记录被删除：%d → %d", len(beforeAccess.Records), len(afterAccess.Records))
+	}
+}
+
+func Test归档包清洗附件路径并精确替换附件引用(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+
+	setStorageClock(t, s, 2026, time.June, 2)
+	res := createTicket(t, s, admin, createTicketBody{
+		Title:   "附件路径安全",
+		BriefMD: "见 [第一份](att:att_1) 和 [第十二份](att:att_12)。",
+		Labels:  []string{"机型:UD-2300"},
+	})
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("建单状态码 = %d, 想 201", res.StatusCode)
+	}
+	var ticket createTicketResponse
+	tbtest.DecodeJSON(t, res, &ticket)
+	number := ticket.Number
+	atts := []struct {
+		id       int64
+		filename string
+		content  string
+	}{
+		{1, "a b(c).txt", "one"},
+		{2, "..", "dotdot"},
+		{12, "twelve (12).txt", "twelve"},
+	}
+	attsDir := filepath.Join(s.DataDir(), "attachments")
+	if err := os.MkdirAll(attsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, att := range atts {
+		if _, err := s.Store().DB.Exec(`INSERT INTO attachments(
+			id, ticket_seq, filename, size, state, attached_to, uploader_member_id, uploaded_at, claimed_at)
+			VALUES (?, ?, ?, ?, 'attached', '说明',
+			        (SELECT id FROM members WHERE username = '陈工'), '2026-06-02T09:00:00+08:00',
+			        '2026-06-02T09:00:01+08:00')`,
+			att.id, ticket.Seq, att.filename, len(att.content)); err != nil {
+			t.Fatalf("造附件元数据失败：%v", err)
+		}
+		if err := os.WriteFile(filepath.Join(attsDir, strconv.Itoa(int(att.id))), []byte(att.content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if res := closeTicket(t, s, admin, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d, 想 200", res.StatusCode)
+	}
+	s.Clock().Set(time.Date(2026, time.October, 30, 10, 0, 0, 0, clock.Beijing))
+	admin = s.Login("陈工", "secret-pass")
+
+	var created archivePackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/archive/packages",
+		map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, &created); res.StatusCode != http.StatusCreated {
+		t.Fatalf("生成归档包状态码 = %d, 想 201", res.StatusCode)
+	}
+	files := downloadArchiveFiles(t, s, admin, created.DownloadURL)
+	prefix := "tickets/" + number + "/"
+	for name := range files {
+		for _, part := range strings.Split(name, "/") {
+			if part == "" || part == "." || part == ".." || strings.ContainsRune(part, 0) ||
+				strings.ContainsFunc(part, func(r rune) bool { return unicode.IsControl(r) }) {
+				t.Fatalf("归档包里有不安全路径段 %q（完整条目 %q）", part, name)
+			}
+		}
+	}
+	expected := map[string]string{
+		prefix + "attachments/att_1/a b(c).txt":       "one",
+		prefix + "attachments/att_2/_":                "dotdot",
+		prefix + "attachments/att_12/twelve (12).txt": "twelve",
+	}
+	for path, want := range expected {
+		if got := string(files[path]); got != want {
+			t.Fatalf("附件 %s 内容 = %q, 想 %q", path, got, want)
+		}
+	}
+	md := string(files[prefix+"README.md"])
+	if !strings.Contains(md, "[a b(c).txt](attachments/att_1/a%20b%28c%29.txt)") {
+		t.Fatalf("Markdown 没有安全编码 att_1 链接：\n%s", md)
+	}
+	if !strings.Contains(md, "[twelve (12).txt](attachments/att_12/twelve%20%2812%29.txt)") {
+		t.Fatalf("Markdown 没有精确替换 att_12 链接：\n%s", md)
 	}
 }
 

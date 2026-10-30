@@ -14,10 +14,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/allanpk716/agent-taskboard/internal/identity"
@@ -71,6 +73,8 @@ type manifestFile struct {
 	SHA256 string `json:"sha256"`
 	Size   int64  `json:"size"`
 }
+
+var attachmentRefPattern = regexp.MustCompile(`att:[A-Za-z0-9_-]+`)
 
 type ticketExport struct {
 	Ticket        map[string]any   `json:"ticket"`
@@ -537,15 +541,12 @@ func (s *Service) packageAttachments(zw *zip.Writer, files *[]manifestFile, summ
 		if err != nil {
 			return nil, fmt.Errorf("读取附件 %s 失败：%w", ref, err)
 		}
-		body, readErr := io.ReadAll(src)
-		closeErr := src.Close()
-		if readErr != nil {
-			return nil, readErr
+		size, _ := row["size"].(int64)
+		if err := addZipStream(zw, files, path, src, size); err != nil {
+			_ = src.Close()
+			return nil, err
 		}
-		if closeErr != nil {
-			return nil, closeErr
-		}
-		if err := addZipFile(zw, files, path, body); err != nil {
+		if err := src.Close(); err != nil {
 			return nil, err
 		}
 		out = append(out, packagedAttachment{Ref: ref, Filename: filename, Relative: relative})
@@ -563,12 +564,57 @@ func addZipFile(zw *zip.Writer, files *[]manifestFile, path string, body []byte)
 }
 
 func addZipEntry(zw *zip.Writer, path string, body []byte) error {
+	path, err := safeZipPath(path)
+	if err != nil {
+		return err
+	}
 	entry, err := zw.Create(path)
 	if err != nil {
 		return err
 	}
 	_, err = entry.Write(body)
 	return err
+}
+
+func addZipStream(zw *zip.Writer, files *[]manifestFile, path string, src io.Reader, size int64) error {
+	path, err := safeZipPath(path)
+	if err != nil {
+		return err
+	}
+	entry, err := zw.Create(path)
+	if err != nil {
+		return err
+	}
+	sum := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(entry, sum), src)
+	if copyErr != nil {
+		return copyErr
+	}
+	if written != size {
+		return fmt.Errorf("附件 %s 大小不一致：数据库 %d，实际 %d", path, size, written)
+	}
+	*files = append(*files, manifestFile{Path: path, SHA256: hex.EncodeToString(sum.Sum(nil)), Size: written})
+	return nil
+}
+
+func safeZipPath(path string) (string, error) {
+	parts := strings.Split(path, "/")
+	for i, part := range parts {
+		part = sanitizeZipSegment(part)
+		if part == "" {
+			return "", fmt.Errorf("归档包路径 %q 包含空路径段", path)
+		}
+		parts[i] = part
+	}
+	return strings.Join(parts, "/"), nil
+}
+
+func sanitizeZipSegment(part string) string {
+	if part == "" || part == "." || part == ".." || strings.ContainsAny(part, `\/`) ||
+		strings.ContainsFunc(part, unicode.IsControl) {
+		return "_"
+	}
+	return part
 }
 
 func markdownOf(summary TicketSummary, export ticketExport, atts []packagedAttachment) string {
@@ -586,10 +632,13 @@ func markdownOf(summary TicketSummary, export ticketExport, atts []packagedAttac
 	}
 	b.WriteString("\n## 说明\n\n")
 	rewrite := func(body string) string {
-		for ref, att := range refs {
-			body = strings.ReplaceAll(body, "att:"+ref, escapeMarkdownPath(att.Relative))
-		}
-		return body
+		return attachmentRefPattern.ReplaceAllStringFunc(body, func(token string) string {
+			att, ok := refs[token[len("att:"):]]
+			if !ok {
+				return token
+			}
+			return escapeMarkdownPath(att.Relative)
+		})
 	}
 	brief := rewrite(stringValue(export.Ticket["brief_md"]))
 	if brief == "" {
@@ -648,13 +697,11 @@ func stringValues(rows []map[string]any, key string) []string {
 }
 
 func escapeMarkdownPath(path string) string {
-	escaped := url.PathEscape(path)
-	// PathEscape 会把中文也转成百分号编码；Markdown 的链接支持原文字符，
-	// 保留 UTF-8 文件名，让解压后的 README 更接近原始附件名。
-	if decoded, err := url.PathUnescape(escaped); err == nil {
-		escaped = decoded
+	parts := strings.Split(path, "/")
+	for i, part := range parts {
+		parts[i] = strings.ReplaceAll(url.QueryEscape(part), "+", "%20")
 	}
-	return escaped
+	return strings.Join(parts, "/")
 }
 
 func (s *Service) discardPendingDrafts(ctx context.Context, tickets []TicketSummary) error {
