@@ -20,6 +20,14 @@ type MonthStat struct {
 	Month           string
 	TicketCount     int64
 	AttachmentBytes int64
+	Tickets         []TicketStat
+}
+
+// TicketStat 是月份内一张可逐张选择的工单。
+type TicketStat struct {
+	Number          string
+	Title           string
+	AttachmentBytes int64
 }
 
 // Stats 是 GET /api/v1/admin/storage 需要的全部统计结果。
@@ -74,10 +82,12 @@ func (s *Service) ArchivableByMonth(ctx context.Context, cutoff time.Time) ([]Mo
 	// 两条查询不能同时占着连接。
 	type closedTicket struct {
 		seq      int64
+		number   string
+		title    string
 		closedAt sql.NullString // 理论上关单与 closed 事件同事务写入；缺事件时跳过而不是整页报错
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT t.seq, (
+		SELECT t.seq, t.number, t.title, (
 			SELECT e.at FROM timeline_events e
 			WHERE e.ticket_seq = t.seq AND e.type = 'closed'
 			ORDER BY e.seq DESC LIMIT 1
@@ -90,7 +100,7 @@ func (s *Service) ArchivableByMonth(ctx context.Context, cutoff time.Time) ([]Mo
 	var closed []closedTicket
 	for rows.Next() {
 		var ct closedTicket
-		if err := rows.Scan(&ct.seq, &ct.closedAt); err != nil {
+		if err := rows.Scan(&ct.seq, &ct.number, &ct.title, &ct.closedAt); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -124,10 +134,14 @@ func (s *Service) ArchivableByMonth(ctx context.Context, cutoff time.Time) ([]Mo
 		}
 		stat.TicketCount++
 		stat.AttachmentBytes += attachmentBytes[ct.seq]
+		stat.Tickets = append(stat.Tickets, TicketStat{
+			Number: ct.number, Title: ct.title, AttachmentBytes: attachmentBytes[ct.seq],
+		})
 	}
 
 	months := make([]MonthStat, 0, len(byMonth))
 	for _, stat := range byMonth {
+		sort.Slice(stat.Tickets, func(i, j int) bool { return stat.Tickets[i].Number < stat.Tickets[j].Number })
 		months = append(months, *stat)
 	}
 	sort.Slice(months, func(i, j int) bool { return months[i].Month > months[j].Month })

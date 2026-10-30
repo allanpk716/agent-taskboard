@@ -26,9 +26,9 @@ func makeVersionDir(parent, ver string) (string, error) {
 		return "", err
 	}
 	files := map[string]string{
-		"index.html":               fmt.Sprintf("<!doctype html><title>v%s</title>", ver),
+		"index.html":                fmt.Sprintf("<!doctype html><title>v%s</title>", ver),
 		"assets/app-" + ver + ".js": fmt.Sprintf("console.log('%s')", ver),
-		"version.json":             fmt.Sprintf(`{"component":"web","version":"%s"}`, ver),
+		"version.json":              fmt.Sprintf(`{"component":"web","version":"%s"}`, ver),
 	}
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(name)), []byte(content), 0o644); err != nil {
@@ -245,9 +245,9 @@ func Test超过保留代数的版本轮换在途请求不404(t *testing.T) {
 			if err := os.Rename(tmpLink, web); err != nil {
 				_ = os.Remove(web)
 				if err2 := fslink.Make(web, parent+filepath.FromSlash("/web-"+v)); err2 != nil {
-				errs = append(errs, "换链接失败："+err2.Error())
-				return
-			}
+					errs = append(errs, "换链接失败："+err2.Error())
+					return
+				}
 			}
 		}
 	}()

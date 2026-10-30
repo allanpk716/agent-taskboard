@@ -21,12 +21,12 @@ func (a *API) handleAdminStorage(w http.ResponseWriter, r *http.Request) {
 		"存储统计只对管理员开放；访客请通过成员处理工单"); !ok {
 		return
 	}
-	closedMonths := 3
+	closedMonths := defaultClosedMonths
 	if raw := r.URL.Query().Get("closed_months"); raw != "" {
 		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 || n > 120 {
+		if err != nil || !validClosedMonths(n) {
 			WriteError(w, http.StatusBadRequest, CodeInvalidClosedMonths,
-				"closed_months 必须是 1–120 的整数", "不传时默认 3（已关闭满 3 个月）")
+				closedMonthsMessage, closedMonthsHint)
 			return
 		}
 		closedMonths = n
@@ -37,9 +37,16 @@ func (a *API) handleAdminStorage(w http.ResponseWriter, r *http.Request) {
 	}
 	months := make([]storageMonthView, 0, len(stats.Archivable))
 	for _, m := range stats.Archivable {
-		months = append(months, storageMonthView{
+		view := storageMonthView{
 			Month: m.Month, TicketCount: m.TicketCount, AttachmentBytes: m.AttachmentBytes,
-		})
+			Tickets: make([]storageTicketView, 0, len(m.Tickets)),
+		}
+		for _, ticket := range m.Tickets {
+			view.Tickets = append(view.Tickets, storageTicketView{
+				Number: ticket.Number, Title: ticket.Title, AttachmentBytes: ticket.AttachmentBytes,
+			})
+		}
+		months = append(months, view)
 	}
 	writeJSON(w, http.StatusOK, storageStatsView{
 		DatabaseBytes:    stats.DatabaseBytes,
@@ -63,7 +70,14 @@ type storageStatsView struct {
 
 // storageMonthView 是一个关闭月份的可归档汇总。
 type storageMonthView struct {
-	Month           string `json:"month"`
-	TicketCount     int64  `json:"ticket_count"`
+	Month           string              `json:"month"`
+	TicketCount     int64               `json:"ticket_count"`
+	AttachmentBytes int64               `json:"attachment_bytes"`
+	Tickets         []storageTicketView `json:"tickets"`
+}
+
+type storageTicketView struct {
+	Number          string `json:"number"`
+	Title           string `json:"title"`
 	AttachmentBytes int64  `json:"attachment_bytes"`
 }

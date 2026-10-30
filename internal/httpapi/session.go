@@ -14,6 +14,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/captcha"
 
 	accessrecords "github.com/allanpk716/agent-taskboard/internal/accessrecords"
+	"github.com/allanpk716/agent-taskboard/internal/archive"
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
@@ -43,6 +44,7 @@ type API struct {
 	accessRecords  *accessrecords.Manager
 	drafts         *drafts.Manager
 	storage        *storage.Service
+	archive        *archive.Service
 	cfg            config.Config
 	clk            clock.Clock
 	intakeUploads  *requestRateLimiter
@@ -75,9 +77,9 @@ type captchaRecord struct {
 	used      bool
 }
 
-func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager, backups *ops.Backups, accessRecs *accessrecords.Manager, draftStore *drafts.Manager, storageStats *storage.Service, cfg config.Config, clk clock.Clock) *API {
+func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager, backups *ops.Backups, accessRecs *accessrecords.Manager, draftStore *drafts.Manager, storageStats *storage.Service, archives *archive.Service, cfg config.Config, clk clock.Clock) *API {
 	return &API{ident: ident, tickets: tk, templates: tpl, idem: idem, atts: atts, backups: backups,
-		accessRecords: accessRecs, drafts: draftStore, storage: storageStats, cfg: cfg, clk: clk,
+		accessRecords: accessRecs, drafts: draftStore, storage: storageStats, archive: archives, cfg: cfg, clk: clk,
 		intakeUploads: newRequestRateLimiter(cfg.Intake.UploadRatePerMin, clk),
 		clientOnline:  make(map[int64]int),
 		captchaSource: captcha.Random{}, captchas: make(map[string]captchaRecord),
@@ -121,6 +123,10 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/intakes/", a.handleIntakeRef)
 	mux.HandleFunc("/api/v1/admin/backups", a.handleAdminBackups)
 	mux.HandleFunc("/api/v1/admin/storage", a.handleAdminStorage)
+	mux.HandleFunc("/api/v1/admin/archive/preview", a.handleAdminArchivePreview)
+	mux.HandleFunc("/api/v1/admin/archive/packages", a.handleAdminArchivePackages)
+	mux.HandleFunc("/api/v1/admin/archive/packages/", a.handleAdminArchivePackages)
+	mux.HandleFunc("/api/v1/admin/operations", a.handleAdminOperations)
 	mux.HandleFunc("/api/v1/admin/login-locks", a.handleLoginLocks)
 	mux.HandleFunc("/api/v1/admin/login-locks/unlock", a.handleLoginUnlock)
 	mux.HandleFunc("/api/v1/admin/update", a.handleAdminUpdate)

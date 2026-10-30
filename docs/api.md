@@ -1153,7 +1153,14 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   "closed_months": 3,
   "cutoff": "2026-07-16T09:00:00+08:00",
   "archivable": [
-    {"month": "2026-06", "ticket_count": 4, "attachment_bytes": 1024}
+    {
+      "month": "2026-06",
+      "ticket_count": 4,
+      "attachment_bytes": 1024,
+      "tickets": [
+        {"number": "20260601-001", "title": "旧工单", "attachment_bytes": 256}
+      ]
+    }
   ]
 }
 ```
@@ -1167,9 +1174,121 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 - `archivable` 只统计**当前**状态为已关闭、且最近一次关闭时间 `<= cutoff` 的工单，
   按关闭时间的北京月份（`YYYY-MM`）分组、新月份在前；没有可归档工单时是空数组 `[]`。
   重新开启后又关闭的以最近一次 `closed` 事件为准；当前未关闭的老工单不计入。
+- 每个月度分组的 `tickets` 是组内可逐张选择的工单（按编号排序）；
+  `ticket_count` / `attachment_bytes` 仍以整组为准。
 - `attachment_bytes` 是该月各工单附件（含待用附件）按数据库记录大小的合计；
   附件按 id 落盘，同一存储文件被多处引用只计一次。
-- 本接口只做统计，不移动、不删除任何数据；选中工单、生成归档包与移除见后续 #235/#236。
+- 本接口只做统计，不移动、不删除任何数据；选中工单后的预览、生成与下载见下一节，
+  移除仍是后续 #236。
+
+## 归档包（#235）
+
+只接受**管理员网页会话**；访客 403 `members_only`，普通成员 403 `admin_required`，
+Agent token 403 `web_session_required`，匿名 401。选择里的每张工单都必须当前已关闭，
+且最近一次关闭时间不晚于「现在 − `closed_months` 个月」（北京时间、平台时钟）；
+否则 `400 ticket_not_archivable`。
+
+| 方法与路径 | 说明 |
+|---|---|
+| `POST /api/v1/admin/archive/preview` | 预览选择：工单数、附件总大小、将被丢弃的未发出草稿。 |
+| `POST /api/v1/admin/archive/packages` | 生成 zip 归档包并暂存 7 天。 |
+| `GET /api/v1/admin/archive/packages` | 列出未过期暂存包（新包在前）。 |
+| `GET /api/v1/admin/archive/packages/{name}/download` | 重复下载一个暂存包（`application/zip`）。 |
+
+预览与生成的请求体相同：
+
+```json
+{"closed_months": 3, "ticket_numbers": ["20260601-001"]}
+```
+
+`closed_months` 省略时默认 `3`，范围 1–120，否则 `400 invalid_closed_months`。
+预览响应：
+
+```json
+{
+  "ticket_count": 1,
+  "attachment_bytes": 256,
+  "tickets": [
+    {"number": "20260601-001", "title": "旧工单", "closed_at": "2026-06-01T10:00:00+08:00", "attachment_bytes": 256}
+  ],
+  "drafts": [
+    {"id": "dft_1", "ticket_number": "20260601-001", "kind": "reply", "member_name": "陈工",
+     "agent_name": "秘书", "version": 2, "updated_at": "2026-10-30T09:30:00+08:00",
+     "attachment_ids": []}
+  ]
+}
+```
+
+生成响应 / 列表里的 `packages[]` 元素：
+
+```json
+{
+  "name": "archive-1790000000000000000-a1b2c3d4e5.zip",
+  "ticket_count": 1,
+  "attachment_bytes": 256,
+  "generated_at": "2026-10-30T10:00:00+08:00",
+  "expires_at": "2026-11-06T10:00:00+08:00",
+  "ticket_numbers": ["20260601-001"],
+  "download_url": "/api/v1/admin/archive/packages/archive-.../download",
+  "operator_name": "陈工"
+}
+```
+
+- 包暂存在 `data_dir/archive-packages/`；生成先写同目录临时文件、成功后原子 rename。
+  有效期 7 天，由平台注入时钟判定；服务有周期清除任务，列表与下载前也会清除到期包。
+  到期或不存在时下载返回 `404 archive_not_found`。
+- 生成成功会丢弃所选工单上未发出的草稿（含其占用附件），不改说明、回复、时间线、
+  访问记录、标签、协作者和访客链接，也不移除工单。包先完整写出，草稿删除在数据库
+  事务里提交；生成失败时平台数据保持不变，可恢复故障后重试。
+- 草稿丢弃事务会先重新校验选择仍可归档，并只删除预览快照里的草稿 ID；生成期间新增
+  的草稿保留。若复核失败，已写出的包会删除，平台数据不变。
+- 同一服务进程内同一时刻只执行一次生成；已有生成未结束时再次 `POST` 返回
+  `409 archive_generate_in_progress`。
+- 预览的 `drafts[]` 只包含草稿元数据，不返回未发出草稿正文；草稿正文仍只有草稿作者
+  能查看。预览与生成响应的 `attachment_bytes` 是将进入包的附件大小，不计入会被丢弃的
+  未发出草稿独占附件；存储统计接口仍按数据库中的全部附件计。
+- zip 根部有 `manifest.json`：格式版本（当前 `1`）、平台版本、生成时间、包名、操作人、
+  工单列表，以及除 manifest 自身外每个文件的 SHA-256 与大小（manifest 不能自包含自己的
+  哈希）。本工单没有导入端；校验规则由 #237 实现。
+- 每张工单有 `tickets/{工单编号}/ticket.json`（工单本体、说明各版本、回复、附件元数据、
+  时间线、起草过程、访问记录、标签关联、协作者、成员已读位置、访客链接及已认领设备）、
+  `README.md`（可直接阅读；
+  附件用相对路径链接）和 `attachments/att_{附件ID}/{原文件名}` 原文件。
+  `ticket.json` 的 `drafts` 是已发出内容对应的起草过程；未发出草稿在生成时丢弃，不进包。
+- `guest_links` 与 `guest_devices` 包含访客链接密钥哈希、服务端加密密文、访问码哈希和
+  已认领设备凭证哈希等恢复所需的全部列。归档包因此与数据库备份同等敏感，必须按备份
+  的安全规格保管和传输。
+- manifest 同时是生成操作留痕：操作人、时间、工单编号列表和包名都在包内；暂存列表从
+  manifest 读出这些元数据。
+
+## 管理操作记录（#235）
+
+只接受**管理员网页会话**；普通成员 403 `admin_required`，Agent token 403
+`web_session_required`，匿名 401。
+
+| 方法与路径 | 说明 |
+|---|---|
+| `GET /api/v1/admin/operations` | 按时间倒序读取管理操作记录。 |
+
+当前记录类型只有 `archive_generate`；#236/#237 会继续加入 `archive_remove` /
+`archive_import`。响应结构：
+
+```json
+{
+  "count": 1,
+  "operations": [
+    {
+      "id": 1,
+      "operation_type": "archive_generate",
+      "operator_member_id": 1,
+      "operator_name": "陈工",
+      "at": "2026-10-30T10:00:00+08:00",
+      "ticket_numbers": ["20260601-001"],
+      "package_name": "archive-1790000000000000000-a1b2c3d4e5.zip"
+    }
+  ]
+}
+```
 
 ## 更新（#45）
 

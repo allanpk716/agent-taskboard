@@ -2,6 +2,8 @@
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { inflateRawSync } from 'node:zlib'
+import { DatabaseSync } from 'node:sqlite'
 import { expect, type APIRequestContext, type Page } from '@playwright/test'
 
 export const ADMIN = { username: 'admin', password: 'admin-pass-123' }
@@ -58,6 +60,59 @@ export async function loginWithRequest(
 
 export async function markDraftIntroSeen(request: APIRequestContext) {
   await request.post('/api/v1/me/notices/drafts_intro/seen')
+}
+
+export function ageClosedTicket(number: string, closedAt: string): void {
+  const port = process.env.E2E_PORT || '8901'
+  const info = JSON.parse(readFileSync(join(tmpdir(), `tb-e2e-server-${port}.json`), 'utf-8')) as {
+    data_dir: string
+  }
+  const db = new DatabaseSync(join(info.data_dir, 'taskboard.db'))
+  try {
+    const ticket = db.prepare('SELECT seq FROM tickets WHERE number = ?').get(number) as { seq: number }
+    if (!ticket) throw new Error(`e2e 造数找不到工单 ${number}`)
+    db.prepare(`
+      UPDATE timeline_events SET at = ?
+      WHERE ticket_seq = ? AND type = 'closed' AND seq = (
+        SELECT MAX(seq) FROM timeline_events WHERE ticket_seq = ? AND type = 'closed'
+      )
+    `).run(closedAt, ticket.seq, ticket.seq)
+  } finally {
+    db.close()
+  }
+}
+
+export function readZipTextEntry(zipPath: string, wantedName: string): string {
+  const zip = readFileSync(zipPath)
+  let eocd = -1
+  for (let i = zip.length - 22; i >= 0; i--) {
+    if (zip.readUInt32LE(i) === 0x06054b50) {
+      eocd = i
+      break
+    }
+  }
+  if (eocd < 0) throw new Error('e2e 下载的 zip 缺少中央目录')
+  const count = zip.readUInt16LE(eocd + 10)
+  let offset = zip.readUInt32LE(eocd + 16)
+  for (let i = 0; i < count; i++) {
+    if (zip.readUInt32LE(offset) !== 0x02014b50) throw new Error('e2e zip 中央目录损坏')
+    const method = zip.readUInt16LE(offset + 10)
+    const compressedSize = zip.readUInt32LE(offset + 20)
+    const nameLength = zip.readUInt16LE(offset + 28)
+    const extraLength = zip.readUInt16LE(offset + 30)
+    const commentLength = zip.readUInt16LE(offset + 32)
+    const localOffset = zip.readUInt32LE(offset + 42)
+    const name = zip.subarray(offset + 46, offset + 46 + nameLength).toString('utf-8')
+    if (name === wantedName) {
+      const localNameLength = zip.readUInt16LE(localOffset + 26)
+      const localExtraLength = zip.readUInt16LE(localOffset + 28)
+      const dataStart = localOffset + 30 + localNameLength + localExtraLength
+      const data = zip.subarray(dataStart, dataStart + compressedSize)
+      return (method === 8 ? inflateRawSync(data) : data).toString('utf-8')
+    }
+    offset += 46 + nameLength + extraLength + commentLength
+  }
+  throw new Error(`e2e zip 缺少 ${wantedName}`)
 }
 
 const guestTokens = new Map<string, string>()

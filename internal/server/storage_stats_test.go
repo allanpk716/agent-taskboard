@@ -16,8 +16,15 @@ import (
 
 // storageMonthBody 是 archivable 数组里一个月度分组。
 type storageMonthBody struct {
-	Month           string `json:"month"`
-	TicketCount     int64  `json:"ticket_count"`
+	Month           string              `json:"month"`
+	TicketCount     int64               `json:"ticket_count"`
+	AttachmentBytes int64               `json:"attachment_bytes"`
+	Tickets         []storageTicketBody `json:"tickets"`
+}
+
+type storageTicketBody struct {
+	Number          string `json:"number"`
+	Title           string `json:"title"`
 	AttachmentBytes int64  `json:"attachment_bytes"`
 }
 
@@ -212,6 +219,45 @@ func Test可归档工单按关闭月份分组(t *testing.T) {
 	}
 }
 
+// 统计页要支持「按月整批、逐张勾选或排除」，所以每个月度分组里必须带
+// 可归档工单的编号与标题；仍打开的工单即使更老也不进入候选列表。
+func Test存储统计月份带可逐张选择的工单清单(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+
+	setStorageClock(t, s, 2026, time.May, 10)
+	first := createClosedTicketAt(t, s, admin, "五月第一张", 25)
+	setStorageClock(t, s, 2026, time.May, 20)
+	second := createClosedTicketAt(t, s, admin, "五月第二张")
+	setStorageClock(t, s, 2026, time.June, 1)
+	_ = mustCreateTicket(t, s, admin, "六月仍打开")
+	s.Clock().Set(time.Date(2026, time.October, 16, 9, 0, 0, 0, clock.Beijing))
+	admin = s.Login("陈工", "secret-pass")
+
+	var stats storageStatsBody
+	res := s.Do(t, admin, http.MethodGet, "/api/v1/admin/storage", nil, &stats)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("状态码 = %d, 想 200", res.StatusCode)
+	}
+	if len(stats.Archivable) != 1 {
+		t.Fatalf("archivable = %+v, 想只有 2026-05 一组", stats.Archivable)
+	}
+	got := stats.Archivable[0].Tickets
+	want := []storageTicketBody{
+		{Number: first, Title: "五月第一张", AttachmentBytes: 25},
+		{Number: second, Title: "五月第二张", AttachmentBytes: 0},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("月份工单清单 = %+v, 想 %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("月份工单清单[%d] = %+v, 想 %+v", i, got[i], want[i])
+		}
+	}
+}
+
 // assertStorageMonths 逐项断言月度分组（顺序也要求：新月份在前）。
 func assertStorageMonths(t testing.TB, got, want []storageMonthBody) {
 	t.Helper()
@@ -219,7 +265,8 @@ func assertStorageMonths(t testing.TB, got, want []storageMonthBody) {
 		t.Fatalf("archivable = %+v, 想 %+v", got, want)
 	}
 	for i := range want {
-		if got[i] != want[i] {
+		if got[i].Month != want[i].Month || got[i].TicketCount != want[i].TicketCount ||
+			got[i].AttachmentBytes != want[i].AttachmentBytes {
 			t.Errorf("archivable[%d] = %+v, 想 %+v", i, got[i], want[i])
 		}
 	}
