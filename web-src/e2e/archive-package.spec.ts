@@ -69,4 +69,7 @@ test('管理员选择可归档工单后预览生成并下载归档包', async ({
   }
   expect(manifest.format_version).toBe(1)
   expect(manifest.tickets.map((ticket) => ticket.number)).toContain(number)
+  // 共享 e2e 服务不能留下“已关闭满 3 个月”的工单，否则 #234 的空态用例失效；
+  // 包已经下载完成，把测试专用的关闭时间恢复为当前时间即可。
+  ageClosedTicket(number, new Date().toISOString())
 })
