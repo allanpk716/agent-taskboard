@@ -3,7 +3,10 @@ package httpapi
 
 import (
 	"errors"
+	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/archive"
@@ -47,6 +50,86 @@ func (a *API) handleAdminArchivePreview(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, newArchivePreviewView(preview))
 }
 
+// handleAdminArchivePackages 处理：
+//
+//	GET  /api/v1/admin/archive/packages        列出未过期暂存包
+//	POST /api/v1/admin/archive/packages       生成归档包
+//	GET  /api/v1/admin/archive/packages/{name}/download 下载
+func (a *API) handleAdminArchivePackages(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/api/v1/admin/archive/packages" {
+		a.downloadArchivePackage(w, r)
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
+			"归档包集合支持 GET 列表和 POST 生成", "")
+		return
+	}
+	viewer, ok := a.adminWebSessionFromRequest(w, r, "生成归档包只对管理员开放")
+	if !ok {
+		return
+	}
+	if r.Method == http.MethodGet {
+		packages, err := a.archive.List(r.Context())
+		if err != nil {
+			panic(err)
+		}
+		views := make([]archivePackageView, 0, len(packages))
+		for _, pkg := range packages {
+			views = append(views, newArchivePackageView(pkg))
+		}
+		writeJSON(w, http.StatusOK, struct {
+			Count    int                  `json:"count"`
+			Packages []archivePackageView `json:"packages"`
+		}{Count: len(views), Packages: views})
+		return
+	}
+	req, ok := a.decodeArchiveSelection(w, r)
+	if !ok {
+		return
+	}
+	months, _ := req.months()
+	pkg, err := a.archive.Generate(r.Context(), req.TicketNumbers, months, viewer)
+	if errors.Is(err, archive.ErrNotArchivable) {
+		WriteError(w, http.StatusBadRequest, CodeTicketNotArchivable,
+			"选择里有不存在、未关闭或关闭未满 N 个月的工单", "请从存储统计列出的可归档月份中选择")
+		return
+	}
+	if err != nil {
+		panic(err)
+	}
+	writeJSON(w, http.StatusCreated, newArchivePackageView(pkg))
+}
+
+func (a *API) downloadArchivePackage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "下载归档包用 GET", "")
+		return
+	}
+	if _, ok := a.adminWebSessionFromRequest(w, r, "下载归档包只对管理员开放"); !ok {
+		return
+	}
+	suffix := "/download"
+	name := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/admin/archive/packages/"), suffix)
+	if name == "" || strings.HasSuffix(name, "/") || strings.Contains(name, "/") {
+		WriteError(w, http.StatusNotFound, CodeArchiveNotFound, "没有这个归档包", "")
+		return
+	}
+	file, _, err := a.archive.Open(name)
+	if errors.Is(err, archive.ErrPackageNotFound) {
+		WriteError(w, http.StatusNotFound, CodeArchiveNotFound, "归档包不存在或已过期清除", "")
+		return
+	}
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(name))
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, file)
+}
+
 func (a *API) decodeArchiveSelection(w http.ResponseWriter, r *http.Request) (archiveSelectionRequest, bool) {
 	var req archiveSelectionRequest
 	if !decodeJSON(w, r, &req, `{"closed_months":3,"ticket_numbers":["20261016-001"]}`) {
@@ -88,4 +171,26 @@ func newArchivePreviewView(p archive.Preview) archivePreviewView {
 	}
 	return archivePreviewView{TicketCount: p.TicketCount(), AttachmentBytes: p.AttachmentBytes(),
 		Tickets: tickets, Drafts: drafts}
+}
+
+type archivePackageView struct {
+	Name            string   `json:"name"`
+	TicketCount     int      `json:"ticket_count"`
+	AttachmentBytes int64    `json:"attachment_bytes"`
+	GeneratedAt     string   `json:"generated_at"`
+	ExpiresAt       string   `json:"expires_at"`
+	TicketNumbers   []string `json:"ticket_numbers"`
+	DownloadURL     string   `json:"download_url"`
+	OperatorName    string   `json:"operator_name"`
+}
+
+func newArchivePackageView(pkg archive.PackageInfo) archivePackageView {
+	if pkg.TicketNumbers == nil {
+		pkg.TicketNumbers = []string{}
+	}
+	return archivePackageView{Name: pkg.Name, TicketCount: pkg.TicketCount,
+		AttachmentBytes: pkg.AttachmentBytes, GeneratedAt: pkg.GeneratedAt.Format(time.RFC3339),
+		ExpiresAt: pkg.ExpiresAt.Format(time.RFC3339), TicketNumbers: pkg.TicketNumbers,
+		DownloadURL:  "/api/v1/admin/archive/packages/" + url.PathEscape(pkg.Name) + "/download",
+		OperatorName: pkg.OperatorName}
 }

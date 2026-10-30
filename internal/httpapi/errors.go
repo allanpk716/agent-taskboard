@@ -183,6 +183,7 @@ const (
 	// #234：管理页存储统计。
 	CodeInvalidClosedMonths = "invalid_closed_months" // closed_months 不是 1–120 的整数（400）
 	CodeTicketNotArchivable = "ticket_not_archivable" // 选择里有不可归档工单（400）
+	CodeArchiveNotFound     = "archive_not_found"     // 归档包不存在或已过期（404）
 
 	// #80：桌面客户端凭证。
 	CodeInvalidClientPort        = "invalid_client_port"

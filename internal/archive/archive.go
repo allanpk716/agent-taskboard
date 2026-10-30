@@ -8,10 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 )
 
@@ -59,14 +60,19 @@ func (p Preview) AttachmentBytes() int64 {
 
 // Service 提供归档预览、生成、下载与暂存清除。
 type Service struct {
-	db  *sql.DB
-	clk clock.Clock
+	db             *sql.DB
+	clk            clock.Clock
+	dataDir        string
+	attachmentsDir string
+	atts           *attachments.Manager
 }
 
 // NewService 建归档服务。
-func NewService(db *sql.DB, c clock.Clock) *Service {
-	return &Service{db: db, clk: c}
+func NewService(db *sql.DB, dataDir, attachmentsDir string, atts *attachments.Manager, c clock.Clock) *Service {
+	return &Service{db: db, clk: c, dataDir: dataDir, attachmentsDir: attachmentsDir, atts: atts}
 }
+
+func (s *Service) stageDir() string { return filepath.Join(s.dataDir, "archive-packages") }
 
 // Preview 校验选择并把工单与未发出草稿汇总给管理员确认。
 func (s *Service) Preview(ctx context.Context, ticketNumbers []string, closedMonths int) (Preview, error) {
@@ -105,7 +111,7 @@ func (s *Service) selection(ctx context.Context, ticketNumbers []string, closedM
 			ORDER BY e.seq DESC LIMIT 1
 		)
 		FROM tickets t
-		WHERE t.number IN (`+strings.Join(placeholders, ",")+`)`, args...)
+		WHERE t.status = 'closed' AND t.number IN (`+strings.Join(placeholders, ",")+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -226,9 +232,4 @@ func (s *Service) pendingDrafts(ctx context.Context, tickets []TicketSummary) ([
 		out = append(out, d)
 	}
 	return out, rows.Err()
-}
-
-// SortTickets 按工单编号稳定排序，供预览和包清单共用。
-func SortTickets(tickets []TicketSummary) {
-	sort.Slice(tickets, func(i, j int) bool { return tickets[i].Number < tickets[j].Number })
 }

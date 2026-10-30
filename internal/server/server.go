@@ -139,7 +139,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	ticketStore.SetSystemNotifier(notificationStore)
 	draftStore := drafts.NewManager(st.DB, c, ticketStore, atts)
 	storageStats := storage.NewService(st.DB, cfg.DataDir, atts.Dir(), backups.TargetDir(), c)
-	archives := archive.NewService(st.DB, c)
+	archives := archive.NewService(st.DB, cfg.DataDir, atts.Dir(), atts, c)
 	draftStore.SetNotifier(notificationStore.DraftNotifier())
 	api := httpapi.NewAPI(ident, ticketStore,
 		templateDict, idem, atts, backups, accessRecords, draftStore, storageStats, archives, cfg, c)
@@ -176,16 +176,20 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 func (s *Server) Handler() http.Handler { return s.handler }
 
 // Serve 在 ln 上对外服务，直到 Shutdown 或关闭连接。服务期间周期运行附件
-// 清除任务（未引用满 24 小时的待用附件；时钟可注入，见 internal/attachments）
+// 清除任务（未引用满 24 小时的待用附件；时钟可注入，见 internal/attachments）、
+// 归档暂存包清除任务（满 7 天；时钟同样可注入，见 internal/archive）
 // 和备份调度（每天 daily_at；备份时刻同样由注入时钟决定，见 internal/ops）。
 func (s *Server) Serve(ln net.Listener) error {
 	s.listener = ln
 	janitorDone := make(chan struct{})
+	archiveDone := make(chan struct{})
 	backupDone := make(chan struct{})
 	idemDone := make(chan struct{})
 	go s.runAttachmentJanitor(janitorDone)
+	go s.runArchiveJanitor(archiveDone)
 	go s.Backups.RunSchedule(backupDone, ops.DefaultScheduleTick)
 	go s.runIdempotencyJanitor(idemDone)
+	defer func() { close(archiveDone) }()
 	defer func() { close(idemDone) }()
 	defer func() { close(backupDone) }()
 	defer func() { close(janitorDone) }()
@@ -200,6 +204,24 @@ func (s *Server) Serve(ln net.Listener) error {
 // attachmentJanitorInterval 是附件清除任务的运行间隔（真实时钟；24 小时的
 // 判定用注入时钟，测试里直接调 CleanupUnreferenced，不睡真实时间）。
 const attachmentJanitorInterval = 10 * time.Minute
+
+// archiveJanitorInterval 是归档暂存包清除任务的运行间隔（真实时钟；7 天
+// 判定用注入时钟，测试里直接调 CleanupExpired，不睡真实时间）。
+const archiveJanitorInterval = 10 * time.Minute
+
+// runArchiveJanitor 周期清除到期归档包。清除失败只影响本轮（下一轮再试）。
+func (s *Server) runArchiveJanitor(done <-chan struct{}) {
+	ticker := time.NewTicker(archiveJanitorInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+			_ = s.Archives.CleanupExpired(context.Background())
+		}
+	}
+}
 
 // runAttachmentJanitor 周期清除未引用的待用附件。清除失败只影响本轮
 // （下一轮再试），不影响服务。

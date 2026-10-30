@@ -6,6 +6,14 @@ export interface StorageMonthStat {
   month: string
   ticket_count: number
   attachment_bytes: number
+  /** 月份内可逐张选择的工单；老 mock / 旧服务可没有这个字段。 */
+  tickets?: StorageTicketStat[]
+}
+
+export interface StorageTicketStat {
+  number: string
+  title: string
+  attachment_bytes: number
 }
 
 export interface StorageStats {

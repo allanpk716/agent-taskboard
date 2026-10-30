@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/archive"
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/captcha"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
@@ -281,6 +282,10 @@ func (s *Server) Backups() *ops.Backups { return s.srv.Backups }
 
 // Notifications 暴露通知模块（#177 系统通知测试用）。
 func (s *Server) Notifications() *notifications.Manager { return s.srv.Notifications }
+
+// Archives 暴露归档模块（#235）：测试里直接触发暂存包到期清除
+// （服务里由定时器周期调用；不睡真实时间，用注入时钟推进后手动跑）。
+func (s *Server) Archives() *archive.Service { return s.srv.Archives }
 
 // Idempotency 暴露幂等模块（评审修正）：测试里直接触发 24 小时清除任务
 // （服务里由定时器周期调用；不睡真实时间，用注入时钟推进后手动跑）。
