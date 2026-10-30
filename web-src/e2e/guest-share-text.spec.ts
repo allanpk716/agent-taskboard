@@ -46,18 +46,20 @@ test('老访客链接换新地址前先确认再复制', async ({ page, request 
   await page.setViewportSize({ width: 1440, height: 800 })
   await page.route(`**/api/v1/tickets/${number}/guest-links`, async (route) => {
     const response = await route.fetch()
-    const body = (await response.json()) as { links: Array<{ id: number; share_text_available?: boolean }> }
-    for (const item of body.links) {
+    const raw = JSON.parse(await response.text()) as {
+      links: Array<{ id: number; share_text_available?: boolean }>
+    }
+    for (const item of raw.links) {
       if (item.id === link.id) item.share_text_available = false
     }
-    await route.fulfill({ response, json: body })
+    await route.fulfill({ json: raw })
   })
   await page.route(`**/api/v1/tickets/${number}/guest-links/${link.id}/rotate-key`, async (route) => {
     await route.fulfill({ json: { url: newURL, share_text: shareText } })
   })
   await page.route(`**/api/v1/tickets/${number}`, async (route) => {
     const response = await route.fetch()
-    const body = (await response.json()) as {
+    const body = JSON.parse(await response.text()) as {
       timeline?: Array<Record<string, unknown> & { seq: number; change: number }>
     }
     const last = body.timeline?.[body.timeline.length - 1]
@@ -68,7 +70,7 @@ test('老访客链接换新地址前先确认再复制', async ({ page, request 
       type: 'guest_link_rotated',
       note: '检验科-张三',
     })
-    await route.fulfill({ response, json: body })
+    await route.fulfill({ json: body })
   })
   await login(page, ADMIN)
   await page.goto(`/t/${number}?status=open`)
@@ -96,4 +98,5 @@ test('老访客链接换新地址前先确认再复制', async ({ page, request 
   await rotateConfirm.getByRole('button', { name: '换新地址并复制' }).click()
   await expect(page.locator('#toast')).toHaveText('✓ 新转发文案已复制')
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(shareText)
+  await page.unrouteAll({ behavior: 'ignoreErrors' })
 })

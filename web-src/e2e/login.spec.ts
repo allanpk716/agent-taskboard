@@ -33,8 +33,9 @@ test('已登录时打开登录页直接跳回首页', async ({ page }) => {
 test('登录页显示验证码，答错后提示并自动换一张', async ({ page }) => {
   await page.goto('/login')
   await expect(page.getByRole('img', { name: '验证码图片' })).toBeVisible()
+  const refreshed = page.waitForResponse((response) => response.url().endsWith('/api/v1/login-captcha'))
   await page.getByRole('button', { name: '换一张' }).click()
-  await expect(page.getByRole('img', { name: '验证码图片' })).toBeVisible()
+  await refreshed
 
   await page.getByLabel('用户名').fill(ADMIN.username)
   await page.getByLabel('密码').fill(ADMIN.password)

@@ -19,6 +19,7 @@ const worker = { username: 'wang', name: '王工' }
 // 初始密码按端口放在临时文件里：服务被复用时（Playwright reuseExistingServer），
 // 首次创建时写下的密码仍然有效，用例照常能读到。
 const membersFile = join(tmpdir(), `tb-e2e-members-${port}.json`)
+const serverInfoFile = join(tmpdir(), `tb-e2e-server-${port}.json`)
 
 const dir = mkdtempSync(join(tmpdir(), 'tb-e2e-'))
 const tomlPath = (p) => p.replaceAll('\\', '/')
@@ -30,6 +31,7 @@ writeFileSync(
       ? `[server]\ndeploy = 'container'\npublic_url = 'http://127.0.0.1:${port}'\n`
       : ''),
 )
+writeFileSync(serverInfoFile, JSON.stringify({ data_dir: join(dir, 'data') }))
 
 // 创建管理员（复用已有服务时登录名可能已存在，忽略失败）。
 try {
@@ -58,6 +60,9 @@ const child = spawn(bin, ['serve', '-config', configPath], { stdio: 'inherit' })
 const base = `http://127.0.0.1:${port}`
 const cleanup = () => {
   child.kill()
+  try {
+    rmSync(serverInfoFile, { force: true })
+  } catch {}
   try {
     rmSync(dir, { recursive: true, force: true })
   } catch {}

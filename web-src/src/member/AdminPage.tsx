@@ -33,6 +33,7 @@ import {
 import { Confirm, Modal, copyText, toast } from './ui'
 import { chipClass } from './TicketsPage'
 import { SystemPanel } from './admin/SystemPanel'
+import { StoragePanel } from './admin/StoragePanel'
 
 type AdminTab = 'members' | 'intakes' | 'governance'
 
@@ -88,6 +89,8 @@ export function AdminPage({ me }: { me: Me }) {
           「备份未离开本机」）与版本更新（管理页按钮与命令行、管理 API 共用
           同一套逻辑）。 */}
       <SystemPanel />
+      {/* 存储统计（#234）：三类空间占用与按关闭月份汇总的可归档工单。 */}
+      <StoragePanel />
     </div>
   )
 }

@@ -12,14 +12,14 @@ import (
 type ListRow struct {
 	Number        string
 	Title         string
-	Status        string    // open | closed
-	CloseReason   string    // done | wontfix | duplicate（空 = 未关闭）
-	Assignee      string    // 空 = 未指派
-	WaitingOnText string    // 如「李工（指派人）」
+	Status        string // open | closed
+	CloseReason   string // done | wontfix | duplicate（空 = 未关闭）
+	Assignee      string // 空 = 未指派
+	WaitingOnText string // 如「李工（指派人）」
 	Labels        []string
 	UpdatedAt     time.Time
-	MatchedIn     []string  // q 命中的位置（无 q 时空）
-	Snippet       string    // q 命中的片段
+	MatchedIn     []string // q 命中的位置（无 q 时空）
+	Snippet       string   // q 命中的片段
 }
 
 // ListInput 是列表 Markdown 视图的输入。
