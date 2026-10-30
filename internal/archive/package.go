@@ -275,6 +275,11 @@ func (s *Service) Open(name string) (*os.File, PackageInfo, error) {
 
 // CleanupExpired 清除暂存超过 7 天的包与生成中断留下的临时文件。
 func (s *Service) CleanupExpired(ctx context.Context) error {
+	if !s.generateMu.TryLock() {
+		// 正在生成时不能清理临时文件；下一轮清除任务会处理到期包。
+		return nil
+	}
+	defer s.generateMu.Unlock()
 	_ = ctx
 	entries, err := os.ReadDir(s.stageDir())
 	if err != nil {

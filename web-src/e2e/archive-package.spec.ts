@@ -1,117 +1,72 @@
-import { test, expect, type Route } from '@playwright/test'
-import { ADMIN, login } from './helpers'
+import { test, expect } from '@playwright/test'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  ADMIN,
+  ageClosedTicket,
+  createTicket,
+  login,
+  loginAdmin,
+  readZipTextEntry,
+} from './helpers'
 
-// #235：统计页支持按月整批与逐张选择，预览会丢弃的草稿，再生成并下载
-// 归档包。接口数据用路由模拟，保持用例只验证管理页行为，不依赖真实时钟。
+// #235：真实后端 + 真实构建前端。关闭时间用测试专用直连 SQLite 快路径改早，
+// 让服务真实执行选择校验、生成、暂存与下载。
+test('管理员选择可归档工单后预览生成并下载归档包', async ({ page, request }) => {
+  await loginAdmin(request)
+  const title = `e2e 归档包 ${Date.now()}`
+  const number = await createTicket(request, { title })
+  const closed = await request.post(`/api/v1/tickets/${number}/close`, { data: { reason: 'done' } })
+  expect(closed.status(), `关闭工单失败：${await closed.text()}`).toBe(200)
+  ageClosedTicket(number, new Date(Date.now() - 120 * 24 * 3600 * 1000).toISOString())
 
-const candidates = {
-  database_bytes: 123456,
-  attachments_bytes: 456789,
-  backups_bytes: 789012,
-  closed_months: 3,
-  cutoff: '2026-07-16T09:00:00+08:00',
-  archivable: [
-    {
-      month: '2026-05',
-      ticket_count: 2,
-      attachment_bytes: 25,
-      tickets: [
-        { number: '20260510-001', title: '五月第一张', attachment_bytes: 25 },
-        { number: '20260520-001', title: '五月第二张', attachment_bytes: 0 },
-      ],
-    },
-  ],
-}
-
-test('管理员选择可归档工单后预览生成并下载归档包', async ({ page }) => {
-  const previewRequests: Array<Record<string, unknown>> = []
-  const generateRequests: Array<Record<string, unknown>> = []
-  const created = {
-    name: 'archive-20261030-abcdef.zip',
-    ticket_count: 1,
-    attachment_bytes: 25,
-    generated_at: '2026-10-30T10:00:00+08:00',
-    expires_at: '2026-11-06T10:00:00+08:00',
-    ticket_numbers: ['20260510-001'],
-    download_url: '/api/v1/admin/archive/packages/archive-20261030-abcdef.zip/download',
-    operator_name: '管理员',
+  const storage = await request.get('/api/v1/admin/storage?closed_months=3')
+  expect(storage.ok(), `读取存储统计失败：${await storage.text()}`).toBeTruthy()
+  const candidates = (await storage.json()) as {
+    archivable: Array<{ tickets: Array<{ number: string }> }>
   }
-
-  await page.route('**/api/v1/admin/storage*', (route) => route.fulfill({ json: candidates }))
-  await page.route('**/api/v1/admin/archive/preview', async (route) => {
-    previewRequests.push(route.request().postDataJSON() as Record<string, unknown>)
-    await route.fulfill({
-      json: {
-        ticket_count: 1,
-        attachment_bytes: 25,
-        tickets: [
-          { number: '20260510-001', title: '五月第一张', closed_at: '2026-05-10T10:00:00+08:00', attachment_bytes: 25 },
-        ],
-        drafts: [
-          {
-            id: 'dft_1',
-            ticket_number: '20260510-001',
-            kind: 'reply',
-            member_name: '陈工',
-            agent_name: '待确认稿',
-            version: 1,
-            body_md: '归档前会丢弃这份草稿',
-            attachment_ids: [],
-          },
-        ],
-      },
-    })
-  })
-  const packageRoute = async (route: Route) => {
-    const path = new URL(route.request().url()).pathname
-    if (path.endsWith('/download')) {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/zip',
-        headers: { 'content-disposition': 'attachment; filename="archive-20261030-abcdef.zip"' },
-        body: 'mock archive package',
-      })
-      return
-    }
-    if (route.request().method() === 'POST') {
-      generateRequests.push(route.request().postDataJSON() as Record<string, unknown>)
-      await route.fulfill({ status: 201, json: created })
-      return
-    }
-    await route.fulfill({ json: { count: 1, packages: [created] } })
-  }
-  await page.route('**/api/v1/admin/archive/packages**', packageRoute)
+  expect(
+    candidates.archivable.some((month) => month.tickets?.some((ticket) => ticket.number === number)),
+    '造数后存储统计应列出可归档工单',
+  ).toBeTruthy()
 
   await login(page, ADMIN)
   await page.goto('/admin')
-
-  await page.getByTestId('archive-month-2026-05').check()
-  await expect(page.getByTestId('archive-ticket-20260510-001')).toBeChecked()
-  await expect(page.getByTestId('archive-ticket-20260520-001')).toBeChecked()
-  await page.getByTestId('archive-ticket-20260520-001').uncheck()
-
+  await page.getByTestId(`archive-ticket-${number}`).check()
   await page.getByRole('button', { name: '预览归档' }).click()
   const preview = page.getByTestId('archive-preview')
-  await expect(preview).toContainText('将归档 1 张工单，附件 25 B')
-  await expect(preview).toContainText('归档前会丢弃这份草稿')
-  await expect(preview).toContainText('20260510-001')
-  await expect(preview).toContainText('五月第一张')
-  await page.getByRole('button', { name: '生成归档包' }).click()
+  await expect(preview).toContainText(`将归档 1 张工单`)
+  await expect(preview).toContainText(number)
+  await expect(preview).toContainText(title)
+  await expect(preview).toContainText('这些工单上没有未发出的草稿。')
 
-  const pkg = page.getByTestId('archive-package-archive-20261030-abcdef.zip')
-  await expect(pkg).toContainText('archive-20261030-abcdef.zip')
-  await expect(pkg).toContainText('1 张工单 · 25 B')
-  await expect(pkg).toContainText('2026-11-06 10:00')
+  await page.getByRole('button', { name: '生成归档包' }).click()
+  let created: { name: string; ticket_numbers: string[] } | undefined
+  for (let i = 0; i < 40 && !created; i++) {
+    const listRes = await request.get('/api/v1/admin/archive/packages')
+    expect(listRes.ok(), `读取归档包列表失败：${await listRes.text()}`).toBeTruthy()
+    const list = (await listRes.json()) as {
+      packages: Array<{ name: string; ticket_numbers: string[] }>
+    }
+    created = list.packages.find((pkg) => pkg.ticket_numbers.includes(number))
+    if (!created) await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  expect(created, '生成后归档包列表应包含新包').toBeTruthy()
+
+  const pkg = page.getByTestId(`archive-package-${created!.name}`)
+  await expect(pkg).toContainText(created!.name)
+  await expect(pkg).toContainText('1 张工单')
   const [download] = await Promise.all([
     page.waitForEvent('download'),
-    page.getByTestId('archive-download-archive-20261030-abcdef.zip').click(),
+    page.getByTestId(`archive-download-${created!.name}`).click(),
   ])
-  expect(download.suggestedFilename()).toBe('archive-20261030-abcdef.zip')
-
-  expect(previewRequests).toEqual([
-    { closed_months: 3, ticket_numbers: ['20260510-001'] },
-  ])
-  expect(generateRequests).toEqual([
-    { closed_months: 3, ticket_numbers: ['20260510-001'] },
-  ])
+  expect(download.suggestedFilename()).toBe(created!.name)
+  const zipPath = join(tmpdir(), `tb-e2e-${created!.name}`)
+  await download.saveAs(zipPath)
+  const manifest = JSON.parse(readZipTextEntry(zipPath, 'manifest.json')) as {
+    format_version: number
+    tickets: Array<{ number: string }>
+  }
+  expect(manifest.format_version).toBe(1)
+  expect(manifest.tickets.map((ticket) => ticket.number)).toContain(number)
 })
