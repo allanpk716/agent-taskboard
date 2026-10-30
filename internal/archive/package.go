@@ -83,6 +83,8 @@ type ticketExport struct {
 	Labels        []map[string]any `json:"labels"`
 	Collaborators []map[string]any `json:"collaborators"`
 	GuestLinks    []map[string]any `json:"guest_links"`
+	GuestDevices  []map[string]any `json:"guest_devices"`
+	TicketReads   []map[string]any `json:"ticket_reads"`
 }
 
 // Generate 生成归档包：先完整写出 zip 并原子 rename，成功后才在一个事务里
@@ -336,42 +338,66 @@ func (s *Service) infoFromZip(name string) (PackageInfo, error) {
 func (s *Service) exportTicket(ctx context.Context, summary TicketSummary) (ticketExport, error) {
 	var out ticketExport
 	var err error
-	if out.Ticket, err = s.queryObject(ctx, `SELECT * FROM tickets WHERE seq = ?`, summary.Seq); err != nil {
+	if out.Ticket, err = s.queryObject(ctx, `
+		SELECT seq, number, kind, title, status, close_reason, brief_md, brief_revision,
+		       creator_member_id, creator_agent_id, assignee_id, template_key, created_at,
+		       last_change, duplicate_of_seq, template_version, template_snapshot, fields_json,
+		       creator_link_id, creator_intake_id, creator_author_name, brief_attachment_ids
+		FROM tickets WHERE seq = ?`, summary.Seq); err != nil {
 		return out, err
 	}
-	if out.BriefVersions, err = s.queryObjects(ctx, `SELECT * FROM brief_versions WHERE ticket_seq = ? ORDER BY revision`, summary.Seq); err != nil {
+	if out.BriefVersions, err = s.queryObjects(ctx, `
+		SELECT ticket_seq, revision, title, brief_md, fields_json, attachment_ids,
+		       actor_member_id, actor_agent_id, actor_link_id, actor_link_note,
+		       actor_author_name, actor_via_agent, at
+		FROM brief_versions WHERE ticket_seq = ? ORDER BY revision`, summary.Seq); err != nil {
 		return out, err
 	}
-	if out.Replies, err = s.queryObjects(ctx, `SELECT * FROM timeline_events WHERE ticket_seq = ? AND type = 'reply' ORDER BY seq`, summary.Seq); err != nil {
+	if out.Replies, err = s.queryObjects(ctx, timelineColumns+`
+		FROM timeline_events WHERE ticket_seq = ? AND type = 'reply' ORDER BY seq`, summary.Seq); err != nil {
 		return out, err
 	}
 	// 草稿附件会随未发出草稿一起丢弃，不进入归档包。
-	if out.Attachments, err = s.queryObjects(ctx, `SELECT * FROM attachments WHERE ticket_seq = ? AND draft_id IS NULL ORDER BY id`, summary.Seq); err != nil {
+	if out.Attachments, err = s.queryObjects(ctx, attachmentColumns+`
+		FROM attachments WHERE ticket_seq = ? AND draft_id IS NULL ORDER BY id`, summary.Seq); err != nil {
 		return out, err
 	}
-	if out.Timeline, err = s.queryObjects(ctx, `SELECT * FROM timeline_events WHERE ticket_seq = ? ORDER BY seq`, summary.Seq); err != nil {
+	if out.Timeline, err = s.queryObjects(ctx, timelineColumns+`
+		FROM timeline_events WHERE ticket_seq = ? ORDER BY seq`, summary.Seq); err != nil {
 		return out, err
 	}
-	if out.AccessRecords, err = s.queryObjects(ctx, `SELECT * FROM access_records WHERE ticket_seq = ? ORDER BY first_at, id`, summary.Seq); err != nil {
+	if out.AccessRecords, err = s.queryObjects(ctx, accessRecordColumns+`
+		FROM access_records WHERE ticket_seq = ? ORDER BY first_at, id`, summary.Seq); err != nil {
 		return out, err
 	}
-	if out.Labels, err = s.queryObjects(ctx, `SELECT * FROM ticket_labels WHERE ticket_seq = ? ORDER BY label`, summary.Seq); err != nil {
+	if out.Labels, err = s.queryObjects(ctx, `
+		SELECT ticket_seq, label FROM ticket_labels WHERE ticket_seq = ? ORDER BY label`, summary.Seq); err != nil {
 		return out, err
 	}
-	if out.Collaborators, err = s.queryObjects(ctx, `SELECT * FROM ticket_collaborators WHERE ticket_seq = ? ORDER BY member_id`, summary.Seq); err != nil {
+	if out.Collaborators, err = s.queryObjects(ctx, `
+		SELECT ticket_seq, member_id, added_at FROM ticket_collaborators
+		WHERE ticket_seq = ? ORDER BY member_id`, summary.Seq); err != nil {
 		return out, err
 	}
-	if out.GuestLinks, err = s.queryObjects(ctx, `SELECT * FROM guest_links WHERE ticket_seq = ? ORDER BY id`, summary.Seq); err != nil {
+	if out.GuestLinks, err = s.queryObjects(ctx, guestLinkColumns+`
+		FROM guest_links WHERE ticket_seq = ? ORDER BY id`, summary.Seq); err != nil {
 		return out, err
 	}
-	sentRows, err := s.queryObjects(ctx, `SELECT * FROM drafts WHERE ticket_seq = ? AND status = 'sent' ORDER BY id`, summary.Seq)
+	if out.TicketReads, err = s.queryObjects(ctx, `
+		SELECT member_id, ticket_seq, last_read_seq FROM ticket_reads
+		WHERE ticket_seq = ? ORDER BY member_id`, summary.Seq); err != nil {
+		return out, err
+	}
+	sentRows, err := s.queryObjects(ctx, draftColumns+`
+		FROM drafts WHERE ticket_seq = ? AND status = 'sent' ORDER BY id`, summary.Seq)
 	if err != nil {
 		return out, err
 	}
 	out.Drafts = make([]map[string]any, 0, len(sentRows))
 	for _, row := range sentRows {
 		id, _ := row["id"].(int64)
-		versions, err := s.queryObjects(ctx, `SELECT * FROM draft_versions WHERE draft_id = ? ORDER BY version`, id)
+		versions, err := s.queryObjects(ctx, draftVersionColumns+`
+			FROM draft_versions WHERE draft_id = ? ORDER BY version`, id)
 		if err != nil {
 			return out, err
 		}
@@ -380,7 +406,8 @@ func (s *Service) exportTicket(ctx context.Context, summary TicketSummary) (tick
 		}
 		out.Drafts = append(out.Drafts, map[string]any{"draft": row, "versions": versions})
 	}
-	return out, nil
+	out.GuestDevices, err = s.guestDevices(ctx, out.GuestLinks)
+	return out, err
 }
 
 func (s *Service) queryObject(ctx context.Context, query string, args ...any) (map[string]any, error) {
@@ -450,6 +477,46 @@ func normalizeSQLValue(value any) any {
 	default:
 		return value
 	}
+}
+
+const timelineColumns = `SELECT ticket_seq, seq, change_seq, type, actor_member_id, actor_agent_id, at,
+	       body_md, reply_no, deliver, revision, reason, duplicate_of, label, actor_link_id,
+	       actor_link_note, actor_author_name, actor_via_agent, note, link_expires_at,
+	       assign_from, assign_to, attachment_ids, collaborator_member_id, collaborator_name,
+	       actor_system`
+
+const attachmentColumns = `SELECT id, ticket_seq, filename, size, state, attached_to,
+	       uploader_member_id, uploader_agent_id, uploader_link_id, uploader_intake_id,
+	       intake_upload_key, uploaded_at, claimed_at, draft_id`
+
+const accessRecordColumns = `SELECT id, ticket_seq, actor_kind, actor_name, actor_member_id,
+	       actor_agent_id, actor_link_id, actor_link_note, entry_method, action, attachment_id,
+	       attachment_ref, attachment_filename, first_at, last_at, count`
+
+const guestLinkColumns = `SELECT id, ticket_seq, key_hash, note, expires_at, revoked_at,
+	       can_edit_brief, created_by_member_id, created_by_agent_id, created_at, claimed_at,
+	       claim_name, access_code_hash, access_code_failures, access_code_locked_at, key_ciphertext`
+
+const draftColumns = `SELECT id, kind, status, ticket_seq, member_id, request_json, version,
+	       base_timeline_seq, member_edited, created_at, updated_at, sent_at, sent_timeline_seq`
+
+const draftVersionColumns = `SELECT draft_id, version, request_json, author_member_id,
+	       author_agent_id, at`
+
+func (s *Service) guestDevices(ctx context.Context, links []map[string]any) ([]map[string]any, error) {
+	ids := make([]any, 0, len(links))
+	placeholders := make([]string, 0, len(links))
+	for _, link := range links {
+		id, _ := link["id"].(int64)
+		ids = append(ids, id)
+		placeholders = append(placeholders, "?")
+	}
+	if len(ids) == 0 {
+		return []map[string]any{}, nil
+	}
+	return s.queryObjects(ctx, `SELECT id, guest_link_id, token_hash, created_at, entry_method
+		FROM guest_devices WHERE guest_link_id IN (`+strings.Join(placeholders, ",")+`)
+		ORDER BY guest_link_id, id`, ids...)
 }
 
 type packagedAttachment struct {
@@ -547,7 +614,7 @@ func markdownOf(summary TicketSummary, export ticketExport, atts []packagedAttac
 		fmt.Fprintf(&b, "- %v · %s · %s\n", event["type"], stringValue(event["at"]), timelineDetail(event))
 	}
 	b.WriteString("\n## 起草过程\n\n见 `ticket.json` 的 `drafts` 字段。\n")
-	b.WriteString("\n## 访问记录与访客链接\n\n见 `ticket.json` 的 `access_records`、`guest_links` 字段。\n")
+	b.WriteString("\n## 访问记录与访客链接\n\n见 `ticket.json` 的 `access_records`、`guest_links`、`guest_devices` 字段。\n")
 	return b.String()
 }
 

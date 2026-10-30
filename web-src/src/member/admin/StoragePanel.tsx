@@ -252,7 +252,9 @@ export function StoragePanel() {
                   {preview.drafts.map((draft) => (
                     <tr key={draft.id}>
                       <td className="mono">{draft.ticket_number}</td>
-                      <td>{draft.body_md}</td>
+                      <td>{draft.member_name}{draft.agent_name ? ` / ${draft.agent_name}` : ''}</td>
+                      <td>{draft.kind} v{draft.version}</td>
+                      <td>{fmtBeijing(draft.updated_at)}</td>
                     </tr>
                   ))}
                 </tbody>

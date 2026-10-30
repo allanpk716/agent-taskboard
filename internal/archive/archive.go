@@ -36,8 +36,9 @@ type DraftSummary struct {
 	MemberName    string   `json:"member_name"`
 	AgentName     string   `json:"agent_name"`
 	Version       int64    `json:"version"`
-	BodyMD        string   `json:"body_md"`
+	UpdatedAt     string   `json:"updated_at"`
 	AttachmentIDs []string `json:"attachment_ids"`
+	seq           int64
 }
 
 // Preview 是一次归档选择的汇总。
@@ -166,10 +167,10 @@ func (s *Service) attachmentBytes(ctx context.Context, tickets []TicketSummary) 
 		args = append(args, t.Seq)
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT ticket_seq, COALESCE(SUM(size), 0)
-		FROM attachments
-		WHERE ticket_seq IN (`+strings.Join(placeholders, ",")+`)
-		GROUP BY ticket_seq`, args...)
+		SELECT a.ticket_seq, COALESCE(SUM(a.size), 0)
+		FROM attachments a
+		WHERE a.ticket_seq IN (`+strings.Join(placeholders, ",")+`) AND a.draft_id IS NULL
+		GROUP BY a.ticket_seq`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +199,7 @@ func (s *Service) pendingDrafts(ctx context.Context, tickets []TicketSummary) ([
 		args = append(args, t.Seq)
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT d.id, d.kind, d.version, d.request_json, t.number, m.name,
+		SELECT d.id, d.kind, d.version, d.updated_at, d.request_json, t.number, m.name,
 		       COALESCE((
 		           SELECT a.name FROM draft_versions v
 		           LEFT JOIN agent_tokens a ON a.id = v.author_agent_id
@@ -218,14 +219,15 @@ func (s *Service) pendingDrafts(ctx context.Context, tickets []TicketSummary) ([
 		var d DraftSummary
 		var id int64
 		var request string
-		if err := rows.Scan(&id, &d.Kind, &d.Version, &request, &d.TicketNumber,
+		if err := rows.Scan(&id, &d.Kind, &d.Version, &d.UpdatedAt, &request, &d.TicketNumber,
 			&d.MemberName, &d.AgentName); err != nil {
 			return nil, err
 		}
 		d.ID = fmt.Sprintf("dft_%d", id)
+		d.seq = id
 		var req draftRequest
 		_ = json.Unmarshal([]byte(request), &req)
-		d.BodyMD, d.AttachmentIDs = req.BodyMD, req.AttachmentIDs
+		d.AttachmentIDs = req.AttachmentIDs
 		if d.AttachmentIDs == nil {
 			d.AttachmentIDs = []string{}
 		}

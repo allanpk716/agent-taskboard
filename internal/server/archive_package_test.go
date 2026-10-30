@@ -41,7 +41,7 @@ type archiveDraftSummary struct {
 	MemberName    string   `json:"member_name"`
 	AgentName     string   `json:"agent_name"`
 	Version       int64    `json:"version"`
-	BodyMD        string   `json:"body_md"`
+	UpdatedAt     string   `json:"updated_at"`
 	AttachmentIDs []string `json:"attachment_ids"`
 }
 
@@ -85,6 +85,8 @@ type archiveStructuredTicketBody struct {
 	AccessRecords []map[string]any `json:"access_records"`
 	Collaborators []map[string]any `json:"collaborators"`
 	GuestLinks    []map[string]any `json:"guest_links"`
+	GuestDevices  []map[string]any `json:"guest_devices"`
+	TicketReads   []map[string]any `json:"ticket_reads"`
 }
 
 func Test归档预览只接受可归档工单并列出未发出草稿(t *testing.T) {
@@ -144,15 +146,25 @@ func Test归档预览只接受可归档工单并列出未发出草稿(t *testing
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("预览状态码 = %d, 想 200", res.StatusCode)
 	}
-	if preview.TicketCount != 1 || preview.AttachmentBytes != int64(len("1234")) {
-		t.Fatalf("预览数量/附件大小 = %d/%d, 想 1/4", preview.TicketCount, preview.AttachmentBytes)
+	if preview.TicketCount != 1 || preview.AttachmentBytes != 0 {
+		t.Fatalf("预览数量/附件大小 = %d/%d, 想 1/0（草稿独占附件不计入包）", preview.TicketCount, preview.AttachmentBytes)
 	}
 	if len(preview.Tickets) != 1 || preview.Tickets[0].Number != number || preview.Tickets[0].Title != "可归档工单" {
 		t.Fatalf("预览工单清单 = %+v", preview.Tickets)
 	}
 	if len(preview.Drafts) != 1 || preview.Drafts[0].TicketNumber != number ||
-		preview.Drafts[0].BodyMD != "草稿正文" || len(preview.Drafts[0].AttachmentIDs) != 1 {
+		preview.Drafts[0].Kind != "reply" || preview.Drafts[0].MemberName != "陈工" ||
+		preview.Drafts[0].AgentName != "笔记本" || preview.Drafts[0].Version != 1 ||
+		preview.Drafts[0].UpdatedAt == "" || len(preview.Drafts[0].AttachmentIDs) != 1 {
 		t.Fatalf("预览未发出草稿 = %+v", preview.Drafts)
+	}
+	var rawPreview struct {
+		Drafts []map[string]any `json:"drafts"`
+	}
+	s.Do(t, admin, http.MethodPost, "/api/v1/admin/archive/preview",
+		map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, &rawPreview)
+	if _, leaked := rawPreview.Drafts[0]["body_md"]; leaked {
+		t.Fatalf("预览泄露了未发出草稿正文：%+v", rawPreview.Drafts[0])
 	}
 }
 
@@ -175,6 +187,10 @@ func Test生成归档包可下载且校验和与Markdown有效(t *testing.T) {
 	link := s.CreateGuestLink(t, admin, number, map[string]any{"note": "现场确认", "valid_days": 90})
 	if link.URL == "" {
 		t.Fatal("创建访客链接失败")
+	}
+	guest := s.GuestClient(link.Key(t))
+	if res := s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+number, nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("访客认领后访问状态码 = %d, 想 200", res.StatusCode)
 	}
 	if res := addCollaborator(t, s, admin, number, "王工"); res.StatusCode != http.StatusCreated {
 		t.Fatalf("加入协作者状态码 = %d, 想 201", res.StatusCode)
@@ -255,7 +271,7 @@ func Test生成归档包可下载且校验和与Markdown有效(t *testing.T) {
 		t.Fatalf("结构化工单 JSON 无效：%v", err)
 	}
 	for _, key := range []string{"ticket", "brief_versions", "replies", "attachments", "timeline",
-		"drafts", "access_records", "labels", "collaborators", "guest_links"} {
+		"drafts", "access_records", "labels", "collaborators", "guest_links", "guest_devices", "ticket_reads"} {
 		if _, ok := rawStructured[key]; !ok {
 			t.Errorf("结构化工单 JSON 缺少 %s", key)
 		}
@@ -265,9 +281,23 @@ func Test生成归档包可下载且校验和与Markdown有效(t *testing.T) {
 		t.Fatalf("结构化工单 JSON 无效：%v", err)
 	}
 	if len(structured.Replies) != 1 || len(structured.Attachments) != 1 ||
-		len(structured.Collaborators) != 1 || len(structured.GuestLinks) != 1 {
-		t.Fatalf("结构化工单关联数据不完整：replies=%d attachments=%d collaborators=%d guest_links=%d",
-			len(structured.Replies), len(structured.Attachments), len(structured.Collaborators), len(structured.GuestLinks))
+		len(structured.Collaborators) != 1 || len(structured.GuestLinks) != 1 ||
+		len(structured.GuestDevices) != 1 || len(structured.TicketReads) != 1 {
+		t.Fatalf("结构化工单关联数据不完整：replies=%d attachments=%d collaborators=%d guest_links=%d guest_devices=%d ticket_reads=%d",
+			len(structured.Replies), len(structured.Attachments), len(structured.Collaborators),
+			len(structured.GuestLinks), len(structured.GuestDevices), len(structured.TicketReads))
+	}
+	for _, key := range []string{"id", "ticket_seq", "key_hash", "note", "expires_at", "revoked_at",
+		"can_edit_brief", "created_by_member_id", "created_by_agent_id", "created_at", "claimed_at",
+		"claim_name", "access_code_hash", "access_code_failures", "access_code_locked_at", "key_ciphertext"} {
+		if _, ok := structured.GuestLinks[0][key]; !ok {
+			t.Errorf("导出的访客链接缺少恢复列 %s：%+v", key, structured.GuestLinks[0])
+		}
+	}
+	for _, key := range []string{"id", "guest_link_id", "token_hash", "created_at", "entry_method"} {
+		if _, ok := structured.GuestDevices[0][key]; !ok {
+			t.Errorf("导出的访客设备缺少恢复列 %s：%+v", key, structured.GuestDevices[0])
+		}
 	}
 	relative := "attachments/" + log.ID + "/服务日志.txt"
 	md := string(files["tickets/"+number+"/README.md"])

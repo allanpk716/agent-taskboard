@@ -16,7 +16,7 @@ export interface ArchiveDraftSummary {
   member_name: string
   agent_name: string
   version: number
-  body_md: string
+  updated_at: string
   attachment_ids: string[]
 }
 
