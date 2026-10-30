@@ -189,10 +189,12 @@ const (
 	CodeArchiveNotFound         = "archive_not_found"            // 归档包不存在或已过期（404）
 	CodeArchiveGenerateConflict = "archive_generate_in_progress" // 已有归档生成正在执行（409）
 
-	// #236：归档移除与墓碑。
-	CodeArchiveSavedRequired = "archive_saved_confirmation_required" // 未勾选“我已保存归档包”（400）
-	CodeArchiveRemoved       = "archive_package_removed"             // 归档包对应的工单已移除（409）
-	CodeTicketArchived       = "ticket_archived"                     // 工单已归档移出平台（410）
+	// #236/#237：归档移除、墓碑与导入。
+	CodeArchiveSavedRequired     = "archive_saved_confirmation_required" // 未勾选“我已保存归档包”（400）
+	CodeArchiveRemoved           = "archive_package_removed"             // 归档包对应的工单已移除（409）
+	CodeArchivePackageInvalid    = "archive_package_invalid"             // 上传包校验失败（422）
+	CodeArchiveFormatUnsupported = "archive_format_unsupported"          // 上传包格式版本不支持（422）
+	CodeTicketArchived           = "ticket_archived"                     // 工单已归档移出平台（410）
 
 	// #80：桌面客户端凭证。
 	CodeInvalidClientPort        = "invalid_client_port"

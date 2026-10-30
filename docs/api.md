@@ -1181,7 +1181,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   附件按 id 落盘，同一存储文件被多处引用只计一次。
 - 本接口只做统计，不移动、不删除任何数据；选中工单后的预览、生成、下载与移除见下一节。
 
-## 归档包（#235）
+## 归档包（#235/#237）
 
 只接受**管理员网页会话**；访客 403 `members_only`，普通成员 403 `admin_required`，
 Agent token 403 `web_session_required`，匿名 401。选择里的每张工单都必须当前已关闭，
@@ -1195,6 +1195,8 @@ Agent token 403 `web_session_required`，匿名 401。选择里的每张工单�
 | `GET /api/v1/admin/archive/packages` | 列出未过期暂存包（新包在前）。 |
 | `GET /api/v1/admin/archive/packages/{name}/download` | 重复下载一个暂存包（`application/zip`）。 |
 | `POST /api/v1/admin/archive/packages/{name}/remove` | 确认已保存后从服务器移除包内工单并写墓碑。 |
+| `POST /api/v1/admin/archive/import/inspect` | 上传并检查一个归档包。 |
+| `POST /api/v1/admin/archive/import` | 导入上传包里选中的墓碑工单。 |
 
 预览与生成的请求体相同：
 
@@ -1250,7 +1252,7 @@ Agent token 403 `web_session_required`，匿名 401。选择里的每张工单�
   未发出草稿独占附件；存储统计接口仍按数据库中的全部附件计。
 - zip 根部有 `manifest.json`：格式版本（当前 `1`）、平台版本、生成时间、包名、操作人、
   工单列表，以及除 manifest 自身外每个文件的 SHA-256 与大小（manifest 不能自包含自己的
-  哈希）。本工单没有导入端；校验规则由 #237 实现。
+  哈希）。检查与导入都会先校验 manifest 和全部列出的文件。
 - 每张工单有 `tickets/{工单编号}/ticket.json`（工单本体、说明各版本、回复、附件元数据、
   时间线、起草过程、访问记录、标签关联、协作者、成员已读位置、访客链接及已认领设备）、
   `README.md`（可直接阅读；
@@ -1303,6 +1305,84 @@ Agent token 403 `web_session_required`，匿名 401。选择里的每张工单�
 点开同样显示墓碑；列表与搜索默认不出现已归档工单。工单编号分配会把墓碑计入，
 编号永不复用。
 
+### 导入（#237）
+
+检查与导入都用 `multipart/form-data` 上传 zip，文件字段名 `package`，上传大小上限
+1 GB。检查接口只读平台数据；导入接口可重复附带 `ticket_numbers` 字段选择包内工单，
+省略该字段表示导入选包时全部可导入的工单。
+
+```text
+POST /api/v1/admin/archive/import/inspect
+Content-Type: multipart/form-data
+
+package=<archive-....zip>
+
+POST /api/v1/admin/archive/import
+Content-Type: multipart/form-data
+
+package=<archive-....zip>
+ticket_numbers=20260601-001
+```
+
+检查响应：
+
+```json
+{
+  "format_version": 1,
+  "platform_version": "1.0.0",
+  "package_name": "archive-1790000000000000000-a1b2c3d4e5.zip",
+  "generated_at": "2026-10-30T10:00:00+08:00",
+  "ticket_count": 1,
+  "attachment_bytes": 256,
+  "tickets": [
+    {
+      "seq": 1,
+      "number": "20260601-001",
+      "title": "旧工单",
+      "closed_at": "2026-06-01T10:00:00+08:00",
+      "attachment_bytes": 256,
+      "importable": true,
+      "reason": ""
+    }
+  ]
+}
+```
+
+导入前会整包校验：manifest 必须合法，包内除 manifest 外的每个文件都必须在清单中，
+路径安全、大小和 SHA-256 完全一致，且不能有多余文件；任何一项不符返回
+`422 archive_package_invalid`。格式版本高于当前支持的 `1` 返回
+`422 archive_format_unsupported`；当前版本和更早版本可以继续处理。
+
+每张工单只有与墓碑的序号、编号和包名完全匹配且引用的成员、成员 Agent、标签、模板、
+访客链接等仍存在时才能导入；工单已在平台上或附件等恢复 ID 已被占用时拒绝该张。
+被拒绝的工单保留墓碑，其他选中工单照常恢复。成功恢复的工单按原 ID、原编号和原
+时间线恢复全部关联数据并删除墓碑，附件文件按原附件 ID 写回；状态保持归档前的
+`closed`，之后可重新开启或再次归档。
+
+导入响应：
+
+```json
+{
+  "package_name": "archive-1790000000000000000-a1b2c3d4e5.zip",
+  "imported_at": "2026-10-30T11:00:00+08:00",
+  "imported": [
+    {
+      "seq": 1,
+      "number": "20260601-001",
+      "title": "旧工单",
+      "closed_at": "2026-06-01T10:00:00+08:00",
+      "attachment_bytes": 256,
+      "importable": true,
+      "reason": ""
+    }
+  ],
+  "rejected": []
+}
+```
+
+成功导入至少一张工单时，平台写入一条 `archive_import` 管理操作，记录操作人、时间、
+成功恢复的工单编号和包名；全部被拒绝时不写操作。
+
 ## 管理操作记录（#235）
 
 只接受**管理员网页会话**；普通成员 403 `admin_required`，Agent token 403
@@ -1312,8 +1392,7 @@ Agent token 403 `web_session_required`，匿名 401。选择里的每张工单�
 |---|---|
 | `GET /api/v1/admin/operations` | 按时间倒序读取管理操作记录。 |
 
-当前记录类型有 `archive_generate` / `archive_remove`；#237 会继续加入
-`archive_import`。响应结构：
+当前记录类型有 `archive_generate` / `archive_remove` / `archive_import`。响应结构：
 
 ```json
 {
