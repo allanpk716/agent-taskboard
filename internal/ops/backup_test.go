@@ -130,8 +130,9 @@ func Test每月一日的那份备份是monthly(t *testing.T) {
 	}
 }
 
-// 附件做增量镜像，只增不删：新增文件按次统计，主存储删掉的文件镜像仍保留。
-func Test附件镜像只增不删并统计新增文件数(t *testing.T) {
+// 附件做增量镜像：新增文件按次统计；未引用附件清除只删主存储，镜像仍保留。
+// 归档移除会另行删除对应镜像（#236）。
+func Test附件镜像同步不删除并统计新增文件数(t *testing.T) {
 	target := t.TempDir()
 	b, clk, dataDir := newBackups(t, target)
 	atts := filepath.Join(dataDir, "attachments")
@@ -170,7 +171,7 @@ func Test附件镜像只增不删并统计新增文件数(t *testing.T) {
 		t.Fatalf("第二次镜像应只新增 1 个文件，得到 %d", rec.FilesAdded)
 	}
 
-	// 主存储删除后镜像不删（只增不删；未引用附件的清除是主存储的事）。
+	// 主存储删除后同步不删镜像；归档移除才会删除对应镜像。
 	if err := os.Remove(filepath.Join(atts, "1")); err != nil {
 		t.Fatal(err)
 	}

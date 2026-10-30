@@ -187,7 +187,7 @@ func (b *Backups) TargetDir() string {
 func (b *Backups) attachmentsDir() string { return filepath.Join(b.dataDir, "attachments") }
 
 // Now 立刻做一次备份（taskboard backup、定时任务和更新前备份共用）：
-// 导出（VACUUM INTO）→ 附件增量镜像（只增不删）→ 对副本 PRAGMA integrity_check
+// 导出（VACUUM INTO）→ 附件增量镜像（同步不删除）→ 对副本 PRAGMA integrity_check
 // → 结果写库 → 清点既有副本（损坏的改名 .bad）→ 按保留份数轮换。
 // 失败也返回记录（已写库）和错误；调用方的服务照常运行。
 func (b *Backups) BackupNow(ctx context.Context, kind Kind) (Record, error) {
@@ -471,7 +471,7 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-// syncMirror 把附件主存储增量镜像到目标下的 attachments\，只增不删：
+// syncMirror 把附件主存储增量镜像到目标下的 attachments\，同步不删除：
 // 已存在且同大小的文件跳过（附件写入后不再修改；大小不一致说明上次拷贝
 // 没写完整，重拷一份）。返回本次新增的文件数。
 func (b *Backups) syncMirror() (int, error) {
@@ -496,7 +496,8 @@ func (b *Backups) syncMirror() (int, error) {
 		to := filepath.Join(dst, e.Name())
 		if info, err := os.Stat(to); err == nil {
 			if srcInfo, serr := e.Info(); serr == nil && info.Size() == srcInfo.Size() {
-				continue // 已镜像过（只增不删：主存储删掉的文件镜像保留）
+				// 已镜像过。同步不删除；归档移除会在事务提交后单独删除对应镜像。
+				continue
 			}
 		}
 		if err := copyFile(from, to); err != nil {

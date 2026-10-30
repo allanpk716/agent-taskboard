@@ -1,14 +1,20 @@
-// 管理页「存储」面板（#234/#235）：三类空间占用、按关闭月份分组的可归档
-// 工单，以及选择 → 预览 → 生成 / 下载归档包。N 只是查询参数（默认 3，范围
-// 1–120），改动后重新请求；生成本工单只丢弃未发出草稿，不移除工单。
+// 管理页「存储」面板（#234/#235/#236）：三类空间占用、按关闭月份分组的可归档
+// 工单，以及选择 → 预览 → 生成 / 下载归档包 → 确认已保存后移除。N 只是查询
+// 参数（默认 3，范围 1–120），改动后重新请求。
 import { useEffect, useMemo, useState } from 'react'
 import { ApiError } from '../../api'
 import { fmtBeijing } from '../../shared/format'
 import {
   createArchivePackage,
   fetchArchivePackages,
+  importArchivePackage,
+  inspectArchivePackage,
   previewArchive,
+  removeArchivePackage,
   type ArchivePackage,
+  type ArchiveImportInspection,
+  type ArchiveImportResult,
+  type ArchiveRemoveResult,
   type ArchivePreview,
 } from './archiveApi'
 import { fetchStorageStats, type StorageStats, type StorageTicketStat } from './storageApi'
@@ -35,7 +41,14 @@ export function StoragePanel() {
   const [preview, setPreview] = useState<ArchivePreview | null>(null)
   const [packages, setPackages] = useState<ArchivePackage[]>([])
   const [packageError, setPackageError] = useState<string | null>(null)
-  const [busy, setBusy] = useState<'preview' | 'generate' | null>(null)
+  const [saved, setSaved] = useState<Set<string>>(new Set())
+  const [removal, setRemoval] = useState<ArchiveRemoveResult | null>(null)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [inspection, setInspection] = useState<ArchiveImportInspection | null>(null)
+  const [importSelected, setImportSelected] = useState<Set<string>>(new Set())
+  const [importResult, setImportResult] = useState<ArchiveImportResult | null>(null)
+  const [importError, setImportError] = useState<string | null>(null)
+  const [busy, setBusy] = useState<'preview' | 'generate' | 'remove' | 'inspect' | 'import' | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -124,10 +137,75 @@ export function StoragePanel() {
     try {
       await createArchivePackage(months, selectedNumbers)
       setPreview(null)
+      setRemoval(null)
       setPackages(await fetchArchivePackages())
       setError(null)
     } catch (e) {
       setError(e instanceof ApiError ? `${e.message}（${e.code}）` : '生成归档包失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const remove = async (name: string) => {
+    if (!saved.has(name)) return
+    setBusy('remove')
+    try {
+      const result = await removeArchivePackage(name)
+      setRemoval(result)
+      setPackages(await fetchArchivePackages())
+      setStats(await fetchStorageStats(months))
+      setSaved((prev) => {
+        const next = new Set(prev)
+        next.delete(name)
+        return next
+      })
+      setPackageError(null)
+    } catch (e) {
+      setPackageError(e instanceof ApiError ? `${e.message}（${e.code}）` : '移除归档工单失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const chooseImportFile = (file: File | null) => {
+    setImportFile(file)
+    setInspection(null)
+    setImportSelected(new Set())
+    setImportResult(null)
+    setImportError(null)
+  }
+
+  const inspectImport = async () => {
+    if (!importFile) return
+    setBusy('inspect')
+    try {
+      const result = await inspectArchivePackage(importFile)
+      setInspection(result)
+      setImportSelected(new Set(result.tickets.filter((ticket) => ticket.importable).map((ticket) => ticket.number)))
+      setImportResult(null)
+      setImportError(null)
+    } catch (e) {
+      setInspection(null)
+      setImportSelected(new Set())
+      setImportError(e instanceof ApiError ? `${e.message}（${e.code}）` : '检查归档包失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const submitImport = async () => {
+    if (!importFile || importSelected.size === 0) return
+    setBusy('import')
+    try {
+      const result = await importArchivePackage(importFile, [...importSelected])
+      setImportResult(result)
+      setInspection(null)
+      setImportSelected(new Set())
+      setImportError(null)
+      setStats(await fetchStorageStats(months))
+    } catch (e) {
+      setImportError(e instanceof ApiError ? `${e.message}（${e.code}）` : '导入归档包失败')
     } finally {
       setBusy(null)
     }
@@ -281,6 +359,12 @@ export function StoragePanel() {
         暂存归档包（7 天）
       </div>
       {packageError && <div className="errbox">{packageError}</div>}
+      {removal && (
+        <div className="okbox" data-testid="archive-released">
+          已移除 {removal.ticket_count} 张工单，已释放附件与备份镜像 {fmtBytes(removal.attachment_bytes)}。
+          {removal.cleanup_failures > 0 ? `有 ${removal.cleanup_failures} 个文件未能清理，服务会记录并可在下次处理。` : ''}
+        </div>
+      )}
       {packages.length === 0 ? (
         <div className="hint">暂存区没有归档包。</div>
       ) : (
@@ -291,9 +375,30 @@ export function StoragePanel() {
                 <td className="mono">{pkg.name}</td>
                 <td>
                   {pkg.ticket_count} 张工单 · {fmtBytes(pkg.attachment_bytes)}
+                  <div className="mono hint">{pkg.ticket_numbers.join('、')}</div>
                   <div className="hint">{fmtBeijing(pkg.expires_at)} 到期</div>
+                  {pkg.removed_ticket_count > 0 && (
+                    <div className="warn">已从服务器移除 {pkg.removed_ticket_count} 张工单</div>
+                  )}
                 </td>
                 <td>
+                  <label className="hint" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <input
+                      type="checkbox"
+                      checked={saved.has(pkg.name)}
+                      disabled={pkg.removed_ticket_count > 0}
+                      onChange={(e) =>
+                        setSaved((prev) => {
+                          const next = new Set(prev)
+                          if (e.target.checked) next.add(pkg.name)
+                          else next.delete(pkg.name)
+                          return next
+                        })
+                      }
+                      data-testid={`archive-saved-${pkg.name}`}
+                    />
+                    我已保存
+                  </label>
                   <a
                     className="btn sm ghost"
                     href={pkg.download_url}
@@ -302,13 +407,106 @@ export function StoragePanel() {
                   >
                     下载
                   </a>
+                  <button
+                    type="button"
+                    className="btn sm danger"
+                    disabled={pkg.removed_ticket_count > 0 || !saved.has(pkg.name) || busy === 'remove'}
+                    onClick={() => void remove(pkg.name)}
+                    data-testid={`archive-remove-${pkg.name}`}
+                  >
+                    从服务器移除
+                  </button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
-      <div className="hint">生成包不会从服务器移除工单；移除与导入是后续工单。</div>
+      <div className="hint">移除会删除服务器上的工单数据与附件，只留下墓碑。</div>
+
+      <div className="fldlab" style={{ marginTop: 12 }}>
+        导入归档包
+      </div>
+      <div className="frow">
+        <input
+          type="file"
+          accept="application/zip,.zip"
+          aria-label="选择归档包文件"
+          data-testid="archive-import-file"
+          onChange={(e) => chooseImportFile(e.target.files?.[0] ?? null)}
+        />
+        <button
+          type="button"
+          className="btn sm ghost"
+          disabled={importFile === null || busy !== null}
+          onClick={() => void inspectImport()}
+          data-testid="archive-import-inspect"
+        >
+          {busy === 'inspect' ? '检查中…' : '检查包'}
+        </button>
+      </div>
+      {importError && <div className="errbox">{importError}</div>}
+      {inspection && (
+        <div className="subcard" data-testid="archive-import-preview">
+          <div className="fldlab">
+            {inspection.package_name}：{inspection.ticket_count} 张工单，附件{' '}
+            {fmtBytes(inspection.attachment_bytes)}
+          </div>
+          <table className="mini-tbl" style={{ marginTop: 6 }}>
+            <tbody>
+              {inspection.tickets.map((ticket) => (
+                <tr key={ticket.number} data-testid={`archive-import-ticket-${ticket.number}`}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      aria-label={`选择导入工单 ${ticket.number}`}
+                      data-testid={`archive-import-select-${ticket.number}`}
+                      checked={importSelected.has(ticket.number)}
+                      disabled={!ticket.importable}
+                      onChange={(e) =>
+                        setImportSelected((prev) => {
+                          const next = new Set(prev)
+                          if (e.target.checked) next.add(ticket.number)
+                          else next.delete(ticket.number)
+                          return next
+                        })
+                      }
+                    />{' '}
+                    <span className="mono">{ticket.number}</span> {ticket.title}
+                  </td>
+                  <td>
+                    {ticket.importable ? (
+                      <span className="ok">可导入</span>
+                    ) : (
+                      <span className="warn">{ticket.reason}</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <button
+            type="button"
+            className="btn sm"
+            disabled={importSelected.size === 0 || busy !== null}
+            onClick={() => void submitImport()}
+            data-testid="archive-import-submit"
+          >
+            {busy === 'import' ? '导入中…' : `导入选中的 ${importSelected.size} 张工单`}
+          </button>
+        </div>
+      )}
+      {importResult && (
+        <div className="okbox" data-testid="archive-import-result">
+          已导入 {importResult.imported.length} 张工单
+          {importResult.rejected.length > 0 ? `，${importResult.rejected.length} 张被拒绝` : ''}。
+          {importResult.rejected.map((ticket) => (
+            <div className="hint" key={ticket.number}>
+              {ticket.number}：{ticket.reason}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

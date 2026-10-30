@@ -4,8 +4,8 @@
 // 按创建者署名区分）；翻页跟着响应里的 next 走。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError } from '../api'
-import { closeReasonText, fmtShort } from '../shared/format'
-import type { MemberSummary } from '../shared/types'
+import { closeReasonText, fmtBeijing, fmtShort } from '../shared/format'
+import type { ArchivedTicket, MemberSummary } from '../shared/types'
 import { DeactivatedBadge } from '../shared/widgets'
 import { api } from '../api'
 import { nav, useInvalidate, useLocationSearch } from './ui'
@@ -44,6 +44,7 @@ interface ListResponse {
   count: number
   items: TicketListItem[]
   next: string | null
+  archived?: ArchivedTicket | null
 }
 
 export function turnLabel(
@@ -109,6 +110,21 @@ function mergeLabelInput(current: string[], text: string): string[] {
     if (labels.includes(value)) return labels
     return [...labels, value]
   }, current)
+}
+
+function ArchivedSearchHint({
+  archived,
+  href,
+}: {
+  archived: ArchivedTicket
+  href: string
+}) {
+  return (
+    <a className="ecard" href={href} data-testid="archived-ticket-hint">
+      编号 <b className="mono">{archived.number}</b> 已归档于 {fmtBeijing(archived.archived_at)}，
+      归档包 <span className="mono">{archived.package_name}</span>。点击查看墓碑信息。
+    </a>
+  )
 }
 
 export function TicketCard({
@@ -570,6 +586,7 @@ export function TicketsPage({
         <div className="pc-list-scroll" data-testid="ticket-list-scroll">
           {error && <div className="ecard">{error}</div>}
           {!error && items.length === 0 && data && <div className="ecard">没有符合条件的工单</div>}
+          {data?.archived && <ArchivedSearchHint archived={data.archived} href={detailHref(data.archived.number)} />}
           {items.map((it) => (
             <TicketCard
               key={it.number}
@@ -794,6 +811,7 @@ export function TicketsPage({
       </div>
       {error && <div className="ecard">{error}</div>}
       {!error && items.length === 0 && data && <div className="ecard">没有符合条件的工单</div>}
+      {data?.archived && <ArchivedSearchHint archived={data.archived} href={detailHref(data.archived.number)} />}
       {items.map((it) => (
         <TicketCard
           key={it.number}

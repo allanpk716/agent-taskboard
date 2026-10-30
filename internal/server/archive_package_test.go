@@ -51,13 +51,14 @@ type archiveDraftSummary struct {
 }
 
 type archivePackageBody struct {
-	Name            string   `json:"name"`
-	TicketCount     int      `json:"ticket_count"`
-	AttachmentBytes int64    `json:"attachment_bytes"`
-	GeneratedAt     string   `json:"generated_at"`
-	ExpiresAt       string   `json:"expires_at"`
-	TicketNumbers   []string `json:"ticket_numbers"`
-	DownloadURL     string   `json:"download_url"`
+	Name               string   `json:"name"`
+	TicketCount        int      `json:"ticket_count"`
+	AttachmentBytes    int64    `json:"attachment_bytes"`
+	GeneratedAt        string   `json:"generated_at"`
+	ExpiresAt          string   `json:"expires_at"`
+	TicketNumbers      []string `json:"ticket_numbers"`
+	DownloadURL        string   `json:"download_url"`
+	RemovedTicketCount int      `json:"removed_ticket_count"`
 }
 
 type archivePackageListBody struct {
@@ -892,8 +893,14 @@ func Test归档接口只对管理员开放(t *testing.T) {
 		{"普通成员列表", member, http.MethodGet, "/api/v1/admin/archive/packages", nil, "admin_required"},
 		{"普通成员下载", member, http.MethodGet,
 			"/api/v1/admin/archive/packages/archive-test.zip/download", nil, "admin_required"},
+		{"普通成员移除", member, http.MethodPost,
+			"/api/v1/admin/archive/packages/archive-test.zip/remove",
+			map[string]any{"saved": true}, "admin_required"},
 		{"管理员Agent列表", adminAgent, http.MethodGet, "/api/v1/admin/archive/packages", nil,
 			"web_session_required"},
+		{"管理员Agent移除", adminAgent, http.MethodPost,
+			"/api/v1/admin/archive/packages/archive-test.zip/remove",
+			map[string]any{"saved": true}, "web_session_required"},
 	}
 	for _, tc := range cases {
 		res := s.Do(t, tc.c, tc.method, tc.path, tc.body, nil)

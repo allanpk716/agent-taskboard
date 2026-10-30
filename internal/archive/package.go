@@ -39,13 +39,14 @@ var ErrPackageNotFound = errors.New("archive package not found")
 
 // PackageInfo 是暂存区里一个归档包的对外信息。
 type PackageInfo struct {
-	Name            string
-	TicketNumbers   []string
-	TicketCount     int
-	AttachmentBytes int64
-	GeneratedAt     time.Time
-	ExpiresAt       time.Time
-	OperatorName    string
+	Name               string
+	TicketNumbers      []string
+	TicketCount        int
+	AttachmentBytes    int64
+	GeneratedAt        time.Time
+	ExpiresAt          time.Time
+	OperatorName       string
+	RemovedTicketCount int
 }
 
 type manifest struct {
@@ -75,9 +76,18 @@ type manifestTicket struct {
 	Title           string `json:"title"`
 	ClosedAt        string `json:"closed_at"`
 	AttachmentBytes int64  `json:"attachment_bytes"`
+	ContentSHA256   string `json:"content_sha256"`
 }
 
 var attachmentRefPattern = regexp.MustCompile(`att:[A-Za-z0-9_-]+`)
+
+func archiveAttachmentPathPrefix(number string, id int64) string {
+	return "tickets/" + number + "/attachments/att_" + strconv.FormatInt(id, 10) + "/"
+}
+
+func archiveAttachmentPath(number string, id int64, filename string) string {
+	return archiveAttachmentPathPrefix(number, id) + filename
+}
 
 type ticketExport struct {
 	Ticket        map[string]any   `json:"ticket"`
@@ -130,7 +140,7 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 	exps := make(map[int64]ticketExport)
 	files := make([]manifestFile, 0)
 	zw := zip.NewWriter(temp)
-	for _, summary := range preview.Tickets {
+	for i, summary := range preview.Tickets {
 		export, err := s.exportTicket(ctx, summary)
 		if err != nil {
 			_ = zw.Close()
@@ -148,6 +158,9 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 			_ = zw.Close()
 			return PackageInfo{}, err
 		}
+		sum := sha256.Sum256(encoded)
+		summary.ContentSHA256 = hex.EncodeToString(sum[:])
+		preview.Tickets[i] = summary
 	}
 	for _, summary := range preview.Tickets {
 		export := exps[summary.Seq]
@@ -170,7 +183,8 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 		Files:    files}
 	for _, t := range preview.Tickets {
 		m.Tickets = append(m.Tickets, manifestTicket{Number: t.Number, Title: t.Title,
-			ClosedAt: t.ClosedAt.Format(time.RFC3339Nano), AttachmentBytes: t.AttachmentBytes})
+			ClosedAt: t.ClosedAt.Format(time.RFC3339Nano), AttachmentBytes: t.AttachmentBytes,
+			ContentSHA256: t.ContentSHA256})
 	}
 	manifestBytes, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
@@ -224,6 +238,10 @@ func (s *Service) List(ctx context.Context) ([]PackageInfo, error) {
 		}
 		return nil, err
 	}
+	removedCounts, err := s.removedTicketCounts(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := []PackageInfo{}
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".zip") {
@@ -239,10 +257,30 @@ func (s *Service) List(ctx context.Context) ([]PackageInfo, error) {
 		if s.clk.Now().After(info.ExpiresAt) {
 			continue
 		}
+		info.RemovedTicketCount = removedCounts[info.Name]
 		out = append(out, info)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].GeneratedAt.After(out[j].GeneratedAt) })
 	return out, nil
+}
+
+func (s *Service) removedTicketCounts(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT package_name, COUNT(*) FROM archived_tickets GROUP BY package_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var name string
+		var count int
+		if err := rows.Scan(&name, &count); err != nil {
+			return nil, err
+		}
+		out[name] = count
+	}
+	return out, rows.Err()
 }
 
 // Open 返回未过期包的文件句柄；调用方负责 Close。
@@ -340,15 +378,26 @@ func (s *Service) infoFromZip(name string) (PackageInfo, error) {
 		numbers = append(numbers, t.Number)
 		attachmentBytes += t.AttachmentBytes
 	}
+	if m.PackageName != name {
+		return PackageInfo{}, ErrPackageNotFound
+	}
 	return PackageInfo{Name: name, TicketNumbers: numbers, TicketCount: len(numbers),
 		AttachmentBytes: attachmentBytes, GeneratedAt: generated, ExpiresAt: generated.Add(Retention),
 		OperatorName: m.Operator.Name}, nil
 }
 
+type archiveQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
 func (s *Service) exportTicket(ctx context.Context, summary TicketSummary) (ticketExport, error) {
+	return exportTicket(ctx, s.db, summary)
+}
+
+func exportTicket(ctx context.Context, q archiveQueryer, summary TicketSummary) (ticketExport, error) {
 	var out ticketExport
 	var err error
-	if out.Ticket, err = s.queryObject(ctx, `
+	if out.Ticket, err = queryObject(ctx, q, `
 		SELECT seq, number, kind, title, status, close_reason, brief_md, brief_revision,
 		       creator_member_id, creator_agent_id, assignee_id, template_key, created_at,
 		       last_change, duplicate_of_seq, template_version, template_snapshot, fields_json,
@@ -356,49 +405,49 @@ func (s *Service) exportTicket(ctx context.Context, summary TicketSummary) (tick
 		FROM tickets WHERE seq = ?`, summary.Seq); err != nil {
 		return out, err
 	}
-	if out.BriefVersions, err = s.queryObjects(ctx, `
+	if out.BriefVersions, err = queryObjects(ctx, q, `
 		SELECT ticket_seq, revision, title, brief_md, fields_json, attachment_ids,
 		       actor_member_id, actor_agent_id, actor_link_id, actor_link_note,
 		       actor_author_name, actor_via_agent, at
 		FROM brief_versions WHERE ticket_seq = ? ORDER BY revision`, summary.Seq); err != nil {
 		return out, err
 	}
-	if out.Replies, err = s.queryObjects(ctx, timelineColumns+`
+	if out.Replies, err = queryObjects(ctx, q, timelineColumns+`
 		FROM timeline_events WHERE ticket_seq = ? AND type = 'reply' ORDER BY seq`, summary.Seq); err != nil {
 		return out, err
 	}
 	// 草稿附件会随未发出草稿一起丢弃，不进入归档包。
-	if out.Attachments, err = s.queryObjects(ctx, attachmentColumns+`
+	if out.Attachments, err = queryObjects(ctx, q, attachmentColumns+`
 		FROM attachments WHERE ticket_seq = ? AND draft_id IS NULL ORDER BY id`, summary.Seq); err != nil {
 		return out, err
 	}
-	if out.Timeline, err = s.queryObjects(ctx, timelineColumns+`
+	if out.Timeline, err = queryObjects(ctx, q, timelineColumns+`
 		FROM timeline_events WHERE ticket_seq = ? ORDER BY seq`, summary.Seq); err != nil {
 		return out, err
 	}
-	if out.AccessRecords, err = s.queryObjects(ctx, accessRecordColumns+`
+	if out.AccessRecords, err = queryObjects(ctx, q, accessRecordColumns+`
 		FROM access_records WHERE ticket_seq = ? ORDER BY first_at, id`, summary.Seq); err != nil {
 		return out, err
 	}
-	if out.Labels, err = s.queryObjects(ctx, `
+	if out.Labels, err = queryObjects(ctx, q, `
 		SELECT ticket_seq, label FROM ticket_labels WHERE ticket_seq = ? ORDER BY label`, summary.Seq); err != nil {
 		return out, err
 	}
-	if out.Collaborators, err = s.queryObjects(ctx, `
+	if out.Collaborators, err = queryObjects(ctx, q, `
 		SELECT ticket_seq, member_id, added_at FROM ticket_collaborators
 		WHERE ticket_seq = ? ORDER BY member_id`, summary.Seq); err != nil {
 		return out, err
 	}
-	if out.GuestLinks, err = s.queryObjects(ctx, guestLinkColumns+`
+	if out.GuestLinks, err = queryObjects(ctx, q, guestLinkColumns+`
 		FROM guest_links WHERE ticket_seq = ? ORDER BY id`, summary.Seq); err != nil {
 		return out, err
 	}
-	if out.TicketReads, err = s.queryObjects(ctx, `
+	if out.TicketReads, err = queryObjects(ctx, q, `
 		SELECT member_id, ticket_seq, last_read_seq FROM ticket_reads
 		WHERE ticket_seq = ? ORDER BY member_id`, summary.Seq); err != nil {
 		return out, err
 	}
-	sentRows, err := s.queryObjects(ctx, draftColumns+`
+	sentRows, err := queryObjects(ctx, q, draftColumns+`
 		FROM drafts WHERE ticket_seq = ? AND status = 'sent' ORDER BY id`, summary.Seq)
 	if err != nil {
 		return out, err
@@ -406,7 +455,7 @@ func (s *Service) exportTicket(ctx context.Context, summary TicketSummary) (tick
 	out.Drafts = make([]map[string]any, 0, len(sentRows))
 	for _, row := range sentRows {
 		id, _ := row["id"].(int64)
-		versions, err := s.queryObjects(ctx, draftVersionColumns+`
+		versions, err := queryObjects(ctx, q, draftVersionColumns+`
 			FROM draft_versions WHERE draft_id = ? ORDER BY version`, id)
 		if err != nil {
 			return out, err
@@ -416,12 +465,12 @@ func (s *Service) exportTicket(ctx context.Context, summary TicketSummary) (tick
 		}
 		out.Drafts = append(out.Drafts, map[string]any{"draft": row, "versions": versions})
 	}
-	out.GuestDevices, err = s.guestDevices(ctx, out.GuestLinks)
+	out.GuestDevices, err = guestDevices(ctx, q, out.GuestLinks)
 	return out, err
 }
 
-func (s *Service) queryObject(ctx context.Context, query string, args ...any) (map[string]any, error) {
-	rows, err := s.db.QueryContext(ctx, query, args...)
+func queryObject(ctx context.Context, q archiveQueryer, query string, args ...any) (map[string]any, error) {
+	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -436,8 +485,8 @@ func (s *Service) queryObject(ctx context.Context, query string, args ...any) (m
 	return out, rows.Err()
 }
 
-func (s *Service) queryObjects(ctx context.Context, query string, args ...any) ([]map[string]any, error) {
-	rows, err := s.db.QueryContext(ctx, query, args...)
+func queryObjects(ctx context.Context, q archiveQueryer, query string, args ...any) ([]map[string]any, error) {
+	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -509,7 +558,7 @@ const draftColumns = `SELECT id, kind, status, ticket_seq, member_id, request_js
 const draftVersionColumns = `SELECT draft_id, version, request_json, author_member_id,
 	       author_agent_id, at`
 
-func (s *Service) guestDevices(ctx context.Context, links []map[string]any) ([]map[string]any, error) {
+func guestDevices(ctx context.Context, q archiveQueryer, links []map[string]any) ([]map[string]any, error) {
 	ids := make([]any, 0, len(links))
 	for _, link := range links {
 		id, _ := link["id"].(int64)
@@ -518,7 +567,7 @@ func (s *Service) guestDevices(ctx context.Context, links []map[string]any) ([]m
 	if len(ids) == 0 {
 		return []map[string]any{}, nil
 	}
-	return s.queryObjects(ctx, `SELECT id, guest_link_id, token_hash, created_at, entry_method
+	return queryObjects(ctx, q, `SELECT id, guest_link_id, token_hash, created_at, entry_method
 		FROM guest_devices WHERE guest_link_id IN (`+inPlaceholders(len(ids))+`)
 		ORDER BY guest_link_id, id`, ids...)
 }
@@ -536,7 +585,7 @@ func (s *Service) packageAttachments(zw *zip.Writer, files *[]manifestFile, summ
 		filename, _ := row["filename"].(string)
 		ref := fmt.Sprintf("att_%d", id)
 		relative := "attachments/" + ref + "/" + filename
-		path := "tickets/" + summary.Number + "/" + relative
+		path := archiveAttachmentPath(summary.Number, id, filename)
 		src, err := os.Open(filepath.Join(s.attachmentsDir, strconv.FormatInt(id, 10)))
 		if err != nil {
 			return nil, fmt.Errorf("读取附件 %s 失败：%w", ref, err)
@@ -754,7 +803,8 @@ func (s *Service) discardPendingDrafts(ctx context.Context, tickets []TicketSumm
 			return err
 		}
 	}
-	if err := insertGenerateOperation(ctx, tx, operator.Member.ID, generatedAt, numbersOf(tickets), packageName); err != nil {
+	if err := insertArchiveOperation(ctx, tx, "archive_generate", operator.Member.ID,
+		generatedAt, numbersOf(tickets), packageName); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

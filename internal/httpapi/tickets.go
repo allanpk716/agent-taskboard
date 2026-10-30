@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -528,6 +529,18 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, ref strin
 	case errors.As(err, &crossTicket):
 		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
 			"访客链接只能访问它所指向的那张工单")
+	case errors.Is(err, tickets.ErrNotFound):
+		// handler 已经认证过；这里只取身份，不做新的业务判定。
+		if viewer, ok := a.viewerFromRequest(w, r); ok {
+			if tombstone, terr := a.archive.TombstoneForViewer(r.Context(), viewer, ref); terr == nil {
+				writeArchivedTicket(w, tombstone)
+				return
+			} else if !errors.Is(terr, sql.ErrNoRows) {
+				panic(terr)
+			}
+		}
+		WriteError(w, http.StatusNotFound, CodeTicketNotFound, "没有这张工单",
+			"用工单编号（YYYYMMDD-NNN）或全局序号引用；编号按北京时间分配")
 	case errors.Is(err, tickets.ErrTitleRequired):
 		WriteError(w, http.StatusUnprocessableEntity, CodeTitleRequired, "标题不能为空", "")
 	case errors.Is(err, tickets.ErrInvalidKind):

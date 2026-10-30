@@ -15,13 +15,14 @@ import { fmtDateCN } from '../shared/format'
 import { VersionBanner } from '../shared/VersionBanner'
 import { useVersionCheck } from '../shared/versionCheck'
 import { Modal, copyText } from '../member/ui'
-import type { GuestSession, TicketView } from '../shared/types'
+import type { ArchivedTicket, GuestSession, TicketView } from '../shared/types'
 
 type Mode = 'land' | 'talk' | 'fill'
 
 type Phase =
   | { kind: 'loading' }
   | { kind: 'invalid'; code: string }
+  | { kind: 'archived'; tombstone: ArchivedTicket }
   | { kind: 'claim'; info: ClaimInfo }
   | { kind: 'enter'; info: ClaimInfo }
   | { kind: 'ready'; ticket: TicketView }
@@ -88,7 +89,29 @@ function GuestHandoffDialog({
 }
 
 /** 链接失效整页提示（prototype a.html 的 expired 状态）。 */
-function LinkInvalidPage({ code, expiresAt }: { code: string; expiresAt?: string }) {
+function LinkInvalidPage({
+  code,
+  expiresAt,
+  tombstone,
+}: {
+  code: string
+  expiresAt?: string
+  tombstone?: ArchivedTicket
+}) {
+  if (code === 'ticket_archived' && tombstone) {
+    return (
+      <div className="full">
+        <div style={{ fontSize: 42 }}>🗄️</div>
+        <h2>该工单已归档</h2>
+        <p className="muted mono">{tombstone.number}</p>
+        <p className="muted">{tombstone.title}</p>
+        <p className="muted">
+          已于 {fmtDateCN(tombstone.archived_at)} 由 {tombstone.operator_name} 归档。
+        </p>
+        <p className="muted">归档包：{tombstone.package_name}</p>
+      </div>
+    )
+  }
   if (code === 'link_claimed') {
     return (
       <div className="full">
@@ -154,6 +177,13 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
         setMode(showLanding ? 'land' : 'talk')
       }
     } catch (err) {
+      if (err instanceof ApiError && err.status === 410 && err.code === 'ticket_archived') {
+        const tombstone = (err.body as { archived_ticket?: ArchivedTicket } | undefined)?.archived_ticket
+        if (tombstone) {
+          setPhase({ kind: 'archived', tombstone })
+          return
+        }
+      }
       if (err instanceof ApiError && err.status === 401) {
         setPhase({ kind: 'invalid', code: err.code })
         return
@@ -173,6 +203,16 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
         {banner}
         <main className="guest-root">
           <LinkInvalidPage code={phase.code} expiresAt={expiresAt} />
+        </main>
+      </>
+    )
+  }
+  if (phase.kind === 'archived') {
+    return (
+      <>
+        {banner}
+        <main className="guest-root">
+          <LinkInvalidPage code="ticket_archived" tombstone={phase.tombstone} />
         </main>
       </>
     )

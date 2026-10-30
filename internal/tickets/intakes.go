@@ -412,18 +412,10 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 		return SubmissionResult{}, err
 	}
 
-	// 当日序号与全局序号在同一事务内分配（与成员建单同一段逻辑）。
-	var today int
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM tickets WHERE number LIKE ?`, date+"-%").Scan(&today); err != nil {
+	// 当日序号与全局序号在同一事务内分配；墓碑同样计数，编号永不复用。
+	number, err := nextTicketNumber(ctx, tx, date)
+	if err != nil {
 		return SubmissionResult{}, err
-	}
-	daily := today + 1
-	number := date + "-"
-	if daily > 999 {
-		number += fmt.Sprintf("%d", daily)
-	} else {
-		number += fmt.Sprintf("%03d", daily)
 	}
 
 	snapshot := template.Snapshot{Key: tmpl.Key, Version: tmpl.Version, Definition: tmpl.Definition}

@@ -139,7 +139,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	ticketStore.SetSystemNotifier(notificationStore)
 	draftStore := drafts.NewManager(st.DB, c, ticketStore, atts)
 	storageStats := storage.NewService(st.DB, cfg.DataDir, atts.Dir(), backups.TargetDir(), c)
-	archives := archive.NewService(st.DB, cfg.DataDir, atts.Dir(), atts, c)
+	archives := archive.NewService(st.DB, cfg.DataDir, atts.Dir(), backups.TargetDir(), atts, c)
 	draftStore.SetNotifier(notificationStore.DraftNotifier())
 	api := httpapi.NewAPI(ident, ticketStore,
 		templateDict, idem, atts, backups, accessRecords, draftStore, storageStats, archives, cfg, c)

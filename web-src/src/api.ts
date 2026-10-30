@@ -30,6 +30,7 @@ export async function api(path: string, init?: ApiRequest): Promise<any> {
   if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey
   const res = await fetch(path, {
     credentials: 'same-origin',
+    cache: 'no-store',
     ...rest,
     headers,
   })

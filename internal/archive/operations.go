@@ -55,15 +55,15 @@ func (s *Service) ListOperations(ctx context.Context) ([]Operation, error) {
 	return out, rows.Err()
 }
 
-func insertGenerateOperation(ctx context.Context, tx *sql.Tx, operatorMemberID int64, at time.Time,
-	ticketNumbers []string, packageName string) error {
+func insertArchiveOperation(ctx context.Context, tx *sql.Tx, operationType string,
+	operatorMemberID int64, at time.Time, ticketNumbers []string, packageName string) error {
 	numbers, err := json.Marshal(ticketNumbers)
 	if err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO admin_operations(operation_type, operator_member_id, at, ticket_numbers, package_name)
-		VALUES ('archive_generate', ?, ?, ?, ?)`,
-		operatorMemberID, at.Format(time.RFC3339Nano), string(numbers), packageName)
+		VALUES (?, ?, ?, ?, ?)`,
+		operationType, operatorMemberID, at.Format(time.RFC3339Nano), string(numbers), packageName)
 	return err
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -30,6 +31,7 @@ type TicketSummary struct {
 	Title           string
 	ClosedAt        time.Time
 	AttachmentBytes int64
+	ContentSHA256   string
 }
 
 // DraftSummary 是归档前将被丢弃的一份未发出草稿。
@@ -70,16 +72,27 @@ type Service struct {
 	clk            clock.Clock
 	dataDir        string
 	attachmentsDir string
+	backupDir      string
 	atts           *attachments.Manager
 	generateMu     sync.Mutex
 }
 
 // NewService 建归档服务。
-func NewService(db *sql.DB, dataDir, attachmentsDir string, atts *attachments.Manager, c clock.Clock) *Service {
-	return &Service{db: db, clk: c, dataDir: dataDir, attachmentsDir: attachmentsDir, atts: atts}
+func NewService(db *sql.DB, dataDir, attachmentsDir, backupDir string, atts *attachments.Manager, c clock.Clock) *Service {
+	return &Service{db: db, clk: c, dataDir: dataDir, attachmentsDir: attachmentsDir,
+		backupDir: backupDir, atts: atts}
 }
 
 func (s *Service) stageDir() string { return filepath.Join(s.dataDir, "archive-packages") }
+
+// CreateUploadFile 为导入包上传创建暂存区里的临时文件，解析与恢复都从它
+// 流式读取，避免把整个 zip 解到内存。
+func (s *Service) CreateUploadFile() (*os.File, error) {
+	if err := os.MkdirAll(s.stageDir(), 0o755); err != nil {
+		return nil, err
+	}
+	return os.CreateTemp(s.stageDir(), ".import-*.zip.tmp")
+}
 
 // Preview 校验选择并把工单与未发出草稿汇总给管理员确认。
 func (s *Service) Preview(ctx context.Context, ticketNumbers []string, closedMonths int) (Preview, error) {

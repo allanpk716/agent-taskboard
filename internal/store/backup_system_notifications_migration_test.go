@@ -27,8 +27,9 @@ func Test系统通知迁移保留既有数据并强制CHECK(t *testing.T) {
 	names := []string{}
 	for _, e := range entries {
 		if !strings.HasPrefix(e.Name(), "0025_") && !strings.HasPrefix(e.Name(), "0032_") {
-			// 0036/0039 是这个场景之后新增的迁移，留给 Open 按真实顺序补跑。
-			if strings.HasPrefix(e.Name(), "0036_") || strings.HasPrefix(e.Name(), "0039_") {
+			// 0036/0039/0042 是这个场景之后新增的迁移，留给 Open 按真实顺序补跑。
+			if strings.HasPrefix(e.Name(), "0036_") || strings.HasPrefix(e.Name(), "0039_") ||
+				strings.HasPrefix(e.Name(), "0042_") {
 				continue
 			}
 			names = append(names, e.Name())
