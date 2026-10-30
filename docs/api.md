@@ -1136,6 +1136,41 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 - 手动备份走命令行 `taskboard backup`（与定时备份、更新前备份共用同一段代码），
   不提供 HTTP 触发；更新流程的「更新前备份」由 #45 的更新接口触发。
 
+## 存储统计（#234）
+
+| 方法与路径 | 说明 |
+|---|---|
+| `GET /api/v1/admin/storage?closed_months=N` | 三类空间占用与按关闭月份汇总的可归档工单（**仅管理员网页会话**；访客 403 `members_only`，普通成员 403 `admin_required`，Agent token 403 `web_session_required`，匿名 401）。 |
+
+`closed_months` 省略时默认 `3`；必须是 1–120 的整数，否则 `400 invalid_closed_months`。
+它只是查询参数，不入库。响应结构：
+
+```json
+{
+  "database_bytes": 123,
+  "attachments_bytes": 456,
+  "backups_bytes": 789,
+  "closed_months": 3,
+  "cutoff": "2026-07-16T09:00:00+08:00",
+  "archivable": [
+    {"month": "2026-06", "ticket_count": 4, "attachment_bytes": 1024}
+  ]
+}
+```
+
+- `database_bytes` 是 `taskboard.db` + 同名 `-wal` + `-shm` 文件大小之和（不存在的按 0）；
+  `attachments_bytes` / `backups_bytes` 分别是附件目录、实际生效备份目录
+  （配置 `[backup]` 目录，留空时 `data_dir/backups`）下所有普通文件的递归之和。
+  备份目录不存在或不可读时 `backups_bytes` 为 0，不让接口报错。附件目录与备份目录
+  互相嵌套时各计各的子树，不重复计入。
+- `cutoff` = 服务当前时间（可注入时钟，北京时间）减 `closed_months` 个月。
+- `archivable` 只统计**当前**状态为已关闭、且最近一次关闭时间 `<= cutoff` 的工单，
+  按关闭时间的北京月份（`YYYY-MM`）分组、新月份在前；没有可归档工单时是空数组 `[]`。
+  重新开启后又关闭的以最近一次 `closed` 事件为准；当前未关闭的老工单不计入。
+- `attachment_bytes` 是该月各工单附件（含待用附件）按数据库记录大小的合计；
+  附件按 id 落盘，同一存储文件被多处引用只计一次。
+- 本接口只做统计，不移动、不删除任何数据；选中工单、生成归档包与移除见后续 #235/#236。
+
 ## 更新（#45）
 
 只由管理员手动触发；服务只提示有新版本，绝不自动安装。三个入口（管理页按钮、

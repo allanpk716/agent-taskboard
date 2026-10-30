@@ -180,6 +180,9 @@ const (
 	CodeInvalidBefore          = "invalid_before"
 	CodeInvalidLastEventID     = "invalid_last_event_id"
 
+	// #234：管理页存储统计。
+	CodeInvalidClosedMonths = "invalid_closed_months" // closed_months 不是 1–120 的整数（400）
+
 	// #80：桌面客户端凭证。
 	CodeInvalidClientPort        = "invalid_client_port"
 	CodeInvalidClientConnect     = "invalid_client_connect"

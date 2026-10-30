@@ -25,6 +25,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/labels"
 	"github.com/allanpk716/agent-taskboard/internal/notifications"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
+	"github.com/allanpk716/agent-taskboard/internal/storage"
 	"github.com/allanpk716/agent-taskboard/internal/store"
 	"github.com/allanpk716/agent-taskboard/internal/templates"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
@@ -135,9 +136,10 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	ticketStore.SetNotifier(notificationStore)
 	ticketStore.SetSystemNotifier(notificationStore)
 	draftStore := drafts.NewManager(st.DB, c, ticketStore, atts)
+	storageStats := storage.NewService(st.DB, cfg.DataDir, atts.Dir(), backups.TargetDir(), c)
 	draftStore.SetNotifier(notificationStore.DraftNotifier())
 	api := httpapi.NewAPI(ident, ticketStore,
-		templateDict, idem, atts, backups, accessRecords, draftStore, cfg, c)
+		templateDict, idem, atts, backups, accessRecords, draftStore, storageStats, cfg, c)
 	api.SetCaptchaSource(captchaSrc)
 	api.SetLoginRateLimit(loginRateLimit())
 	api.SetNotifications(notificationStore)
