@@ -22,6 +22,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/version"
 )
@@ -94,6 +95,10 @@ type ticketExport struct {
 // Generate 生成归档包：先完整写出 zip 并原子 rename，成功后才在一个事务里
 // 丢弃未发出草稿，保证包生成失败时平台数据不变。
 func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMonths int, operator identity.Viewer) (PackageInfo, error) {
+	if !s.generateMu.TryLock() {
+		return PackageInfo{}, ErrGenerateInProgress
+	}
+	defer s.generateMu.Unlock()
 	preview, err := s.Preview(ctx, ticketNumbers, closedMonths)
 	if err != nil {
 		return PackageInfo{}, err
@@ -199,7 +204,8 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 	}
 	tempName = ""
 
-	if err := s.discardPendingDrafts(ctx, preview.Tickets); err != nil {
+	if err := s.discardPendingDrafts(ctx, preview.Tickets, preview.Drafts, closedMonths,
+		operator, name, now); err != nil {
 		// 包已完整写出，但「生成」这个操作还没有成功：移除暂存包，让管理员
 		// 故障恢复后从原数据重试，避免列表里出现未完成丢弃动作的包。
 		_ = os.Remove(final)
@@ -704,54 +710,164 @@ func escapeMarkdownPath(path string) string {
 	return strings.Join(parts, "/")
 }
 
-func (s *Service) discardPendingDrafts(ctx context.Context, tickets []TicketSummary) error {
+func (s *Service) discardPendingDrafts(ctx context.Context, tickets []TicketSummary, drafts []DraftSummary,
+	closedMonths int, operator identity.Viewer, packageName string, generatedAt time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	placeholders := make([]string, 0, len(tickets))
-	args := make([]any, 0, len(tickets))
-	for _, t := range tickets {
-		placeholders = append(placeholders, "?")
-		args = append(args, t.Seq)
-	}
-	in := strings.Join(placeholders, ",")
-	rows, err := tx.QueryContext(ctx, `
-		SELECT a.id FROM attachments a
-		JOIN drafts d ON d.id = a.draft_id
-		WHERE d.status = 'pending' AND d.ticket_seq IN (`+in+`)`, args...)
-	if err != nil {
+	if err := revalidateSelectionTx(ctx, tx, tickets, closedMonths, s.clk.Now()); err != nil {
 		return err
 	}
+	if err := revalidateDraftsTx(ctx, tx, drafts); err != nil {
+		return err
+	}
+	draftIDs := make([]any, 0, len(drafts))
+	for _, draft := range drafts {
+		draftIDs = append(draftIDs, draft.seq)
+	}
 	fileIDs := []int64{}
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+	if len(draftIDs) > 0 {
+		rows, err := tx.QueryContext(ctx, `
+			SELECT a.id FROM attachments a
+			WHERE a.draft_id IN (`+inPlaceholders(len(draftIDs))+`)`, draftIDs...)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			fileIDs = append(fileIDs, id)
+		}
+		if err := rows.Err(); err != nil {
 			rows.Close()
 			return err
 		}
-		fileIDs = append(fileIDs, id)
-	}
-	if err := rows.Err(); err != nil {
 		rows.Close()
-		return err
 	}
-	rows.Close()
-	if _, err := tx.ExecContext(ctx, `
-		DELETE FROM attachments WHERE draft_id IN (
-			SELECT id FROM drafts WHERE status = 'pending' AND ticket_seq IN (`+in+`)
-		)`, args...); err != nil {
-		return err
+	if len(draftIDs) > 0 {
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM attachments WHERE draft_id IN (`+inPlaceholders(len(draftIDs))+`)`, draftIDs...); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM drafts WHERE id IN (`+inPlaceholders(len(draftIDs))+`)
+			AND status = 'pending'`, draftIDs...); err != nil {
+			return err
+		}
 	}
-	if _, err := tx.ExecContext(ctx, `
-		DELETE FROM drafts WHERE status = 'pending' AND ticket_seq IN (`+in+`)`, args...); err != nil {
+	if err := insertGenerateOperation(ctx, tx, operator.Member.ID, generatedAt, numbersOf(tickets), packageName); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 	s.atts.RemoveFiles(fileIDs)
+	return nil
+}
+
+func inPlaceholders(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
+}
+
+func revalidateSelectionTx(ctx context.Context, tx *sql.Tx, tickets []TicketSummary,
+	closedMonths int, now time.Time) error {
+	args := make([]any, 0, len(tickets))
+	for _, ticket := range tickets {
+		args = append(args, ticket.Seq)
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT t.seq, t.status, (
+			SELECT e.at FROM timeline_events e
+			WHERE e.ticket_seq = t.seq AND e.type = 'closed'
+			ORDER BY e.seq DESC LIMIT 1
+		)
+		FROM tickets t WHERE t.seq IN (`+inPlaceholders(len(tickets))+`)`, args...)
+	if err != nil {
+		return err
+	}
+	statuses := map[int64]string{}
+	closedAts := map[int64]sql.NullString{}
+	for rows.Next() {
+		var seq int64
+		var status string
+		var closedAt sql.NullString
+		if err := rows.Scan(&seq, &status, &closedAt); err != nil {
+			rows.Close()
+			return err
+		}
+		statuses[seq] = status
+		closedAts[seq] = closedAt
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	cutoff := now.AddDate(0, -closedMonths, 0)
+	for _, ticket := range tickets {
+		if statuses[ticket.Seq] != "closed" || !closedAts[ticket.Seq].Valid {
+			return fmt.Errorf("%w：%s", ErrNotArchivable, ticket.Number)
+		}
+		at, err := time.ParseInLocation(time.RFC3339Nano, closedAts[ticket.Seq].String, clock.Beijing)
+		if err != nil || at.After(cutoff) {
+			return fmt.Errorf("%w：%s", ErrNotArchivable, ticket.Number)
+		}
+	}
+	return nil
+}
+
+func revalidateDraftsTx(ctx context.Context, tx *sql.Tx, drafts []DraftSummary) error {
+	if len(drafts) == 0 {
+		return nil
+	}
+	args := make([]any, 0, len(drafts))
+	for _, draft := range drafts {
+		args = append(args, draft.seq)
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, status, ticket_seq, version, updated_at FROM drafts
+		WHERE id IN (`+inPlaceholders(len(drafts))+`)`, args...)
+	if err != nil {
+		return err
+	}
+	type currentDraft struct {
+		status  string
+		ticket  int64
+		version int64
+		updated string
+	}
+	current := map[int64]currentDraft{}
+	for rows.Next() {
+		var id int64
+		var draft currentDraft
+		if err := rows.Scan(&id, &draft.status, &draft.ticket, &draft.version, &draft.updated); err != nil {
+			rows.Close()
+			return err
+		}
+		current[id] = draft
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, draft := range drafts {
+		got, ok := current[draft.seq]
+		if !ok || got.status != "pending" || got.ticket == 0 {
+			return fmt.Errorf("待丢弃草稿 %s 已变化", draft.ID)
+		}
+		if got.ticket != draft.ticketSeq || got.version != draft.Version || got.updated != draft.UpdatedAt {
+			return fmt.Errorf("待丢弃草稿 %s 已变化", draft.ID)
+		}
+	}
 	return nil
 }
 

@@ -126,6 +126,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/admin/archive/preview", a.handleAdminArchivePreview)
 	mux.HandleFunc("/api/v1/admin/archive/packages", a.handleAdminArchivePackages)
 	mux.HandleFunc("/api/v1/admin/archive/packages/", a.handleAdminArchivePackages)
+	mux.HandleFunc("/api/v1/admin/operations", a.handleAdminOperations)
 	mux.HandleFunc("/api/v1/admin/login-locks", a.handleLoginLocks)
 	mux.HandleFunc("/api/v1/admin/login-locks/unlock", a.handleLoginUnlock)
 	mux.HandleFunc("/api/v1/admin/update", a.handleAdminUpdate)

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
@@ -18,6 +19,9 @@ import (
 
 // ErrNotArchivable 表示选择里混入不存在、未关闭或关闭未满 N 个月的工单。
 var ErrNotArchivable = errors.New("ticket not archivable")
+
+// ErrGenerateInProgress 表示同一个服务进程里已有一次归档生成正在执行。
+var ErrGenerateInProgress = errors.New("archive generation in progress")
 
 // TicketSummary 是预览与归档清单里的一张可归档工单。
 type TicketSummary struct {
@@ -39,6 +43,7 @@ type DraftSummary struct {
 	UpdatedAt     string   `json:"updated_at"`
 	AttachmentIDs []string `json:"attachment_ids"`
 	seq           int64
+	ticketSeq     int64
 }
 
 // Preview 是一次归档选择的汇总。
@@ -66,6 +71,7 @@ type Service struct {
 	dataDir        string
 	attachmentsDir string
 	atts           *attachments.Manager
+	generateMu     sync.Mutex
 }
 
 // NewService 建归档服务。
@@ -199,7 +205,7 @@ func (s *Service) pendingDrafts(ctx context.Context, tickets []TicketSummary) ([
 		args = append(args, t.Seq)
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT d.id, d.kind, d.version, d.updated_at, d.request_json, t.number, m.name,
+		SELECT d.id, d.kind, d.version, d.updated_at, d.request_json, t.seq, t.number, m.name,
 		       COALESCE((
 		           SELECT a.name FROM draft_versions v
 		           LEFT JOIN agent_tokens a ON a.id = v.author_agent_id
@@ -219,7 +225,7 @@ func (s *Service) pendingDrafts(ctx context.Context, tickets []TicketSummary) ([
 		var d DraftSummary
 		var id int64
 		var request string
-		if err := rows.Scan(&id, &d.Kind, &d.Version, &d.UpdatedAt, &request, &d.TicketNumber,
+		if err := rows.Scan(&id, &d.Kind, &d.Version, &d.UpdatedAt, &request, &d.ticketSeq, &d.TicketNumber,
 			&d.MemberName, &d.AgentName); err != nil {
 			return nil, err
 		}

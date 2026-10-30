@@ -90,6 +90,11 @@ func (a *API) handleAdminArchivePackages(w http.ResponseWriter, r *http.Request)
 	}
 	months, _ := req.months()
 	pkg, err := a.archive.Generate(r.Context(), req.TicketNumbers, months, viewer)
+	if errors.Is(err, archive.ErrGenerateInProgress) {
+		WriteError(w, http.StatusConflict, CodeArchiveGenerateConflict,
+			"已有归档包正在生成", "请等当前生成完成后重试")
+		return
+	}
 	if errors.Is(err, archive.ErrNotArchivable) {
 		WriteError(w, http.StatusBadRequest, CodeTicketNotArchivable,
 			"选择里有不存在、未关闭或关闭未满 N 个月的工单", "请从存储统计列出的可归档月份中选择")
@@ -128,6 +133,29 @@ func (a *API) downloadArchivePackage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(name))
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.Copy(w, file)
+}
+
+// handleAdminOperations 处理 GET /api/v1/admin/operations。
+func (a *API) handleAdminOperations(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "管理操作记录用 GET", "")
+		return
+	}
+	if _, ok := a.adminWebSessionFromRequest(w, r, "读取管理操作记录只对管理员开放"); !ok {
+		return
+	}
+	operations, err := a.archive.ListOperations(r.Context())
+	if err != nil {
+		panic(err)
+	}
+	views := make([]adminOperationView, 0, len(operations))
+	for _, op := range operations {
+		views = append(views, newAdminOperationView(op))
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Count      int                  `json:"count"`
+		Operations []adminOperationView `json:"operations"`
+	}{Count: len(views), Operations: views})
 }
 
 func (a *API) decodeArchiveSelection(w http.ResponseWriter, r *http.Request) (archiveSelectionRequest, bool) {
@@ -193,4 +221,23 @@ func newArchivePackageView(pkg archive.PackageInfo) archivePackageView {
 		ExpiresAt: pkg.ExpiresAt.Format(time.RFC3339), TicketNumbers: pkg.TicketNumbers,
 		DownloadURL:  "/api/v1/admin/archive/packages/" + url.PathEscape(pkg.Name) + "/download",
 		OperatorName: pkg.OperatorName}
+}
+
+type adminOperationView struct {
+	ID               int64    `json:"id"`
+	OperationType    string   `json:"operation_type"`
+	OperatorMemberID int64    `json:"operator_member_id"`
+	OperatorName     string   `json:"operator_name"`
+	At               string   `json:"at"`
+	TicketNumbers    []string `json:"ticket_numbers"`
+	PackageName      string   `json:"package_name"`
+}
+
+func newAdminOperationView(op archive.Operation) adminOperationView {
+	if op.TicketNumbers == nil {
+		op.TicketNumbers = []string{}
+	}
+	return adminOperationView{ID: op.ID, OperationType: op.OperationType,
+		OperatorMemberID: op.OperatorMemberID, OperatorName: op.OperatorName, At: op.At.Format(time.RFC3339),
+		TicketNumbers: op.TicketNumbers, PackageName: op.PackageName}
 }

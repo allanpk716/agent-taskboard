@@ -6,12 +6,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -19,7 +21,9 @@ import (
 	"unicode"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/store"
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
+	_ "modernc.org/sqlite"
 )
 
 type archivePreviewBody struct {
@@ -89,6 +93,21 @@ type archiveStructuredTicketBody struct {
 	GuestLinks    []map[string]any `json:"guest_links"`
 	GuestDevices  []map[string]any `json:"guest_devices"`
 	TicketReads   []map[string]any `json:"ticket_reads"`
+}
+
+type adminOperationBody struct {
+	ID               int64    `json:"id"`
+	OperationType    string   `json:"operation_type"`
+	OperatorMemberID int64    `json:"operator_member_id"`
+	OperatorName     string   `json:"operator_name"`
+	At               string   `json:"at"`
+	TicketNumbers    []string `json:"ticket_numbers"`
+	PackageName      string   `json:"package_name"`
+}
+
+type adminOperationsBody struct {
+	Count      int                  `json:"count"`
+	Operations []adminOperationBody `json:"operations"`
 }
 
 func downloadArchiveFiles(t testing.TB, s *tbtest.Server, c *http.Client, url string) map[string][]byte {
@@ -559,6 +578,294 @@ func Test暂存归档包七天到期清除(t *testing.T) {
 	tbtest.DecodeJSON(t, res, &got)
 	if got.Error.Code != "archive_not_found" {
 		t.Fatalf("到期后下载错误码 = %q, 想 archive_not_found", got.Error.Code)
+	}
+}
+
+func Test生成归档包成功写入管理操作记录(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	s.CreateMember("王工", "member-pass")
+	admin := s.Login("陈工", "secret-pass")
+	member := s.Login("王工", "member-pass")
+
+	setStorageClock(t, s, 2026, time.June, 2)
+	number := mustCreateTicket(t, s, admin, "操作留痕")
+	if res := closeTicket(t, s, admin, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d, 想 200", res.StatusCode)
+	}
+	s.Clock().Set(time.Date(2026, time.October, 30, 10, 0, 0, 0, clock.Beijing))
+	admin = s.Login("陈工", "secret-pass")
+	member = s.Login("王工", "member-pass")
+	var created archivePackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/archive/packages",
+		map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, &created); res.StatusCode != http.StatusCreated {
+		t.Fatalf("生成归档包状态码 = %d, 想 201", res.StatusCode)
+	}
+
+	var operations adminOperationsBody
+	res := s.Do(t, admin, http.MethodGet, "/api/v1/admin/operations", nil, &operations)
+	if res.StatusCode != http.StatusOK || operations.Count != 1 || len(operations.Operations) != 1 {
+		t.Fatalf("读取管理操作记录 = %d/%+v, 想 200 且 1 条", res.StatusCode, operations)
+	}
+	op := operations.Operations[0]
+	if op.OperationType != "archive_generate" || op.OperatorMemberID == 0 || op.OperatorName != "陈工" ||
+		op.At == "" || !reflect.DeepEqual(op.TicketNumbers, []string{number}) || op.PackageName != created.Name {
+		t.Fatalf("生成归档包操作记录 = %+v", op)
+	}
+
+	var denied errorBody
+	res = s.Do(t, member, http.MethodGet, "/api/v1/admin/operations", nil, &denied)
+	if res.StatusCode != http.StatusForbidden || denied.Error.Code != "admin_required" {
+		t.Fatalf("普通成员读取操作记录 = %d/%s, 想 403 admin_required", res.StatusCode, denied.Error.Code)
+	}
+}
+
+func Test生成归档包失败不写入管理操作记录(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+
+	setStorageClock(t, s, 2026, time.June, 2)
+	number := mustCreateTicket(t, s, admin, "失败不留痕")
+	if res := closeTicket(t, s, admin, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d, 想 200", res.StatusCode)
+	}
+	s.Clock().Set(time.Date(2026, time.October, 30, 10, 0, 0, 0, clock.Beijing))
+	admin = s.Login("陈工", "secret-pass")
+	stage := filepath.Join(s.DataDir(), "archive-packages")
+	if err := os.MkdirAll(stage, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(stage, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(stage, 0o700) })
+	failed := s.Do(t, admin, http.MethodPost, "/api/v1/admin/archive/packages",
+		map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, nil)
+	if failed.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("生成失败状态码 = %d, 想 500", failed.StatusCode)
+	}
+	if err := os.Chmod(stage, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var operations adminOperationsBody
+	if res := s.Do(t, admin, http.MethodGet, "/api/v1/admin/operations", nil, &operations); res.StatusCode != http.StatusOK ||
+		operations.Count != 0 || operations.Operations == nil {
+		t.Fatalf("失败后的管理操作记录 = %d/%+v, 想 200 且空数组", res.StatusCode, operations)
+	}
+}
+
+func waitForNewArchiveTemp(t testing.TB, stage string, before map[string]bool) string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		entries, err := os.ReadDir(stage)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			name := entry.Name()
+			if !before[name] && strings.HasPrefix(name, ".generating-") && strings.HasSuffix(name, ".tmp") {
+				return name
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("等待归档包生成中的临时文件超时")
+	return ""
+}
+
+func Test生成归档包只丢弃快照中的草稿且丢弃前复核工单(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	s.CreateMember("王工", "member-pass")
+	admin := s.Login("陈工", "secret-pass")
+	wang := s.Login("王工", "member-pass")
+
+	setStorageClock(t, s, 2026, time.June, 2)
+	res := createTicket(t, s, admin, createTicketBody{
+		Title:   "生成期间数据变化",
+		BriefMD: "见 [大附件](att:att_1)。",
+		Labels:  []string{"机型:UD-2300"},
+	})
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("建单状态码 = %d, 想 201", res.StatusCode)
+	}
+	var ticket createTicketResponse
+	tbtest.DecodeJSON(t, res, &ticket)
+	number := ticket.Number
+	if res := addCollaborator(t, s, admin, number, "王工"); res.StatusCode != http.StatusCreated {
+		t.Fatalf("加入协作者状态码 = %d, 想 201", res.StatusCode)
+	}
+	_, snapshotAgent := issueRequiredAgent(t, s, admin, "快照草稿")
+	if res := s.Do(t, snapshotAgent, http.MethodPost, "/api/v1/tickets/"+number+"/replies",
+		map[string]any{"body_md": "快照里的草稿"}, nil); res.StatusCode != http.StatusAccepted {
+		t.Fatalf("保存快照草稿状态码 = %d, 想 202", res.StatusCode)
+	}
+	const largeSize = 128 << 20
+	if _, err := s.Store().DB.Exec(`INSERT INTO attachments(
+		id, ticket_seq, filename, size, state, attached_to, uploader_member_id, uploaded_at, claimed_at)
+		VALUES (1, ?, '大附件.bin', ?, 'attached', '说明',
+		        (SELECT id FROM members WHERE username = '陈工'), '2026-06-02T09:00:00+08:00',
+		        '2026-06-02T09:00:01+08:00')`, ticket.Seq, largeSize); err != nil {
+		t.Fatalf("造附件元数据失败：%v", err)
+	}
+	large := filepath.Join(s.DataDir(), "attachments", "1")
+	if err := os.WriteFile(large, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(large, largeSize); err != nil {
+		t.Fatal(err)
+	}
+	if res := closeTicket(t, s, admin, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d, 想 200", res.StatusCode)
+	}
+	s.Clock().Set(time.Date(2026, time.October, 30, 10, 0, 0, 0, clock.Beijing))
+	admin = s.Login("陈工", "secret-pass")
+	wang = s.Login("王工", "member-pass")
+	stage := filepath.Join(s.DataDir(), "archive-packages")
+	entriesBefore := map[string]bool{}
+	for _, name := range archiveStageNames(t, stage) {
+		entriesBefore[name] = true
+	}
+
+	first := make(chan *http.Response, 1)
+	go func() {
+		first <- s.Do(t, admin, http.MethodPost, "/api/v1/admin/archive/packages",
+			map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, nil)
+	}()
+	waitForNewArchiveTemp(t, stage, entriesBefore)
+	if _, err := s.Store().DB.Exec(`INSERT INTO drafts(
+		kind, status, ticket_seq, member_id, request_json, version, base_timeline_seq,
+		member_edited, created_at, updated_at)
+		VALUES ('reply', 'pending', ?, (SELECT id FROM members WHERE username = '王工'),
+		        '{"body_md":"生成期间新增的草稿","attachment_ids":[]}', 1, 0, 0,
+		        '2026-10-30T10:00:01+08:00', '2026-10-30T10:00:01+08:00')`, ticket.Seq); err != nil {
+		t.Fatalf("造生成期间的新草稿失败：%v", err)
+	}
+	firstRes := <-first
+	if firstRes.StatusCode != http.StatusCreated {
+		t.Fatalf("第一次生成状态码 = %d, 想 201", firstRes.StatusCode)
+	}
+	var adminAfter ticketResponseBody
+	s.Do(t, admin, http.MethodGet, "/api/v1/tickets/"+number, nil, &adminAfter)
+	if adminAfter.MyDraft != nil {
+		t.Fatalf("快照草稿未被丢弃：%+v", adminAfter.MyDraft)
+	}
+	var wangAfter ticketResponseBody
+	s.Do(t, wang, http.MethodGet, "/api/v1/tickets/"+number, nil, &wangAfter)
+	if wangAfter.MyDraft == nil {
+		t.Fatal("生成期间新增的草稿被误丢弃")
+	}
+
+	entriesBefore = map[string]bool{}
+	for _, name := range archiveStageNames(t, stage) {
+		entriesBefore[name] = true
+	}
+	second := make(chan *http.Response, 1)
+	go func() {
+		second <- s.Do(t, admin, http.MethodPost, "/api/v1/admin/archive/packages",
+			map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, nil)
+	}()
+	waitForNewArchiveTemp(t, stage, entriesBefore)
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/tickets/"+number+"/reopen", nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("重开工单状态码 = %d, 想 200", res.StatusCode)
+	}
+	secondRes := <-second
+	if secondRes.StatusCode != http.StatusBadRequest {
+		t.Fatalf("丢弃前复核失败状态码 = %d, 想 400", secondRes.StatusCode)
+	}
+	var conflict errorBody
+	tbtest.DecodeJSON(t, secondRes, &conflict)
+	if conflict.Error.Code != "ticket_not_archivable" {
+		t.Fatalf("丢弃前复核错误码 = %q, 想 ticket_not_archivable", conflict.Error.Code)
+	}
+	var after ticketResponseBody
+	s.Do(t, wang, http.MethodGet, "/api/v1/tickets/"+number, nil, &after)
+	if after.Status != "open" || after.MyDraft == nil {
+		t.Fatalf("复核失败后工单/草稿被改动：status=%s draft=%+v", after.Status, after.MyDraft)
+	}
+	var packages archivePackageListBody
+	if res := s.Do(t, admin, http.MethodGet, "/api/v1/admin/archive/packages", nil, &packages); res.StatusCode != http.StatusOK ||
+		packages.Count != 1 {
+		t.Fatalf("复核失败后的暂存包列表 = %d/%d, 想 200 且只保留第一次包", res.StatusCode, packages.Count)
+	}
+}
+
+func archiveStageNames(t testing.TB, stage string) []string {
+	t.Helper()
+	if err := os.MkdirAll(stage, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, entry.Name())
+	}
+	return out
+}
+
+func Test生成归档包进行中第二个请求返回冲突(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+
+	setStorageClock(t, s, 2026, time.June, 2)
+	number := mustCreateTicket(t, s, admin, "并发生成")
+	if res := closeTicket(t, s, admin, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d, 想 200", res.StatusCode)
+	}
+	s.Clock().Set(time.Date(2026, time.October, 30, 10, 0, 0, 0, clock.Beijing))
+	admin = s.Login("陈工", "secret-pass")
+
+	lock, err := sql.Open("sqlite", store.FileURI(filepath.Join(s.DataDir(), "taskboard.db"))+"?_pragma=busy_timeout(10000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if _, err := lock.Exec(`PRAGMA busy_timeout = 60000`); err != nil {
+		t.Fatal(err)
+	}
+	lockTx, err := lock.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lockTx.Rollback() }()
+	if _, err := lockTx.Exec(`UPDATE schema_migrations SET applied_at = applied_at WHERE version = 1`); err != nil {
+		t.Fatal(err)
+	}
+	stage := filepath.Join(s.DataDir(), "archive-packages")
+	first := make(chan *http.Response, 1)
+	go func() {
+		first <- s.Do(t, admin, http.MethodPost, "/api/v1/admin/archive/packages",
+			map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, nil)
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(archiveStageNames(t, stage)) > 0 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	second := s.Do(t, admin, http.MethodPost, "/api/v1/admin/archive/packages",
+		map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, nil)
+	if second.StatusCode != http.StatusConflict {
+		t.Fatalf("并发生成状态码 = %d, 想 409", second.StatusCode)
+	}
+	var conflict errorBody
+	tbtest.DecodeJSON(t, second, &conflict)
+	if conflict.Error.Code != "archive_generate_in_progress" {
+		t.Fatalf("并发生成错误码 = %q, 想 archive_generate_in_progress", conflict.Error.Code)
+	}
+	if err := lockTx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	firstRes := <-first
+	if firstRes.StatusCode != http.StatusCreated {
+		t.Fatalf("第一个生成请求状态码 = %d, 想 201", firstRes.StatusCode)
 	}
 }
 

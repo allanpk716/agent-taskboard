@@ -1240,6 +1240,10 @@ Agent token 403 `web_session_required`，匿名 401。选择里的每张工单�
 - 生成成功会丢弃所选工单上未发出的草稿（含其占用附件），不改说明、回复、时间线、
   访问记录、标签、协作者和访客链接，也不移除工单。包先完整写出，草稿删除在数据库
   事务里提交；生成失败时平台数据保持不变，可恢复故障后重试。
+- 草稿丢弃事务会先重新校验选择仍可归档，并只删除预览快照里的草稿 ID；生成期间新增
+  的草稿保留。若复核失败，已写出的包会删除，平台数据不变。
+- 同一服务进程内同一时刻只执行一次生成；已有生成未结束时再次 `POST` 返回
+  `409 archive_generate_in_progress`。
 - 预览的 `drafts[]` 只包含草稿元数据，不返回未发出草稿正文；草稿正文仍只有草稿作者
   能查看。预览与生成响应的 `attachment_bytes` 是将进入包的附件大小，不计入会被丢弃的
   未发出草稿独占附件；存储统计接口仍按数据库中的全部附件计。
@@ -1256,6 +1260,35 @@ Agent token 403 `web_session_required`，匿名 401。选择里的每张工单�
   的安全规格保管和传输。
 - manifest 同时是生成操作留痕：操作人、时间、工单编号列表和包名都在包内；暂存列表从
   manifest 读出这些元数据。
+
+## 管理操作记录（#235）
+
+只接受**管理员网页会话**；普通成员 403 `admin_required`，Agent token 403
+`web_session_required`，匿名 401。
+
+| 方法与路径 | 说明 |
+|---|---|
+| `GET /api/v1/admin/operations` | 按时间倒序读取管理操作记录。 |
+
+当前记录类型只有 `archive_generate`；#236/#237 会继续加入 `archive_remove` /
+`archive_import`。响应结构：
+
+```json
+{
+  "count": 1,
+  "operations": [
+    {
+      "id": 1,
+      "operation_type": "archive_generate",
+      "operator_member_id": 1,
+      "operator_name": "陈工",
+      "at": "2026-10-30T10:00:00+08:00",
+      "ticket_numbers": ["20260601-001"],
+      "package_name": "archive-1790000000000000000-a1b2c3d4e5.zip"
+    }
+  ]
+}
+```
 
 ## 更新（#45）
 
