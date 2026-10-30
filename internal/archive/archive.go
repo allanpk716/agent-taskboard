@@ -100,7 +100,6 @@ func (s *Service) selection(ctx context.Context, ticketNumbers []string, closedM
 		return nil, fmt.Errorf("%w：没有选择工单", ErrNotArchivable)
 	}
 	seen := make(map[string]bool, len(ticketNumbers))
-	placeholders := make([]string, 0, len(ticketNumbers))
 	args := make([]any, 0, len(ticketNumbers))
 	for _, number := range ticketNumbers {
 		number = strings.TrimSpace(number)
@@ -108,7 +107,6 @@ func (s *Service) selection(ctx context.Context, ticketNumbers []string, closedM
 			return nil, fmt.Errorf("%w：编号为空或重复", ErrNotArchivable)
 		}
 		seen[number] = true
-		placeholders = append(placeholders, "?")
 		args = append(args, number)
 	}
 	rows, err := s.db.QueryContext(ctx, `
@@ -118,7 +116,7 @@ func (s *Service) selection(ctx context.Context, ticketNumbers []string, closedM
 			ORDER BY e.seq DESC LIMIT 1
 		)
 		FROM tickets t
-		WHERE t.status = 'closed' AND t.number IN (`+strings.Join(placeholders, ",")+`)`, args...)
+		WHERE t.status = 'closed' AND t.number IN (`+inPlaceholders(len(args))+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -166,16 +164,14 @@ func (s *Service) selection(ctx context.Context, ticketNumbers []string, closedM
 }
 
 func (s *Service) attachmentBytes(ctx context.Context, tickets []TicketSummary) (map[int64]int64, error) {
-	placeholders := make([]string, 0, len(tickets))
 	args := make([]any, 0, len(tickets))
 	for _, t := range tickets {
-		placeholders = append(placeholders, "?")
 		args = append(args, t.Seq)
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT a.ticket_seq, COALESCE(SUM(a.size), 0)
 		FROM attachments a
-		WHERE a.ticket_seq IN (`+strings.Join(placeholders, ",")+`) AND a.draft_id IS NULL
+		WHERE a.ticket_seq IN (`+inPlaceholders(len(args))+`) AND a.draft_id IS NULL
 		GROUP BY a.ticket_seq`, args...)
 	if err != nil {
 		return nil, err
@@ -193,15 +189,12 @@ func (s *Service) attachmentBytes(ctx context.Context, tickets []TicketSummary) 
 }
 
 type draftRequest struct {
-	BodyMD        string   `json:"body_md"`
 	AttachmentIDs []string `json:"attachment_ids"`
 }
 
 func (s *Service) pendingDrafts(ctx context.Context, tickets []TicketSummary) ([]DraftSummary, error) {
-	placeholders := make([]string, 0, len(tickets))
 	args := make([]any, 0, len(tickets))
 	for _, t := range tickets {
-		placeholders = append(placeholders, "?")
 		args = append(args, t.Seq)
 	}
 	rows, err := s.db.QueryContext(ctx, `
@@ -214,7 +207,7 @@ func (s *Service) pendingDrafts(ctx context.Context, tickets []TicketSummary) ([
 		FROM drafts d
 		JOIN tickets t ON t.seq = d.ticket_seq
 		JOIN members m ON m.id = d.member_id
-		WHERE d.status = 'pending' AND d.ticket_seq IN (`+strings.Join(placeholders, ",")+`)
+		WHERE d.status = 'pending' AND d.ticket_seq IN (`+inPlaceholders(len(args))+`)
 		ORDER BY d.ticket_seq, d.id`, args...)
 	if err != nil {
 		return nil, err

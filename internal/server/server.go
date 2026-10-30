@@ -218,7 +218,7 @@ func (s *Server) runArchiveJanitor(done <-chan struct{}) {
 		case <-done:
 			return
 		case <-ticker.C:
-			_ = s.Archives.CleanupExpired(context.Background())
+			_ = s.Archives.CleanupExpired()
 		}
 	}
 }

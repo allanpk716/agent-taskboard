@@ -19,9 +19,9 @@ type archiveSelectionRequest struct {
 
 func (r archiveSelectionRequest) months() (int, bool) {
 	if r.ClosedMonths == nil {
-		return 3, true
+		return defaultClosedMonths, true
 	}
-	return *r.ClosedMonths, *r.ClosedMonths >= 1 && *r.ClosedMonths <= 120
+	return *r.ClosedMonths, validClosedMonths(*r.ClosedMonths)
 }
 
 // handleAdminArchivePreview 处理 POST /api/v1/admin/archive/preview。
@@ -39,9 +39,7 @@ func (a *API) handleAdminArchivePreview(w http.ResponseWriter, r *http.Request) 
 	}
 	months, _ := req.months()
 	preview, err := a.archive.Preview(r.Context(), req.TicketNumbers, months)
-	if errors.Is(err, archive.ErrNotArchivable) {
-		WriteError(w, http.StatusBadRequest, CodeTicketNotArchivable,
-			"选择里有不存在、未关闭或关闭未满 N 个月的工单", "请从存储统计列出的可归档月份中选择")
+	if writeNotArchivableError(w, err) {
 		return
 	}
 	if err != nil {
@@ -95,9 +93,7 @@ func (a *API) handleAdminArchivePackages(w http.ResponseWriter, r *http.Request)
 			"已有归档包正在生成", "请等当前生成完成后重试")
 		return
 	}
-	if errors.Is(err, archive.ErrNotArchivable) {
-		WriteError(w, http.StatusBadRequest, CodeTicketNotArchivable,
-			"选择里有不存在、未关闭或关闭未满 N 个月的工单", "请从存储统计列出的可归档月份中选择")
+	if writeNotArchivableError(w, err) {
 		return
 	}
 	if err != nil {
@@ -135,6 +131,15 @@ func (a *API) downloadArchivePackage(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, file)
 }
 
+func writeNotArchivableError(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, archive.ErrNotArchivable) {
+		return false
+	}
+	WriteError(w, http.StatusBadRequest, CodeTicketNotArchivable,
+		"选择里有不存在、未关闭或关闭未满 N 个月的工单", "请从存储统计列出的可归档月份中选择")
+	return true
+}
+
 // handleAdminOperations 处理 GET /api/v1/admin/operations。
 func (a *API) handleAdminOperations(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -165,7 +170,7 @@ func (a *API) decodeArchiveSelection(w http.ResponseWriter, r *http.Request) (ar
 	}
 	if _, ok := req.months(); !ok {
 		WriteError(w, http.StatusBadRequest, CodeInvalidClosedMonths,
-			"closed_months 必须是 1–120 的整数", "不传时默认 3（已关闭满 3 个月）")
+			closedMonthsMessage, closedMonthsHint)
 		return req, false
 	}
 	return req, true

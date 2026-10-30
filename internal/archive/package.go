@@ -49,18 +49,13 @@ type PackageInfo struct {
 }
 
 type manifest struct {
-	FormatVersion   int           `json:"format_version"`
-	PlatformVersion string        `json:"platform_version"`
-	GeneratedAt     string        `json:"generated_at"`
-	PackageName     string        `json:"package_name"`
-	Operator        manifestActor `json:"operator"`
-	Tickets         []struct {
-		Number          string `json:"number"`
-		Title           string `json:"title"`
-		ClosedAt        string `json:"closed_at"`
-		AttachmentBytes int64  `json:"attachment_bytes"`
-	} `json:"tickets"`
-	Files []manifestFile `json:"files"`
+	FormatVersion   int              `json:"format_version"`
+	PlatformVersion string           `json:"platform_version"`
+	GeneratedAt     string           `json:"generated_at"`
+	PackageName     string           `json:"package_name"`
+	Operator        manifestActor    `json:"operator"`
+	Tickets         []manifestTicket `json:"tickets"`
+	Files           []manifestFile   `json:"files"`
 }
 
 type manifestActor struct {
@@ -73,6 +68,13 @@ type manifestFile struct {
 	Path   string `json:"path"`
 	SHA256 string `json:"sha256"`
 	Size   int64  `json:"size"`
+}
+
+type manifestTicket struct {
+	Number          string `json:"number"`
+	Title           string `json:"title"`
+	ClosedAt        string `json:"closed_at"`
+	AttachmentBytes int64  `json:"attachment_bytes"`
 }
 
 var attachmentRefPattern = regexp.MustCompile(`att:[A-Za-z0-9_-]+`)
@@ -125,7 +127,6 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 		}
 	}()
 
-	exports := make([]ticketExport, 0, len(preview.Tickets))
 	exps := make(map[int64]ticketExport)
 	files := make([]manifestFile, 0)
 	zw := zip.NewWriter(temp)
@@ -135,7 +136,6 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 			_ = zw.Close()
 			return PackageInfo{}, err
 		}
-		exports = append(exports, export)
 		exps[summary.Seq] = export
 		encoded, err := json.MarshalIndent(export, "", "  ")
 		if err != nil {
@@ -169,12 +169,8 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 		Operator: manifestActor{ID: operator.Member.ID, Username: operator.Member.Username, Name: operator.Member.Name},
 		Files:    files}
 	for _, t := range preview.Tickets {
-		m.Tickets = append(m.Tickets, struct {
-			Number          string `json:"number"`
-			Title           string `json:"title"`
-			ClosedAt        string `json:"closed_at"`
-			AttachmentBytes int64  `json:"attachment_bytes"`
-		}{Number: t.Number, Title: t.Title, ClosedAt: t.ClosedAt.Format(time.RFC3339Nano), AttachmentBytes: t.AttachmentBytes})
+		m.Tickets = append(m.Tickets, manifestTicket{Number: t.Number, Title: t.Title,
+			ClosedAt: t.ClosedAt.Format(time.RFC3339Nano), AttachmentBytes: t.AttachmentBytes})
 	}
 	manifestBytes, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
@@ -218,7 +214,7 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 
 // List 列出未过期的暂存包（新包在前）。
 func (s *Service) List(ctx context.Context) ([]PackageInfo, error) {
-	if err := s.CleanupExpired(ctx); err != nil {
+	if err := s.CleanupExpired(); err != nil {
 		return nil, err
 	}
 	entries, err := os.ReadDir(s.stageDir())
@@ -274,13 +270,12 @@ func (s *Service) Open(name string) (*os.File, PackageInfo, error) {
 }
 
 // CleanupExpired 清除暂存超过 7 天的包与生成中断留下的临时文件。
-func (s *Service) CleanupExpired(ctx context.Context) error {
+func (s *Service) CleanupExpired() error {
 	if !s.generateMu.TryLock() {
 		// 正在生成时不能清理临时文件；下一轮清除任务会处理到期包。
 		return nil
 	}
 	defer s.generateMu.Unlock()
-	_ = ctx
 	entries, err := os.ReadDir(s.stageDir())
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -335,7 +330,7 @@ func (s *Service) infoFromZip(name string) (PackageInfo, error) {
 	if err := json.NewDecoder(rc).Decode(&m); err != nil || m.FormatVersion < 1 {
 		return PackageInfo{}, ErrPackageNotFound
 	}
-	generated, err := time.ParseInLocation(time.RFC3339Nano, m.GeneratedAt, time.Local)
+	generated, err := time.ParseInLocation(time.RFC3339Nano, m.GeneratedAt, clock.Beijing)
 	if err != nil {
 		return PackageInfo{}, ErrPackageNotFound
 	}
@@ -426,7 +421,7 @@ func (s *Service) exportTicket(ctx context.Context, summary TicketSummary) (tick
 }
 
 func (s *Service) queryObject(ctx context.Context, query string, args ...any) (map[string]any, error) {
-	rows, err := s.queryRows(ctx, query, args...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -442,7 +437,7 @@ func (s *Service) queryObject(ctx context.Context, query string, args ...any) (m
 }
 
 func (s *Service) queryObjects(ctx context.Context, query string, args ...any) ([]map[string]any, error) {
-	rows, err := s.queryRows(ctx, query, args...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -456,10 +451,6 @@ func (s *Service) queryObjects(ctx context.Context, query string, args ...any) (
 		out = append(out, row)
 	}
 	return out, rows.Err()
-}
-
-func (s *Service) queryRows(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	return s.db.QueryContext(ctx, query, args...)
 }
 
 func scanObject(rows *sql.Rows) (map[string]any, error) {
@@ -520,17 +511,15 @@ const draftVersionColumns = `SELECT draft_id, version, request_json, author_memb
 
 func (s *Service) guestDevices(ctx context.Context, links []map[string]any) ([]map[string]any, error) {
 	ids := make([]any, 0, len(links))
-	placeholders := make([]string, 0, len(links))
 	for _, link := range links {
 		id, _ := link["id"].(int64)
 		ids = append(ids, id)
-		placeholders = append(placeholders, "?")
 	}
 	if len(ids) == 0 {
 		return []map[string]any{}, nil
 	}
 	return s.queryObjects(ctx, `SELECT id, guest_link_id, token_hash, created_at, entry_method
-		FROM guest_devices WHERE guest_link_id IN (`+strings.Join(placeholders, ",")+`)
+		FROM guest_devices WHERE guest_link_id IN (`+inPlaceholders(len(ids))+`)
 		ORDER BY guest_link_id, id`, ids...)
 }
 

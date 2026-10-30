@@ -4,7 +4,6 @@ package server_test
 import (
 	"archive/zip"
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -562,7 +561,7 @@ func Test暂存归档包七天到期清除(t *testing.T) {
 
 	s.Clock().Set(time.Date(2026, time.October, 30, 10, 0, 1, 0, clock.Beijing).Add(7 * 24 * time.Hour))
 	admin = s.Login("陈工", "secret-pass")
-	if err := s.Archives().CleanupExpired(context.Background()); err != nil {
+	if err := s.Archives().CleanupExpired(); err != nil {
 		t.Fatalf("触发到期清除失败：%v", err)
 	}
 	var packages archivePackageListBody
