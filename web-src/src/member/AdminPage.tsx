@@ -16,6 +16,7 @@ import {
   reactivateMemberAccount,
   resetMemberPassword,
   setMemberTriager,
+  setMemberAdmin,
   mergeLabels,
   renameLabel,
   repointAlias,
@@ -220,6 +221,7 @@ function MembersTab({ me }: { me: Me }) {
   const [revoking, setRevoking] = useState<MemberAccount | null>(null)
   const [reactivating, setReactivating] = useState<MemberAccount | null>(null)
   const [resetting, setResetting] = useState<MemberAccount | null>(null)
+  const [grantingAdmin, setGrantingAdmin] = useState<MemberAccount | null>(null)
   const [resetResult, setResetResult] = useState<{
     username: string
     name: string
@@ -280,6 +282,26 @@ function MembersTab({ me }: { me: Me }) {
     }
   }
 
+  async function doSetAdmin(member: MemberAccount, admin: boolean) {
+    try {
+      await setMemberAdmin(member.id, admin)
+      toast(admin ? `✓ 已设 ${member.name} 为管理员` : `✓ 已撤销 ${member.name} 的管理员身份`)
+      await refresh()
+    } catch (e) {
+      setError(e instanceof ApiError ? `${e.message}（${e.code}）` : '设置管理员失败')
+      await refresh()
+    }
+  }
+
+  async function doGrantAdmin() {
+    if (!grantingAdmin) return
+    try {
+      await doSetAdmin(grantingAdmin, true)
+    } finally {
+      setGrantingAdmin(null)
+    }
+  }
+
   async function doUnlock(lock: LoginLock) {
     try {
       await unlockLogin(lock.username, lock.ip)
@@ -311,12 +333,24 @@ function MembersTab({ me }: { me: Me }) {
   const visibleMembers = (members ?? [])
     .filter((m) => m.active || showInactive)
     .sort((a, b) => Number(b.active) - Number(a.active))
+  const activeMembers = visibleMembers.filter((m) => m.active)
+  const activeAdminNames = activeMembers.filter((m) => m.is_admin).map((m) => m.name)
+  // 没有任何在职显式初筛人时，由全体在职管理员兜底（与后端 EffectiveTriagers 一致）。
+  const fallbackTriagers = members !== null && !activeMembers.some((m) => m.triager) && activeAdminNames.length > 0
 
   return (
     <div className="mcard">
       <div className="hint" style={{ marginTop: 0 }}>
         创建、停用和恢复成员账号只能在网页上操作（管理员）；账号只能停用，不能删除。
       </div>
+      <div className="hint">
+        <b>初筛人</b>：没人负责的工单（新反馈、未指派的任务）由初筛人接收通知，负责检查信息、打标签、指派给合适的人；Agent 初筛不起作用时由他们兜底。
+        <br />
+        <b>管理员</b>：能管理成员和标签，并能看到全部工单。
+      </div>
+      {fallbackTriagers && (
+        <div className="hint">当前未指定初筛人，由全体在职管理员（{activeAdminNames.join('、')}）充当。</div>
+      )}
       {error && <div className="errbox">{error}</div>}
       <label className="ckrow">
         <input
@@ -327,6 +361,23 @@ function MembersTab({ me }: { me: Me }) {
         显示已停用（{inactiveCount}）
       </label>
       <table className="mini-tbl">
+        <thead>
+          <tr>
+            <th>姓名</th>
+            <th>状态</th>
+            <th>
+              初筛人
+              <span
+                style={{ marginLeft: 4, cursor: 'help' }}
+                title="没人负责的工单（新反馈、未指派的任务）由初筛人接收通知，负责检查信息、打标签、指派给合适的人；Agent 初筛不起作用时由他们兜底。"
+              >
+                ⓘ
+              </span>
+            </th>
+            <th>管理员</th>
+            <th>操作</th>
+          </tr>
+        </thead>
         <tbody>
           {visibleMembers.map((m) => (
             <tr key={m.id} data-member={m.username} className={m.active ? undefined : 'member-inactive'}>
@@ -346,6 +397,18 @@ function MembersTab({ me }: { me: Me }) {
                   checked={m.triager}
                   disabled={!m.active}
                   onChange={(e) => void doSetTriager(m, e.target.checked)}
+                />
+              </td>
+              <td>
+                <input
+                  type="checkbox"
+                  aria-label="管理员"
+                  checked={m.is_admin}
+                  disabled={m.id === me.id || !m.active}
+                  title={m.id === me.id ? '不能撤销自己的管理员身份，请另一位管理员来撤销' : undefined}
+                  onChange={(e) =>
+                    e.target.checked ? setGrantingAdmin(m) : void doSetAdmin(m, false)
+                  }
                 />
               </td>
               <td>
@@ -370,7 +433,7 @@ function MembersTab({ me }: { me: Me }) {
           ))}
           {members !== null && members.length === 0 && (
             <tr>
-                <td className="hint" colSpan={4}>
+                <td className="hint" colSpan={5}>
                 还没有成员。
               </td>
             </tr>
@@ -466,6 +529,15 @@ function MembersTab({ me }: { me: Me }) {
           yesLabel="重置密码"
           onYes={() => void doReset()}
           onCancel={() => setResetting(null)}
+        />
+      )}
+      {grantingAdmin && (
+        <Confirm
+          title={`设 ${grantingAdmin.name} 为管理员`}
+          body={<>授予后，{grantingAdmin.name} 将能看到全部工单，并能管理成员和标签。</>}
+          yesLabel="设为管理员"
+          onYes={() => void doGrantAdmin()}
+          onCancel={() => setGrantingAdmin(null)}
         />
       )}
     </div>

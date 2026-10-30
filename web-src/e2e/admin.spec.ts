@@ -56,6 +56,70 @@ test('管理员在管理页切换成员的初筛人身份', async ({ page }) => 
   await expect(toggle).toBeChecked({ checked: initial })
 })
 
+test('管理员在管理页授予与撤销成员的管理员身份', async ({ page }) => {
+  await login(page, ADMIN)
+  // 先复位夹具状态（wang 是普通成员、无人是初筛人），让用例可以独立重跑。
+  await page.evaluate(async () => {
+    const body = (await fetch('/api/v1/members').then((r) => r.json())) as {
+      members: { id: number; username: string; triager: boolean; is_admin: boolean }[]
+    }
+    for (const m of body.members) {
+      if (m.triager) {
+        await fetch(`/api/v1/members/${m.id}/triager`, { method: 'POST', body: '{"triager":false}' })
+      }
+      if (m.is_admin && m.username !== 'admin') {
+        await fetch(`/api/v1/members/${m.id}/admin`, { method: 'POST', body: '{"admin":false}' })
+      }
+    }
+  })
+  await page.goto('/admin')
+
+  // 成员表有表头；表格上方常驻说明两列身份的含义；没有初筛人时提示
+  // 由全体在职管理员兜底。
+  const panel = page.locator('.mcard', { hasText: '创建、停用和恢复成员账号' })
+  await expect(panel.getByRole('columnheader', { name: '姓名' })).toBeVisible()
+  await expect(panel.getByRole('columnheader', { name: '状态' })).toBeVisible()
+  await expect(panel.getByRole('columnheader', { name: /初筛人/ })).toBeVisible()
+  await expect(panel.getByRole('columnheader', { name: '管理员' })).toBeVisible()
+  await expect(panel.getByRole('columnheader', { name: '操作' })).toBeVisible()
+  await expect(panel).toContainText(
+    '初筛人：没人负责的工单（新反馈、未指派的任务）由初筛人接收通知，负责检查信息、打标签、指派给合适的人；Agent 初筛不起作用时由他们兜底。',
+  )
+  await expect(panel).toContainText('管理员：能管理成员和标签，并能看到全部工单。')
+  await expect(panel).toContainText('当前未指定初筛人，由全体在职管理员（管理员）充当。')
+
+  // 授予：先弹确认框，写明授予后的权限；确认后列表勾上。
+  const row = page.locator('tr[data-member="wang"]')
+  const adminToggle = row.getByRole('checkbox', { name: '管理员' })
+  await expect(adminToggle).not.toBeChecked()
+  await adminToggle.click()
+  const grantDialog = page.locator('.modal')
+  await expect(grantDialog).toContainText('授予后，王工 将能看到全部工单，并能管理成员和标签。')
+  await grantDialog.getByRole('button', { name: '设为管理员' }).click()
+  await expect(adminToggle).toBeChecked()
+  await expect(page.locator('#toast')).toContainText('✓ 已设 王工 为管理员')
+  const granted = (await page.evaluate(() => fetch('/api/v1/members').then((r) => r.json()))) as {
+    members: { username: string; is_admin: boolean }[]
+  }
+  expect(granted.members.find((m) => m.username === 'wang')?.is_admin).toBe(true)
+
+  // 撤销：不弹框，直接生效。
+  await adminToggle.click()
+  await expect(page.locator('.modal')).toHaveCount(0)
+  await expect(adminToggle).not.toBeChecked()
+  await expect(page.locator('#toast')).toContainText('✓ 已撤销 王工 的管理员身份')
+  const revoked = (await page.evaluate(() => fetch('/api/v1/members').then((r) => r.json()))) as {
+    members: { username: string; is_admin: boolean }[]
+  }
+  expect(revoked.members.find((m) => m.username === 'wang')?.is_admin).toBe(false)
+
+  // 自己那一行的管理员勾选框禁用，并带提示。
+  const selfToggle = page.locator('tr[data-member="admin"]').getByRole('checkbox', { name: '管理员' })
+  await expect(selfToggle).toBeChecked()
+  await expect(selfToggle).toBeDisabled()
+  await expect(selfToggle).toHaveAttribute('title', '不能撤销自己的管理员身份，请另一位管理员来撤销')
+})
+
 test('管理员编辑反馈入口的部门联系方式', async ({ page, request }) => {
   const loginRes = await loginWithRequest(request, ADMIN)
   expect(loginRes.ok()).toBeTruthy()
