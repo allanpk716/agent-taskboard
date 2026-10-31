@@ -2513,3 +2513,6 @@ textarea.src {
   padding: 2px 0 8px;
   user-select: none;
 }
+.inbox-drafts {
+  margin: 12px 12px 0;
+}
