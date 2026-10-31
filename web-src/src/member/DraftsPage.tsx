@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { fetchDrafts } from './memberApi'
-import type { DraftView } from '../shared/types'
+import type { CreateDraftRequest, DraftView } from '../shared/types'
 import { fmtShort } from '../shared/format'
 import { nav } from './ui'
 
@@ -11,7 +11,8 @@ const KIND_LABELS: Record<string, string> = {
 }
 
 function draftTitle(d: DraftView): string {
-  if (d.kind === 'create') return d.request.body_md.split('\n', 1)[0] || '未命名草稿'
+  // 建单草稿的 request 是 CreateDraftRequest（title/brief_md），没有 body_md。
+  if (d.kind === 'create') return (d.request as unknown as CreateDraftRequest).title || '未命名草稿'
   return d.ticket?.title ?? `#${d.ticket?.seq ?? ''}`
 }
 
