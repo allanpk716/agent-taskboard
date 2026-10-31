@@ -45,6 +45,8 @@ test('Agent 建单草稿经通知确认后发出并展示访客文案', async ({
   expect(drafted.status(), `Agent 建单失败：${await drafted.text()}`).toBe(202)
   const draft = ((await drafted.json()) as { draft: { id: string } }).draft
 
+  await page.goto('/drafts')
+  await expect(page.getByRole('link', { name: '打开 Agent 起草的建单' })).toBeVisible()
   await page.getByRole('button', { name: '通知' }).click()
   const row = page.locator('.nrow', { hasText: '写了建单草稿待确认：Agent 起草的建单' })
   await expect(row).toBeVisible()
