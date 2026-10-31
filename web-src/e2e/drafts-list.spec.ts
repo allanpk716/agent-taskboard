@@ -129,6 +129,10 @@ test.describe('手机视口', () => {
     await draftReply(request, token, number, '手机上待确认。')
 
     await login(page, await wang())
+    const inboxBanner = page.getByRole('link', { name: /你有 \d+ 份草稿待处理/ })
+    await inboxBanner.click()
+    await expect(page.locator('h1', { hasText: '我的草稿' })).toBeVisible()
+    await page.goBack()
     const meTab = page.getByRole('link', { name: /我的/ })
     await expect(meTab.locator('.dot')).toHaveCSS('background-color', 'rgb(217, 119, 6)')
     await meTab.click()

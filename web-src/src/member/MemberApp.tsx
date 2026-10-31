@@ -199,6 +199,19 @@ export function MemberApp() {
   )
   const page = (
     <>
+      {route.page === 'inbox' && tier === 'mobile' && draftCount > 0 && (
+        <a
+          className="drafts-card inbox-drafts"
+          href="/drafts"
+          onClick={(e) => {
+            e.preventDefault()
+            nav('/drafts')
+          }}
+        >
+          <span>✎ 你有 {draftCount} 份草稿待处理</span>
+          <b>›</b>
+        </a>
+      )}
       {route.page === 'inbox' && <InboxPage key={route.page} />}
       {route.page === 'tickets' && <TicketsPage key={route.page} me={me} />}
       {route.page === 'drafts' && <DraftsPage key={navSeq} />}
