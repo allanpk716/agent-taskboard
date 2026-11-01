@@ -76,6 +76,66 @@ func (m *Manager) resolveCollaborator(ctx context.Context, ref string) (Collabor
 	return Collaborator{ID: id, Name: name, Deactivated: nullStringSet(deactivated)}, nil
 }
 
+// resolveCreateCollaborators 解析建单请求里的协作者（抄送）引用：只允许在职
+// 成员；按 id 去重并保持请求顺序；创建者与指派人按现有规则不算协作者，
+// 直接跳过（指派人被改派走后也不会自动回到协作者名单）。
+func (m *Manager) resolveCreateCollaborators(ctx context.Context, refs []string, creatorID, assigneeID int64) ([]Collaborator, error) {
+	out := make([]Collaborator, 0, len(refs))
+	seen := make(map[int64]bool, len(refs))
+	for _, ref := range refs {
+		if strings.TrimSpace(ref) == "" {
+			continue
+		}
+		target, err := m.resolveCollaborator(ctx, strings.TrimSpace(ref))
+		if err != nil {
+			return nil, err
+		}
+		if target.Deactivated {
+			return nil, &CollaboratorDeactivatedError{Name: target.Name}
+		}
+		if target.ID == creatorID || target.ID == assigneeID || seen[target.ID] {
+			continue
+		}
+		seen[target.ID] = true
+		out = append(out, Collaborator{ID: target.ID, Name: target.Name})
+	}
+	return out, nil
+}
+
+// insertInitialCollaboratorsTx 在建单的同一个事务里把初始协作者写入名单，
+// 逐个记录 collaborator_added 事件并发出「加入协作」通知（#274）。任何一步
+// 失败都随建单一起回滚，不留下建了一半的工单。
+func (m *Manager) insertInitialCollaboratorsTx(ctx context.Context, tx *sql.Tx, t Ticket,
+	actor Author, targets []Collaborator, at time.Time) ([]int64, error) {
+	if len(targets) == 0 {
+		return nil, nil
+	}
+	full := Full{Ticket: t}
+	full.Collaborators = []Collaborator{}
+	full.Timeline = []Event{}
+	var notified []int64
+	for _, target := range targets {
+		before := full
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO ticket_collaborators (ticket_seq, member_id, added_at) VALUES (?, ?, ?)`,
+			t.Seq, target.ID, at.Format(time.RFC3339Nano)); err != nil {
+			return nil, fmt.Errorf("加入协作者失败：%w", err)
+		}
+		event, err := m.insertCollaboratorEvent(ctx, tx, before, actor, target, "collaborator_added", at)
+		if err != nil {
+			return nil, err
+		}
+		full.Collaborators = append(full.Collaborators, target)
+		full.Timeline = append(append([]Event{}, full.Timeline...), event)
+		ids, err := m.notifyCollaboratorEvent(ctx, tx, before, full, actor, event)
+		if err != nil {
+			return nil, err
+		}
+		notified = append(notified, ids...)
+	}
+	return notified, nil
+}
+
 // CanManageCollaborators 判断当前成员凭证能否维护这张工单的协作者：
 // 管理员、创建者、当前指派人，以及未指派时的有效初筛人。
 func (m *Manager) CanManageCollaborators(ctx context.Context, viewer identity.Viewer, full Full) (bool, error) {

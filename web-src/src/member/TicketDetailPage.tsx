@@ -1161,6 +1161,9 @@ export function TicketDetailPage({
       setTicket(got)
       setError(null)
       setArchived(null)
+      // 成员网页会话读详情会推进已读游标：让收件箱「协作中」等处的未读标记
+      // 跟着刷新（#274）。
+      window.dispatchEvent(new Event('tb:invalidate'))
     } catch (e) {
       if (e instanceof ApiError && e.code === 'ticket_archived') {
         const tombstone = (e.body as { archived_ticket?: ArchivedTicket } | undefined)?.archived_ticket

@@ -59,6 +59,7 @@ const (
 	CodeAlreadyCollaborator     = "already_collaborator"
 	CodeNotCollaborator         = "not_collaborator"
 	CodeCollaboratorDeactivated = "collaborator_deactivated"
+	CodeInvalidCollaborators    = "invalid_collaborators" // 建单的 collaborators 不是成员引用数组
 
 	// #31：标签、字典与别名。
 	CodeMembersOnly        = "members_only"         // 仅成员可用（访客 403）
@@ -161,17 +162,18 @@ const (
 	CodeIdempotencyInProgress = "idempotency_in_progress" // 同一个 Idempotency-Key 的请求正在执行（409）
 
 	// #37：查询与计数。
-	CodeUnknownParameter = "unknown_parameter"  // 不认识的查询参数（附可用参数列表）
-	CodeInvalidStatus    = "invalid_status"     // status 只能是 open/closed/all
-	CodeInvalidSort      = "invalid_sort"       // 不支持的排序键
-	CodeInvalidLimit     = "invalid_limit"      // limit 不是 1–200 的整数
-	CodeInvalidPageToken = "invalid_page_token" // page_token 无效
-	CodeInvalidTime      = "invalid_time"       // 时间筛选格式不对
-	CodeInvalidInclude   = "invalid_include"    // include 只支持 brief
-	CodeInvalidWaitingOn = "invalid_waiting_on" // waiting_on 只能是五者之一
-	CodeGroupByRequired  = "group_by_required"  // 计数缺 group_by
-	CodeInvalidGroupBy   = "invalid_group_by"   // 不能按这个维度分组
-	CodeInvalidActorKind = "invalid_actor_kind" // actor_kind 只能是 member/agent
+	CodeUnknownParameter    = "unknown_parameter"    // 不认识的查询参数（附可用参数列表）
+	CodeInvalidStatus       = "invalid_status"       // status 只能是 open/closed/all
+	CodeInvalidSort         = "invalid_sort"         // 不支持的排序键
+	CodeInvalidLimit        = "invalid_limit"        // limit 不是 1–200 的整数
+	CodeInvalidPageToken    = "invalid_page_token"   // page_token 无效
+	CodeInvalidTime         = "invalid_time"         // 时间筛选格式不对
+	CodeInvalidInclude      = "invalid_include"      // include 只支持 brief
+	CodeInvalidWaitingOn    = "invalid_waiting_on"   // waiting_on 只能是五者之一
+	CodeGroupByRequired     = "group_by_required"    // 计数缺 group_by
+	CodeInvalidGroupBy      = "invalid_group_by"     // 不能按这个维度分组
+	CodeInvalidActorKind    = "invalid_actor_kind"   // actor_kind 只能是 member/agent
+	CodeInvalidCollaborator = "invalid_collaborator" // collaborator 只能是 me（#274）
 
 	// #78：成员标通知已读。
 	CodeInvalidReadRequest     = "invalid_read_request"   // 请求体不是 ids/ticket/up_to 三选一

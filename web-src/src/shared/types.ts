@@ -121,6 +121,8 @@ export interface CreateDraftRequest {
   fields?: Record<string, string>
   labels: string[]
   assignee: string
+  /** 协作者（抄送，#274）：成员 id / 姓名引用数组；不指定时空数组。 */
+  collaborators?: string[] | null
   guest_link?: {
     note: string
     valid_days?: number

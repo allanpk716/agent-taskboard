@@ -313,9 +313,13 @@ type CreateInput struct {
 	TemplateKey string
 	Fields      map[string]string
 	Assignee    string // 成员 id 或姓名；空 = 不指派（#36）
-	Creator     identity.Viewer
-	GuestLink   *GuestLinkSpec // 带 can_edit_brief 权限时免「至少一个维度标签」（#64）
-	Actor       *Author        // 建单草稿发出时，把最后一个执笔 Agent 作为正式作者
+	// Collaborators 是请求里的协作者（抄送）引用；ValidateCreate 会解析成
+	// CollaboratorMembers（#274）。空列表表示不指定。
+	Collaborators       []string
+	CollaboratorMembers []Collaborator
+	Creator             identity.Viewer
+	GuestLink           *GuestLinkSpec // 带 can_edit_brief 权限时免「至少一个维度标签」（#64）
+	Actor               *Author        // 建单草稿发出时，把最后一个执笔 Agent 作为正式作者
 }
 
 // ValidateCreate 执行建单的保存前校验并规范化输入。建单草稿保存与发出共用
@@ -362,11 +366,18 @@ func (m *Manager) ValidateCreate(ctx context.Context, in CreateInput) (CreateInp
 			return CreateInput{}, nil, ErrInvalidKind
 		}
 	}
+	var assigneeID int64
 	if strings.TrimSpace(in.Assignee) != "" {
-		if _, _, err := m.resolveAssignee(ctx, in.Assignee); err != nil {
+		var err error
+		if assigneeID, _, err = m.resolveAssignee(ctx, in.Assignee); err != nil {
 			return CreateInput{}, nil, err
 		}
 	}
+	collaborators, err := m.resolveCreateCollaborators(ctx, in.Collaborators, in.Creator.Member.ID, assigneeID)
+	if err != nil {
+		return CreateInput{}, nil, err
+	}
+	in.CollaboratorMembers = collaborators
 	in.Labels = dedupe(in.Labels)
 	hasDimension := false
 	for _, l := range in.Labels {
@@ -535,6 +546,13 @@ func (m *Manager) Create(ctx context.Context, in CreateInput) (CreateResult, err
 		}
 		linkCreated = link
 	}
+	// 协作者（抄送，#274）：与工单同一个事务写入，事件与通知复用协作者
+	// 模块的现有逻辑。
+	collabNotified, err := m.insertInitialCollaboratorsTx(ctx, tx, t, creator, in.CollaboratorMembers, now)
+	if err != nil {
+		return CreateResult{}, err
+	}
+	notified = append(notified, collabNotified...)
 	if m.notifier != nil {
 		after := Full{Ticket: t}
 		after.Timeline = []Event{{Seq: 1, At: now, Actor: creator, Type: "created", Change: t.LastChange}}

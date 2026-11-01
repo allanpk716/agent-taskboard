@@ -37,6 +37,10 @@ type ListQuery struct {
 	CreatorName  string // 回显用
 	CreatorGuest bool   // creator=guest：经反馈入口提交
 
+	CollaboratorSet  bool
+	CollaboratorID   int64  // collaborator=me 时按谁的「协作中」算
+	CollaboratorName string // 回显用（me）
+
 	WaitingOn      string // assignee | creator | guest | department | me
 	ViewerMemberID int64  // waiting_on=me 时按谁的收件箱算
 
@@ -187,6 +191,18 @@ func (q *ListQuery) matches(t *Full, turn WaitingOn) bool {
 				return false
 			}
 		} else if t.Creator.MemberID != q.CreatorID {
+			return false
+		}
+	}
+	if q.CollaboratorSet {
+		found := false
+		for _, c := range t.Collaborators {
+			if c.ID == q.CollaboratorID {
+				found = true
+				break
+			}
+		}
+		if !found {
 			return false
 		}
 	}

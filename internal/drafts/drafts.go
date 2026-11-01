@@ -57,14 +57,16 @@ type Request struct {
 }
 
 type CreateRequest struct {
-	Kind      string                  `json:"kind"`
-	Template  string                  `json:"template"`
-	Title     string                  `json:"title"`
-	BriefMD   string                  `json:"brief_md"`
-	Fields    map[string]string       `json:"fields"`
-	Labels    []string                `json:"labels"`
-	Assignee  string                  `json:"assignee"`
-	GuestLink *CreateGuestLinkRequest `json:"guest_link,omitempty"`
+	Kind     string            `json:"kind"`
+	Template string            `json:"template"`
+	Title    string            `json:"title"`
+	BriefMD  string            `json:"brief_md"`
+	Fields   map[string]string `json:"fields"`
+	Labels   []string          `json:"labels"`
+	Assignee string            `json:"assignee"`
+	// Collaborators 是建单时一并加入的协作者（抄送，#274）：成员引用数组。
+	Collaborators []string                `json:"collaborators"`
+	GuestLink     *CreateGuestLinkRequest `json:"guest_link,omitempty"`
 }
 
 type CreateGuestLinkRequest struct {
@@ -235,6 +237,9 @@ func (m *Manager) SaveCreate(ctx context.Context, viewer identity.Viewer, req Cr
 		return Draft{}, err
 	}
 	req.Kind, req.Title, req.BriefMD, req.Labels = validated.Kind, validated.Title, validated.BriefMD, validated.Labels
+	if req.Collaborators == nil {
+		req.Collaborators = []string{}
+	}
 	now := m.clk.Now().Format(time.RFC3339Nano)
 	buf, _ := json.Marshal(req)
 	d := Draft{Kind: KindCreate, Status: "pending", Request: Request{}, CreateRequest: req,
@@ -493,6 +498,9 @@ func (m *Manager) UpdateCreate(ctx context.Context, viewer identity.Viewer, id s
 		return Draft{}, err
 	}
 	req.Kind, req.Title, req.BriefMD, req.Labels = validated.Kind, validated.Title, validated.BriefMD, validated.Labels
+	if req.Collaborators == nil {
+		req.Collaborators = []string{}
+	}
 
 	now := m.clk.Now().Format(time.RFC3339Nano)
 	buf, _ := json.Marshal(req)
@@ -530,6 +538,7 @@ func createInputOf(req CreateRequest, viewer identity.Viewer) tickets.CreateInpu
 	in := tickets.CreateInput{
 		Kind: req.Kind, Title: req.Title, BriefMD: req.BriefMD, Labels: req.Labels,
 		TemplateKey: req.Template, Fields: req.Fields, Assignee: req.Assignee, Creator: viewer,
+		Collaborators: req.Collaborators,
 	}
 	if req.GuestLink != nil {
 		g := req.GuestLink
