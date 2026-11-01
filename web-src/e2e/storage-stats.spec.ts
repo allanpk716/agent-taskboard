@@ -1,12 +1,47 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page, type Response } from '@playwright/test'
 import { ADMIN, login, wang } from './helpers'
 
 // 管理页「存储」面板（#234）：管理员看到三类空间占用与按关闭月份汇总的
 // 可归档工单；N 改动后重新请求。普通成员看不到管理页入口。
 
+type StorageStats = {
+  closed_months: number
+  archivable: { month: string; ticket_count: number; attachment_bytes: number }[]
+}
+
+function waitForStorageResponse(page: Page, closedMonths: number): Promise<Response> {
+  return page.waitForResponse((response) => {
+    if (!response.ok()) return false
+    const url = new URL(response.url())
+    return (
+      url.pathname === '/api/v1/admin/storage' && url.searchParams.get('closed_months') === String(closedMonths)
+    )
+  })
+}
+
+async function expectArchivableMonths(page: Page, stats: StorageStats): Promise<void> {
+  if (stats.archivable.length === 0) {
+    await expect(page.getByTestId('storage-empty')).toHaveText(
+      `没有已关闭满 ${stats.closed_months} 个月的工单`,
+    )
+    return
+  }
+
+  await expect(page.getByTestId('storage-months-table')).toBeVisible()
+  for (const { month } of stats.archivable) {
+    await expect(page.getByTestId(`storage-month-${month}`)).toBeVisible()
+  }
+  await expect(page.getByTestId('storage-empty')).toHaveCount(0)
+}
+
 test('管理员在管理页看到存储占用与可归档月份', async ({ page }) => {
   await login(page, ADMIN)
+
+  // 全量 e2e 会共用同一个服务与数据目录；其他用例可能已经留下可归档工单。
+  // 等页面自己发出的请求完成，再按这次响应的实际内容断言，避免依赖执行顺序。
+  const defaultResponse = waitForStorageResponse(page, 3)
   await page.goto('/admin')
+  const defaultStats = (await (await defaultResponse).json()) as StorageStats
 
   const card = page.getByTestId('storage-card')
   await expect(card).toBeVisible()
@@ -19,13 +54,16 @@ test('管理员在管理页看到存储占用与可归档月份', async ({ page 
   await expect(page.getByTestId('storage-attachments')).toHaveText(sizeRe)
   await expect(page.getByTestId('storage-backups')).toHaveText(sizeRe)
 
-  // e2e 环境没有已关闭满 3 个月的工单：空态文案带当前 N。
-  await expect(page.getByTestId('storage-empty')).toHaveText('没有已关闭满 3 个月的工单')
+  expect(defaultStats.closed_months).toBe(3)
+  await expectArchivableMonths(page, defaultStats)
 
-  // 改 N → 重新请求，空态文案随之更新。
+  // 改 N → 重新请求，展示内容同样按实际响应断言。
   const input = page.getByTestId('storage-months-input')
+  const months5Response = waitForStorageResponse(page, 5)
   await input.fill('5')
-  await expect(page.getByTestId('storage-empty')).toHaveText('没有已关闭满 5 个月的工单')
+  const months5Stats = (await (await months5Response).json()) as StorageStats
+  expect(months5Stats.closed_months).toBe(5)
+  await expectArchivableMonths(page, months5Stats)
 })
 
 test('存储面板按月汇总并随 N 重新请求', async ({ page }) => {
