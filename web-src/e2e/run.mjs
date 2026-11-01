@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 端到端测试入口：编译后端二进制、构建前端，然后跑 Playwright。
-// 用法：cd web-src && npm run e2e
+// 用法：cd web-src && npm run e2e [-- <Playwright 参数，如 e2e/foo.spec.ts>]
 import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -35,7 +35,9 @@ const runPlaywright = (env, args = []) => {
   return res.status ?? 1
 }
 
-const status = runPlaywright({})
-if (status !== 0) process.exit(status)
+// npm run e2e -- <args> 的参数原样转给 Playwright；带参数时只跑这一轮。
+const extraArgs = process.argv.slice(2)
+const status = runPlaywright({}, extraArgs)
+if (status !== 0 || extraArgs.length > 0) process.exit(status)
 // 容器提示第二轮：独立服务与端口，只跑需要容器部署配置的用例。
 process.exit(runPlaywright({ E2E_CONTAINER: '1', E2E_PORT: '8915' }, ['--grep', '容器模式下管理页提示升级镜像']))
