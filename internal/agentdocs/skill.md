@@ -1,6 +1,6 @@
 ---
 name: agent-taskboard
-description: 主人提到工单、工单平台、轮到我的、收件箱、建一张工单、回复或交付工单、草稿，或者贴来带 {{BASE}} 地址的工单指令时使用。用于访问 agent-taskboard、先读说明书再处理工单。
+description: 主人提到工单、工单平台、轮到我的、收件箱、抄送我的单、建一张工单、回复或交付工单、草稿，或者贴来带 {{BASE}} 地址的工单指令时使用。用于访问 agent-taskboard、先读说明书再处理工单。
 ---
 
 # agent-taskboard Agent 技能
@@ -14,6 +14,7 @@ agent-taskboard 是部门工单记录平台，地址是 {{BASE}}。这份技能�
 3. 读不到 `TASKBOARD_TOKEN`，或接口返回 401 时，停下来请主人去「我的 → Agent」签发或换新 token，并贴来接入文案；不要用密码登录，也不要用别人的 token。
 4. 常用起点：
    - 收件箱：{{BASE}}/api/v1/inbox
+   - 抄送我的单：{{BASE}}/api/v1/tickets?collaborator=me&status=open
    - 工单 Markdown 视图：{{BASE}}/api/v1/tickets/<编号>?format=markdown
 
 ## 来源

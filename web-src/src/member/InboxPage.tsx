@@ -1,16 +1,66 @@
 // 收件箱（#41）：「现在轮到我」的开启工单，卡片顶部是醒目的原因色条与文案，
 // 一眼知道轮到我做什么；轮到本部门的未指派工单只进入有效初筛人的收件箱。
+// #274 起分成「轮到我 ｜ 协作中」两个分页：协作中只列本人作为协作者（抄送）
+// 的开启工单，未读在前；侧栏/底栏角标仍只算「轮到我」。
 import { useCallback, useEffect, useState } from 'react'
+import { api } from '../api'
 import { fetchInbox, reasonClass, type InboxItem, type InboxResponse } from './memberApi'
 import { DeactivatedBadge } from '../shared/widgets'
 import { nav, useInvalidate, useLocationSearch } from './ui'
-import { TicketCard, ticketLabelFilterPath } from './TicketsPage'
+import { TicketCard, ticketLabelFilterPath, type TicketListItem } from './TicketsPage'
 import { parsePasteLink } from './pasteLink'
 
 function inboxDetailPath(number: string, search: string): string {
   const params = new URLSearchParams(search)
   params.set('list', 'inbox')
   return `/t/${number}?${params.toString()}`
+}
+
+type InboxMode = 'mine' | 'guest' | 'collab'
+
+interface CollaboratingResponse {
+  total: number
+  items: TicketListItem[]
+}
+
+/** 协作中一行里的等待方短句（不带「等」字，供列表卡片复用现有文案）。 */
+function collaboratingTurnText(w: TicketListItem['waiting_on']): string {
+  switch (w.party) {
+    case 'assignee':
+      return `${w.member ?? w.text} 处理`
+    case 'creator':
+      return `${w.member ?? w.text} 验收`
+    case 'guest':
+      return '访客'
+    case 'department':
+      return '本部门初筛'
+    default:
+      return w.text
+  }
+}
+
+/** 协作中一行里的等待方：按当前推导写成「等 A 处理」「等 张三 验收」「等访客」。 */
+function collaboratingWaitingText(w: TicketListItem['waiting_on']): string {
+  switch (w.party) {
+    case 'assignee':
+      return `等 ${w.member ?? w.text} 处理`
+    case 'creator':
+      return `等 ${w.member ?? w.text} 验收`
+    case 'guest':
+      return '等访客'
+    case 'department':
+      return '等本部门初筛'
+    default:
+      return `等${w.text}`
+  }
+}
+
+/** 未读在前，其余按最近更新时间倒序（与协作中分页的排序约定一致）。 */
+function sortCollaborating(items: TicketListItem[]): TicketListItem[] {
+  return [...items].sort((a, b) => {
+    if (a.unread !== b.unread) return a.unread ? -1 : 1
+    return Date.parse(b.updated_at) - Date.parse(a.updated_at)
+  })
 }
 
 export function InboxPage({
@@ -24,21 +74,33 @@ export function InboxPage({
 }) {
   const search = useLocationSearch()
   const [data, setData] = useState<InboxResponse | null>(null)
+  const [collab, setCollab] = useState<CollaboratingResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [collabError, setCollabError] = useState<string | null>(null)
   const [pasteOpen, setPasteOpen] = useState(false)
   const [pasteValue, setPasteValue] = useState('')
   const [pasteNotice, setPasteNotice] = useState<string | null>(null)
   const params = new URLSearchParams(search)
-  const mode = params.get('inbox') === 'guest' ? 'guest' : 'mine'
+  const modeParam = params.get('inbox')
+  const mode: InboxMode = modeParam === 'collab' ? 'collab' : modeParam === 'guest' ? 'guest' : 'mine'
   const q = params.get('q') ?? ''
 
   const load = useCallback(async () => {
-    try {
-      setData(await fetchInbox())
-      setError(null)
-    } catch (e: any) {
-      setError(e?.message ?? '读取收件箱失败')
-    }
+    // 两个分页各自读取：一边失败不影响另一边展示。
+    void fetchInbox()
+      .then((inbox) => {
+        setData(inbox)
+        setError(null)
+      })
+      .catch((e: any) => setError(e?.message ?? '读取收件箱失败'))
+    // 复用列表接口的 collaborator=me + status=open；limit 取上限，翻页场景
+    // （超过 200 张协作工单）按更新时间倒序取最前面的即可。
+    void api('/api/v1/tickets?collaborator=me&status=open&sort=-updated&limit=200')
+      .then((body) => {
+        setCollab(body as CollaboratingResponse)
+        setCollabError(null)
+      })
+      .catch((e: any) => setCollabError(e?.message ?? '读取协作中失败'))
   }, [])
 
   useEffect(() => {
@@ -51,6 +113,10 @@ export function InboxPage({
     for (const [key, value] of Object.entries(patch)) params.set(key, value)
     nav(`/?${params.toString()}`)
   }
+
+  const collaborating = sortCollaborating(collab?.items ?? [])
+  const collaboratingUnread = collaborating.filter((it) => it.unread).length
+  const collaboratingLabel = collaboratingUnread > 0 ? `协作中 · ${collaboratingUnread}` : '协作中'
 
   function recognizePastedText(text: string) {
     const result = parsePasteLink(text)
@@ -122,6 +188,9 @@ export function InboxPage({
     const shown = q
       ? filtered.filter((it) => it.title.includes(q) || it.number.includes(q) || it.labels.some((l) => l.includes(q)))
       : filtered
+    const collabShown = q
+      ? collaborating.filter((it) => it.title.includes(q) || it.number.includes(q) || it.labels.some((l) => l.includes(q)))
+      : collaborating
     const asCardItem = (it: InboxItem) => ({
       ...it,
       seq: 0,
@@ -135,7 +204,7 @@ export function InboxPage({
         <header className="pc-list-head">
           <div>
             <h2>收件箱</h2>
-            <span>{data?.count ?? '…'} 张</span>
+            <span>{mode === 'collab' ? (collab?.total ?? '…') : (data?.count ?? '…')} 张</span>
             <span className="sp" />
             {pasteButton}
           </div>
@@ -169,37 +238,60 @@ export function InboxPage({
           >
             访客新回复
           </button>
+          <button
+            type="button"
+            className={`fchip${mode === 'collab' ? ' on' : ''}`}
+            aria-pressed={mode === 'collab'}
+            onClick={() => updateInbox({ inbox: 'collab' })}
+          >
+            {collaboratingLabel}
+          </button>
         </div>
         <div className="pc-list-scroll">
           {error && <div className="ecard">{error}</div>}
-          {!error && shown.length === 0 && data && <div className="ecard">收件箱是空的。</div>}
-          {shown.map((it) => (
-            <TicketCard
-              key={it.number}
-              item={asCardItem(it)}
-              desktop
-              me={me}
-              selected={selected === it.number}
-              href={inboxDetailPath(it.number, search)}
-              onLabelClick={(label) => nav(ticketLabelFilterPath(label))}
-            />
-          ))}
+          {mode !== 'collab' ? (
+            <>
+              {!error && shown.length === 0 && data && <div className="ecard">收件箱是空的。</div>}
+              {shown.map((it) => (
+                <TicketCard
+                  key={it.number}
+                  item={asCardItem(it)}
+                  desktop
+                  me={me}
+                  selected={selected === it.number}
+                  href={inboxDetailPath(it.number, search)}
+                  onLabelClick={(label) => nav(ticketLabelFilterPath(label))}
+                />
+              ))}
+            </>
+          ) : (
+            <>
+              {collabError && <div className="ecard">{collabError}</div>}
+              {!collabError && collabShown.length === 0 && collab && (
+                <div className="ecard">没有协作中的工单。</div>
+              )}
+              {collabShown.map((it) => (
+                <TicketCard
+                  key={it.number}
+                  item={{ ...it, waiting_on: { ...it.waiting_on, text: collaboratingTurnText(it.waiting_on) } }}
+                  desktop
+                  selected={selected === it.number}
+                  href={inboxDetailPath(it.number, search)}
+                  onLabelClick={(label) => nav(ticketLabelFilterPath(label))}
+                />
+              ))}
+            </>
+          )}
         </div>
       </div>
     )
   }
 
-  if (error) {
+  if (mode === 'collab' ? collabError || !collab : error || !data) {
+    const text = mode === 'collab' ? collabError ?? '加载中…' : error ?? '加载中…'
     return (
       <div className="bpage">
-        <div className="ecard">{error}</div>
-      </div>
-    )
-  }
-  if (!data) {
-    return (
-      <div className="bpage">
-        <div className="ecard">加载中…</div>
+        <div className="ecard">{text}</div>
       </div>
     )
   }
@@ -223,37 +315,93 @@ export function InboxPage({
           ＋ 建单
         </button>
       </div>
-      <div className="b-note">现在轮到你处理的工单。</div>
-      {data.items.length === 0 ? (
-        <div className="ecard">收件箱是空的。</div>
+      <div className="frow inbox-tabs" role="tablist" aria-label="收件箱分页">
+        <button
+          type="button"
+          role="tab"
+          className={`fchip${mode === 'mine' ? ' on' : ''}`}
+          aria-selected={mode === 'mine'}
+          onClick={() => updateInbox({ inbox: 'mine' })}
+        >
+          轮到我
+        </button>
+        <button
+          type="button"
+          role="tab"
+          className={`fchip${mode === 'collab' ? ' on' : ''}`}
+          aria-selected={mode === 'collab'}
+          onClick={() => updateInbox({ inbox: 'collab' })}
+        >
+          {collaboratingLabel}
+        </button>
+      </div>
+      {mode === 'collab' ? (
+        <>
+          <div className="b-note">你作为协作者（抄送）跟进的开启工单。</div>
+          {collabError && <div className="ecard">{collabError}</div>}
+          {!collabError && collaborating.length === 0 && collab && (
+            <div className="ecard">没有协作中的工单。</div>
+          )}
+          {collaborating.map((it) => (
+            <a
+              key={it.number}
+              className="tcard"
+              href={`/t/${it.number}`}
+              onClick={(e) => {
+                e.preventDefault()
+                nav(`/t/${it.number}?list=inbox`)
+              }}
+            >
+              <div className="tc-top">
+                <span className="badge kind">{it.kind === 'task' ? '任务' : '反馈'}</span>
+                <span className="hint">{collaboratingWaitingText(it.waiting_on)}</span>
+                <span className="hint" style={{ marginLeft: 'auto' }}>
+                  协作中
+                </span>
+              </div>
+              <div className={`tc-title${it.unread ? ' unread' : ''}`}>
+                {it.unread && <span className="unread-dot" aria-hidden="true" />}
+                {it.title}
+              </div>
+              <div className="tc-meta">{it.number}</div>
+            </a>
+          ))}
+        </>
       ) : (
-        data.items.map((it) => (
-          <a
-            key={it.number}
-            className="tcard"
-            href={`/t/${it.number}`}
-            onClick={(e) => {
-              e.preventDefault()
-              nav(`/t/${it.number}?list=inbox`)
-            }}
-          >
-            <span className={`strip ${reasonClass(it.reason)}`} aria-hidden="true" />
-            <div className="tc-top">
-              <span className="badge reason">{it.reason}</span>
-              <span className="hint">
-                {it.role === 'assignee' ? '我是指派人' : it.role === 'triager' ? '我是初筛人' : '我是发起人'}
-              </span>
-            </div>
-            <div className={`tc-title${it.unread ? ' unread' : ''}`}>
-              {it.unread && <span className="unread-dot" aria-hidden="true" />}
-              {it.title}
-            </div>
-            <div className="tc-meta">
-              {it.number}
-              {it.assignee?.member?.deactivated && <DeactivatedBadge />}
-            </div>
-          </a>
-        ))
+        <>
+          <div className="b-note">现在轮到你处理的工单。</div>
+          {(data?.items ?? []).length === 0 ? (
+            <div className="ecard">收件箱是空的。</div>
+          ) : (
+            (data?.items ?? []).map((it) => (
+              <a
+                key={it.number}
+                className="tcard"
+                href={`/t/${it.number}`}
+                onClick={(e) => {
+                  e.preventDefault()
+                  nav(`/t/${it.number}?list=inbox`)
+                }}
+              >
+                <span className={`strip ${reasonClass(it.reason)}`} aria-hidden="true" />
+                <div className="tc-top">
+                  <span className="badge reason">{it.reason}</span>
+                  <span className="hint">
+                    {it.role === 'assignee' ? '我是指派人' : it.role === 'triager' ? '我是初筛人' : '我是发起人'}
+                  </span>
+                </div>
+                <div className={`tc-title${it.unread ? ' unread' : ''}`}>
+                  {it.unread && <span className="unread-dot" aria-hidden="true" />}
+                  {it.title}
+                </div>
+                <div className="tc-meta">
+                  {it.number}
+                  {it.assignee?.member?.deactivated && <DeactivatedBadge />}
+                </div>
+              </a>
+            ))
+          )}
+        </>
       )}
     </div>
   )

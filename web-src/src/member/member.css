@@ -2045,6 +2045,11 @@
   min-height: 30px;
   margin: 4px 0;
 }
+/* 协作者（抄送）多选的已选名单：与 .lblrow 同一排版，另起类名避免选择器歧义。 */
+.collab-row {
+  min-height: 30px;
+  margin: 4px 0;
+}
 .mini-tbl {
   width: 100%;
   border-collapse: collapse;

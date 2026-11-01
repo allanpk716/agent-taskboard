@@ -125,6 +125,10 @@ func (m *Manager) CreateTx(ctx context.Context, tx *sql.Tx, prepared PreparedCre
 			return CreateResult{}, nil, err
 		}
 	}
+	collabNotified, err := m.insertInitialCollaboratorsTx(ctx, tx, t, creator, in.CollaboratorMembers, now)
+	if err != nil {
+		return CreateResult{}, nil, err
+	}
 	var notified []int64
 	if m.notifier != nil {
 		after := Full{Ticket: t}
@@ -141,5 +145,6 @@ func (m *Manager) CreateTx(ctx context.Context, tx *sql.Tx, prepared PreparedCre
 			return CreateResult{}, nil, err
 		}
 	}
+	notified = append(notified, collabNotified...)
 	return CreateResult{Full: Full{Ticket: t}, Warnings: warnings, GuestLink: linkCreated}, notified, nil
 }

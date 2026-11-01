@@ -23,6 +23,16 @@ function asCreateDraft(draft: AnyDraftView): CreateDraftView {
   return { ...draft, request: draft.request as CreateDraftRequest }
 }
 
+/** 草稿里的协作者引用可能是成员 id 或姓名；展示时换成可读的姓名。 */
+function memberRefName(ref: string, members: MemberRef[]): string {
+  if (/^\d+$/.test(ref)) {
+    const hit = members.find((m) => m.id === Number(ref))
+    if (hit) return hit.name
+  }
+  const byName = members.find((m) => m.name === ref)
+  return byName?.name ?? ref
+}
+
 export function CreateDraftPage({ id }: { id: string }) {
   const [stage, setStage] = useState<Stage>({ phase: 'loading' })
   const [members, setMembers] = useState<MemberRef[]>([])
@@ -285,6 +295,58 @@ export function CreateDraftPage({ id }: { id: string }) {
                 .filter((m) => m.active !== false)
                 .map((m) => (
                   <option key={m.id} value={m.name}>
+                    {m.name}
+                  </option>
+                ))}
+            </select>
+          </div>
+          <div className="create-action-card">
+            <label htmlFor="draft-collaborators">协作者（抄送）</label>
+            {(request.collaborators ?? []).length === 0 && (
+              <span className="hint">发出时一并加入协作者并通知本人。</span>
+            )}
+            {(request.collaborators ?? []).length > 0 && (
+              <div className="collab-row">
+                {(request.collaborators ?? []).map((ref, i) => (
+                  <span key={`${ref}-${i}`} className="chip c0 collaborator-chip">
+                    {memberRefName(ref, members)}
+                    <i
+                      title="移除"
+                      onClick={() =>
+                        patch({
+                          collaborators: (request.collaborators ?? []).filter((_, j) => j !== i),
+                        })
+                      }
+                    >
+                      ×
+                    </i>
+                  </span>
+                ))}
+              </div>
+            )}
+            <select
+              id="draft-collaborators"
+              aria-label="选择协作者"
+              value=""
+              onChange={(e) => {
+                const id = e.target.value
+                if (!id) return
+                const next = [...(request.collaborators ?? [])]
+                if (!next.includes(id)) next.push(id)
+                patch({ collaborators: next })
+              }}
+            >
+              <option value="">— 选择成员 —</option>
+              {members
+                .filter(
+                  (m) =>
+                    m.active !== false &&
+                    m.name !== request.assignee &&
+                    !(request.collaborators ?? []).includes(String(m.id)) &&
+                    !(request.collaborators ?? []).includes(m.name),
+                )
+                .map((m) => (
+                  <option key={m.id} value={m.id}>
                     {m.name}
                   </option>
                 ))}

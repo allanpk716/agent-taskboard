@@ -30,7 +30,7 @@ import (
 
 // 列表接受的查询参数（写错 → 422 unknown_parameter）。
 var queryAllowedParams = []string{
-	"status", "kind", "template", "label", "label_any", "no_label", "assignee", "creator", "waiting_on", "q",
+	"status", "kind", "template", "label", "label_any", "no_label", "assignee", "creator", "collaborator", "waiting_on", "q",
 	"actor_kind",
 	"created_after", "created_before", "updated_after", "updated_before", "closed_after", "closed_before",
 	"changed_after", "sort", "limit", "page_token", "include", "format",
@@ -507,6 +507,17 @@ func (a *API) parseQueryFilters(ctx context.Context, viewer identity.Viewer, q u
 			fq.CreatorID, fq.CreatorName = id, name
 		}
 	}
+	if v := q.Get("collaborator"); v != "" {
+		// 协作中（#274）：只支持「我」这一个视角——别人的协作清单属于
+		// 各自的可见范围，不作为查询条件开放。
+		if v != "me" {
+			return fq, nil, NewError(http.StatusUnprocessableEntity, CodeInvalidCollaborator,
+				"collaborator 只能是 me", "想看抄送自己的工单就用 collaborator=me")
+		}
+		fq.CollaboratorSet = true
+		fq.CollaboratorID = viewer.Member.ID
+		fq.CollaboratorName = "me"
+	}
 	if v := q.Get("waiting_on"); v != "" {
 		if !containsStringIn([]string{"assignee", "creator", "guest", "department", "me"}, v) {
 			return fq, nil, NewError(http.StatusUnprocessableEntity, CodeInvalidWaitingOn,
@@ -626,6 +637,9 @@ func queryFiltersEcho(fq tickets.ListQuery, sortKey string) map[string]any {
 	}
 	if fq.CreatorSet {
 		echo["creator"] = fq.CreatorName
+	}
+	if fq.CollaboratorSet {
+		echo["collaborator"] = fq.CollaboratorName
 	}
 	if fq.WaitingOn != "" {
 		echo["waiting_on"] = fq.WaitingOn

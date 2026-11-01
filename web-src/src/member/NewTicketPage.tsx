@@ -356,6 +356,7 @@ function NewTicketForm({
   const [labelInput, setLabelInput] = useState(unsent?.labelInput ?? '')
   const [labelErr, setLabelErr] = useState<string | null>(null)
   const [assignee, setAssignee] = useState(unsent?.assignee ?? '')
+  const [collaborators, setCollaborators] = useState<number[]>(unsent?.collaborators ?? [])
   const [members, setMembers] = useState<MemberRef[]>([])
   const [submitErr, setSubmitErr] = useState<string | null>(null)
   const [missing, setMissing] = useState<string[] | null>(null)
@@ -389,6 +390,7 @@ function NewTicketForm({
       brief.trim() === '' &&
       labelInput.trim() === '' &&
       assignee === '' &&
+      collaborators.length === 0 &&
       kind === 'task' &&
       labels.length === 0 &&
       Object.values(values).every((v) => !v.trim())
@@ -396,8 +398,8 @@ function NewTicketForm({
       clearUnsent(unsentKey)
       return
     }
-    saveUnsentNewTicket(unsentKey, { title, kind, brief, values, labels, labelInput, assignee })
-  }, [unsentKey, title, kind, brief, values, labels, labelInput, assignee])
+    saveUnsentNewTicket(unsentKey, { title, kind, brief, values, labels, labelInput, assignee, collaborators })
+  }, [unsentKey, title, kind, brief, values, labels, labelInput, assignee, collaborators])
 
   function paintLabels(next: string[]) {
     setLabels(next)
@@ -481,6 +483,7 @@ function NewTicketForm({
         title: title.trim(),
         labels,
         ...(assignee ? { assignee } : {}),
+        ...(collaborators.length > 0 ? { collaborators } : {}),
       }
       if (template) {
         body.template = template.key
@@ -662,6 +665,57 @@ function NewTicketForm({
               </option>
             ))}
           </select>
+        </div>
+        <div className="fld">
+          <label htmlFor="nt-collaborators">协作者（抄送）</label>
+          <div className="guide">可选多位在职成员；建单后他们会收到「加入协作」通知并能看到这张工单。</div>
+          <div className="collab-row">
+            {collaborators.length === 0 ? (
+              <span className="hint">还没选协作者</span>
+            ) : (
+              collaborators.map((id) => {
+                const m = members.find((x) => x.id === id)
+                return (
+                  <span key={id} className="chip c0 collaborator-chip">
+                    {m?.name ?? `成员 ${id}`}
+                    <i
+                      title="移除"
+                      onClick={() => setCollaborators(collaborators.filter((x) => x !== id))}
+                    >
+                      ×
+                    </i>
+                  </span>
+                )
+              })
+            )}
+          </div>
+          <div className="inrow">
+            <select
+              id="nt-collaborators"
+              className="sel"
+              aria-label="选择协作者"
+              value=""
+              onChange={(e) => {
+                const id = Number(e.target.value)
+                if (id && !collaborators.includes(id)) setCollaborators([...collaborators, id])
+              }}
+            >
+              <option value="">— 选择成员 —</option>
+              {members
+                .filter(
+                  (m) =>
+                    m.active !== false &&
+                    m.id !== me.id &&
+                    m.name !== assignee &&
+                    !collaborators.includes(m.id),
+                )
+                .map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+            </select>
+          </div>
         </div>
       </div>
       {submitErr && <div className="errbox">{submitErr}</div>}

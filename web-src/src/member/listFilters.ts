@@ -3,6 +3,8 @@ export interface ListFilters {
   status: 'open' | 'closed' | 'all'
   kind: '' | 'task' | 'report'
   assignee: '' | 'me' | 'none'
+  /** 与我相关里的「我协作的」（#274）：collaborator=me。 */
+  collaborator: '' | 'me'
   waiting: '' | 'assignee' | 'creator' | 'guest' | 'department'
   actor: '' | 'member' | 'agent'
   q: string
@@ -31,6 +33,7 @@ export function toQuery(f: ListFilters): string {
   q.set('status', f.status)
   if (f.kind) q.set('kind', f.kind)
   if (f.assignee) q.set('assignee', f.assignee)
+  if (f.collaborator) q.set('collaborator', f.collaborator)
   if (f.waiting) q.set('waiting_on', f.waiting)
   if (f.actor) q.set('actor_kind', f.actor)
   if (f.q.trim()) q.set('q', f.q.trim())
@@ -55,6 +58,7 @@ export function filtersFromSearch(search: string): ListFilters {
     status: (get('status', 'open') || 'all') as ListFilters['status'],
     kind: get('kind', '') as ListFilters['kind'],
     assignee: get('assignee', '') as ListFilters['assignee'],
+    collaborator: (q.get('collaborator') ?? '') as ListFilters['collaborator'],
     waiting: (q.get('waiting_on') ?? '') as ListFilters['waiting'],
     actor: (q.get('actor_kind') ?? '') as ListFilters['actor'],
     q: get('q', ''),

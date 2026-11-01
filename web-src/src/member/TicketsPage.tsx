@@ -375,6 +375,36 @@ export function TicketsPage({
       🏷 标签 ▾
     </button>
   )
+  // 「与我相关」（#274）：三个可叠加的快捷条件，与状态等其他筛选自由组合。
+  const creatorMe = filters.creatorKind === 'me' && !filters.creatorName.trim()
+  const relatedChips = (
+    <>
+      <button
+        type="button"
+        className={`fchip${filters.assignee === 'me' ? ' on' : ''}`}
+        aria-pressed={filters.assignee === 'me'}
+        onClick={() => changeFilter({ assignee: filters.assignee === 'me' ? '' : 'me' })}
+      >
+        指派给我
+      </button>
+      <button
+        type="button"
+        className={`fchip${creatorMe ? ' on' : ''}`}
+        aria-pressed={creatorMe}
+        onClick={() => changeFilter({ creatorKind: creatorMe ? '' : 'me', creatorName: '' })}
+      >
+        我创建的
+      </button>
+      <button
+        type="button"
+        className={`fchip${filters.collaborator === 'me' ? ' on' : ''}`}
+        aria-pressed={filters.collaborator === 'me'}
+        onClick={() => changeFilter({ collaborator: filters.collaborator === 'me' ? '' : 'me' })}
+      >
+        我协作的
+      </button>
+    </>
+  )
 
   if (desktop) {
     return (
@@ -414,14 +444,7 @@ export function TicketsPage({
           >
             已关闭
           </button>
-          <button
-            type="button"
-            className={`fchip${filters.assignee === 'me' ? ' on' : ''}`}
-            aria-pressed={filters.assignee === 'me'}
-            onClick={() => changeFilter({ assignee: filters.assignee === 'me' ? '' : 'me' })}
-          >
-            指派给我
-          </button>
+          {relatedChips}
           <button
             type="button"
             className={`fchip${filters.waiting === 'guest' ? ' on' : ''}`}
@@ -626,6 +649,12 @@ export function TicketsPage({
                 if (e.target.value !== filters.q) set('q', e.target.value)
               }}
             />
+          </div>
+          <div className="frow">
+            <span className="fgroup" role="group" aria-label="与我相关">
+              <span className="flbl">与我相关</span>
+              {relatedChips}
+            </span>
           </div>
           <div className="frow">
             {labelButton}

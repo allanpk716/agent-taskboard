@@ -226,7 +226,7 @@ spec 用户故事 84），没有 `inbox`：
 
 | 方法与路径 | 说明 |
 |---|---|
-| `POST /api/v1/tickets` | 建单（成员/成员 Agent；访客 403 `members_only`，访客建单走反馈入口 #35）。可带 `guest_link` 一并创建访客链接（#64「请人反馈」）。 |
+| `POST /api/v1/tickets` | 建单（成员/成员 Agent；访客 403 `members_only`，访客建单走反馈入口 #35）。可带 `collaborators` 一并指定协作者（抄送，#274）、带 `guest_link` 一并创建访客链接（#64「请人反馈」）。 |
 | `GET /api/v1/tickets` | 条件列表（#37，仅成员；只返回当前凭证可见范围内的工单，见「查询与计数（#37）」）。 |
 | `GET /api/v1/tickets/counts` | 按一个维度计数（#37，仅成员；筛选与可见范围均与列表相同）。 |
 | `GET /api/v1/tickets/{id}` | 读一张可见范围内的工单；`?format=markdown` 返回给 Agent 读的 Markdown。网页会话与客户端凭证读取时把该成员的工单未读游标推进到最新事件；成员 Agent 读取不改变未读状态。 |
@@ -255,8 +255,8 @@ spec 用户故事 84），没有 `inbox`：
 指向工单 `#draft` 或建单草稿页。原接口的 4xx 校验错误照常在保存时返回；已关闭工单上的
 回复草稿保存/发出均返回 `409 ticket_closed`。
 
-- 建单请求体 `{"kind", "title", "brief_md", "labels", "assignee?"}`（不用模板）或
-  `{"template", "title", "fields", "labels", "assignee?"}`（用模板，见下面的「模板（#34）」），
+- 建单请求体 `{"kind", "title", "brief_md", "labels", "assignee?", "collaborators?"}`（不用模板）或
+  `{"template", "title", "fields", "labels", "assignee?", "collaborators?"}`（用模板，见下面的「模板（#34）」），
   以及可选的 `"guest_link"`（#64「请人反馈」，与工单在同一个事务里创建访客链接）：
   - `kind` 可省（默认 `task`），只能是 `task`（任务）或 `report`（反馈）；用模板创建时由模板决定（请求里的 `kind` 被忽略）。
     `guest_link` 不限制模板类型；任务模板同样可用于「请人反馈」，由访客补全必填字段。
@@ -281,6 +281,14 @@ spec 用户故事 84），没有 `inbox`：
     查无此人返回 `422 unknown_member`；账号已停用的成员返回 `422 assignee_deactivated`
     （#42：停用即时生效，不再接新工单）。建单时指派会在 `created` 事件后记一条
     `assigned{from: null, to}` 事件。
+  - `collaborators`（#274「抄送」）是成员引用数组，元素可写正整数成员 id、字符串
+    成员 id 或姓名：`[4, "5", "陈工"]`，缺省或 `null` 表示不指定。只能在**在职**成员里选：
+    查无此人 `422 unknown_member`、账号已停用 `422 collaborator_deactivated`（与协作者
+    接口同一套错误），整个建单请求被拒绝、不留下工单；类型写错（不是数组或元素不是
+    成员引用）返回 `422 invalid_collaborators`。创建者和指派人按现有规则不算协作者
+    （写了会被忽略），其余成员在建单的同一事务里加入名单，并在时间线上依次记
+    `collaborator_added` 事件、发出「加入协作」通知，与详情页手动加人完全一致。
+    例：`{"title": "整理清单", "labels": ["机型:UD-2300"], "assignee": "陈工", "collaborators": [4, "李工"]}`。
   - `guest_link`（#64）是 `{"note", "valid_days?", "can_edit_brief"}`：`note` 必填
     （写对方是谁，如「检验科-张三」），`valid_days` 只能 7/30/90（不填默认 30），
     复用单建访客链接的校验与错误码（422 `note_required` / `invalid_valid_days`）。
@@ -468,6 +476,10 @@ spec 用户故事 84），没有 `inbox`：
   `author` 是最后一版执笔者；`versions` 是起草过程元数据；`base.brief_revision`
   只在说明修订草稿上出现。同一成员一方在同一张工单上只有一个 pending 草稿位，
   回复与说明修订共用。
+- 建单草稿（`kind == "create"`）的 `request` 与建单请求同形，另可带 `collaborators`
+  （#274「抄送」，成员引用数组）：保存与修改时就按建单的规则校验（停用/不存在的
+  成员当场报错），草稿视图原样回显这个字段；发出时随工单一并加入协作者、记
+  `collaborator_added` 事件并通知本人。
 - pending 的模板建单草稿（`request.template` 非空）视图带三个**只读的服务端计算字段**：
   `rendered_brief_md` 按发出时的同一条路径（当前模板版本的字段定义 + 说明渲染）
   算出，与发出后的工单说明 `brief.markdown` 逐字一致；`template_fields` 是当前
@@ -614,6 +626,11 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
     `unknown_dimension` / `unknown_label_value`，不带维度时的 `hint` 指向改用 `label`。
   - `assignee=<名|id>|me|none`、`creator=<名|id>|me|guest`（经反馈入口提交）、
     `waiting_on=assignee|creator|guest|department|me`（不存在的成员 422 `unknown_member`）。
+  - `collaborator=me`（#274「协作中」）：只返回当前成员**作为协作者**（抄送）的工单，
+    照常受可见范围约束，可与 `status` 等其他条件组合（如看已关闭的协作工单用
+    `collaborator=me&status=closed`）。成员 Agent 使用时等同其主人。只接受 `me`，
+    其他取值返回 `422 invalid_collaborator`。想看「抄送我的单」，用
+    `GET /api/v1/tickets?collaborator=me&status=open`。
   - `actor_kind=member|agent`（orchestrator 决议 5，「本人 / Agent」筛选）：按**创建者**
     的署名区分——`member` 是真人署名（成员本人或未自报 `via_agent` 的访客），
     `agent` 是成员 Agent 署名，或访客自报「由 Agent 写成」（`via_agent`，评审 P2-12）。

@@ -307,14 +307,16 @@ func (a *API) ticketAccessRecords(w http.ResponseWriter, r *http.Request, ref st
 // guest_link（#64「请人反馈」）非空时在同一事务里一并创建访客链接，
 // 链接带 can_edit_brief 权限时免「至少一个维度标签」。
 type createTicketRequest struct {
-	Kind      string            `json:"kind"`
-	Template  string            `json:"template"`
-	Title     string            `json:"title"`
-	BriefMD   string            `json:"brief_md"`
-	Fields    map[string]string `json:"fields"`
-	Labels    []string          `json:"labels"`
-	Assignee  assigneeRef       `json:"assignee"`
-	GuestLink *guestLinkRequest `json:"guest_link"`
+	Kind     string            `json:"kind"`
+	Template string            `json:"template"`
+	Title    string            `json:"title"`
+	BriefMD  string            `json:"brief_md"`
+	Fields   map[string]string `json:"fields"`
+	Labels   []string          `json:"labels"`
+	Assignee assigneeRef       `json:"assignee"`
+	// Collaborators（抄送，#274）：建单时一并加入协作者；只允许在职成员。
+	Collaborators collaboratorRefs  `json:"collaborators"`
+	GuestLink     *guestLinkRequest `json:"guest_link"`
 }
 
 // createTicketResponse 是建单成功的响应（201）。用模板建单缺必填项时
@@ -354,6 +356,12 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 		writeInvalidAssignee(w)
 		return
 	}
+	if req.Collaborators.invalid {
+		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidCollaborators,
+			"collaborators 必须是成员引用数组",
+			`如 {"collaborators": [4, "5", "陈工"]}；不指定时省略或给 null`)
+		return
+	}
 	// guest_link 复用单建访客链接的请求体与校验（note 必填；错误码也一致，#64），
 	// 但只接受 {note, valid_days, can_edit_brief}：expires_at 只在单建链接时可用
 	//（这里必须守住 7/30/90 的限制）。
@@ -382,7 +390,8 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 			}
 			d, err := a.drafts.SaveCreate(r.Context(), viewer, drafts.CreateRequest{
 				Kind: req.Kind, Template: req.Template, Title: req.Title, BriefMD: req.BriefMD,
-				Fields: req.Fields, Labels: req.Labels, Assignee: req.Assignee.ref, GuestLink: guestDraft,
+				Fields: req.Fields, Labels: req.Labels, Assignee: req.Assignee.ref,
+				Collaborators: req.Collaborators.refs, GuestLink: guestDraft,
 			})
 			if err != nil {
 				a.writeTicketError(w, r, "", err)
@@ -400,15 +409,16 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result, err := a.tickets.Create(r.Context(), tickets.CreateInput{
-			Kind:        req.Kind,
-			Title:       req.Title,
-			BriefMD:     req.BriefMD,
-			Labels:      req.Labels,
-			TemplateKey: req.Template,
-			Fields:      req.Fields,
-			Assignee:    req.Assignee.ref,
-			Creator:     viewer,
-			GuestLink:   guestSpec,
+			Kind:          req.Kind,
+			Title:         req.Title,
+			BriefMD:       req.BriefMD,
+			Labels:        req.Labels,
+			TemplateKey:   req.Template,
+			Fields:        req.Fields,
+			Assignee:      req.Assignee.ref,
+			Collaborators: req.Collaborators.refs,
+			Creator:       viewer,
+			GuestLink:     guestSpec,
 		})
 		if err != nil {
 			a.writeTicketError(w, r, "", err)

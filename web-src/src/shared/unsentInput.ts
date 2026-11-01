@@ -14,6 +14,8 @@ export interface UnsentNewTicket {
   labels: string[]
   labelInput: string
   assignee: string
+  /** 协作者（抄送，#274）的成员 id 列表。 */
+  collaborators?: number[]
 }
 
 export interface UnsentReply {
@@ -83,6 +85,9 @@ export function loadUnsentNewTicket(key: string): UnsentNewTicket | null {
     labels: Array.isArray(v.labels) ? v.labels.filter((l) => typeof l === 'string') : [],
     labelInput: typeof v.labelInput === 'string' ? v.labelInput : '',
     assignee: typeof v.assignee === 'string' ? v.assignee : '',
+    collaborators: Array.isArray(v.collaborators)
+      ? v.collaborators.filter((id) => typeof id === 'number')
+      : [],
   }
 }
 

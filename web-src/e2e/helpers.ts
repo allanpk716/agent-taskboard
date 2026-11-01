@@ -9,25 +9,50 @@ import { expect, type APIRequestContext, type Page } from '@playwright/test'
 export const ADMIN = { username: 'admin', password: 'admin-pass-123' }
 const E2E_CAPTCHA_ANSWER = 'TB123'
 
-// 王工是普通成员（start-server.mjs 用 #42 的成员账号接口创建）：初始密码由
-// 服务器生成、只出现一次，写在按端口命名的临时文件里；服务刚起来时可能还没
-// 写好，这里等它出现（复用旧服务、文件不存在时回退到旧密码）。
-let cachedWang: { username: string; password: string } | null = null
-export async function wang(): Promise<{ username: string; password: string }> {
-  if (cachedWang) return cachedWang
+// 普通成员（王工 / 李工，start-server.mjs 用 #42 的成员账号接口创建）：初始
+// 密码由服务器生成、只出现一次，写在按端口命名的临时文件里；服务刚起来时可
+// 能还没写好，这里等它出现（复用旧服务、文件不存在时回退到旧密码）。
+export type MemberCredential = { username: string; password: string }
+const cachedMembers = new Map<string, MemberCredential>()
+
+async function memberCredential(username: string, fallbackPassword: string): Promise<MemberCredential> {
+  const cached = cachedMembers.get(username)
+  if (cached) return cached
   const port = process.env.E2E_PORT || '8901'
   const file = join(tmpdir(), `tb-e2e-members-${port}.json`)
   for (let i = 0; i < 80; i++) {
     try {
-      const parsed = JSON.parse(readFileSync(file, 'utf-8')) as { username: string; password: string }
-      cachedWang = parsed
-      return parsed
+      const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
+      if (parsed && typeof parsed === 'object') {
+        const record = parsed as Record<string, unknown>
+        const found =
+          record.username === username && typeof record.password === 'string'
+            ? { username, password: record.password }
+            : record[username] && typeof (record[username] as MemberCredential).password === 'string'
+              ? (record[username] as MemberCredential)
+              : null
+        if (found?.password) {
+          cachedMembers.set(username, found)
+          return found
+        }
+      }
     } catch {}
     await new Promise((r) => setTimeout(r, 250))
   }
-  console.warn(`[e2e] 没找到 ${file}，回退到旧密码（服务是旧代码启动的？）`)
-  cachedWang = { username: 'wang', password: 'wang-pass-123' }
-  return cachedWang
+  console.warn(`[e2e] 没在 ${file} 里找到 ${username}，回退到旧密码（服务是旧代码启动的？）`)
+  const fallback = { username, password: fallbackPassword }
+  cachedMembers.set(username, fallback)
+  return fallback
+}
+
+/** 王工：普通成员（指派、收件箱流转、非管理员视角）。 */
+export async function wang(): Promise<MemberCredential> {
+  return memberCredential('wang', 'wang-pass-123')
+}
+
+/** 李工：普通成员（#274 抄送与「协作中」视角）。 */
+export async function li(): Promise<MemberCredential> {
+  return memberCredential('li', 'li-pass-123')
 }
 
 export async function login(page: Page, who: { username: string; password: string }) {
