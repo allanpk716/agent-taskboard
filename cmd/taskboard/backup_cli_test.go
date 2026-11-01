@@ -187,7 +187,7 @@ func Test命令行备份命名正确并通过完整性校验(t *testing.T) {
 	stop() // 备份本身支持在线进行，这里先停掉避免与后续测试抢端口
 
 	out := runTaskboard(t, f.bin, "backup", "-config", f.configPath)
-	matches := globBackupFiles(t, f.target, "daily")
+	matches := globScheduledBackups(t, f.target)
 	if len(matches) != 1 {
 		t.Fatalf("目标里应有一个每日备份文件：%v（输出 %s）", matches, out)
 	}
@@ -242,7 +242,7 @@ func Test命令行恢复后工单数一致附件能打开(t *testing.T) {
 
 	// 服务运行中做在线备份（VACUUM INTO 不需要停服务）。
 	runTaskboard(t, f.bin, "backup", "-config", f.configPath)
-	backup := globBackupFiles(t, f.target, "daily")[0]
+	backup := globScheduledBackups(t, f.target)[0]
 	backupPath := filepath.Join(f.target, backup)
 
 	// 服务还在跑时恢复被拒绝。
@@ -342,4 +342,11 @@ func globBackupFiles(t *testing.T, dir, kind string) []string {
 		matches[i], matches[j] = matches[j], matches[i]
 	}
 	return matches
+}
+
+// globScheduledBackups 列出手动/定时备份的文件名：每月 1 日归为 monthly，
+// 其余日子为 daily（ops.KindForDate），测试不依赖当天日期（#277）。
+func globScheduledBackups(t *testing.T, dir string) []string {
+	t.Helper()
+	return append(globBackupFiles(t, dir, "daily"), globBackupFiles(t, dir, "monthly")...)
 }
