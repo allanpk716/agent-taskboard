@@ -171,3 +171,94 @@ func Test下载已瘦身附件返回专用错误码与包名(t *testing.T) {
 		}
 	}
 }
+
+func Test重开瘦身后上传新附件状态变部分且可再次瘦身(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	s.CreateMember("王工", "member-pass")
+	admin := s.Login("陈工", "secret-pass")
+	member := s.Login("王工", "member-pass")
+
+	setStorageClock(t, s, 2026, time.June, 2)
+	number := mustCreateTicket(t, s, member, "重开后再瘦身")
+	old := mustUploadAttachment(t, s, member, number, "旧日志.log", []byte("old"))
+	if res := revise(t, s, member, number, map[string]any{
+		"attachment_ids": []string{old.ID}, "base_revision": 1,
+	}); res.StatusCode != http.StatusOK {
+		t.Fatalf("挂说明附件状态码 = %d", res.StatusCode)
+	}
+	if res := closeTicket(t, s, member, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d", res.StatusCode)
+	}
+	setStorageClock(t, s, 2026, time.October, 16)
+	admin = s.Login("陈工", "secret-pass")
+	var first slimPackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/slim/packages",
+		map[string]any{"ticket_numbers": []string{number}}, &first); res.StatusCode != http.StatusCreated {
+		t.Fatalf("第一次生成瘦身包状态码 = %d", res.StatusCode)
+	}
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/admin/slim/packages/"+first.Name+"/remove", map[string]any{"saved": true}, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("第一次确认瘦身状态码 = %d", res.StatusCode)
+	}
+	var afterFirst slimDetailBody
+	s.Do(t, member, http.MethodGet, "/api/v1/tickets/"+number, nil, &afterFirst)
+	if afterFirst.Slim.Status != "full" {
+		t.Fatalf("第一次瘦身后状态 = %q，想 full", afterFirst.Slim.Status)
+	}
+
+	// 重开并上传新附件：新附件照常下载，工单标记变为「部分附件已瘦身」。
+	if res := s.Do(t, member, http.MethodPost, "/api/v1/tickets/"+number+"/reopen", nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("重开状态码 = %d", res.StatusCode)
+	}
+	fresh := mustUploadAttachment(t, s, member, number, "新日志.log", []byte("new-body"))
+	if res := revise(t, s, member, number, map[string]any{
+		"attachment_ids": []string{old.ID, fresh.ID}, "base_revision": 2,
+	}); res.StatusCode != http.StatusOK {
+		t.Fatalf("挂新附件状态码 = %d", res.StatusCode)
+	}
+	body := readAll(t, downloadAttachment(t, s, member,
+		"/api/v1/attachments/"+fresh.ID+"/"+url.PathEscape("新日志.log")))
+	if string(body) != "new-body" {
+		t.Fatalf("新附件下载内容 = %q，想 new-body", body)
+	}
+	var afterReopen slimDetailBody
+	s.Do(t, member, http.MethodGet, "/api/v1/tickets/"+number, nil, &afterReopen)
+	if afterReopen.Slim.Status != "partial" || afterReopen.Slim.RemovedCount != 1 ||
+		len(afterReopen.Attachments) != 2 {
+		t.Fatalf("重开后瘦身汇总 = %+v，附件 = %+v", afterReopen.Slim, afterReopen.Attachments)
+	}
+	var list slimListBody
+	s.Do(t, member, http.MethodGet, "/api/v1/tickets?status=all", nil, &list)
+	for _, item := range list.Items {
+		if item.Number == number && item.SlimStatus != "partial" {
+			t.Fatalf("重开后列表瘦身状态 = %q，想 partial", item.SlimStatus)
+		}
+	}
+
+	// 再次瘦身只处理新附件，之后标记回到「已瘦身」。
+	if res := closeTicket(t, s, member, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("再次关闭状态码 = %d", res.StatusCode)
+	}
+	setStorageClock(t, s, 2026, time.November, 16)
+	admin = s.Login("陈工", "secret-pass")
+	member = s.Login("王工", "member-pass")
+	var second slimPackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/slim/packages",
+		map[string]any{"closed_months": 1, "ticket_numbers": []string{number}}, &second); res.StatusCode != http.StatusCreated {
+		t.Fatalf("第二次生成瘦身包状态码 = %d", res.StatusCode)
+	}
+	if second.Name == first.Name || second.AttachmentCount != 1 || second.AttachmentBytes != 8 {
+		t.Fatalf("第二次瘦身包 = %+v，想只包含新附件", second)
+	}
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/admin/slim/packages/"+second.Name+"/remove", map[string]any{"saved": true}, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("第二次确认瘦身状态码 = %d", res.StatusCode)
+	}
+	var afterSecond slimDetailBody
+	s.Do(t, member, http.MethodGet, "/api/v1/tickets/"+number, nil, &afterSecond)
+	if afterSecond.Slim.Status != "full" || afterSecond.Slim.RemovedCount != 2 ||
+		len(afterSecond.Slim.Packages) != 2 {
+		t.Fatalf("第二次瘦身后汇总 = %+v，想 2 个附件、2 个包、full", afterSecond.Slim)
+	}
+}
