@@ -130,6 +130,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/admin/slim/preview", a.handleAdminSlimPreview)
 	mux.HandleFunc("/api/v1/admin/slim/packages", a.handleAdminSlimPackages)
 	mux.HandleFunc("/api/v1/admin/slim/packages/", a.handleAdminSlimPackages)
+	mux.HandleFunc("/api/v1/admin/slim/restore", a.handleAdminSlimRestore)
+	mux.HandleFunc("/api/v1/admin/slim/restore/inspect", a.handleAdminSlimRestoreInspect)
 	mux.HandleFunc("/api/v1/admin/archive/packages", a.handleAdminArchivePackages)
 	mux.HandleFunc("/api/v1/admin/archive/packages/", a.handleAdminArchivePackages)
 	mux.HandleFunc("/api/v1/admin/archive/import/inspect", a.handleAdminArchiveImportInspect)

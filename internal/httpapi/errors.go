@@ -200,13 +200,15 @@ const (
 	CodeArchiveFormatUnsupported = "archive_format_unsupported"          // 上传包格式版本不支持（422）
 	CodeTicketArchived           = "ticket_archived"                     // 工单已归档移出平台（410）
 
-	// #281/#283：附件瘦身。
-	CodeNotSlimmable         = "ticket_not_slimmable"             // 选择里的工单没有可瘦身附件或不满足关闭月数（422）
-	CodeSlimNotFound         = "slim_package_not_found"           // 瘦身包不存在或已过期（404）
-	CodeSlimGenerateConflict = "slim_generate_in_progress"        // 已有瘦身生成正在执行（409）
-	CodeSlimSavedRequired    = "slim_saved_confirmation_required" // 未勾选“我已保存瘦身包”（400）
-	CodeSlimRemoved          = "slim_package_removed"             // 瘦身包对应附件已移出（409）
-	CodeSlimPackageStale     = "slim_package_stale"               // 生成后工单或附件变化（409）
+	// #281/#283/#285：附件瘦身与恢复。
+	CodeNotSlimmable          = "ticket_not_slimmable"             // 选择里的工单没有可瘦身附件或不满足关闭月数（422）
+	CodeSlimNotFound          = "slim_package_not_found"           // 瘦身包不存在或已过期（404）
+	CodeSlimGenerateConflict  = "slim_generate_in_progress"        // 已有瘦身生成正在执行（409）
+	CodeSlimSavedRequired     = "slim_saved_confirmation_required" // 未勾选“我已保存瘦身包”（400）
+	CodeSlimRemoved           = "slim_package_removed"             // 瘦身包对应附件已移出（409）
+	CodeSlimPackageStale      = "slim_package_stale"               // 生成后工单或附件变化（409）
+	CodeSlimPackageInvalid    = "slim_package_invalid"             // 上传的瘦身包校验失败（422）
+	CodeSlimFormatUnsupported = "slim_format_unsupported"          // 上传包格式版本太高（422）
 
 	// #80：桌面客户端凭证。
 	CodeInvalidClientPort        = "invalid_client_port"

@@ -1,5 +1,5 @@
-// 管理页「附件瘦身」（#283）：筛选、勾选、预览、生成 / 下载瘦身包，
-// 确认已保存后只移出附件；交互与归档面板保持一致。
+// 管理页「附件瘦身」（#283/#285）：筛选、勾选、预览、生成 / 下载瘦身包，
+// 确认已保存后只移出附件，并可上传瘦身包按工单恢复；交互与归档面板保持一致。
 import { useEffect, useMemo, useState } from 'react'
 import { ApiError } from '../../api'
 import { fmtBeijing } from '../../shared/format'
@@ -7,9 +7,13 @@ import {
   createSlimPackage,
   fetchSlimCandidates,
   fetchSlimPackages,
+  inspectSlimRestorePackage,
   previewSlim,
   removeSlimPackage,
+  restoreSlimPackage,
   type SlimCandidateMonth,
+  type SlimRestoreInspection,
+  type SlimRestoreResult,
   type SlimPackage,
   type SlimPreview,
   type SlimRemoveResult,
@@ -38,7 +42,12 @@ export function SlimPanel() {
   const [packageError, setPackageError] = useState<string | null>(null)
   const [saved, setSaved] = useState<Set<string>>(new Set())
   const [removal, setRemoval] = useState<SlimRemoveResult | null>(null)
-  const [busy, setBusy] = useState<'preview' | 'generate' | 'remove' | null>(null)
+  const [restoreFile, setRestoreFile] = useState<File | null>(null)
+  const [restoreInspection, setRestoreInspection] = useState<SlimRestoreInspection | null>(null)
+  const [restoreSelected, setRestoreSelected] = useState<Set<string>>(new Set())
+  const [restoreResult, setRestoreResult] = useState<SlimRestoreResult | null>(null)
+  const [restoreError, setRestoreError] = useState<string | null>(null)
+  const [busy, setBusy] = useState<'preview' | 'generate' | 'remove' | 'inspect' | 'restore' | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -151,6 +160,52 @@ export function SlimPanel() {
       setPackageError(null)
     } catch (e) {
       setPackageError(e instanceof ApiError ? `${e.message}（${e.code}）` : '确认瘦身移出失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const chooseRestoreFile = (file: File | null) => {
+    setRestoreFile(file)
+    setRestoreInspection(null)
+    setRestoreSelected(new Set())
+    setRestoreResult(null)
+    setRestoreError(null)
+  }
+
+  const inspectRestore = async () => {
+    if (!restoreFile) return
+    setBusy('inspect')
+    try {
+      const result = await inspectSlimRestorePackage(restoreFile)
+      setRestoreInspection(result)
+      setRestoreSelected(
+        new Set(result.tickets.filter((ticket) => ticket.restorable).map((ticket) => ticket.number)),
+      )
+      setRestoreResult(null)
+      setRestoreError(null)
+    } catch (e) {
+      setRestoreInspection(null)
+      setRestoreSelected(new Set())
+      setRestoreError(e instanceof ApiError ? `${e.message}（${e.code}）` : '检查瘦身包失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const submitRestore = async () => {
+    if (!restoreFile || restoreSelected.size === 0) return
+    setBusy('restore')
+    try {
+      const result = await restoreSlimPackage(restoreFile, [...restoreSelected])
+      setRestoreResult(result)
+      setRestoreInspection(null)
+      setRestoreSelected(new Set())
+      setRestoreError(null)
+      setPackages(await fetchSlimPackages())
+      setCandidateMonths(await fetchSlimCandidates(months))
+    } catch (e) {
+      setRestoreError(e instanceof ApiError ? `${e.message}（${e.code}）` : '恢复瘦身包失败')
     } finally {
       setBusy(null)
     }
@@ -339,6 +394,93 @@ export function SlimPanel() {
         <div className="okbox" data-testid="slim-remove-result">
           已移出 {removal.attachment_count} 个附件，释放 {fmtBytes(removal.attachment_bytes)}；
           清理失败 {removal.cleanup_failures} 个。
+        </div>
+      )}
+
+      <div className="fldlab" style={{ marginTop: 12 }}>
+        恢复瘦身包
+      </div>
+      <div className="frow">
+        <input
+          type="file"
+          accept="application/zip,.zip"
+          aria-label="选择瘦身包文件"
+          data-testid="slim-restore-file"
+          onChange={(e) => chooseRestoreFile(e.target.files?.[0] ?? null)}
+        />
+        <button
+          type="button"
+          className="btn sm ghost"
+          disabled={restoreFile === null || busy !== null}
+          onClick={() => void inspectRestore()}
+          data-testid="slim-restore-inspect"
+        >
+          {busy === 'inspect' ? '检查中…' : '检查瘦身包'}
+        </button>
+      </div>
+      {restoreError && <div className="errbox">{restoreError}</div>}
+      {restoreInspection && (
+        <div className="subcard" data-testid="slim-restore-preview">
+          <div className="fldlab">
+            {restoreInspection.package_name}：{restoreInspection.ticket_count} 张工单，
+            {restoreInspection.attachment_count} 个附件 / {fmtBytes(restoreInspection.attachment_bytes)}
+          </div>
+          <table className="mini-tbl" style={{ marginTop: 6 }}>
+            <tbody>
+              {restoreInspection.tickets.map((ticket) => (
+                <tr key={ticket.number} data-testid={`slim-restore-ticket-${ticket.number}`}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      aria-label={`选择恢复工单 ${ticket.number}`}
+                      data-testid={`slim-restore-select-${ticket.number}`}
+                      checked={restoreSelected.has(ticket.number)}
+                      disabled={!ticket.restorable}
+                      onChange={(e) =>
+                        setRestoreSelected((prev) => {
+                          const next = new Set(prev)
+                          if (e.target.checked) next.add(ticket.number)
+                          else next.delete(ticket.number)
+                          return next
+                        })
+                      }
+                    />{' '}
+                    <span className="mono">{ticket.number}</span> {ticket.title}
+                  </td>
+                  <td>
+                    {ticket.attachment_count} 个 / {fmtBytes(ticket.attachment_bytes)}
+                  </td>
+                  <td>
+                    {ticket.restorable ? (
+                      <span className="ok">可恢复</span>
+                    ) : (
+                      <span className="warn">{ticket.reason}</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <button
+            type="button"
+            className="btn sm"
+            disabled={restoreSelected.size === 0 || busy !== null}
+            onClick={() => void submitRestore()}
+            data-testid="slim-restore-submit"
+          >
+            {busy === 'restore' ? '恢复中…' : `恢复选中的 ${restoreSelected.size} 张工单`}
+          </button>
+        </div>
+      )}
+      {restoreResult && (
+        <div className="okbox" data-testid="slim-restore-result">
+          已恢复 {restoreResult.restored.length} 张工单
+          {restoreResult.rejected.length > 0 ? `，${restoreResult.rejected.length} 张被拒绝` : ''}。
+          {restoreResult.rejected.map((ticket) => (
+            <div className="hint" key={ticket.number}>
+              {ticket.number}：{ticket.reason}
+            </div>
+          ))}
         </div>
       )}
     </div>
