@@ -38,6 +38,10 @@ type Attachment struct {
 	URL        string
 	SizeLabel  string // 如「1.2 MB」
 	AttachedTo string // 「说明」或「回复 N」
+	// Slimmed：附件已瘦身移出服务器（#284）。此时不输出下载地址，
+	// 只写明包名，Agent 看到就不要再尝试下载。
+	Slimmed         bool
+	SlimPackageName string
 }
 
 // Input 是单张工单 Markdown 视图的输入（纯数据，由 HTTP 层从投影填充）。
@@ -108,6 +112,11 @@ func Ticket(in Input) string {
 		L = append(L, "（无）")
 	} else {
 		for _, att := range in.Attachments {
+			if att.Slimmed {
+				L = append(L, "- "+att.Filename+"（"+att.SizeLabel+"，附于"+att.AttachedTo+
+					"；已瘦身移出，见包 "+att.SlimPackageName+"，不要下载）")
+				continue
+			}
 			L = append(L, "- ["+att.Filename+"]("+att.URL+")（"+att.SizeLabel+"，附于"+att.AttachedTo+"）")
 		}
 	}

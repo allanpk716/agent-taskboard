@@ -262,3 +262,46 @@ func Test重开瘦身后上传新附件状态变部分且可再次瘦身(t *test
 		t.Fatalf("第二次瘦身后汇总 = %+v，想 2 个附件、2 个包、full", afterSecond.Slim)
 	}
 }
+
+func TestMarkdown视图标注瘦身附件且不再给出下载链接(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	s.CreateMember("王工", "member-pass")
+	admin := s.Login("陈工", "secret-pass")
+	member := s.Login("王工", "member-pass")
+
+	setStorageClock(t, s, 2026, time.June, 2)
+	number := mustCreateTicket(t, s, member, "瘦身 Markdown")
+	log := mustUploadAttachment(t, s, member, number, "服务日志.log", []byte("slim-body"))
+	if res := revise(t, s, member, number, map[string]any{
+		"attachment_ids": []string{log.ID}, "base_revision": 1,
+	}); res.StatusCode != http.StatusOK {
+		t.Fatalf("挂说明附件状态码 = %d", res.StatusCode)
+	}
+	if res := closeTicket(t, s, member, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d", res.StatusCode)
+	}
+	setStorageClock(t, s, 2026, time.October, 16)
+	admin = s.Login("陈工", "secret-pass")
+	var pkg slimPackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/slim/packages",
+		map[string]any{"ticket_numbers": []string{number}}, &pkg); res.StatusCode != http.StatusCreated {
+		t.Fatalf("生成瘦身包状态码 = %d", res.StatusCode)
+	}
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/admin/slim/packages/"+pkg.Name+"/remove", map[string]any{"saved": true}, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("确认瘦身状态码 = %d", res.StatusCode)
+	}
+
+	res := s.Do(t, member, http.MethodGet, "/api/v1/tickets/"+number+"?format=markdown", nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("Markdown 状态码 = %d", res.StatusCode)
+	}
+	md := string(readAll(t, res))
+	if !strings.Contains(md, "已瘦身移出") || !strings.Contains(md, pkg.Name) || !strings.Contains(md, "服务日志.log") {
+		t.Fatalf("Markdown 缺少瘦身标注：\n%s", md)
+	}
+	if strings.Contains(md, "/api/v1/attachments/"+log.ID+"/") {
+		t.Fatalf("Markdown 不应再给已瘦身附件下载链接：\n%s", md)
+	}
+}

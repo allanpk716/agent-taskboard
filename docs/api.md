@@ -1012,8 +1012,12 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 
   三种 413 的 `hint` 都提示改用 NAS 路径（外部文件引用），如
   `\nas01\共享\工单61016-001\文件名`。
-- 单工单 GET 的 `attachments` 只列已挂上的（`{id, filename, size, url, attached_to}`，
-  `attached_to` 为「说明」或「回复 N」）；`attachment_usage`
+- 单工单 GET 的 `attachments` 只列已挂上的（`{id, filename, size, url, attached_to,
+  slim_removed_at?, slim_package_name?}`，`attached_to` 为「说明」或「回复 N」）；
+  附件带 `slim_removed_at` 表示已被瘦身移出服务器（下载见下方专用错误）；
+  工单级 `slim` 汇总 `{removed_count, last_removed_at, packages, status}` 由附件状态推导，
+  `status` 为 `none` / `partial`（部分附件已瘦身）/ `full`（附件已全部瘦身）；
+  列表项同样带 `slim_status`。`attachment_usage`
   `{used_bytes, used_mb, ticket_limit_mb, file_limit_mb, max_files_per_post, max_images_per_post}`
   把待用的也计入。`?format=markdown` 附「## 附件」小节（链接 + 用量）。
 
@@ -1023,6 +1027,8 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   （Bearer 或 `tb_guest_device` cookie），权限判定与读工单一致（访客取他单附件
   404 `ticket_not_found`，防枚举）。
   只有待用（pending）状态不提供下载（404）。
+  已被瘦身移出的附件返回 410 `attachment_slimmed`，错误对象附
+  `slim_package_name`（与说明文字一致）；不要重试，需要文件时请联系管理员恢复。
 - 访客不再使用签名地址：JSON 与 Markdown 都返回普通附件路径，浏览器用
   `tb_guest_device` cookie，程序化调用用 `tbgd_` Bearer。地址泄露后不能下载；
   每次成功下载记入访问记录，访客署名为链接备注加自报称呼并标注已认领设备。

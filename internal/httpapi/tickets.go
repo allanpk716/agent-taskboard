@@ -1194,6 +1194,7 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer, atts []attac
 		in.Attachments = append(in.Attachments, markdownview.Attachment{
 			Filename: att.Filename, URL: att.URL,
 			SizeLabel: sizeLabel(att.Size), AttachedTo: att.AttachedTo,
+			Slimmed: att.SlimRemovedAt != nil, SlimPackageName: att.SlimPackageName,
 		})
 	}
 	if full.TemplateDef != nil {
