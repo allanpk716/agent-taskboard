@@ -365,17 +365,44 @@ func validateImportTicket(meta manifestTicket, export ticketExport) error {
 		}
 	}
 	var attachmentBytes int64
+	slimPackages := map[string]bool{}
 	for _, row := range export.Attachments {
 		size := importInt(row, "size")
 		if size < 0 {
 			return fmt.Errorf("%s 的附件大小无效", meta.Number)
 		}
 		attachmentBytes += size
+		removedAt, _ := row["slim_removed_at"]
+		packageName := stringValue(row["slim_package_name"])
+		if (removedAt != nil) != (packageName != "") {
+			return fmt.Errorf("%s 的附件瘦身状态不完整", meta.Number)
+		}
+		if removedAt != nil {
+			if _, err := time.ParseInLocation(time.RFC3339Nano, stringValue(removedAt), clock.Beijing); err != nil {
+				return fmt.Errorf("%s 的附件瘦身时间无效", meta.Number)
+			}
+			slimPackages[packageName] = true
+		}
 	}
 	if attachmentBytes != meta.AttachmentBytes {
 		return fmt.Errorf("%s 的附件大小与清单不一致", meta.Number)
 	}
+	if !sameStringSet(slimPackages, meta.SlimPackages) {
+		return fmt.Errorf("%s 的清单瘦身包与附件瘦身状态不一致", meta.Number)
+	}
 	return nil
+}
+
+func sameStringSet(got map[string]bool, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for _, name := range want {
+		if !got[name] {
+			return false
+		}
+	}
+	return true
 }
 
 func validateManifestFiles(pkg *parsedImportPackage) error {
@@ -470,6 +497,16 @@ func normalizeImportTicket(export *ticketExport) {
 	for i, item := range export.Drafts {
 		normalized := normalizeImportMap(item).(map[string]any)
 		export.Drafts[i] = normalized
+	}
+	// 旧格式的归档包没有瘦身列；统一补默认值，恢复时与「仍在服务器上」一致。
+	for i, row := range export.Attachments {
+		if _, ok := row["slim_removed_at"]; !ok {
+			row["slim_removed_at"] = nil
+		}
+		if _, ok := row["slim_package_name"]; !ok {
+			row["slim_package_name"] = ""
+		}
+		export.Attachments[i] = row
 	}
 }
 
@@ -722,6 +759,10 @@ func (s *Service) checkImportReferencesTx(ctx context.Context, tx *sql.Tx,
 
 func checkImportAttachments(pkg *parsedImportPackage, meta manifestTicket, export ticketExport) string {
 	for _, row := range export.Attachments {
+		if importAttachmentSlimmed(row) {
+			// 已瘦身的附件文件不在服务器上，也不在归档包里；要还原它需要瘦身包。
+			continue
+		}
 		id := importInt(row, "id")
 		prefix := archiveAttachmentPathPrefix(meta.Number, id)
 		found := []string{}
@@ -735,6 +776,10 @@ func checkImportAttachments(pkg *parsedImportPackage, meta manifestTicket, expor
 		}
 	}
 	return ""
+}
+
+func importAttachmentSlimmed(row map[string]any) bool {
+	return row["slim_removed_at"] != nil || stringValue(row["slim_package_name"]) != ""
 }
 
 type intSet struct{ items map[int64]bool }
@@ -830,7 +875,8 @@ var importTableColumns = []struct {
 		"attachment_ids", "collaborator_member_id", "collaborator_name", "actor_system"}},
 	{"attachments", []string{"id", "ticket_seq", "filename", "size", "state", "attached_to",
 		"uploader_member_id", "uploader_agent_id", "uploader_link_id", "uploader_intake_id",
-		"intake_upload_key", "uploaded_at", "claimed_at", "draft_id"}},
+		"intake_upload_key", "uploaded_at", "claimed_at", "draft_id",
+		"slim_removed_at", "slim_package_name"}},
 	{"drafts", []string{"id", "kind", "status", "ticket_seq", "member_id", "request_json",
 		"version", "base_timeline_seq", "member_edited", "created_at", "updated_at", "sent_at",
 		"sent_timeline_seq"}},
@@ -934,6 +980,9 @@ func writeImportAttachments(dir string, pkg *parsedImportPackage, meta manifestT
 	}
 	written := []string{}
 	for _, row := range export.Attachments {
+		if importAttachmentSlimmed(row) {
+			continue
+		}
 		id := importInt(row, "id")
 		prefix := archiveAttachmentPathPrefix(meta.Number, id)
 		var packagePath string

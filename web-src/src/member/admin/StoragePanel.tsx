@@ -1,6 +1,6 @@
-// 管理页「存储」面板（#234/#235/#236）：三类空间占用、按关闭月份分组的可归档
-// 工单，以及选择 → 预览 → 生成 / 下载归档包 → 确认已保存后移除。N 只是查询
-// 参数（默认 3，范围 1–120），改动后重新请求。
+// 管理页「存储」面板（#234/#235/#236/#287）：三类空间占用、可瘦身汇总、按关闭
+// 月份分组的可归档工单，以及选择 → 预览 → 生成 / 下载归档包 → 确认已保存后移除。
+// N 只是查询参数（默认 3，范围 1–120），改动后重新请求。
 import { useEffect, useMemo, useState } from 'react'
 import { ApiError } from '../../api'
 import { fmtBeijing } from '../../shared/format'
@@ -231,6 +231,14 @@ export function StoragePanel() {
         <span>备份目录</span>
         <b data-testid="storage-backups">{stats ? fmtBytes(stats.backups_bytes) : '…'}</b>
       </div>
+      <div className="kv">
+        <span>可瘦身</span>
+        <b data-testid="storage-slimmable">
+          {stats
+            ? `${stats.slimmable_ticket_count} 张工单，附件共 ${fmtBytes(stats.slimmable_attachment_bytes)}`
+            : '…'}
+        </b>
+      </div>
       <div className="hint">
         数据库含 WAL 与共享内存文件；备份目录是实际生效的配置目录（未配置时在数据目录的
         backups\ 下，含附件镜像）。
@@ -322,6 +330,11 @@ export function StoragePanel() {
       {preview && (
         <div className="subcard" data-testid="archive-preview" style={{ marginTop: 10 }}>
           <div className="fldlab">将归档 {preview.ticket_count} 张工单，附件 {fmtBytes(preview.attachment_bytes)}</div>
+          {preview.slim_packages?.length > 0 && (
+            <div className="warnbox" data-testid="archive-slim-packages">
+              这些工单引用了瘦身包 {preview.slim_packages.join('、')}，请一并保存。
+            </div>
+          )}
           {preview.drafts.length > 0 ? (
             <>
               <div className="warnbox">生成归档包会丢弃下面这些未发出的草稿。</div>
@@ -376,6 +389,11 @@ export function StoragePanel() {
                 <td>
                   {pkg.ticket_count} 张工单 · {fmtBytes(pkg.attachment_bytes)}
                   <div className="mono hint">{pkg.ticket_numbers.join('、')}</div>
+                  {pkg.slim_packages?.length > 0 && (
+                    <div className="warn">
+                      需一并保存瘦身包：{pkg.slim_packages.join('、')}
+                    </div>
+                  )}
                   <div className="hint">{fmtBeijing(pkg.expires_at)} 到期</div>
                   {pkg.removed_ticket_count > 0 && (
                     <div className="warn">已从服务器移除 {pkg.removed_ticket_count} 张工单</div>

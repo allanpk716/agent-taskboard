@@ -20,6 +20,10 @@ export interface StorageStats {
   database_bytes: number
   attachments_bytes: number
   backups_bytes: number
+  /** 按当前 N 可瘦身的工单数（口径与瘦身预览一致）。 */
+  slimmable_ticket_count: number
+  /** 这些工单里仍留在服务器上的附件字节数（不含插图）。 */
+  slimmable_attachment_bytes: number
   closed_months: number
   cutoff: string
   archivable: StorageMonthStat[]

@@ -1177,6 +1177,8 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   "database_bytes": 123,
   "attachments_bytes": 456,
   "backups_bytes": 789,
+  "slimmable_ticket_count": 2,
+  "slimmable_attachment_bytes": 768,
   "closed_months": 3,
   "cutoff": "2026-07-16T09:00:00+08:00",
   "archivable": [
@@ -1205,6 +1207,9 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   `ticket_count` / `attachment_bytes` 仍以整组为准。
 - `attachment_bytes` 是该月各工单附件（含待用附件）按数据库记录大小的合计；
   附件按 id 落盘，同一存储文件被多处引用只计一次。
+- `slimmable_ticket_count` / `slimmable_attachment_bytes` 按当前 `closed_months`
+  汇总可瘦身工单：只统计仍有附件在服务器上的已关闭工单，只算附件、不算插图，
+  与 `POST /api/v1/admin/slim/preview` 对同一批工单的口径一致；确认瘦身后随之下降。
 - 本接口只做统计，不移动、不删除任何数据；选中工单后的预览、生成、下载与移除见下一节。
 
 ## 归档包（#235/#237）
