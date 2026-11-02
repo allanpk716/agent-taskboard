@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/archive"
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/labels"
@@ -124,9 +125,21 @@ func (a *API) handleTicketList(w http.ResponseWriter, r *http.Request) {
 		end = len(rows)
 	}
 	page := rows[offset:end]
+	seqs := make([]int64, 0, len(page))
+	for i := range page {
+		seqs = append(seqs, page[i].Full.Seq)
+	}
+	slimStatuses, err := a.atts.SlimStatuses(r.Context(), seqs)
+	if err != nil {
+		panic(err)
+	}
 	items := make([]ticketListItemView, 0, len(page))
 	for i := range page {
-		items = append(items, newTicketListItem(&page[i], include))
+		status := slimStatuses[page[i].Full.Seq]
+		if status == "" {
+			status = attachments.SlimStatusNone
+		}
+		items = append(items, newTicketListItem(&page[i], include, status))
 	}
 	var next *string
 	if offset+limit < len(rows) {
@@ -738,13 +751,14 @@ type ticketListItemView struct {
 	LastChange          int64         `json:"last_change"`
 	ReadFull            string        `json:"read_full"`
 	Unread              bool          `json:"unread"`
+	SlimStatus          string        `json:"slim_status"` // none | partial | full（#284）
 	MatchedIn           []string      `json:"matched_in,omitempty"`
 	Snippet             string        `json:"snippet,omitempty"`
 	Brief               *briefView    `json:"brief,omitempty"` // include=brief 时附带说明
 }
 
 // newTicketListItem 把一行投影组装成摘要；q 命中时带 matched_in/snippet。
-func newTicketListItem(row *tickets.ListRow, include string) ticketListItemView {
+func newTicketListItem(row *tickets.ListRow, include, slimStatus string) ticketListItemView {
 	t := &row.Full
 	v := ticketListItemView{
 		Number:     t.Number,
@@ -760,6 +774,7 @@ func newTicketListItem(row *tickets.ListRow, include string) ticketListItemView 
 		LastChange: row.Meta.Change,
 		ReadFull:   "/api/v1/tickets/" + t.Number + "?format=markdown",
 		Unread:     row.Unread,
+		SlimStatus: slimStatus,
 	}
 	if t.Creator.MemberID != 0 {
 		v.Creator = t.Creator.MemberName

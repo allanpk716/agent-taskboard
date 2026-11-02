@@ -149,9 +149,13 @@ type AttachmentInfo struct {
 	State      string // pending | attached
 	AttachedTo string // 「说明」或「回复 N」；pending 为空
 	DraftID    int64  // 非 0 表示被这份草稿的最新版占用
-	Uploader   Principal
-	UploadedAt time.Time
-	ClaimedAt  *time.Time
+	// SlimRemovedAt / SlimPackageName：附件被瘦身移出时记录（#281）。
+	// RemovedAt 为 nil 表示文件仍在服务器上；附件行本身保留作占位。
+	SlimRemovedAt   *time.Time
+	SlimPackageName string
+	Uploader        Principal
+	UploadedAt      time.Time
+	ClaimedAt       *time.Time
 }
 
 // Ref 返回对外的附件引用（att_N）。
@@ -325,7 +329,8 @@ func MarkdownSnippet(a AttachmentInfo) string {
 func (m *Manager) ByTicket(ctx context.Context, ticketSeq int64) ([]AttachmentInfo, error) {
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT id, ticket_seq, filename, size, state, attached_to, draft_id,
-		       uploader_member_id, uploader_agent_id, uploader_link_id, uploaded_at, claimed_at
+		       uploader_member_id, uploader_agent_id, uploader_link_id, uploaded_at, claimed_at,
+		       slim_removed_at, slim_package_name
 		FROM attachments WHERE ticket_seq = ? ORDER BY id`, ticketSeq)
 	if err != nil {
 		return nil, err
@@ -358,7 +363,8 @@ func (m *Manager) Get(ctx context.Context, ref string) (AttachmentInfo, error) {
 	}
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT id, ticket_seq, filename, size, state, attached_to, draft_id,
-		       uploader_member_id, uploader_agent_id, uploader_link_id, uploaded_at, claimed_at
+		       uploader_member_id, uploader_agent_id, uploader_link_id, uploaded_at, claimed_at,
+		       slim_removed_at, slim_package_name
 		FROM attachments WHERE id = ? AND ticket_seq IS NOT NULL`, id)
 	if err != nil {
 		return AttachmentInfo{}, err
@@ -408,9 +414,11 @@ func scanAttachments(rows *sql.Rows) ([]AttachmentInfo, error) {
 			uploadedAt string
 			claimedAt  sql.NullString
 			draftID    sql.NullInt64
+			slimmedAt  sql.NullString
 		)
 		if err := rows.Scan(&a.ID, &ticket, &a.Filename, &a.Size, &a.State, &attachedTo,
-			&draftID, &memberID, &agentID, &linkID, &uploadedAt, &claimedAt); err != nil {
+			&draftID, &memberID, &agentID, &linkID, &uploadedAt, &claimedAt,
+			&slimmedAt, &a.SlimPackageName); err != nil {
 			return nil, err
 		}
 		a.TicketSeq = ticket.Int64
@@ -427,6 +435,13 @@ func scanAttachments(rows *sql.Rows) ([]AttachmentInfo, error) {
 				return nil, err
 			}
 			a.ClaimedAt = &t
+		}
+		if slimmedAt.Valid {
+			t, err := parseTime(slimmedAt.String)
+			if err != nil {
+				return nil, err
+			}
+			a.SlimRemovedAt = &t
 		}
 		out = append(out, a)
 	}

@@ -171,14 +171,14 @@ func attachmentBasePath(ref string) string { return "/api/v1/attachments/" + ref
 // attachmentProjection 组装工单 GET 里的附件列表与用量（#33）。列表只含已挂上的
 // （attached），用量把待用的也算进去。访客凭证拿到的 url 是与链接绑定的短时效
 // 签名地址（浏览器 <img> 带不了 Bearer 头，orchestrator 决议 9）。
-func (a *API) attachmentProjection(ctx context.Context, full tickets.Full, viewer identity.Viewer) ([]attachmentView, attachmentUsage, error) {
+func (a *API) attachmentProjection(ctx context.Context, full tickets.Full, viewer identity.Viewer) ([]attachmentView, attachmentUsage, attachments.SlimSummary, error) {
 	atts, err := a.atts.ByTicketState(ctx, full.Seq, "attached")
 	if err != nil {
-		return nil, attachmentUsage{}, err
+		return nil, attachmentUsage{}, attachments.SlimSummary{}, err
 	}
 	used, _, err := a.atts.Usage(ctx, full.Seq)
 	if err != nil {
-		return nil, attachmentUsage{}, err
+		return nil, attachmentUsage{}, attachments.SlimSummary{}, err
 	}
 	limits := a.atts.Limits()
 	usage := attachmentUsage{
@@ -191,7 +191,8 @@ func (a *API) attachmentProjection(ctx context.Context, full tickets.Full, viewe
 		url := attachmentBasePath(att.Ref()) + url.PathEscape(att.Filename)
 		views = append(views, attachmentView{
 			ID: att.Ref(), Filename: att.Filename, Size: att.Size, URL: url, AttachedTo: att.AttachedTo,
+			SlimRemovedAt: att.SlimRemovedAt, SlimPackageName: att.SlimPackageName,
 		})
 	}
-	return views, usage, nil
+	return views, usage, attachments.SlimSummaryOf(atts), nil
 }
