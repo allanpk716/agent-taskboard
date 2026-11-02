@@ -28,6 +28,7 @@ import (
 type archivePreviewBody struct {
 	TicketCount     int64                 `json:"ticket_count"`
 	AttachmentBytes int64                 `json:"attachment_bytes"`
+	SlimPackages    []string              `json:"slim_packages"`
 	Tickets         []archiveTicketBody   `json:"tickets"`
 	Drafts          []archiveDraftSummary `json:"drafts"`
 }
@@ -54,6 +55,7 @@ type archivePackageBody struct {
 	Name               string   `json:"name"`
 	TicketCount        int      `json:"ticket_count"`
 	AttachmentBytes    int64    `json:"attachment_bytes"`
+	SlimPackages       []string `json:"slim_packages"`
 	GeneratedAt        string   `json:"generated_at"`
 	ExpiresAt          string   `json:"expires_at"`
 	TicketNumbers      []string `json:"ticket_numbers"`

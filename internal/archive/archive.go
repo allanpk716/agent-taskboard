@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,7 @@ type TicketSummary struct {
 	Title           string
 	ClosedAt        time.Time
 	AttachmentBytes int64
+	SlimPackages    []string
 	ContentSHA256   string
 }
 
@@ -64,6 +66,27 @@ func (p Preview) AttachmentBytes() int64 {
 		total += t.AttachmentBytes
 	}
 	return total
+}
+
+// ReferencedSlimPackages 汇总选中工单引用的瘦身包（去重、按包名排序），
+// 管理员保存归档包时需要把这些瘦身包一并保存。
+func (p Preview) ReferencedSlimPackages() []string {
+	return distinctSortedSlimPackages(p.Tickets)
+}
+
+func distinctSortedSlimPackages(tickets []TicketSummary) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, t := range tickets {
+		for _, name := range t.SlimPackages {
+			if !seen[name] {
+				seen[name] = true
+				out = append(out, name)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Service 提供归档预览、生成、下载与暂存清除。
@@ -170,8 +193,13 @@ func (s *Service) selection(ctx context.Context, ticketNumbers []string, closedM
 	if err != nil {
 		return nil, err
 	}
+	slimPackages, err := s.referencedSlimPackages(ctx, out)
+	if err != nil {
+		return nil, err
+	}
 	for i := range out {
 		out[i].AttachmentBytes = sizes[out[i].Seq]
+		out[i].SlimPackages = slimPackages[out[i].Seq]
 	}
 	return out, nil
 }
@@ -199,6 +227,39 @@ func (s *Service) attachmentBytes(ctx context.Context, tickets []TicketSummary) 
 		out[seq] = size
 	}
 	return out, rows.Err()
+}
+
+// referencedSlimPackages 按工单汇总已瘦身附件所在的瘦身包名。
+func (s *Service) referencedSlimPackages(ctx context.Context, tickets []TicketSummary) (map[int64][]string, error) {
+	args := make([]any, 0, len(tickets))
+	for _, t := range tickets {
+		args = append(args, t.Seq)
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT a.ticket_seq, a.slim_package_name
+		FROM attachments a
+		WHERE a.ticket_seq IN (`+inPlaceholders(len(args))+`) AND a.draft_id IS NULL
+		  AND a.slim_removed_at IS NOT NULL AND a.slim_package_name != ''`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]string{}
+	for rows.Next() {
+		var seq int64
+		var name string
+		if err := rows.Scan(&seq, &name); err != nil {
+			return nil, err
+		}
+		out[seq] = append(out[seq], name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for seq := range out {
+		sort.Strings(out[seq])
+	}
+	return out, nil
 }
 
 type draftRequest struct {

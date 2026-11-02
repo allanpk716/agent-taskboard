@@ -322,6 +322,11 @@ export function StoragePanel() {
       {preview && (
         <div className="subcard" data-testid="archive-preview" style={{ marginTop: 10 }}>
           <div className="fldlab">将归档 {preview.ticket_count} 张工单，附件 {fmtBytes(preview.attachment_bytes)}</div>
+          {preview.slim_packages?.length > 0 && (
+            <div className="warnbox" data-testid="archive-slim-packages">
+              这些工单引用了瘦身包 {preview.slim_packages.join('、')}，请一并保存。
+            </div>
+          )}
           {preview.drafts.length > 0 ? (
             <>
               <div className="warnbox">生成归档包会丢弃下面这些未发出的草稿。</div>
@@ -376,6 +381,11 @@ export function StoragePanel() {
                 <td>
                   {pkg.ticket_count} 张工单 · {fmtBytes(pkg.attachment_bytes)}
                   <div className="mono hint">{pkg.ticket_numbers.join('、')}</div>
+                  {pkg.slim_packages?.length > 0 && (
+                    <div className="warn">
+                      需一并保存瘦身包：{pkg.slim_packages.join('、')}
+                    </div>
+                  )}
                   <div className="hint">{fmtBeijing(pkg.expires_at)} 到期</div>
                   {pkg.removed_ticket_count > 0 && (
                     <div className="warn">已从服务器移除 {pkg.removed_ticket_count} 张工单</div>
