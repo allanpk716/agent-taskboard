@@ -164,12 +164,13 @@ func (s *Service) cleanupFiles(atts []removalAttachment) (int64, int) {
 	failures := 0
 	for _, att := range atts {
 		text := strconv.FormatInt(att.ID, 10)
-		bytes, failed := packagefile.RemoveForCleanup(filepath.Join(s.attachmentsDir, text))
-		freed += bytes
+		_, failed := packagefile.RemoveForCleanup(filepath.Join(s.attachmentsDir, text))
 		failures += failed
-		bytes, failed = packagefile.RemoveForCleanup(filepath.Join(s.backupDir, "attachments", text))
-		freed += bytes
+		_, failed = packagefile.RemoveForCleanup(filepath.Join(s.backupDir, "attachments", text))
 		failures += failed
+		// 释放字节数与预览口径一致：只按附件本身大小计，不把备份镜像
+		// 重复计入（镜像删除失败只进 failures）。
+		freed += att.Size
 	}
 	return freed, failures
 }

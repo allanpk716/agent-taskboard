@@ -418,8 +418,9 @@ func Test确认瘦身移出删除附件与备份并保留工单(t *testing.T) {
 		t.Fatalf("确认瘦身状态码 = %d", res.StatusCode)
 	}
 	if removed.PackageName != pkg.Name || len(removed.TicketNumbers) != 1 || removed.TicketNumbers[0] != number ||
-		removed.AttachmentCount != 1 || removed.AttachmentBytes != 18 || removed.CleanupFailures != 0 || removed.RemovedAt == "" {
-		t.Fatalf("瘦身移出响应 = %+v", removed)
+		removed.AttachmentCount != 1 || removed.AttachmentBytes != int64(len("slim-body")) ||
+		removed.CleanupFailures != 0 || removed.RemovedAt == "" {
+		t.Fatalf("瘦身移出响应 = %+v，attachment_bytes 应与附件本身大小一致（不把镜像重复计入）", removed)
 	}
 	if _, err := os.Stat(mainFile); !os.IsNotExist(err) {
 		t.Fatalf("移出后附件主文件应删除：%v", err)
