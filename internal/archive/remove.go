@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
+	"github.com/allanpk716/agent-taskboard/internal/packagefile"
 )
 
 // ErrAlreadyRemoved 表示归档包对应的工单已经移除。
@@ -218,30 +218,14 @@ func (s *Service) cleanupRemovedFiles(ids []int64) (int64, int) {
 	failures := 0
 	for _, id := range ids {
 		text := strconv.FormatInt(id, 10)
-		bytes, failed := removeFileForCleanup(s.atts.Path(id))
+		bytes, failed := packagefile.RemoveForCleanup(s.atts.Path(id))
 		freed += bytes
 		failures += failed
-		bytes, failed = removeFileForCleanup(filepath.Join(s.backupDir, "attachments", text))
+		bytes, failed = packagefile.RemoveForCleanup(filepath.Join(s.backupDir, "attachments", text))
 		freed += bytes
 		failures += failed
 	}
 	return freed, failures
-}
-
-func removeFileForCleanup(path string) (int64, int) {
-	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		return 0, 0
-	}
-	if err != nil {
-		log.Printf("归档移除后检查文件 %s 失败：%v", path, err)
-		return 0, 1
-	}
-	if err := os.Remove(path); err != nil {
-		log.Printf("归档移除后清理文件 %s 失败：%v", path, err)
-		return 0, 1
-	}
-	return info.Size(), 0
 }
 
 func readPackageManifest(file *os.File) (*manifest, error) {

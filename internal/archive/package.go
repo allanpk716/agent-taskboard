@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,11 +18,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
+	"github.com/allanpk716/agent-taskboard/internal/packagefile"
 	"github.com/allanpk716/agent-taskboard/internal/version"
 )
 
@@ -65,11 +64,7 @@ type manifestActor struct {
 	Name     string `json:"name"`
 }
 
-type manifestFile struct {
-	Path   string `json:"path"`
-	SHA256 string `json:"sha256"`
-	Size   int64  `json:"size"`
-}
+type manifestFile = packagefile.ManifestFile
 
 type manifestTicket struct {
 	Number          string `json:"number"`
@@ -154,7 +149,7 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 		}
 		encoded = append(encoded, '\n')
 		path := "tickets/" + summary.Number + "/ticket.json"
-		if err := addZipFile(zw, &files, path, encoded); err != nil {
+		if err := packagefile.AddFile(zw, &files, path, encoded); err != nil {
 			_ = zw.Close()
 			return PackageInfo{}, err
 		}
@@ -171,7 +166,7 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 		}
 		encoded := []byte(markdownOf(summary, export, atts))
 		path := "tickets/" + summary.Number + "/README.md"
-		if err := addZipFile(zw, &files, path, encoded); err != nil {
+		if err := packagefile.AddFile(zw, &files, path, encoded); err != nil {
 			_ = zw.Close()
 			return PackageInfo{}, err
 		}
@@ -191,7 +186,7 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 		_ = zw.Close()
 		return PackageInfo{}, err
 	}
-	if err := addZipEntry(zw, "manifest.json", append(manifestBytes, '\n')); err != nil {
+	if err := packagefile.AddEntry(zw, "manifest.json", append(manifestBytes, '\n')); err != nil {
 		_ = zw.Close()
 		return PackageInfo{}, err
 	}
@@ -591,7 +586,7 @@ func (s *Service) packageAttachments(zw *zip.Writer, files *[]manifestFile, summ
 			return nil, fmt.Errorf("读取附件 %s 失败：%w", ref, err)
 		}
 		size, _ := row["size"].(int64)
-		if err := addZipStream(zw, files, path, src, size); err != nil {
+		if err := packagefile.AddStream(zw, files, path, src, size); err != nil {
 			_ = src.Close()
 			return nil, err
 		}
@@ -601,69 +596,6 @@ func (s *Service) packageAttachments(zw *zip.Writer, files *[]manifestFile, summ
 		out = append(out, packagedAttachment{Ref: ref, Filename: filename, Relative: relative})
 	}
 	return out, nil
-}
-
-func addZipFile(zw *zip.Writer, files *[]manifestFile, path string, body []byte) error {
-	if err := addZipEntry(zw, path, body); err != nil {
-		return err
-	}
-	sum := sha256.Sum256(body)
-	*files = append(*files, manifestFile{Path: path, SHA256: hex.EncodeToString(sum[:]), Size: int64(len(body))})
-	return nil
-}
-
-func addZipEntry(zw *zip.Writer, path string, body []byte) error {
-	path, err := safeZipPath(path)
-	if err != nil {
-		return err
-	}
-	entry, err := zw.Create(path)
-	if err != nil {
-		return err
-	}
-	_, err = entry.Write(body)
-	return err
-}
-
-func addZipStream(zw *zip.Writer, files *[]manifestFile, path string, src io.Reader, size int64) error {
-	path, err := safeZipPath(path)
-	if err != nil {
-		return err
-	}
-	entry, err := zw.Create(path)
-	if err != nil {
-		return err
-	}
-	sum := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(entry, sum), src)
-	if copyErr != nil {
-		return copyErr
-	}
-	if written != size {
-		return fmt.Errorf("附件 %s 大小不一致：数据库 %d，实际 %d", path, size, written)
-	}
-	*files = append(*files, manifestFile{Path: path, SHA256: hex.EncodeToString(sum.Sum(nil)), Size: written})
-	return nil
-}
-
-func safeZipPath(path string) (string, error) {
-	parts := strings.Split(path, "/")
-	for i, part := range parts {
-		part = sanitizeZipSegment(part)
-		if part == "" {
-			return "", fmt.Errorf("归档包路径 %q 包含空路径段", path)
-		}
-		parts[i] = part
-	}
-	return strings.Join(parts, "/"), nil
-}
-
-func sanitizeZipSegment(part string) string {
-	if part == "" || part == "." || part == ".." || strings.ContainsAny(part, `\/`) ||
-		strings.ContainsFunc(part, unicode.IsControl) {
-		return "_"
-	}
-	return part
 }
 
 func markdownOf(summary TicketSummary, export ticketExport, atts []packagedAttachment) string {

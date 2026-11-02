@@ -34,6 +34,7 @@ import { Confirm, Modal, copyText, toast } from './ui'
 import { chipClass } from './TicketsPage'
 import { SystemPanel } from './admin/SystemPanel'
 import { StoragePanel } from './admin/StoragePanel'
+import { SlimPanel } from './admin/SlimPanel'
 
 type AdminTab = 'members' | 'intakes' | 'governance'
 
@@ -91,6 +92,8 @@ export function AdminPage({ me }: { me: Me }) {
       <SystemPanel />
       {/* 存储统计（#234）：三类空间占用与按关闭月份汇总的可归档工单。 */}
       <StoragePanel />
+      {/* 附件瘦身（#281/#283）：只移出附件，工单本体留在平台。 */}
+      <SlimPanel />
     </div>
   )
 }
