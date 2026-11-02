@@ -1,11 +1,14 @@
-// 瘦身包的 HTTP 侧（#283）：预览、生成、列出、下载与确认移出都只接受管理员。
+// 瘦身包的 HTTP 侧（#283/#285）：预览、生成、列出、下载、确认移出与恢复都只接受管理员。
 package httpapi
 
 import (
 	"errors"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -183,6 +186,187 @@ func (a *API) downloadSlimPackage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+const slimRestoreMaxBytes = 1 << 30
+
+type slimRestoreUpload struct {
+	File     *os.File
+	Selected []string
+}
+
+// handleAdminSlimRestore 处理 POST /api/v1/admin/slim/restore。
+func (a *API) handleAdminSlimRestore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "恢复瘦身包用 POST", "")
+		return
+	}
+	viewer, ok := a.adminWebSessionFromRequest(w, r, "恢复瘦身包只对管理员开放")
+	if !ok {
+		return
+	}
+	upload, closeUpload, ok := a.slimRestoreUploadFile(w, r)
+	if !ok {
+		return
+	}
+	defer closeUpload()
+	readerAt, size, ok := archiveUploadReader(w, upload.File)
+	if !ok {
+		return
+	}
+	result, err := a.slim.Restore(r.Context(), readerAt, size, upload.Selected, viewer)
+	if writeSlimRestorePackageError(w, err) {
+		return
+	}
+	if errors.Is(err, slim.ErrPackageStale) {
+		WriteError(w, http.StatusConflict, CodeSlimPackageStale,
+			"恢复过程中工单或附件状态发生变化", "重新检查瘦身包后再恢复")
+		return
+	}
+	if err != nil {
+		panic(err)
+	}
+	writeJSON(w, http.StatusOK, newSlimRestoreResultView(result))
+}
+
+// handleAdminSlimRestoreInspect 处理 POST /api/v1/admin/slim/restore/inspect。
+func (a *API) handleAdminSlimRestoreInspect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "检查瘦身包用 POST", "")
+		return
+	}
+	if _, ok := a.adminWebSessionFromRequest(w, r, "检查瘦身包只对管理员开放"); !ok {
+		return
+	}
+	upload, closeUpload, ok := a.slimRestoreUploadFile(w, r)
+	if !ok {
+		return
+	}
+	defer closeUpload()
+	readerAt, size, ok := archiveUploadReader(w, upload.File)
+	if !ok {
+		return
+	}
+	inspection, err := a.slim.InspectRestore(r.Context(), readerAt, size)
+	if writeSlimRestorePackageError(w, err) {
+		return
+	}
+	if err != nil {
+		panic(err)
+	}
+	writeJSON(w, http.StatusOK, newSlimRestoreInspectionView(inspection))
+}
+
+func (a *API) slimRestoreUploadFile(w http.ResponseWriter, r *http.Request) (*slimRestoreUpload, func(), bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, slimRestoreMaxBytes)
+	mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "multipart/form-data" || params["boundary"] == "" {
+		WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "上传瘦身包的 multipart 表单无效",
+			"用 multipart/form-data 上传，文件字段名 package；文件最大 1 GB")
+		return nil, func() {}, false
+	}
+	reader := multipart.NewReader(r.Body, params["boundary"])
+	var upload slimRestoreUpload
+	cleanup := func() {
+		if upload.File != nil {
+			name := upload.File.Name()
+			_ = upload.File.Close()
+			_ = os.Remove(name)
+			upload.File = nil
+		}
+	}
+	for {
+		part, err := reader.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			cleanup()
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				WriteError(w, http.StatusRequestEntityTooLarge, CodeAttachmentTooLarge,
+					"上传瘦身包不能超过 1 GB", "")
+			} else {
+				WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "上传瘦身包的 multipart 表单无效",
+					"用 multipart/form-data 上传，文件字段名 package；文件最大 1 GB")
+			}
+			return nil, func() {}, false
+		}
+		field := part.FormName()
+		if field == "package" {
+			if upload.File != nil {
+				part.Close()
+				cleanup()
+				WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "multipart 里 package 字段重复", "")
+				return nil, func() {}, false
+			}
+			upload.File, err = a.slim.CreateUploadFile()
+			if err == nil {
+				_, err = io.Copy(upload.File, part)
+			}
+			closeErr := part.Close()
+			if err == nil {
+				err = closeErr
+			}
+			if err == nil {
+				err = upload.File.Sync()
+			}
+			if err == nil {
+				_, err = upload.File.Seek(0, io.SeekStart)
+			}
+			if err != nil {
+				cleanup()
+				var tooLarge *http.MaxBytesError
+				if errors.As(err, &tooLarge) {
+					WriteError(w, http.StatusRequestEntityTooLarge, CodeAttachmentTooLarge,
+						"上传瘦身包不能超过 1 GB", "")
+				} else {
+					WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "保存上传的瘦身包失败", "")
+				}
+				return nil, func() {}, false
+			}
+			continue
+		}
+		if field == "ticket_numbers" {
+			value, readErr := readArchiveFormPart(part)
+			closeErr := part.Close()
+			if readErr == nil {
+				readErr = closeErr
+			}
+			if readErr != nil {
+				cleanup()
+				WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "读取 ticket_numbers 字段失败", "")
+				return nil, func() {}, false
+			}
+			for _, item := range strings.Split(value, ",") {
+				if item = strings.TrimSpace(item); item != "" {
+					upload.Selected = append(upload.Selected, item)
+				}
+			}
+			continue
+		}
+		_ = part.Close()
+	}
+	if upload.File == nil {
+		cleanup()
+		WriteError(w, http.StatusUnprocessableEntity, CodeFileRequired, "multipart 里缺少瘦身包文件",
+			"文件字段名必须是 package")
+		return nil, func() {}, false
+	}
+	return &upload, cleanup, true
+}
+
+func writeSlimRestorePackageError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, slim.ErrRestorePackageInvalid):
+		WriteError(w, http.StatusUnprocessableEntity, CodeSlimPackageInvalid, "瘦身包校验失败", err.Error())
+	case errors.Is(err, slim.ErrRestoreFormatUnsupported):
+		WriteError(w, http.StatusUnprocessableEntity, CodeSlimFormatUnsupported,
+			"瘦身包格式版本太高", err.Error())
+	default:
+		return false
+	}
+	return true
+}
+
 func (r slimSelectionRequest) months() (int, bool) {
 	if r.ClosedMonths == nil {
 		return defaultClosedMonths, true
@@ -334,4 +518,60 @@ func newSlimRemoveView(removal slim.Removal) slimRemoveView {
 	return slimRemoveView{PackageName: removal.PackageName, TicketNumbers: removal.TicketNumbers,
 		AttachmentCount: removal.AttachmentCount, AttachmentBytes: removal.AttachmentBytes,
 		RemovedAt: removal.RemovedAt.Format(time.RFC3339), CleanupFailures: removal.CleanupFailures}
+}
+
+type slimRestoreCandidateView struct {
+	Number          string `json:"number"`
+	Title           string `json:"title"`
+	AttachmentCount int    `json:"attachment_count"`
+	AttachmentBytes int64  `json:"attachment_bytes"`
+	Restorable      bool   `json:"restorable"`
+	Reason          string `json:"reason"`
+}
+
+type slimRestoreInspectionView struct {
+	FormatVersion   int                        `json:"format_version"`
+	PackageName     string                     `json:"package_name"`
+	GeneratedAt     string                     `json:"generated_at"`
+	TicketCount     int                        `json:"ticket_count"`
+	AttachmentCount int                        `json:"attachment_count"`
+	AttachmentBytes int64                      `json:"attachment_bytes"`
+	Tickets         []slimRestoreCandidateView `json:"tickets"`
+}
+
+type slimRestoreResultView struct {
+	PackageName string                     `json:"package_name"`
+	RestoredAt  string                     `json:"restored_at"`
+	Restored    []slimRestoreCandidateView `json:"restored"`
+	Rejected    []slimRestoreCandidateView `json:"rejected"`
+}
+
+func newSlimRestoreCandidateView(ticket slim.RestoreTicket) slimRestoreCandidateView {
+	return slimRestoreCandidateView{Number: ticket.Number, Title: ticket.Title,
+		AttachmentCount: ticket.AttachmentCount, AttachmentBytes: ticket.AttachmentBytes,
+		Restorable: ticket.Restorable, Reason: ticket.Reason}
+}
+
+func newSlimRestoreInspectionView(inspection slim.RestoreInspection) slimRestoreInspectionView {
+	tickets := make([]slimRestoreCandidateView, 0, len(inspection.Tickets))
+	for _, ticket := range inspection.Tickets {
+		tickets = append(tickets, newSlimRestoreCandidateView(ticket))
+	}
+	return slimRestoreInspectionView{FormatVersion: inspection.FormatVersion,
+		PackageName: inspection.PackageName, GeneratedAt: inspection.GeneratedAt.Format(time.RFC3339),
+		TicketCount: len(tickets), AttachmentCount: inspection.AttachmentCount,
+		AttachmentBytes: inspection.AttachmentBytes, Tickets: tickets}
+}
+
+func newSlimRestoreResultView(result slim.RestoreResult) slimRestoreResultView {
+	restored := make([]slimRestoreCandidateView, 0, len(result.Restored))
+	for _, ticket := range result.Restored {
+		restored = append(restored, newSlimRestoreCandidateView(ticket))
+	}
+	rejected := make([]slimRestoreCandidateView, 0, len(result.Rejected))
+	for _, ticket := range result.Rejected {
+		rejected = append(rejected, newSlimRestoreCandidateView(ticket))
+	}
+	return slimRestoreResultView{PackageName: result.PackageName,
+		RestoredAt: result.RestoredAt.Format(time.RFC3339), Restored: restored, Rejected: rejected}
 }
