@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
+	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
 
@@ -64,6 +65,15 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 	if att.State != "attached" && !draftOwner {
 		WriteError(w, http.StatusNotFound, CodeAttachmentNotFound, "附件还在待用状态，不能下载",
 			"先在说明或回复里引用它（attachment_ids 或正文 att: 引用）")
+		return
+	}
+	// 已瘦身移出的附件：说明去哪了（含包名），不返回笼统的 404（#284）。
+	if att.SlimRemovedAt != nil {
+		WriteErrorExtra(w, http.StatusGone, CodeAttachmentSlimmed,
+			"这个附件已于 "+att.SlimRemovedAt.In(clock.Beijing).Format("2006-01-02")+
+				" 瘦身移出服务器，见瘦身包 "+att.SlimPackageName,
+			"需要这个文件时请联系管理员，用瘦身包恢复；Agent 看到瘦身标记时不要尝试下载",
+			map[string]any{"slim_package_name": att.SlimPackageName, "slim_removed_at": *att.SlimRemovedAt})
 		return
 	}
 	if filename != att.Filename {

@@ -126,6 +126,7 @@ const (
 	CodeTicketQuotaExceeded     = "ticket_quota_exceeded"     // 整张工单合计超限（413）
 	CodeAttachmentNotUsable     = "attachment_not_usable"     // 引用的附件不可用（422）
 	CodeAttachmentNotFound      = "attachment_not_found"      // 附件不存在（404）
+	CodeAttachmentSlimmed       = "attachment_slimmed"        // 附件已瘦身移出服务器（410，#284）
 	CodeFileRequired            = "file_required"             // multipart 缺文件字段
 	CodeInvalidFilename         = "invalid_filename"          // 文件名缺失或非法
 	CodeAttachmentURLExpired    = "attachment_url_expired"    // 附件签名地址过期（401）

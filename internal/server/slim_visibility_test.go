@@ -4,6 +4,8 @@ package server_test
 
 import (
 	"net/http"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -119,5 +121,53 @@ func Test瘦身信息在详情与列表接口处处可见(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("列表里没有 %s：%+v", number, list.Items)
+	}
+}
+
+func Test下载已瘦身附件返回专用错误码与包名(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	s.CreateMember("王工", "member-pass")
+	admin := s.Login("陈工", "secret-pass")
+	member := s.Login("王工", "member-pass")
+
+	setStorageClock(t, s, 2026, time.June, 2)
+	number := mustCreateTicket(t, s, member, "瘦身下载提示")
+	log := mustUploadAttachment(t, s, member, number, "服务日志.log", []byte("slim-body"))
+	if res := revise(t, s, member, number, map[string]any{
+		"attachment_ids": []string{log.ID}, "base_revision": 1,
+	}); res.StatusCode != http.StatusOK {
+		t.Fatalf("挂说明附件状态码 = %d", res.StatusCode)
+	}
+	if res := closeTicket(t, s, member, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d", res.StatusCode)
+	}
+	setStorageClock(t, s, 2026, time.October, 16)
+	admin = s.Login("陈工", "secret-pass")
+	var pkg slimPackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/slim/packages",
+		map[string]any{"ticket_numbers": []string{number}}, &pkg); res.StatusCode != http.StatusCreated {
+		t.Fatalf("生成瘦身包状态码 = %d", res.StatusCode)
+	}
+	removeURL := "/api/v1/admin/slim/packages/" + pkg.Name + "/remove"
+	if res := s.Do(t, admin, http.MethodPost, removeURL, map[string]any{"saved": true}, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("确认瘦身状态码 = %d", res.StatusCode)
+	}
+
+	link := mustCreateGuestLink(t, s, admin, number, map[string]any{"note": "现场", "valid_days": 7})
+	guest := s.GuestClient(guestKeyOf(t, link))
+	for name, c := range map[string]*http.Client{"成员": member, "管理员": admin, "访客": guest} {
+		res := downloadAttachment(t, s, c, "/api/v1/attachments/"+log.ID+"/"+url.PathEscape("服务日志.log"))
+		if res.StatusCode != http.StatusGone {
+			t.Fatalf("%s 下载已瘦身附件状态码 = %d，想 410", name, res.StatusCode)
+		}
+		var got errorBodyWithExtra
+		tbtest.DecodeJSON(t, res, &got)
+		if got.Error.Code != "attachment_slimmed" {
+			t.Fatalf("%s 下载错误码 = %s，想 attachment_slimmed", name, got.Error.Code)
+		}
+		if !strings.Contains(got.Error.Message, pkg.Name) {
+			t.Fatalf("%s 下载错误说明 = %q，想包含包名 %s", name, got.Error.Message, pkg.Name)
+		}
 	}
 }
