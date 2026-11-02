@@ -188,7 +188,12 @@ func (m *Manager) SlimStatuses(ctx context.Context, seqs []int64) (map[int64]str
 
 	for _, seq := range seqs {
 		atts, ok := bySeq[seq]
-		if !ok {
+		// 没有已移出的附件时状态必为 none，免去逐工单查插图引用。
+		hasRemoved := false
+		for _, att := range atts {
+			hasRemoved = hasRemoved || att.removed
+		}
+		if !ok || !hasRemoved {
 			statuses[seq] = SlimStatusNone
 			continue
 		}
