@@ -4,7 +4,6 @@ package slim
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -277,75 +276,16 @@ func (s *Service) slimmableAttachments(ctx context.Context, ticketSeq int64) ([]
 		return []Attachment{}, nil
 	}
 
-	inline, err := s.inlineRefs(ctx, ticketSeq)
+	inline, err := s.atts.InlineImageRefs(ctx, ticketSeq)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Attachment, 0, len(all))
 	for _, att := range all {
-		if inline[att.Ref] && attachments.IsImage(att.Filename) {
+		if attachments.InlineImage(inline, att.Ref, att.Filename) {
 			continue
 		}
 		out = append(out, att)
-	}
-	return out, nil
-}
-
-func (s *Service) inlineRefs(ctx context.Context, ticketSeq int64) (map[string]bool, error) {
-	type source struct {
-		markdown string
-		idsJSON  string
-	}
-	sources := []source{}
-	briefRows, err := s.db.QueryContext(ctx, `
-		SELECT brief_md, COALESCE(attachment_ids, '[]') FROM brief_versions
-		WHERE ticket_seq = ?`, ticketSeq)
-	if err != nil {
-		return nil, err
-	}
-	for briefRows.Next() {
-		var src source
-		if err := briefRows.Scan(&src.markdown, &src.idsJSON); err != nil {
-			briefRows.Close()
-			return nil, err
-		}
-		sources = append(sources, src)
-	}
-	if err := briefRows.Err(); err != nil {
-		briefRows.Close()
-		return nil, err
-	}
-	briefRows.Close()
-
-	replyRows, err := s.db.QueryContext(ctx, `
-		SELECT COALESCE(body_md, ''), COALESCE(attachment_ids, '[]')
-		FROM timeline_events WHERE ticket_seq = ? AND type = 'reply'`, ticketSeq)
-	if err != nil {
-		return nil, err
-	}
-	for replyRows.Next() {
-		var src source
-		if err := replyRows.Scan(&src.markdown, &src.idsJSON); err != nil {
-			replyRows.Close()
-			return nil, err
-		}
-		sources = append(sources, src)
-	}
-	if err := replyRows.Err(); err != nil {
-		replyRows.Close()
-		return nil, err
-	}
-	replyRows.Close()
-
-	out := map[string]bool{}
-	for _, src := range sources {
-		var ids []string
-		if err := json.Unmarshal([]byte(src.idsJSON), &ids); err != nil {
-			return nil, fmt.Errorf("解析工单 %d 的附件引用失败：%w", ticketSeq, err)
-		}
-		for _, ref := range attachments.ParsePostRefs(src.markdown, ids) {
-			out[ref.ID] = out[ref.ID] || ref.ImageSyntax
-		}
 	}
 	return out, nil
 }

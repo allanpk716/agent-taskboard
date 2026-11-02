@@ -263,6 +263,97 @@ func Test重开瘦身后上传新附件状态变部分且可再次瘦身(t *test
 	}
 }
 
+// S1：工单级瘦身状态的分母只算附件（不含插图）。插图永不参与瘦身，
+// 不能因为它还留在服务器上就让已全部瘦身的工单永远显示 partial。
+func Test瘦身状态分母只算附件不算插图(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	s.CreateMember("王工", "member-pass")
+	admin := s.Login("陈工", "secret-pass")
+	member := s.Login("王工", "member-pass")
+
+	setStorageClock(t, s, 2026, time.June, 2)
+	number := mustCreateTicket(t, s, member, "带插图的瘦身工单")
+	log := mustUploadAttachment(t, s, member, number, "服务日志.log", []byte("slim-body"))
+	image := mustUploadAttachment(t, s, member, number, "现场图.png", []byte("image"))
+	if res := revise(t, s, member, number, map[string]any{
+		"brief_md":       "见 [服务日志](att:" + log.ID + ")。![现场图](att:" + image.ID + ")。",
+		"attachment_ids": []string{log.ID},
+		"base_revision":  1,
+	}); res.StatusCode != http.StatusOK {
+		t.Fatalf("挂说明附件状态码 = %d", res.StatusCode)
+	}
+	if res := closeTicket(t, s, member, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d", res.StatusCode)
+	}
+	setStorageClock(t, s, 2026, time.October, 16)
+	admin = s.Login("陈工", "secret-pass")
+
+	// 全部附件瘦身后：工单状态是 full，而不是被插图拖成 partial。
+	var pkg slimPackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/slim/packages",
+		map[string]any{"ticket_numbers": []string{number}}, &pkg); res.StatusCode != http.StatusCreated {
+		t.Fatalf("生成瘦身包状态码 = %d", res.StatusCode)
+	}
+	if pkg.AttachmentCount != 1 {
+		t.Fatalf("瘦身包只应包含 1 个附件，得到 %+v", pkg)
+	}
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/admin/slim/packages/"+pkg.Name+"/remove", map[string]any{"saved": true}, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("确认瘦身状态码 = %d", res.StatusCode)
+	}
+	checkStatus := func(wantDetail string) {
+		t.Helper()
+		var detail slimDetailBody
+		if res := s.Do(t, member, http.MethodGet, "/api/v1/tickets/"+number, nil, &detail); res.StatusCode != http.StatusOK {
+			t.Fatalf("读取详情状态码 = %d", res.StatusCode)
+		}
+		if detail.Slim.Status != wantDetail {
+			t.Fatalf("详情瘦身状态 = %q，想 %q", detail.Slim.Status, wantDetail)
+		}
+		var list slimListBody
+		if res := s.Do(t, member, http.MethodGet, "/api/v1/tickets?status=all", nil, &list); res.StatusCode != http.StatusOK {
+			t.Fatalf("读取列表状态码 = %d", res.StatusCode)
+		}
+		for _, item := range list.Items {
+			if item.Number == number && item.SlimStatus != wantDetail {
+				t.Fatalf("列表瘦身状态 = %q，想 %q", item.SlimStatus, wantDetail)
+			}
+		}
+	}
+	checkStatus("full")
+
+	// 重新打开并上传新附件：旧附件已瘦身、新附件在服务器上 → partial。
+	if res := s.Do(t, member, http.MethodPost, "/api/v1/tickets/"+number+"/reopen", nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("重开状态码 = %d", res.StatusCode)
+	}
+	fresh := mustUploadAttachment(t, s, member, number, "新日志.log", []byte("new-body"))
+	if res := revise(t, s, member, number, map[string]any{
+		"attachment_ids": []string{log.ID, fresh.ID}, "base_revision": 2,
+	}); res.StatusCode != http.StatusOK {
+		t.Fatalf("挂新附件状态码 = %d", res.StatusCode)
+	}
+	checkStatus("partial")
+
+	// 恢复包内全部附件（只含旧附件；插图本来就不在包里）→ none，无任何标记。
+	download := s.Do(t, admin, http.MethodGet, pkg.DownloadURL, nil, nil)
+	if download.StatusCode != http.StatusOK {
+		t.Fatalf("下载瘦身包状态码 = %d", download.StatusCode)
+	}
+	pkgBytes := readAll(t, download)
+	res, got := restoreSlim(t, s, admin, pkgBytes, number)
+	if res.StatusCode != http.StatusOK || len(got.Restored) != 1 || got.Restored[0].Number != number {
+		t.Fatalf("恢复结果 = %d/%+v，想恢复 %s", res.StatusCode, got, number)
+	}
+	checkStatus("none")
+	var detail slimDetailBody
+	s.Do(t, member, http.MethodGet, "/api/v1/tickets/"+number, nil, &detail)
+	if detail.Slim.RemovedCount != 0 || detail.Slim.LastRemovedAt != "" ||
+		len(detail.Slim.Packages) != 0 {
+		t.Fatalf("全部恢复后瘦身汇总应为空：%+v", detail.Slim)
+	}
+}
+
 func TestMarkdown视图标注瘦身附件且不再给出下载链接(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")

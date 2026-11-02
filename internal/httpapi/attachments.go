@@ -194,5 +194,9 @@ func (a *API) attachmentProjection(ctx context.Context, full tickets.Full, viewe
 			SlimRemovedAt: att.SlimRemovedAt, SlimPackageName: att.SlimPackageName,
 		})
 	}
-	return views, usage, attachments.SlimSummaryOf(atts), nil
+	summary, err := a.atts.SlimSummaryOf(ctx, atts)
+	if err != nil {
+		return nil, attachmentUsage{}, attachments.SlimSummary{}, err
+	}
+	return views, usage, summary, nil
 }
