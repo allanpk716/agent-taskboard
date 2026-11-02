@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/allanpk716/agent-taskboard/internal/store"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -597,7 +598,7 @@ func guestDevices(ctx context.Context, q archiveQueryer, links []map[string]any)
 		return []map[string]any{}, nil
 	}
 	return queryObjects(ctx, q, `SELECT id, guest_link_id, token_hash, created_at, entry_method
-		FROM guest_devices WHERE guest_link_id IN (`+inPlaceholders(len(ids))+`)
+		FROM guest_devices WHERE guest_link_id IN (`+store.Placeholders(len(ids))+`)
 		ORDER BY guest_link_id, id`, ids...)
 }
 
@@ -758,7 +759,7 @@ func (s *Service) discardPendingDrafts(ctx context.Context, tickets []TicketSumm
 	if len(draftIDs) > 0 {
 		rows, err := tx.QueryContext(ctx, `
 			SELECT a.id FROM attachments a
-			WHERE a.draft_id IN (`+inPlaceholders(len(draftIDs))+`)`, draftIDs...)
+			WHERE a.draft_id IN (`+store.Placeholders(len(draftIDs))+`)`, draftIDs...)
 		if err != nil {
 			return err
 		}
@@ -778,11 +779,11 @@ func (s *Service) discardPendingDrafts(ctx context.Context, tickets []TicketSumm
 	}
 	if len(draftIDs) > 0 {
 		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM attachments WHERE draft_id IN (`+inPlaceholders(len(draftIDs))+`)`, draftIDs...); err != nil {
+			DELETE FROM attachments WHERE draft_id IN (`+store.Placeholders(len(draftIDs))+`)`, draftIDs...); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM drafts WHERE id IN (`+inPlaceholders(len(draftIDs))+`)
+			DELETE FROM drafts WHERE id IN (`+store.Placeholders(len(draftIDs))+`)
 			AND status = 'pending'`, draftIDs...); err != nil {
 			return err
 		}
@@ -798,13 +799,6 @@ func (s *Service) discardPendingDrafts(ctx context.Context, tickets []TicketSumm
 	return nil
 }
 
-func inPlaceholders(n int) string {
-	if n == 0 {
-		return ""
-	}
-	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
-}
-
 func revalidateSelectionTx(ctx context.Context, tx *sql.Tx, tickets []TicketSummary,
 	closedMonths int, now time.Time) error {
 	args := make([]any, 0, len(tickets))
@@ -817,7 +811,7 @@ func revalidateSelectionTx(ctx context.Context, tx *sql.Tx, tickets []TicketSumm
 			WHERE e.ticket_seq = t.seq AND e.type = 'closed'
 			ORDER BY e.seq DESC LIMIT 1
 		)
-		FROM tickets t WHERE t.seq IN (`+inPlaceholders(len(tickets))+`)`, args...)
+		FROM tickets t WHERE t.seq IN (`+store.Placeholders(len(tickets))+`)`, args...)
 	if err != nil {
 		return err
 	}
@@ -862,7 +856,7 @@ func revalidateDraftsTx(ctx context.Context, tx *sql.Tx, drafts []DraftSummary) 
 	}
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id, status, ticket_seq, version, updated_at FROM drafts
-		WHERE id IN (`+inPlaceholders(len(drafts))+`)`, args...)
+		WHERE id IN (`+store.Placeholders(len(drafts))+`)`, args...)
 	if err != nil {
 		return err
 	}

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/allanpk716/agent-taskboard/internal/store"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -287,7 +288,7 @@ func (s *Service) removalState(ctx context.Context, tx *sql.Tx, numbers []string
 			WHERE e.ticket_seq = t.seq AND e.type = 'closed'
 			ORDER BY e.seq DESC LIMIT 1
 		)
-		FROM tickets t WHERE t.number IN (`+inPlaceholders(len(args))+`)`, args...)
+		FROM tickets t WHERE t.number IN (`+store.Placeholders(len(args))+`)`, args...)
 	if err != nil {
 		return removalSnapshot{}, err
 	}
@@ -365,7 +366,7 @@ func (s *Service) removalState(ctx context.Context, tx *sql.Tx, numbers []string
 
 	collabRows, err := tx.QueryContext(ctx, `
 		SELECT ticket_seq, member_id FROM ticket_collaborators
-		WHERE ticket_seq IN (`+inPlaceholders(len(seqArgs))+`) ORDER BY ticket_seq, member_id`, seqArgs...)
+		WHERE ticket_seq IN (`+store.Placeholders(len(seqArgs))+`) ORDER BY ticket_seq, member_id`, seqArgs...)
 	if err != nil {
 		return removalSnapshot{}, err
 	}
@@ -397,7 +398,7 @@ func (s *Service) removalState(ctx context.Context, tx *sql.Tx, numbers []string
 
 	attRows, err := tx.QueryContext(ctx, `
 		SELECT id, COALESCE(size, 0) FROM attachments
-		WHERE ticket_seq IN (`+inPlaceholders(len(seqArgs))+`)`, seqArgs...)
+		WHERE ticket_seq IN (`+store.Placeholders(len(seqArgs))+`)`, seqArgs...)
 	if err != nil {
 		return removalSnapshot{}, err
 	}
@@ -419,7 +420,7 @@ func (s *Service) removalState(ctx context.Context, tx *sql.Tx, numbers []string
 	hashRows, err := tx.QueryContext(ctx, `
 		SELECT l.ticket_seq, l.key_hash, d.token_hash FROM guest_links l
 		LEFT JOIN guest_devices d ON d.guest_link_id = l.id
-		WHERE l.ticket_seq IN (`+inPlaceholders(len(seqArgs))+`)`, seqArgs...)
+		WHERE l.ticket_seq IN (`+store.Placeholders(len(seqArgs))+`)`, seqArgs...)
 	if err != nil {
 		return removalSnapshot{}, err
 	}
@@ -530,7 +531,7 @@ func deleteTicketsTx(ctx context.Context, tx *sql.Tx, tickets []TicketSummary) e
 	for _, t := range tickets {
 		args = append(args, t.Seq)
 	}
-	placeholder := inPlaceholders(len(args))
+	placeholder := store.Placeholders(len(args))
 	_, err := tx.ExecContext(ctx, `DELETE FROM draft_versions WHERE draft_id IN (
 		SELECT id FROM drafts WHERE ticket_seq IN (`+placeholder+`))`, args...)
 	if err != nil {

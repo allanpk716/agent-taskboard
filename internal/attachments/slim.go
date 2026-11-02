@@ -6,9 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/allanpk716/agent-taskboard/internal/store"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -166,7 +166,7 @@ func (m *Manager) SlimStatuses(ctx context.Context, seqs []int64) (map[int64]str
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT ticket_seq, id, filename, slim_removed_at IS NOT NULL
 		FROM attachments
-		WHERE state = 'attached' AND ticket_seq IN (`+placeholders(len(args))+`)
+		WHERE state = 'attached' AND ticket_seq IN (`+store.Placeholders(len(args))+`)
 		ORDER BY ticket_seq, id`, args...)
 	if err != nil {
 		return nil, err
@@ -209,8 +209,4 @@ func (m *Manager) SlimStatuses(ctx context.Context, seqs []int64) (map[int64]str
 		statuses[seq] = slimStatus(total, removed)
 	}
 	return statuses, nil
-}
-
-func placeholders(n int) string {
-	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }

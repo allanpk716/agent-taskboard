@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/allanpk716/agent-taskboard/internal/store"
 	"os"
 	"path/filepath"
 	"sort"
@@ -152,7 +153,7 @@ func (s *Service) selection(ctx context.Context, ticketNumbers []string, closedM
 			ORDER BY e.seq DESC LIMIT 1
 		)
 		FROM tickets t
-		WHERE t.status = 'closed' AND t.number IN (`+inPlaceholders(len(args))+`)`, args...)
+		WHERE t.status = 'closed' AND t.number IN (`+store.Placeholders(len(args))+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +213,7 @@ func (s *Service) attachmentBytes(ctx context.Context, tickets []TicketSummary) 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT a.ticket_seq, COALESCE(SUM(a.size), 0)
 		FROM attachments a
-		WHERE a.ticket_seq IN (`+inPlaceholders(len(args))+`) AND a.draft_id IS NULL
+		WHERE a.ticket_seq IN (`+store.Placeholders(len(args))+`) AND a.draft_id IS NULL
 		GROUP BY a.ticket_seq`, args...)
 	if err != nil {
 		return nil, err
@@ -238,7 +239,7 @@ func (s *Service) referencedSlimPackages(ctx context.Context, tickets []TicketSu
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT DISTINCT a.ticket_seq, a.slim_package_name
 		FROM attachments a
-		WHERE a.ticket_seq IN (`+inPlaceholders(len(args))+`) AND a.draft_id IS NULL
+		WHERE a.ticket_seq IN (`+store.Placeholders(len(args))+`) AND a.draft_id IS NULL
 		  AND a.slim_removed_at IS NOT NULL AND a.slim_package_name != ''`, args...)
 	if err != nil {
 		return nil, err
@@ -281,7 +282,7 @@ func (s *Service) pendingDrafts(ctx context.Context, tickets []TicketSummary) ([
 		FROM drafts d
 		JOIN tickets t ON t.seq = d.ticket_seq
 		JOIN members m ON m.id = d.member_id
-		WHERE d.status = 'pending' AND d.ticket_seq IN (`+inPlaceholders(len(args))+`)
+		WHERE d.status = 'pending' AND d.ticket_seq IN (`+store.Placeholders(len(args))+`)
 		ORDER BY d.ticket_seq, d.id`, args...)
 	if err != nil {
 		return nil, err

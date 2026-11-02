@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/allanpk716/agent-taskboard/internal/store"
 	"sort"
 	"strings"
 	"sync"
@@ -216,7 +217,7 @@ func (s *Service) selection(ctx context.Context, ticketNumbers []string, closedM
 			ORDER BY e.seq DESC LIMIT 1
 		)
 		FROM tickets t
-		WHERE t.status = 'closed' AND t.number IN (`+inPlaceholders(len(args))+`)`, args...)
+		WHERE t.status = 'closed' AND t.number IN (`+store.Placeholders(len(args))+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -329,7 +330,7 @@ func (s *Service) pendingDrafts(ctx context.Context, tickets []TicketSummary) ([
 		FROM drafts d
 		JOIN tickets t ON t.seq = d.ticket_seq
 		JOIN members m ON m.id = d.member_id
-		WHERE d.status = 'pending' AND d.ticket_seq IN (`+inPlaceholders(len(args))+`)
+		WHERE d.status = 'pending' AND d.ticket_seq IN (`+store.Placeholders(len(args))+`)
 		ORDER BY d.ticket_seq, d.id`, args...)
 	if err != nil {
 		return nil, err
@@ -356,11 +357,4 @@ func (s *Service) pendingDrafts(ctx context.Context, tickets []TicketSummary) ([
 		out = append(out, d)
 	}
 	return out, rows.Err()
-}
-
-func inPlaceholders(n int) string {
-	if n == 0 {
-		return ""
-	}
-	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }
