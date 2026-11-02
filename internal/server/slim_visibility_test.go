@@ -3,6 +3,7 @@
 package server_test
 
 import (
+	"bytes"
 	"net/http"
 	"net/url"
 	"strings"
@@ -351,6 +352,62 @@ func Test瘦身状态分母只算附件不算插图(t *testing.T) {
 	if detail.Slim.RemovedCount != 0 || detail.Slim.LastRemovedAt != "" ||
 		len(detail.Slim.Packages) != 0 {
 		t.Fatalf("全部恢复后瘦身汇总应为空：%+v", detail.Slim)
+	}
+}
+
+// S4：已瘦身移出的附件不再占用单张工单的附件配额，重开后可以继续上传。
+func Test瘦身后附件配额释放可再上传(t *testing.T) {
+	s := tbtest.Start(t, tbtest.WithAttachments(1, 5, 10, 1))
+	s.CreateAdmin("陈工", "secret-pass")
+	s.CreateMember("王工", "member-pass")
+	admin := s.Login("陈工", "secret-pass")
+	member := s.Login("王工", "member-pass")
+
+	setStorageClock(t, s, 2026, time.June, 2)
+	number := mustCreateTicket(t, s, member, "瘦身后配额")
+	body := bytes.Repeat([]byte{0x61}, 700*(1<<10)) // 700KB，工单上限 1MB
+	log := mustUploadAttachment(t, s, member, number, "服务日志.log", body)
+	if res := revise(t, s, member, number, map[string]any{
+		"attachment_ids": []string{log.ID}, "base_revision": 1,
+	}); res.StatusCode != http.StatusOK {
+		t.Fatalf("挂说明附件状态码 = %d", res.StatusCode)
+	}
+	if res := closeTicket(t, s, member, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d", res.StatusCode)
+	}
+	setStorageClock(t, s, 2026, time.October, 16)
+	admin = s.Login("陈工", "secret-pass")
+
+	var pkg slimPackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/slim/packages",
+		map[string]any{"ticket_numbers": []string{number}}, &pkg); res.StatusCode != http.StatusCreated {
+		t.Fatalf("生成瘦身包状态码 = %d", res.StatusCode)
+	}
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/admin/slim/packages/"+pkg.Name+"/remove", map[string]any{"saved": true}, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("确认瘦身状态码 = %d", res.StatusCode)
+	}
+
+	// 工单详情的用量口径：已瘦身附件不计入。
+	var detail struct {
+		AttachmentUsage struct {
+			UsedBytes int64 `json:"used_bytes"`
+		} `json:"attachment_usage"`
+	}
+	if res := s.Do(t, member, http.MethodGet, "/api/v1/tickets/"+number, nil, &detail); res.StatusCode != http.StatusOK {
+		t.Fatalf("读取详情状态码 = %d", res.StatusCode)
+	}
+	if detail.AttachmentUsage.UsedBytes != 0 {
+		t.Fatalf("瘦身后 used_bytes = %d，想 0（已移出文件不占配额）", detail.AttachmentUsage.UsedBytes)
+	}
+
+	// 重新打开并上传同样大小的附件：配额已释放，不应被 413 挡住。
+	if res := s.Do(t, member, http.MethodPost, "/api/v1/tickets/"+number+"/reopen", nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("重开状态码 = %d", res.StatusCode)
+	}
+	fresh := mustUploadAttachment(t, s, member, number, "新日志.log", body)
+	if fresh.State != "pending" {
+		t.Fatalf("瘦身后新上传 state = %q，想 pending", fresh.State)
 	}
 }
 

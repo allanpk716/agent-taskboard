@@ -386,10 +386,12 @@ func ParseRef(ref string) (int64, error) {
 	return strconv.ParseInt(ref, 10, 64)
 }
 
-// Usage 返回这张工单的附件用量：合计字节（含待用附件）与个数。
+// Usage 返回这张工单的附件用量：合计字节（含待用附件；已瘦身移出服务器的
+// 附件文件不在服务器上，不占配额也不计入）与个数。
 func (m *Manager) Usage(ctx context.Context, ticketSeq int64) (usedBytes int64, count int, err error) {
 	if err = m.db.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(size), 0), COUNT(*) FROM attachments WHERE ticket_seq = ?`,
+		`SELECT COALESCE(SUM(CASE WHEN slim_removed_at IS NULL THEN size ELSE 0 END), 0), COUNT(*)
+		FROM attachments WHERE ticket_seq = ?`,
 		ticketSeq).Scan(&usedBytes, &count); err != nil {
 		return 0, 0, err
 	}
