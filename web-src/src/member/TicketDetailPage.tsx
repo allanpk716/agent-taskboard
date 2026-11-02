@@ -43,7 +43,7 @@ import { BriefBubble, EventLine, ReplyBubble, eventText } from '../shared/conver
 import { JumpToLatestReply } from '../shared/JumpToLatestReply'
 import { Markdown, inlineImageIds } from '../shared/markdown'
 import { DimensionSelect } from '../guest/DimensionSelect'
-import { AttachmentChips, DeactivatedBadge, Lightbox } from '../shared/widgets'
+import { AttachmentChips, DeactivatedBadge, Lightbox, SlimBanner } from '../shared/widgets'
 import { absoluteUrl, authorName, closeReasonText, fmtBeijing, fmtLinkExpiry, fmtShort, linkExpired } from '../shared/format'
 import { Confirm, Modal, copyText, invalidate, nav, toast, useLocationSearch } from './ui'
 import { HandoffDialog, PeerHandoffDialog, type HandoffPeer } from './HandoffDialog'
@@ -1470,6 +1470,7 @@ export function TicketDetailPage({
             </span>
           )}
         </div>
+        <SlimBanner slim={ticket.slim} />
         {(tier === 'mobile' || tier === 'narrow') && (
           <details className="mmeta">
             <summary>标签 · 指派 · 访客链接</summary>

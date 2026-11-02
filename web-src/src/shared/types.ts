@@ -49,6 +49,19 @@ export interface Attachment {
   size: number // 字节
   url: string // 访客拿到的是与链接绑定的短时效签名地址
   attached_to: string // 「说明」或「回复 N」
+  /** 瘦身标记（#284）：存在表示文件已移出服务器，原位置只显示占位。 */
+  slim_removed_at?: string
+  slim_package_name?: string
+}
+
+/** 工单级瘦身状态：由附件状态推导（none / partial / full）。 */
+export type SlimStatus = 'none' | 'partial' | 'full'
+
+export interface TicketSlim {
+  removed_count: number
+  last_removed_at?: string
+  packages: string[]
+  status: SlimStatus
 }
 
 export interface TimelineEvent {
@@ -199,6 +212,8 @@ export interface TicketView {
   my_draft?: DraftView | null
   brief: Brief
   attachments: Attachment[]
+  /** 附件瘦身汇总（#284）：status=none 时也总是返回。 */
+  slim: TicketSlim
   viewer: {
     kind: string
     role: string
