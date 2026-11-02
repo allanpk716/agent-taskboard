@@ -33,6 +33,18 @@ type slimPreviewBody struct {
 	AttachmentCount int                     `json:"attachment_count"`
 	AttachmentBytes int64                   `json:"attachment_bytes"`
 	Tickets         []slimPreviewTicketBody `json:"tickets"`
+	Drafts          []slimPreviewDraftBody  `json:"drafts"`
+}
+
+type slimPreviewDraftBody struct {
+	ID            string   `json:"id"`
+	TicketNumber  string   `json:"ticket_number"`
+	Kind          string   `json:"kind"`
+	MemberName    string   `json:"member_name"`
+	AgentName     string   `json:"agent_name"`
+	Version       int64    `json:"version"`
+	UpdatedAt     string   `json:"updated_at"`
+	AttachmentIDs []string `json:"attachment_ids"`
 }
 
 type slimCandidateBody struct {
@@ -203,6 +215,47 @@ func Test瘦身候选按关闭月数筛选且排除没有附件的工单(t *test
 	res = s.Do(t, admin, http.MethodGet, "/api/v1/admin/slim/candidates?closed_months=121", nil, &invalid)
 	if res.StatusCode != http.StatusBadRequest || invalid.Error.Code != "invalid_closed_months" {
 		t.Fatalf("越界候选 = %d/%s，想 400 invalid_closed_months", res.StatusCode, invalid.Error.Code)
+	}
+}
+
+// P2 / spec 故事 40：瘦身预览与归档预览同一口径列出未发出的草稿。
+func Test瘦身预览同样列出未发出的草稿(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	s.CreateMember("王工", "member-pass")
+	admin := s.Login("陈工", "secret-pass")
+	member := s.Login("王工", "member-pass")
+	_, agent := issueRequiredAgent(t, s, member, "瘦身草稿")
+
+	setStorageClock(t, s, 2026, time.June, 2)
+	number := mustCreateTicket(t, s, member, "带草稿的瘦身工单")
+	log := mustUploadAttachment(t, s, member, number, "服务日志.log", []byte("draft-body"))
+	if res := revise(t, s, member, number, map[string]any{
+		"attachment_ids": []string{log.ID}, "base_revision": 1,
+	}); res.StatusCode != http.StatusOK {
+		t.Fatalf("挂说明附件状态码 = %d", res.StatusCode)
+	}
+	mustReplyDraft(t, s, agent, number)
+	if res := closeTicket(t, s, member, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d", res.StatusCode)
+	}
+	setStorageClock(t, s, 2026, time.October, 16)
+	admin = s.Login("陈工", "secret-pass")
+
+	var preview slimPreviewBody
+	res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/slim/preview",
+		map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, &preview)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("瘦身预览状态码 = %d", res.StatusCode)
+	}
+	if len(preview.Drafts) != 1 {
+		t.Fatalf("瘦身预览 drafts = %+v，想列出 1 份未发出草稿", preview.Drafts)
+	}
+	draft := preview.Drafts[0]
+	if draft.TicketNumber != number || draft.Kind != "reply" || draft.MemberName != "王工" ||
+		draft.AgentName != "瘦身草稿" || draft.ID == "" || draft.UpdatedAt == "" ||
+		len(draft.AttachmentIDs) != 0 {
+		t.Fatalf("瘦身预览草稿字段 = %+v", draft)
 	}
 }
 

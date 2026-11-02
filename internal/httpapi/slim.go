@@ -430,6 +430,7 @@ type slimPreviewView struct {
 	AttachmentCount int                     `json:"attachment_count"`
 	AttachmentBytes int64                   `json:"attachment_bytes"`
 	Tickets         []slimPreviewTicketView `json:"tickets"`
+	Drafts          []slim.DraftSummary     `json:"drafts"`
 }
 
 type slimPreviewTicketView struct {
@@ -478,8 +479,12 @@ func newSlimPreviewView(p slim.Preview) slimPreviewView {
 			AttachmentCount: ticket.AttachmentCount, AttachmentBytes: ticket.AttachmentBytes,
 		})
 	}
+	drafts := p.Drafts
+	if drafts == nil {
+		drafts = []slim.DraftSummary{}
+	}
 	return slimPreviewView{TicketCount: p.TicketCount(), AttachmentCount: p.AttachmentCount(),
-		AttachmentBytes: p.AttachmentBytes(), Tickets: tickets}
+		AttachmentBytes: p.AttachmentBytes(), Tickets: tickets, Drafts: drafts}
 }
 
 type slimPackageView struct {

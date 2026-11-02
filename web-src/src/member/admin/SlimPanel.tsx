@@ -312,6 +312,30 @@ export function SlimPanel() {
             将瘦身 {preview.ticket_count} 张工单，{preview.attachment_count} 个附件，共{' '}
             {fmtBytes(preview.attachment_bytes)}
           </div>
+          {preview.drafts.length > 0 ? (
+            <>
+              <div className="warnbox" data-testid="slim-preview-drafts">
+                这些工单还有下面这些未发出的草稿；瘦身只处理附件，不会丢弃或修改草稿。
+              </div>
+              <table className="mini-tbl">
+                <tbody>
+                  {preview.drafts.map((draft) => (
+                    <tr key={draft.id}>
+                      <td className="mono">{draft.ticket_number}</td>
+                      <td>
+                        {draft.member_name}
+                        {draft.agent_name ? ` / ${draft.agent_name}` : ''}
+                      </td>
+                      <td>
+                        {draft.kind} v{draft.version}
+                      </td>
+                      <td>{fmtBeijing(draft.updated_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          ) : null}
           <table className="mini-tbl" style={{ marginTop: 6 }}>
             <tbody>
               {preview.tickets.map((ticket) => (

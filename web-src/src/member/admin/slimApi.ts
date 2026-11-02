@@ -32,6 +32,16 @@ export interface SlimPreview {
     attachment_count: number
     attachment_bytes: number
   }>
+  drafts: Array<{
+    id: string
+    ticket_number: string
+    kind: string
+    member_name: string
+    agent_name: string
+    version: number
+    updated_at: string
+    attachment_ids: string[]
+  }>
 }
 
 export interface SlimPackage {

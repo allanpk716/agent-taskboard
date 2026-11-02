@@ -4,6 +4,7 @@ package slim
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -41,6 +42,20 @@ type Attachment struct {
 // Preview 是管理员确认生成瘦身包前的汇总。
 type Preview struct {
 	Tickets []TicketSummary
+	Drafts  []DraftSummary
+}
+
+// DraftSummary 是瘦身预览里提示管理员的一份未发出草稿（与归档预览
+// 同一字段口径；瘦身本身不修改、不丢弃草稿）。
+type DraftSummary struct {
+	ID            string   `json:"id"`
+	TicketNumber  string   `json:"ticket_number"`
+	Kind          string   `json:"kind"`
+	MemberName    string   `json:"member_name"`
+	AgentName     string   `json:"agent_name"`
+	Version       int64    `json:"version"`
+	UpdatedAt     string   `json:"updated_at"`
+	AttachmentIDs []string `json:"attachment_ids"`
 }
 
 // MonthCandidates 是管理页筛选结果里的一个关闭月份。
@@ -94,7 +109,14 @@ func NewService(db *sql.DB, dataDir, attachmentsDir, backupDir string,
 // Preview 校验管理员选择并汇总仍留在服务器上的附件。
 func (s *Service) Preview(ctx context.Context, ticketNumbers []string, closedMonths int) (Preview, error) {
 	tickets, err := s.selection(ctx, ticketNumbers, closedMonths)
-	return Preview{Tickets: tickets}, err
+	if err != nil {
+		return Preview{}, err
+	}
+	drafts, err := s.pendingDrafts(ctx, tickets)
+	if err != nil {
+		return Preview{}, err
+	}
+	return Preview{Tickets: tickets, Drafts: drafts}, nil
 }
 
 // Candidates 找出已关闭满 N 个月且仍有附件在服务器上的工单。
@@ -288,6 +310,52 @@ func (s *Service) slimmableAttachments(ctx context.Context, ticketSeq int64) ([]
 		out = append(out, att)
 	}
 	return out, nil
+}
+
+// pendingDrafts 与归档预览同一口径：列出所选工单上未发出的草稿，
+// 供管理页按同样的方式提示（spec 故事 40）。
+func (s *Service) pendingDrafts(ctx context.Context, tickets []TicketSummary) ([]DraftSummary, error) {
+	args := make([]any, 0, len(tickets))
+	for _, t := range tickets {
+		args = append(args, t.Seq)
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT d.id, d.kind, d.version, d.updated_at, d.request_json, t.seq, t.number, m.name,
+		       COALESCE((
+		           SELECT a.name FROM draft_versions v
+		           LEFT JOIN agent_tokens a ON a.id = v.author_agent_id
+		           WHERE v.draft_id = d.id ORDER BY v.version DESC LIMIT 1
+		       ), '')
+		FROM drafts d
+		JOIN tickets t ON t.seq = d.ticket_seq
+		JOIN members m ON m.id = d.member_id
+		WHERE d.status = 'pending' AND d.ticket_seq IN (`+inPlaceholders(len(args))+`)
+		ORDER BY d.ticket_seq, d.id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []DraftSummary{}
+	for rows.Next() {
+		var d DraftSummary
+		var id int64
+		var request string
+		if err := rows.Scan(&id, &d.Kind, &d.Version, &d.UpdatedAt, &request,
+			new(int64), &d.TicketNumber, &d.MemberName, &d.AgentName); err != nil {
+			return nil, err
+		}
+		d.ID = fmt.Sprintf("dft_%d", id)
+		var req struct {
+			AttachmentIDs []string `json:"attachment_ids"`
+		}
+		_ = json.Unmarshal([]byte(request), &req)
+		d.AttachmentIDs = req.AttachmentIDs
+		if d.AttachmentIDs == nil {
+			d.AttachmentIDs = []string{}
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
 
 func inPlaceholders(n int) string {
