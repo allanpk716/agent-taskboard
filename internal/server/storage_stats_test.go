@@ -30,12 +30,14 @@ type storageTicketBody struct {
 
 // storageStatsBody 是 GET /api/v1/admin/storage 的响应结构。
 type storageStatsBody struct {
-	DatabaseBytes    int64              `json:"database_bytes"`
-	AttachmentsBytes int64              `json:"attachments_bytes"`
-	BackupsBytes     int64              `json:"backups_bytes"`
-	ClosedMonths     int                `json:"closed_months"`
-	Cutoff           string             `json:"cutoff"`
-	Archivable       []storageMonthBody `json:"archivable"`
+	DatabaseBytes            int64              `json:"database_bytes"`
+	AttachmentsBytes         int64              `json:"attachments_bytes"`
+	BackupsBytes             int64              `json:"backups_bytes"`
+	SlimmableTicketCount     int                `json:"slimmable_ticket_count"`
+	SlimmableAttachmentBytes int64              `json:"slimmable_attachment_bytes"`
+	ClosedMonths             int                `json:"closed_months"`
+	Cutoff                   string             `json:"cutoff"`
+	Archivable               []storageMonthBody `json:"archivable"`
 }
 
 // setStorageClock 把服务的假时钟拨到指定北京时间（10:00，避开跨天边界）。
@@ -56,6 +58,17 @@ func createClosedTicketAt(t testing.TB, s *tbtest.Server, c *http.Client, title 
 		t.Fatalf("关闭 %q 状态码 = %d, 想 200", title, res.StatusCode)
 	}
 	return number
+}
+
+// attachInlineImage 把一张已上传的图片以插图语法写进说明（插图不属于瘦身范围）。
+func attachInlineImage(t testing.TB, s *tbtest.Server, c *http.Client, number, attID string) {
+	t.Helper()
+	if res := revise(t, s, c, number, map[string]any{
+		"brief_md":      "![现场图](att:" + attID + ")。",
+		"base_revision": 1,
+	}); res.StatusCode != http.StatusOK {
+		t.Fatalf("把 %s 挂成插图状态码 = %d", attID, res.StatusCode)
+	}
 }
 
 // bytesOf 造一段确定长度的内容（附件大小是外部行为的一部分）。
@@ -327,5 +340,147 @@ func Test存储统计只对管理员开放(t *testing.T) {
 		if got.Error.Code != tc.code {
 			t.Errorf("%s 错误码 = %q, 想 %q", tc.name, got.Error.Code, tc.code)
 		}
+	}
+}
+
+// 可瘦身口径（#287）：按当前 N 统计「仍有附件在服务器上」的已关闭工单，
+// 只算附件不算插图；插图-only、无附件、未关闭或关闭不满 N 个月的都不计。
+// 汇总与瘦身预览对同一批工单的结果一致。
+func Test存储统计返回可瘦身工单数与附件字节(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+
+	// 2026-06-02 关闭：只有日志附件，整张工单可瘦身。
+	setStorageClock(t, s, 2026, time.June, 2)
+	logOnly := mustCreateTicket(t, s, admin, "老工单-只有日志")
+	logOnlyAtt := mustUploadAttachment(t, s, admin, logOnly, "服务日志.log", bytesOf(100))
+	if res := revise(t, s, admin, logOnly, map[string]any{
+		"brief_md":       "见 [服务日志](att:" + logOnlyAtt.ID + ")。",
+		"attachment_ids": []string{logOnlyAtt.ID},
+		"base_revision":  1,
+	}); res.StatusCode != http.StatusOK {
+		t.Fatalf("挂说明附件状态码 = %d", res.StatusCode)
+	}
+	if res := closeTicket(t, s, admin, logOnly, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭 %q 状态码 = %d", logOnly, res.StatusCode)
+	}
+
+	// 只有插图的老工单：没有可瘦身附件，不计入工单数。
+	imageOnly := mustCreateTicket(t, s, admin, "老工单-只有插图")
+	image := mustUploadAttachment(t, s, admin, imageOnly, "现场图.png", bytesOf(5))
+	attachInlineImage(t, s, admin, imageOnly, image.ID)
+	if res := closeTicket(t, s, admin, imageOnly, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭 %q 状态码 = %d", imageOnly, res.StatusCode)
+	}
+
+	// 日志 + 插图：工单计入，但字节只算日志。
+	mixed := mustCreateTicket(t, s, admin, "老工单-日志加插图")
+	log := mustUploadAttachment(t, s, admin, mixed, "服务日志.log", bytesOf(60))
+	mixedImage := mustUploadAttachment(t, s, admin, mixed, "现场图.png", bytesOf(7))
+	if res := revise(t, s, admin, mixed, map[string]any{
+		"brief_md":       "见 [服务日志](att:" + log.ID + ")。![现场图](att:" + mixedImage.ID + ")。",
+		"attachment_ids": []string{log.ID},
+		"base_revision":  1,
+	}); res.StatusCode != http.StatusOK {
+		t.Fatalf("挂说明附件状态码 = %d", res.StatusCode)
+	}
+	if res := closeTicket(t, s, admin, mixed, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭 %q 状态码 = %d", mixed, res.StatusCode)
+	}
+
+	// 老但没有附件的老工单，不计入。
+	setStorageClock(t, s, 2026, time.May, 10)
+	createClosedTicketAt(t, s, admin, "老工单-没有附件")
+
+	// 未关闭的老工单无论带多少附件都不算。
+	opened := mustCreateTicket(t, s, admin, "老工单-一直开着")
+	mustUploadAttachment(t, s, admin, opened, "未关闭日志.log", bytesOf(80))
+
+	// 2026-08-20 关闭：默认 N=3（cutoff 2026-07-16）还不够老。
+	setStorageClock(t, s, 2026, time.August, 20)
+	createClosedTicketAt(t, s, admin, "新近关闭", 40)
+
+	// 查询时刻 2026-10-16：可瘦身 = logOnly + mixed，共 100 + 60 字节。
+	s.Clock().Set(time.Date(2026, 10, 16, 9, 0, 0, 0, clock.Beijing))
+	admin = s.Login("陈工", "secret-pass")
+	var stats storageStatsBody
+	if res := s.Do(t, admin, http.MethodGet, "/api/v1/admin/storage", nil, &stats); res.StatusCode != http.StatusOK {
+		t.Fatalf("存储统计状态码 = %d，想 200", res.StatusCode)
+	}
+	if stats.SlimmableTicketCount != 2 || stats.SlimmableAttachmentBytes != 160 {
+		t.Fatalf("slimmable = %d 张 / %d 字节，想 2 张 / 160 字节（不含插图、无附件、未关闭与新近关闭）",
+			stats.SlimmableTicketCount, stats.SlimmableAttachmentBytes)
+	}
+
+	// 同一批工单走瘦身预览：两个入口的汇总必须一致。
+	var preview slimPreviewBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/slim/preview",
+		map[string]any{"closed_months": 3, "ticket_numbers": []string{logOnly, mixed}}, &preview); res.StatusCode != http.StatusOK {
+		t.Fatalf("瘦身预览状态码 = %d，想 200", res.StatusCode)
+	}
+	if preview.TicketCount != stats.SlimmableTicketCount || preview.AttachmentBytes != stats.SlimmableAttachmentBytes {
+		t.Fatalf("存储统计 slimmable = %d/%d，瘦身预览 = %d/%d，口径应一致",
+			stats.SlimmableTicketCount, stats.SlimmableAttachmentBytes,
+			preview.TicketCount, preview.AttachmentBytes)
+	}
+}
+
+// 确认瘦身移出后：附件目录占用与可瘦身统计都随之下降，只剩插图还在目录里。
+func Test瘦身移出后存储占用与可瘦身统计下降(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+
+	s.Clock().Set(time.Date(2026, time.June, 2, 10, 0, 0, 0, clock.Beijing))
+	number := mustCreateTicket(t, s, admin, "瘦身前后存储")
+	log := mustUploadAttachment(t, s, admin, number, "服务日志.log", bytesOf(18))
+	image := mustUploadAttachment(t, s, admin, number, "现场图.png", bytesOf(5))
+	if res := revise(t, s, admin, number, map[string]any{
+		"brief_md":       "见 [服务日志](att:" + log.ID + ")。![现场图](att:" + image.ID + ")。",
+		"attachment_ids": []string{log.ID},
+		"base_revision":  1,
+	}); res.StatusCode != http.StatusOK {
+		t.Fatalf("挂说明附件状态码 = %d", res.StatusCode)
+	}
+	if res := closeTicket(t, s, admin, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d", res.StatusCode)
+	}
+
+	s.Clock().Set(time.Date(2026, time.October, 16, 9, 0, 0, 0, clock.Beijing))
+	admin = s.Login("陈工", "secret-pass")
+	var before storageStatsBody
+	if res := s.Do(t, admin, http.MethodGet, "/api/v1/admin/storage", nil, &before); res.StatusCode != http.StatusOK {
+		t.Fatalf("移出前存储统计状态码 = %d", res.StatusCode)
+	}
+	if before.SlimmableTicketCount != 1 || before.SlimmableAttachmentBytes != 18 {
+		t.Fatalf("移出前 slimmable = %d/%d，想 1 张 / 18 字节",
+			before.SlimmableTicketCount, before.SlimmableAttachmentBytes)
+	}
+	if before.AttachmentsBytes != 23 {
+		t.Fatalf("移出前 attachments_bytes = %d，想 23（日志 18 + 插图 5）", before.AttachmentsBytes)
+	}
+
+	var pkg slimPackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/slim/packages",
+		map[string]any{"ticket_numbers": []string{number}}, &pkg); res.StatusCode != http.StatusCreated {
+		t.Fatalf("生成瘦身包状态码 = %d", res.StatusCode)
+	}
+	removeURL := "/api/v1/admin/slim/packages/" + pkg.Name + "/remove"
+	var removed slimRemoveBody
+	if res := s.Do(t, admin, http.MethodPost, removeURL, map[string]any{"saved": true}, &removed); res.StatusCode != http.StatusOK {
+		t.Fatalf("确认瘦身状态码 = %d", res.StatusCode)
+	}
+
+	var after storageStatsBody
+	if res := s.Do(t, admin, http.MethodGet, "/api/v1/admin/storage", nil, &after); res.StatusCode != http.StatusOK {
+		t.Fatalf("移出后存储统计状态码 = %d", res.StatusCode)
+	}
+	if after.SlimmableTicketCount != 0 || after.SlimmableAttachmentBytes != 0 {
+		t.Fatalf("移出后 slimmable = %d/%d，想 0/0（插图本就不在瘦身范围）",
+			after.SlimmableTicketCount, after.SlimmableAttachmentBytes)
+	}
+	if after.AttachmentsBytes != 5 {
+		t.Fatalf("移出后 attachments_bytes = %d，想 5（只剩插图）", after.AttachmentsBytes)
 	}
 }
