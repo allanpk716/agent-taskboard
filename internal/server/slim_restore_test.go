@@ -227,6 +227,26 @@ func Test恢复瘦身包按工单写回附件并进入备份镜像(t *testing.T)
 	}
 }
 
+// S3：spec 故事 27 要求「按工单逐张选择恢复」，空选择不允许代表整包恢复。
+func Test恢复瘦身包空选择返回400(t *testing.T) {
+	s, admin, _, zipBytes, _, _ := buildRemovedSlimPackage(t, "空选择恢复")
+
+	res, _ := restoreSlim(t, s, admin, zipBytes)
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("空选择恢复状态码 = %d，想 400", res.StatusCode)
+	}
+	var rejected errorBody
+	tbtest.DecodeJSON(t, res, &rejected)
+	if rejected.Error.Code != "slim_ticket_selection_required" {
+		t.Fatalf("空选择恢复错误码 = %q，想 slim_ticket_selection_required", rejected.Error.Code)
+	}
+	// 被拒绝后不应恢复任何文件：重新检查仍显示可恢复。
+	inspectRes, inspection := postSlimRestore(t, s, admin, "/api/v1/admin/slim/restore/inspect", zipBytes)
+	if inspectRes.StatusCode != http.StatusOK || len(inspection.Tickets) != 1 || !inspection.Tickets[0].Restorable {
+		t.Fatalf("空选择被拒后检查 = %d/%+v，想仍可恢复", inspectRes.StatusCode, inspection)
+	}
+}
+
 func Test恢复瘦身包只恢复勾选工单(t *testing.T) {
 	f := buildRemovedSlimPackages(t, "部分恢复一", "部分恢复二")
 	first, second := f.numbers[0], f.numbers[1]

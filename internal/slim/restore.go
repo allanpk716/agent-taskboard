@@ -29,6 +29,8 @@ var (
 	ErrRestorePackageInvalid = errors.New("slim package invalid")
 	// ErrRestoreFormatUnsupported 表示瘦身包格式版本高于当前平台支持版本。
 	ErrRestoreFormatUnsupported = errors.New("slim format unsupported")
+	// ErrTicketSelectionRequired 表示执行恢复时没有勾选任何工单。
+	ErrTicketSelectionRequired = errors.New("slim ticket selection required")
 )
 
 const (
@@ -124,11 +126,9 @@ func (s *Service) Restore(ctx context.Context, readerAt io.ReaderAt, size int64,
 			want[number] = true
 		}
 	}
-	selectAll := len(want) == 0
-	for _, number := range parsed.Numbers {
-		if selectAll {
-			want[number] = true
-		}
+	if len(want) == 0 {
+		// spec 故事 27：按工单逐张选择恢复；空选择不是「恢复整包」。
+		return RestoreResult{}, ErrTicketSelectionRequired
 	}
 
 	now := s.clk.Now()

@@ -209,6 +209,7 @@ const (
 	CodeSlimPackageStale      = "slim_package_stale"               // 生成后工单或附件变化（409）
 	CodeSlimPackageInvalid    = "slim_package_invalid"             // 上传的瘦身包校验失败（422）
 	CodeSlimFormatUnsupported = "slim_format_unsupported"          // 上传包格式版本太高（422）
+	CodeSlimSelectionRequired = "slim_ticket_selection_required"   // 执行恢复时没有勾选任何工单（400）
 
 	// #80：桌面客户端凭证。
 	CodeInvalidClientPort        = "invalid_client_port"

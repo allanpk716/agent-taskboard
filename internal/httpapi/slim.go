@@ -213,6 +213,11 @@ func (a *API) handleAdminSlimRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := a.slim.Restore(r.Context(), readerAt, size, upload.Selected, viewer)
+	if errors.Is(err, slim.ErrTicketSelectionRequired) {
+		WriteError(w, http.StatusBadRequest, CodeSlimSelectionRequired,
+			"恢复瘦身包时必须勾选至少一张工单", "按工单逐张选择要恢复的附件")
+		return
+	}
 	if writeSlimRestorePackageError(w, err) {
 		return
 	}
