@@ -57,6 +57,7 @@ test('管理员在管理页完成附件瘦身移出主路径', async ({ page, re
 
   const row = page.getByTestId(`slim-package-${created!.name}`)
   await expect(row).toContainText(created!.name)
+  await expect(row).toContainText('1 张工单')
   await expect(row).toContainText('1 个附件')
   const [download] = await Promise.all([
     page.waitForEvent('download'),

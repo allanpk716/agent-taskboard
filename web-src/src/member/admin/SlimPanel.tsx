@@ -344,7 +344,8 @@ export function SlimPanel() {
                 <td>
                   <div className="mono">{pkg.name}</div>
                   <div className="hint">
-                    {pkg.attachment_count} 个附件 / {fmtBytes(pkg.attachment_bytes)}；生成于{' '}
+                    {pkg.ticket_count} 张工单 / {pkg.attachment_count} 个附件 /{' '}
+                    {fmtBytes(pkg.attachment_bytes)}；生成于{' '}
                     {fmtBeijing(pkg.generated_at)}，到期 {fmtBeijing(pkg.expires_at)}
                   </div>
                 </td>
