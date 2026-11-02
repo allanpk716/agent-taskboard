@@ -86,7 +86,8 @@ func (m *Manager) ReleaseDraftTx(ctx context.Context, tx *sql.Tx, draftID int64)
 func (m *Manager) ByDraft(ctx context.Context, draftID int64) ([]AttachmentInfo, error) {
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT id, ticket_seq, filename, size, state, attached_to, draft_id,
-		       uploader_member_id, uploader_agent_id, uploader_link_id, uploaded_at, claimed_at
+		       uploader_member_id, uploader_agent_id, uploader_link_id, uploaded_at, claimed_at,
+		       slim_removed_at, slim_package_name
 		FROM attachments WHERE draft_id = ? ORDER BY id`, draftID)
 	if err != nil {
 		return nil, err
