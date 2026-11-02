@@ -233,6 +233,7 @@ func (a *API) decodeArchiveSelection(w http.ResponseWriter, r *http.Request) (ar
 type archivePreviewView struct {
 	TicketCount     int                    `json:"ticket_count"`
 	AttachmentBytes int64                  `json:"attachment_bytes"`
+	SlimPackages    []string               `json:"slim_packages"`
 	Tickets         []archiveTicketView    `json:"tickets"`
 	Drafts          []archive.DraftSummary `json:"drafts"`
 }
@@ -256,14 +257,20 @@ func newArchivePreviewView(p archive.Preview) archivePreviewView {
 	if drafts == nil {
 		drafts = []archive.DraftSummary{}
 	}
+	slimPackages := p.ReferencedSlimPackages()
+	if slimPackages == nil {
+		slimPackages = []string{}
+	}
 	return archivePreviewView{TicketCount: p.TicketCount(), AttachmentBytes: p.AttachmentBytes(),
-		Tickets: tickets, Drafts: drafts}
+		SlimPackages: slimPackages,
+		Tickets:      tickets, Drafts: drafts}
 }
 
 type archivePackageView struct {
 	Name               string   `json:"name"`
 	TicketCount        int      `json:"ticket_count"`
 	AttachmentBytes    int64    `json:"attachment_bytes"`
+	SlimPackages       []string `json:"slim_packages"`
 	GeneratedAt        string   `json:"generated_at"`
 	ExpiresAt          string   `json:"expires_at"`
 	TicketNumbers      []string `json:"ticket_numbers"`
@@ -276,9 +283,14 @@ func newArchivePackageView(pkg archive.PackageInfo) archivePackageView {
 	if pkg.TicketNumbers == nil {
 		pkg.TicketNumbers = []string{}
 	}
+	slimPackages := pkg.SlimPackages
+	if slimPackages == nil {
+		slimPackages = []string{}
+	}
 	return archivePackageView{Name: pkg.Name, TicketCount: pkg.TicketCount,
-		AttachmentBytes: pkg.AttachmentBytes, GeneratedAt: pkg.GeneratedAt.Format(time.RFC3339),
-		ExpiresAt: pkg.ExpiresAt.Format(time.RFC3339), TicketNumbers: pkg.TicketNumbers,
+		AttachmentBytes: pkg.AttachmentBytes, SlimPackages: slimPackages,
+		GeneratedAt: pkg.GeneratedAt.Format(time.RFC3339),
+		ExpiresAt:   pkg.ExpiresAt.Format(time.RFC3339), TicketNumbers: pkg.TicketNumbers,
 		DownloadURL:  "/api/v1/admin/archive/packages/" + url.PathEscape(pkg.Name) + "/download",
 		OperatorName: pkg.OperatorName, RemovedTicketCount: pkg.RemovedTicketCount}
 }

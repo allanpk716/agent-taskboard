@@ -23,6 +23,7 @@ export interface ArchiveDraftSummary {
 export interface ArchivePreview {
   ticket_count: number
   attachment_bytes: number
+  slim_packages: string[]
   tickets: ArchiveTicketSummary[]
   drafts: ArchiveDraftSummary[]
 }
@@ -31,6 +32,7 @@ export interface ArchivePackage {
   name: string
   ticket_count: number
   attachment_bytes: number
+  slim_packages: string[]
   generated_at: string
   expires_at: string
   ticket_numbers: string[]
