@@ -290,11 +290,19 @@ func (s *Service) CleanupExpired() error {
 			_ = os.Remove(path)
 			continue
 		}
+		if strings.HasPrefix(name, ".restore-") && strings.HasSuffix(name, ".zip.tmp") {
+			// 恢复上传的临时文件正常会在请求结束时删除；这里兜底清理
+			// 因中断泄漏的旧文件，按 mtime 超过保留期判定。
+			s.removeIfOlderThanRetention(entry, path)
+			continue
+		}
 		if !strings.HasSuffix(name, ".zip") {
 			continue
 		}
 		info, err := s.infoFromZip(name)
 		if errors.Is(err, ErrPackageNotFound) {
+			// 无法解析的暂存包不再永久跳过：按 mtime 超过保留期删除。
+			s.removeIfOlderThanRetention(entry, path)
 			continue
 		}
 		if err != nil || s.clk.Now().After(info.ExpiresAt) {
@@ -302,6 +310,16 @@ func (s *Service) CleanupExpired() error {
 		}
 	}
 	return nil
+}
+
+func (s *Service) removeIfOlderThanRetention(entry os.DirEntry, path string) {
+	info, err := entry.Info()
+	if err != nil {
+		return
+	}
+	if !s.clk.Now().Add(-Retention).Before(info.ModTime()) {
+		_ = os.Remove(path)
+	}
 }
 
 func (s *Service) infoFromZip(name string) (PackageInfo, error) {

@@ -353,6 +353,49 @@ func Test暂存瘦身包七天到期自动删除(t *testing.T) {
 	}
 }
 
+// S6：暂存区里泄漏的恢复上传临时文件与无法解析的 zip 也要按保留期清理，
+// 不能因为请求中断或文件损坏就永久留在 slim-packages 目录里。
+func Test瘦身暂存区清理过期临时文件与无法解析的zip(t *testing.T) {
+	s := tbtest.Start(t)
+	stage := filepath.Join(s.DataDir(), "slim-packages")
+	if err := os.MkdirAll(stage, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldTime := s.Clock().Now().Add(-8 * 24 * time.Hour)
+	files := map[string]time.Time{
+		".restore-leaked.zip.tmp": oldTime,     // 超过保留期的恢复上传临时文件
+		".restore-fresh.zip.tmp":  time.Time{}, // 最近的临时文件先保留
+		"broken-old.zip":          oldTime,     // 超过保留期的损坏暂存包
+		"broken-fresh.zip":        time.Time{}, // 最近的损坏包先保留
+	}
+	for name := range files {
+		if err := os.WriteFile(filepath.Join(stage, name), []byte("not a zip"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, at := range files {
+		if !at.IsZero() {
+			if err := os.Chtimes(filepath.Join(stage, name), at, at); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	if err := s.Slims().CleanupExpired(); err != nil {
+		t.Fatalf("触发清理失败：%v", err)
+	}
+	for _, name := range []string{".restore-leaked.zip.tmp", "broken-old.zip"} {
+		if _, err := os.Stat(filepath.Join(stage, name)); !os.IsNotExist(err) {
+			t.Errorf("过期的 %s 应被清理：%v", name, err)
+		}
+	}
+	for _, name := range []string{".restore-fresh.zip.tmp", "broken-fresh.zip"} {
+		if _, err := os.Stat(filepath.Join(stage, name)); err != nil {
+			t.Errorf("未到期的 %s 不应被清理：%v", name, err)
+		}
+	}
+}
+
 func Test确认瘦身移出删除附件与备份并保留工单(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")
