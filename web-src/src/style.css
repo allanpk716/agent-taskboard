@@ -193,14 +193,6 @@ form button:disabled {
 }
 
 /* 瘦身标记（#284）：行内徽标、详情/访客页横幅、附件占位（下载置灰）。 */
-.badge.slim,
-.slim-banner,
-.att.slimmed,
-.att.slimmed button,
-.att-slimmed {
-  font-size: 12px;
-}
-
 .badge.slim {
   display: inline-block;
   padding: 1px 7px;
