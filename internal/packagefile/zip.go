@@ -42,24 +42,33 @@ func AddEntry(zw *zip.Writer, path string, body []byte) error {
 }
 
 func AddStream(zw *zip.Writer, files *[]ManifestFile, path string, src io.Reader, size int64) error {
-	path, err := SafePath(path)
+	entry, err := AddStreamEntry(zw, path, src, size)
 	if err != nil {
 		return err
 	}
+	*files = append(*files, entry)
+	return nil
+}
+
+// AddStreamEntry 写入一个流式条目并返回它的清单记录（单个文件场景用）。
+func AddStreamEntry(zw *zip.Writer, path string, src io.Reader, size int64) (ManifestFile, error) {
+	path, err := SafePath(path)
+	if err != nil {
+		return ManifestFile{}, err
+	}
 	entry, err := zw.Create(path)
 	if err != nil {
-		return err
+		return ManifestFile{}, err
 	}
 	sum := sha256.New()
 	written, copyErr := io.Copy(io.MultiWriter(entry, sum), src)
 	if copyErr != nil {
-		return copyErr
+		return ManifestFile{}, copyErr
 	}
 	if written != size {
-		return fmt.Errorf("包内文件 %s 大小不一致：数据库 %d，实际 %d", path, size, written)
+		return ManifestFile{}, fmt.Errorf("包内文件 %s 大小不一致：数据库 %d，实际 %d", path, size, written)
 	}
-	*files = append(*files, ManifestFile{Path: path, SHA256: hex.EncodeToString(sum.Sum(nil)), Size: written})
-	return nil
+	return ManifestFile{Path: path, SHA256: hex.EncodeToString(sum.Sum(nil)), Size: written}, nil
 }
 
 func SafePath(path string) (string, error) {

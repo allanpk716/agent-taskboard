@@ -62,9 +62,7 @@ type manifestActor struct {
 }
 
 type manifestFile struct {
-	Path         string `json:"path"`
-	SHA256       string `json:"sha256"`
-	Size         int64  `json:"size"`
+	packagefile.ManifestFile
 	TicketNumber string `json:"ticket_number"`
 	AttachedTo   string `json:"attached_to"`
 	AttachmentID string `json:"attachment_id"`
@@ -119,8 +117,8 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 				_ = zw.Close()
 				return PackageInfo{}, fmt.Errorf("读取附件 %s 失败：%w", att.Ref, err)
 			}
-			commonFiles := make([]packagefile.ManifestFile, 0, 1)
-			if err := packagefile.AddStream(zw, &commonFiles, path, src, att.Size); err != nil {
+			entry, err := packagefile.AddStreamEntry(zw, path, src, att.Size)
+			if err != nil {
 				_ = src.Close()
 				_ = zw.Close()
 				return PackageInfo{}, err
@@ -129,9 +127,8 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 				_ = zw.Close()
 				return PackageInfo{}, err
 			}
-			files = append(files, manifestFile{Path: commonFiles[0].Path, SHA256: commonFiles[0].SHA256,
-				Size: commonFiles[0].Size, TicketNumber: ticket.Number, AttachedTo: att.AttachedTo,
-				AttachmentID: att.Ref, Filename: att.Filename})
+			files = append(files, manifestFile{ManifestFile: entry, TicketNumber: ticket.Number,
+				AttachedTo: att.AttachedTo, AttachmentID: att.Ref, Filename: att.Filename})
 		}
 	}
 	m := manifest{FormatVersion: FormatVersion, PlatformVersion: version.Server,
