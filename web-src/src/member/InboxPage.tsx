@@ -9,6 +9,7 @@ import { nav, useInvalidate, useLocationSearch } from './ui'
 import { TicketCard, ticketLabelFilterPath, type TicketListItem } from './TicketsPage'
 import { parsePasteLink } from './pasteLink'
 import {
+  inboxCounterpartName,
   inboxActivityTime,
   inboxPhrase,
   inboxReasonClass,
@@ -96,19 +97,6 @@ function counterpartKey(counterpart: InboxCounterpart): string {
   }
 }
 
-function counterpartName(counterpart: InboxCounterpart): string {
-  switch (counterpart.type) {
-    case 'guest':
-      return `${counterpart.name || '访客'}（访客）`
-    case 'self':
-      return '我自己'
-    case 'pending_triage':
-      return '待初筛'
-    default:
-      return counterpart.member?.name ?? counterpart.name ?? '对方'
-  }
-}
-
 function activityTimestamp(item: InboxItem): number {
   return Date.parse(item.last_reply_at ?? item.created_at)
 }
@@ -121,7 +109,7 @@ function groupInbox(items: InboxItem[], waiting: InboxItem[]) {
   const groupOf = (item: InboxItem) => {
     const key = counterpartKey(item.counterpart)
     if (!groups.has(key)) {
-      const name = counterpartName(item.counterpart)
+      const name = inboxCounterpartName(item.counterpart)
       groups.set(key, {
         key,
         name,
@@ -148,7 +136,6 @@ function groupInbox(items: InboxItem[], waiting: InboxItem[]) {
   for (const item of items) groupOf(item).mine.push(item)
   for (const item of waiting) groupOf(item).waiting.push(item)
   return [...groups.values()]
-    .filter((group) => group.mine.length > 0)
     .sort((a, b) => {
       const latest = (group: typeof a) =>
         Math.max(...group.mine.map(activityTimestamp), ...group.waiting.map(activityTimestamp))
@@ -431,6 +418,13 @@ export function InboxPage({
       : collaborating
     const asCardItem = (it: InboxItem) => asTicketListItem(it)
     const asInboxCard = (it: InboxItem) => inboxCardInfo(it, me)
+    const personWaiting = (waitingData?.items ?? []).filter((it) => inboxSearch(it, q))
+    const showPersonGroups = view === 'person' && mode === 'mine'
+    const showEmptyInbox =
+      !error &&
+      data &&
+      shown.length === 0 &&
+      !(showPersonGroups && (!waitingData || personWaiting.length > 0))
     return (
       <div className="pc-list-pane inbox" data-testid="inbox-list-pane">
         <header className="pc-list-head">
@@ -504,11 +498,11 @@ export function InboxPage({
           {view === 'person' && waitingError && <div className="ecard">{waitingError}</div>}
           {mode !== 'collab' ? (
             <>
-              {!error && shown.length === 0 && data && <div className="ecard">收件箱是空的。</div>}
-              {view === 'person' && mode === 'mine' ? (
+              {showEmptyInbox && <div className="ecard">收件箱是空的。</div>}
+              {showPersonGroups ? (
                 <InboxGroups
                   items={shown}
-                  waiting={(waitingData?.items ?? []).filter((it) => inboxSearch(it, q))}
+                  waiting={personWaiting}
                   me={me}
                   search={search}
                   selected={selected}
@@ -658,7 +652,12 @@ export function InboxPage({
         <>
           <div className="b-note">现在轮到你处理的工单。</div>
           {view === 'person' && waitingError && <div className="ecard">{waitingError}</div>}
-          {mobileInboxItems.length === 0 ? (
+          {mobileInboxItems.length === 0 &&
+          !(
+            view === 'person' &&
+            mode === 'mine' &&
+            (!waitingData || (waitingData.items ?? []).length > 0)
+          ) ? (
             <div className="ecard">收件箱是空的。</div>
           ) : (
             view === 'person' && mode === 'mine' ? (
