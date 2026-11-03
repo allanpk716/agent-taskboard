@@ -207,7 +207,7 @@ func NewManager(db *sql.DB, clk clock.Clock, tk *tickets.Manager, atts *attachme
 func (m *Manager) SetNotifier(n Notifier) { m.notes = n }
 
 type Notifier interface {
-	NotifyDraftTx(ctx context.Context, tx *sql.Tx, memberID, ticketSeq int64, number, title, text string,
+	NotifyDraftTx(ctx context.Context, tx *sql.Tx, memberID, ticketSeq int64, number, title, text, headline string,
 		baseTimelineSeq, agentID int64, agentName, url string) error
 	Wake(memberIDs []int64)
 	NotifyCreateDraftTx(ctx context.Context, tx *sql.Tx, memberID, agentID int64, memberName, agentName, title, url string) error
@@ -271,11 +271,13 @@ func (m *Manager) SaveReply(ctx context.Context, viewer identity.Viewer, number 
 	}
 	if m.notes != nil {
 		text := "回复草稿"
+		headline := "你的 Agent 写了回复草稿"
 		if req.Deliver {
 			text = "交付草稿"
+			headline = "你的 Agent 写了交付草稿"
 		}
 		if err = m.notes.NotifyDraftTx(ctx, tx, viewer.Member.ID, full.Seq, full.Number, full.Title,
-			"你的 Agent · "+viewer.Agent.Name+" 写了"+text+"待确认", d.BaseTimelineSeq,
+			"你的 Agent · "+viewer.Agent.Name+" 写了"+text+"待确认", headline, d.BaseTimelineSeq,
 			viewer.Agent.ID, viewer.Agent.Name, "/t/"+full.Number+"#draft"); err != nil {
 			return Draft{}, err
 		}

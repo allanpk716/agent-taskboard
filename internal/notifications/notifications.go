@@ -207,7 +207,7 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 	case ReasonReopened:
 		out = append(out, fyiForStakeholders(in, ReasonReopened,
 			notificationTextActor(in.Actor)+" 重新开启了「"+in.After.Title+"」",
-			notificationHeadlineActor(in.Actor)+" 重新打开了工单")...)
+			notificationHeadlineActor(in.Actor)+" 重新开启了工单")...)
 	}
 	return out
 }
@@ -356,6 +356,7 @@ type DraftNotificationInput struct {
 	TicketNumber    string
 	TicketTitle     string
 	Text            string
+	Headline        string
 	BaseTimelineSeq int64
 	AgentID         int64
 	AgentName       string
@@ -372,15 +373,24 @@ func (m *Manager) NotifyDraftTx(ctx context.Context, tx *sql.Tx, in DraftNotific
 		) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, 'draft', 'agent', ?, ?, ?, ?, ?, ?, NULL)`,
 		in.MemberID, in.TicketSeq, in.TicketNumber, in.TicketTitle, ReasonDraftPending, in.Text,
 		in.BaseTimelineSeq, in.AgentName, in.MemberID, in.AgentID, in.URL,
-		in.Text,
+		draftHeadline(in.Headline, in.Text),
 		m.clk.Now().Format(time.RFC3339Nano))
 	return err
+}
+
+// draftHeadline 保证弹窗标题是短句：优先用调用方按草稿类型生成的短语，
+// 旧调用没带时才退回正文。
+func draftHeadline(headline, text string) string {
+	if headline != "" {
+		return headline
+	}
+	return text
 }
 
 func (m *Manager) DraftNotifier() DraftSink { return draftSink{m} }
 
 type DraftSink interface {
-	NotifyDraftTx(ctx context.Context, tx *sql.Tx, memberID, ticketSeq int64, number, title, text string,
+	NotifyDraftTx(ctx context.Context, tx *sql.Tx, memberID, ticketSeq int64, number, title, text, headline string,
 		baseTimelineSeq, agentID int64, agentName, url string) error
 	NotifyCreateDraftTx(ctx context.Context, tx *sql.Tx, memberID, agentID int64,
 		memberName, agentName, title, url string) error
@@ -390,10 +400,11 @@ type DraftSink interface {
 type draftSink struct{ m *Manager }
 
 func (s draftSink) NotifyDraftTx(ctx context.Context, tx *sql.Tx, memberID, ticketSeq int64,
-	number, title, text string, baseTimelineSeq, agentID int64, agentName, url string) error {
+	number, title, text, headline string, baseTimelineSeq, agentID int64, agentName, url string) error {
 	return s.m.NotifyDraftTx(ctx, tx, DraftNotificationInput{
 		MemberID: memberID, TicketSeq: ticketSeq, TicketNumber: number, TicketTitle: title,
-		Text: text, BaseTimelineSeq: baseTimelineSeq, AgentID: agentID, AgentName: agentName, URL: url,
+		Text: text, Headline: headline, BaseTimelineSeq: baseTimelineSeq, AgentID: agentID,
+		AgentName: agentName, URL: url,
 	})
 }
 
