@@ -50,6 +50,8 @@ type InboxActor struct {
 	Member  *Author
 	AgentID int64
 	Agent   string
+	// Action 只在 reason_code=new 时出现：assigned=首次指派，reassigned=改派。
+	Action string
 }
 
 // InboxCounterpart 是按 GLOSSARY「往来对象」归组的结果；pending_triage
@@ -79,10 +81,11 @@ func (m *Manager) Inbox(ctx context.Context, viewer identity.Viewer) ([]InboxIte
 		if err != nil {
 			return nil, err
 		}
-		turn, err := m.WaitingOn(ctx, full)
+		links, err := GuestLinksForTicket(ctx, m.db, full.Seq)
 		if err != nil {
 			return nil, err
 		}
+		turn := WaitingOnOf(full, links, m.clk.Now())
 		isTurn := turn.MemberID == memberID
 		isDepartmentTurn := triager && turn.Party == "department"
 		if !isTurn && !isDepartmentTurn {
@@ -99,10 +102,6 @@ func (m *Manager) Inbox(ctx context.Context, viewer identity.Viewer) ([]InboxIte
 		if isDepartmentTurn && (turn.Why == WhyNew || turn.Why == WhyGuestReplied) {
 			reason = WhyText(WhyPendingTriage)
 			reasonCode = WhyPendingTriage
-		}
-		links, err := GuestLinksForTicket(ctx, m.db, full.Seq)
-		if err != nil {
-			return nil, err
 		}
 		item, err := m.inboxSummary(ctx, memberID, full, turn, links, role, reason, reasonCode)
 		if err != nil {
@@ -132,14 +131,11 @@ func (m *Manager) WaitingCounterparts(ctx context.Context, viewer identity.Viewe
 		if full.Status != "open" {
 			continue
 		}
-		turn, err := m.WaitingOn(ctx, full)
-		if err != nil {
-			return nil, err
-		}
 		links, err := GuestLinksForTicket(ctx, m.db, full.Seq)
 		if err != nil {
 			return nil, err
 		}
+		turn := WaitingOnOf(full, links, m.clk.Now())
 		if !waitingOnCounterpart(memberID, full, turn, links) {
 			continue
 		}
@@ -185,7 +181,7 @@ func (m *Manager) inboxSummary(ctx context.Context, memberID int64, full Full, t
 		ReadFull: "/api/v1/tickets/" + full.Number + "?format=markdown",
 		Kind:     full.Kind, Creator: full.Creator.DisplayName(), Assignee: full.AssigneeName,
 		Labels: full.Labels, Waiting: turn.Text, Who: turn.Member, UpdatedAt: updated,
-		Trigger: inboxTriggerOf(full, turn, links), LastReplyAt: lastReplyAt,
+		Trigger: inboxTriggerOf(full, turn, links, reasonCode), LastReplyAt: lastReplyAt,
 		CreatedAt: full.CreatedAt, Counterpart: inboxCounterpartOf(memberID, full, links),
 		AssigneeID: full.AssigneeID, AssigneeName: full.AssigneeName,
 		AssigneeDeactivated: full.AssigneeDeactivated, Unread: unread,
@@ -224,11 +220,15 @@ func waitingOnCounterpart(memberID int64, full Full, turn WaitingOn, links []Gue
 	return isAssignee && turn.Party == "creator" && turn.MemberID == full.Creator.MemberID
 }
 
-func inboxTriggerOf(full Full, turn WaitingOn, links []GuestLinkInfo) InboxActor {
+func inboxTriggerOf(full Full, turn WaitingOn, links []GuestLinkInfo, reasonCode string) InboxActor {
 	var assigned *Event
 	var causal *Event
+	var created *Event
 	for i := range full.Timeline {
 		e := &full.Timeline[i]
+		if e.Type == "created" && created == nil {
+			created = e
+		}
 		if e.Type == "assigned" {
 			assigned = e
 		}
@@ -238,10 +238,27 @@ func inboxTriggerOf(full Full, turn WaitingOn, links []GuestLinkInfo) InboxActor
 		}
 	}
 	switch {
+	// 待初筛的一句话固定写「创建者 新建，等你初筛」；即使推导依据落在
+	// 某条回复上（SinceSeq），触发者也不换成回复人。
+	case reasonCode == WhyPendingTriage:
+		if created != nil {
+			return inboxActorOf(created.Actor)
+		}
+		return inboxActorOf(full.Creator)
 	case turn.Why == WhyGuestNotCompleted:
 		return inboxGuestActor(full, links)
 	case assigned != nil && (turn.SinceSeq == 0 || assigned.Seq > turn.SinceSeq):
-		return inboxActorOf(assigned.Actor)
+		actor := inboxActorOf(assigned.Actor)
+		if reasonCode == WhyNew {
+			// assigned 事件的 AssignFrom 记录改派前指派人；为空表示此前没有
+			// 指派人（建单时指派，或从取消指派状态再次指派）。
+			if assigned.AssignFrom != "" {
+				actor.Action = "reassigned"
+			} else {
+				actor.Action = "assigned"
+			}
+		}
+		return actor
 	case causal != nil:
 		return inboxActorOf(causal.Actor)
 	case assigned != nil:
@@ -327,28 +344,35 @@ func inboxCounterpartOf(memberID int64, full Full, links []GuestLinkInfo) InboxC
 }
 
 func guestCounterpartName(full Full, links []GuestLinkInfo) string {
-	for i := len(full.Timeline) - 1; i >= 0; i-- {
-		e := full.Timeline[i]
-		if e.Actor.MemberID != 0 {
-			continue
-		}
-		if e.Type == "reply" || e.Type == "brief_revised" {
-			if name := guestDisplayName(e.Actor); name != "访客" {
-				return name
+	// 归属只看身份：固定取最早发出的那条访客链接（GuestLinksForTicket 按 id
+	// 升序返回），不随后来的访客回复跳动。展示名优先用这位访客最近一次自报
+	// 的称呼；没有就退回认领称呼/链接备注，再没有才是「访客」。
+	if len(links) > 0 {
+		link := links[0]
+		for i := len(full.Timeline) - 1; i >= 0; i-- {
+			e := full.Timeline[i]
+			if e.Actor.MemberID != 0 || e.Actor.LinkID != link.ID {
+				continue
+			}
+			if e.Type == "reply" || e.Type == "brief_revised" {
+				if name := guestDisplayName(e.Actor); name != "访客" {
+					return name
+				}
 			}
 		}
+		name := link.ClaimName
+		if name == "" {
+			name = link.Note
+		}
+		if name != "" {
+			return name
+		}
+		return "访客"
 	}
+	// 没有访客链接时（老数据/访客直接创建），才按创建者署名识别。
 	if full.Creator.MemberID == 0 {
 		if name := guestDisplayName(full.Creator); name != "访客" {
 			return name
-		}
-	}
-	for _, link := range links {
-		if link.ClaimName != "" {
-			return link.ClaimName
-		}
-		if link.Note != "" {
-			return link.Note
 		}
 	}
 	return "访客"

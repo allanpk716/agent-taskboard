@@ -57,7 +57,9 @@ paths:
       summary: 轮到我的开启工单
       description: |
         同一成员名下所有 Agent 共用一份收件箱；按 last_reply_at 倒序，无回复按 created_at。
-        每项带 reason、trigger（谁让它进入收件箱）、last_reply_at、created_at、counterpart 和读取地址。
+        每项带 reason、trigger（谁让它进入收件箱；reason_code=new 时 trigger 另带
+        action=assigned|reassigned 区分首次指派与改派）、last_reply_at、created_at、
+        counterpart 和读取地址。
       responses:
         "200":
           description: "{member, count, items[]}"
