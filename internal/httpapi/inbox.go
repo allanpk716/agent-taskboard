@@ -101,6 +101,7 @@ type inboxItemView struct {
 type inboxActorView struct {
 	Type   string     `json:"type"`
 	Name   string     `json:"name"`
+	Action string     `json:"action,omitempty"`
 	Member *memberRef `json:"member,omitempty"`
 	Agent  *agentRef  `json:"agent,omitempty"`
 }
@@ -138,7 +139,7 @@ func newInboxItemView(it tickets.InboxItem) inboxItemView {
 }
 
 func newInboxActorView(actor tickets.InboxActor) inboxActorView {
-	v := inboxActorView{Type: actor.Type, Name: actor.Name}
+	v := inboxActorView{Type: actor.Type, Name: actor.Name, Action: actor.Action}
 	if actor.Member != nil {
 		v.Member = &memberRef{ID: actor.Member.MemberID, Name: actor.Member.MemberName}
 		if actor.Member.MemberDeactivated {

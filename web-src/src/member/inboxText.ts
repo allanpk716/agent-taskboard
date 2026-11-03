@@ -3,6 +3,7 @@ import { fmtBeijing } from '../shared/format'
 export interface InboxActor {
   type: 'member' | 'guest' | 'member_agent' | string
   name: string
+  action?: 'assigned' | 'reassigned' | string
   member?: { id: number; name: string; deactivated?: boolean } | null
   agent?: { id: number; name: string } | null
 }
@@ -27,8 +28,9 @@ export function inboxPhrase(item: InboxPhraseInput, me?: { name: string } | stri
   const memberName = actor.member?.name ?? actor.name
   const memberActorLabel = () => {
     if (actor.type !== 'member_agent') return memberName
-    return actor.member?.name === viewer ? '你的 Agent' : `${actor.member?.name ?? memberName} 的 Agent`
+    return actor.member?.name === viewer ? '你的 Agent' : `${actor.member?.name ?? memberName}的 Agent`
   }
+  const guestLabel = (name?: string | null) => (!name || name === '访客' ? '访客' : `访客 ${name}`)
   switch (item.reason_code) {
     case 'delivered':
       return `${memberActorLabel()} 交付了，等你验收`
@@ -40,17 +42,18 @@ export function inboxPhrase(item: InboxPhraseInput, me?: { name: string } | stri
     case 'agent_replied':
       return `${memberActorLabel()} 回复了`
     case 'guest_replied':
-      return `访客 ${actor.name || '访客'} 回复了`
+      return `${guestLabel(actor.name)} 回复了`
     case 'guest_completed':
-      return `访客 ${actor.name || '访客'} 补全了说明`
+      return `${guestLabel(actor.name)} 补全了说明`
     case 'guest_revised':
-      return `访客 ${actor.name || '访客'} 修订了说明`
+      return `${guestLabel(actor.name)} 修订了说明`
     case 'guest_not_completed':
-      return `访客 ${actor.name || '访客'} 还没填说明`
+      return `${guestLabel(actor.name)} 还没填说明`
     case 'pending_triage':
       return `${memberActorLabel()} 新建，等你初筛`
     case 'new':
     default:
+      if (actor.action === 'reassigned') return `${memberActorLabel()} 改派给你`
       return `${memberActorLabel()} 派给你`
   }
 }
@@ -58,9 +61,26 @@ export function inboxPhrase(item: InboxPhraseInput, me?: { name: string } | stri
 /** 「在等他」参考卡的弱化短句。 */
 export function waitingOnCounterpartPhrase(item: InboxPhraseInput): string {
   const counterpart = item.counterpart
-  if (counterpart.type === 'guest') return `等 访客 ${counterpart.name || '访客'} 回复`
-  const name = counterpart.member?.name ?? counterpart.name ?? '对方'
-  return `等 ${name} ${item.role === 'assignee' ? '回复' : '处理'}`
+  const guestLabel = (name?: string | null) => (!name || name === '访客' ? '访客' : `访客 ${name}`)
+  if (counterpart.type === 'guest') return `等 ${guestLabel(counterpart.name)} 回复`
+  const name = counterpart.member?.name ?? counterpart.name ?? '往来对象'
+  return `等 ${name} 处理`
+}
+
+/** 按往来对象分组的组头名称；匿名访客只写一次「访客」。 */
+export function inboxCounterpartName(counterpart: InboxCounterpart): string {
+  switch (counterpart.type) {
+    case 'guest':
+      return !counterpart.name || counterpart.name === '访客'
+        ? '访客'
+        : `${counterpart.name}（访客）`
+    case 'self':
+      return '我自己'
+    case 'pending_triage':
+      return '待初筛'
+    default:
+      return counterpart.member?.name ?? counterpart.name ?? '往来对象'
+  }
 }
 
 /** 最后回复时间；无回复时用创建时间并写明「创建于」。 */

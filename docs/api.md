@@ -594,10 +594,11 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
     trigger, last_reply_at, created_at, counterpart, unread}`。
     `kind` 到 `updated_at` 是列表摘要字段，供网页收件箱栏使用；`assignee` 为作者结构，
     指派给已停用成员时其 `member.deactivated` 为 `true`（#115）。
-  - `trigger = {type, name, member?, agent?}` 表示让工单进入收件箱的一方：
+  - `trigger = {type, name, action?, member?, agent?}` 表示让工单进入收件箱的一方：
     `type=member|guest|member_agent`；成员 Agent 同时带 `member` 与 `agent`，
     `name` 使用「王工 的 Agent · 笔记本」这类完整署名。新指派/改派取执行指派的人；
-    访客未补全说明没有触发动作，仍取访客本身。
+    访客未补全说明没有触发动作，仍取访客本身。`action` 只在 `reason_code=new`
+    时出现：`assigned`（此前没有指派人）/`reassigned`（改派，之前已有指派人）。
   - `last_reply_at` 是最后一条回复时间；访客修订/补全说明也计入。没有回复时为
     `null`，用 `created_at` 显示「创建于 …」。
   - `counterpart = {type, name?, member?}` 是按术语「往来对象」的归组结果：

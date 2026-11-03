@@ -26,10 +26,7 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
 1. 先看工单的 Markdown 视图：`{{BASE}}/api/v1/tickets/<工单编号>?format=markdown`，请求头 `Authorization: Bearer $TASKBOARD_TOKEN`。
 2. 照工单末尾「下一步（给 Agent 的操作指引）」执行。
 3. 之后的待办看收件箱：`{{BASE}}/api/v1/inbox`。
-4. 给主人列收件箱待办时，每张工单都写出：编号、完整标题（不得缩写或省略）、
-   `trigger.name` 加 `reason` 表示的「谁做了什么」，以及 `last_reply_at`（没有回复时
-   用 `created_at` 并说明是创建时间）。
-5. 用变更序号增量轮询：列表接口的 `changed_after=<上次拿到的最大 change>`，只处理之后变化的工单。
+4. 用变更序号增量轮询：列表接口的 `changed_after=<上次拿到的最大 change>`，只处理之后变化的工单。
 
 ## 访客链接转发文案
 
@@ -70,7 +67,8 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
 等待方表示当前轮到谁行动，由最后一条回复或访客修订说明推导，不能手动设置。访客还没补全说明时轮到访客，这张工单不会进入成员收件箱。收件箱是某位成员「现在轮到我」的开启工单清单；同一成员的所有成员 Agent 共用这份收件箱。看到自己一方在等待方中，或工单进入收件箱，就该继续处理。
 
 向主人汇报收件箱时不要只报编号或截断标题。每张待办都按「编号 + 完整标题 +
-谁做了什么 + 最后回复时间」列出；`last_reply_at` 为 null 时写「创建于 …」。
+谁做了什么 + 最后回复时间」列出：完整标题不得缩写或省略，用 `trigger.name` 加
+`reason` 写「谁做了什么」；`last_reply_at` 为 null 时用 `created_at` 写「创建于 …」。
 
 主人被抄送（协作者）的工单不在收件箱里。主人说「看看抄送我的单」时，用
 `{{BASE}}/api/v1/tickets?collaborator=me&status=open`；要看已关闭的协作工单，把
