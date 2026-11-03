@@ -14,8 +14,9 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 - 所有写请求建议带 `Idempotency-Key`；地址、凭证用法和起手流程见公开说明书
   `GET /agent.md`（`/llms.txt` 是它的别名），完整接口清单见 `GET /api.md`；支持技能的
   Agent 还可公开读取 `GET /skills/agent-taskboard/SKILL.md` 并装成用户级技能
-  `agent-taskboard`（技能只指向说明书，不带凭证）。这些 Markdown
-  无需凭证，正文中的地址按 `[server] public_url`（未配置时按请求的 scheme/host）生成绝对地址。
+  `agent-taskboard`（技能只指向说明书，不带凭证）。OpenAPI 接口描述见 `GET /openapi.yaml`
+  （只收录成员 Agent 处理工单所需操作）。这些公开文档无需凭证，正文中的地址按
+  `[server] public_url`（未配置时按请求的 scheme/host）生成绝对地址。
 - 凭证四种，统一解析成一个 Viewer（`kind` 为 `member` / `guest`，成员带 `member` 与 `agent` / `client`，访客带 `guest_link`，见 spec「身份与凭证」模块）：
   1. **成员本人**：网页会话 cookie `tb_session`（HttpOnly + Secure + SameSite=Lax）。本人操作的唯一来源。
   2. **成员 Agent**：`Authorization: Bearer <Agent token>`，token 由 `POST /api/v1/me/agent-tokens` 签发（前缀 `tbag_`）。ADR 0003：用 token 的操作一律署名为「某成员 的 Agent · 名字」，永远不算本人。
@@ -1029,6 +1030,16 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 - 响应头：图片、PDF、`.txt`、`.log` 以 `inline` 返回，其余（含 HTML、SVG）一律
   `Content-Disposition: attachment`（RFC 5987 编码文件名）；所有附件响应都带
   `X-Content-Type-Options: nosniff`。
+
+### 成员 Agent 附件链接（GET /api/v1/attachment-links/{att_N}）
+
+- 仅成员 Agent（`tbag_` token）可调用；网页会话和访客返回 `403 agents_only`。调用者
+  必须能读附件所属工单，否则 `404`；pending 附件同样 `404`。
+- 返回 `{url, expires_at, mime, size, filename}`。`url` 指向现有附件下载路由并带
+  HMAC 签名，10 分钟有效，绑定这一个附件和签发它的成员 Agent；下载时不需要再带
+  token。Agent 被撤销或失去该工单读取权限后，链接立即失效。
+- 签名下载每次仍会重新核对签名、有效期、Agent 状态和工单权限，成功下载按该成员
+  Agent 写访问记录，响应头沿用上面的 inline/attachment 规则。
 
 - 仅成员的接口（建单、标签全套、关闭、重开、访客链接管理，以及 #35 起的反馈入口
   管理）对访客统一 403 `members_only`（决议 4）。

@@ -1,11 +1,13 @@
 package drafts
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -74,6 +76,77 @@ type CreateGuestLinkRequest struct {
 	ValidDays    int    `json:"valid_days"`
 	ExpiresAt    string `json:"expires_at"`
 	CanEditBrief bool   `json:"can_edit_brief"`
+}
+
+// UnmarshalJSON 让建单草稿 PUT 与建单接口使用同一成员引用规则：assignee 可写
+// 正整数、字符串或 null；collaborators 数组元素可写正整数或字符串。
+// 数字统一归一成字符串，后续校验和发出逻辑继续使用原有字段。
+func (r *CreateRequest) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Kind          string                  `json:"kind"`
+		Template      string                  `json:"template"`
+		Title         string                  `json:"title"`
+		BriefMD       string                  `json:"brief_md"`
+		Fields        map[string]string       `json:"fields"`
+		Labels        []string                `json:"labels"`
+		Assignee      json.RawMessage         `json:"assignee"`
+		Collaborators json.RawMessage         `json:"collaborators"`
+		GuestLink     *CreateGuestLinkRequest `json:"guest_link,omitempty"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	assignee, err := unmarshalMemberRef(wire.Assignee)
+	if err != nil {
+		return fmt.Errorf("assignee: %w", err)
+	}
+	collaborators, err := unmarshalMemberRefs(wire.Collaborators)
+	if err != nil {
+		return fmt.Errorf("collaborators: %w", err)
+	}
+	*r = CreateRequest{
+		Kind: wire.Kind, Template: wire.Template, Title: wire.Title, BriefMD: wire.BriefMD,
+		Fields: wire.Fields, Labels: wire.Labels, Assignee: assignee,
+		Collaborators: collaborators, GuestLink: wire.GuestLink,
+	}
+	return nil
+}
+
+func unmarshalMemberRef(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return "", nil
+	}
+	var number int64
+	if err := json.Unmarshal(raw, &number); err == nil {
+		if number <= 0 {
+			return "", fmt.Errorf("必须是正整数成员 id、字符串成员 id 或姓名")
+		}
+		return strconv.FormatInt(number, 10), nil
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text, nil
+	}
+	return "", fmt.Errorf("必须是正整数成员 id、字符串成员 id 或姓名")
+}
+
+func unmarshalMemberRefs(raw json.RawMessage) ([]string, error) {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, nil
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, fmt.Errorf("必须是成员引用数组")
+	}
+	refs := make([]string, 0, len(items))
+	for _, item := range items {
+		ref, err := unmarshalMemberRef(item)
+		if err != nil || strings.TrimSpace(ref) == "" {
+			return nil, fmt.Errorf("数组元素必须是正整数成员 id 或非空字符串")
+		}
+		refs = append(refs, ref)
+	}
+	return refs, nil
 }
 
 type Draft struct {

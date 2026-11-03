@@ -14,6 +14,7 @@ import (
 	accessrecords "github.com/allanpk716/agent-taskboard/internal/accessrecords"
 	"github.com/allanpk716/agent-taskboard/internal/agentdocs"
 	"github.com/allanpk716/agent-taskboard/internal/archive"
+	"github.com/allanpk716/agent-taskboard/internal/attachmentlink"
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/captcha"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
@@ -141,11 +142,16 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	storageStats := storage.NewService(st.DB, cfg.DataDir, atts.Dir(), backups.TargetDir(), c)
 	archives := archive.NewService(st.DB, cfg.DataDir, atts.Dir(), backups.TargetDir(), atts, c)
 	draftStore.SetNotifier(notificationStore.DraftNotifier())
+	attachmentLinks, err := attachmentlink.LoadOrCreate(cfg.DataDir)
+	if err != nil {
+		return nil, err
+	}
 	api := httpapi.NewAPI(ident, ticketStore,
 		templateDict, idem, atts, backups, accessRecords, draftStore, storageStats, archives, cfg, c)
 	api.SetCaptchaSource(captchaSrc)
 	api.SetLoginRateLimit(loginRateLimit())
 	api.SetNotifications(notificationStore)
+	api.SetAttachmentLinkSigner(attachmentLinks)
 	web, err := webapp.New(cfg.WebDir)
 	if err != nil {
 		return nil, err

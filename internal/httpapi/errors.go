@@ -63,6 +63,7 @@ const (
 
 	// #31：标签、字典与别名。
 	CodeMembersOnly        = "members_only"         // 仅成员可用（访客 403）
+	CodeAgentsOnly         = "agents_only"          // 仅成员 Agent 可用
 	CodeAdminRequired      = "admin_required"       // 标签治理仅管理员
 	CodeUnknownDimension   = "unknown_dimension"    // 维度不存在（新维度只能由管理员加）
 	CodeWildcardNotAllowed = "wildcard_not_allowed" // 维度:* 不能打到工单上
