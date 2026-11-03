@@ -276,7 +276,7 @@ async function runFullUseCase(
   await page.goto('/')
   const completedCard = page.locator('.tcard', { hasText: number })
   await expect(completedCard).toHaveCount(1)
-  if (mobile) await expect(completedCard).toContainText('访客补全了说明')
+  if (mobile) await expect(completedCard).toContainText('访客 检验科 张三 补全了说明')
 
   // 访客对话页：说明卡片有内容，时间线有「修订了说明」事件
   await expect(guest.locator('[data-bubble="brief"]')).toContainText('UD-2300')
