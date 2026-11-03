@@ -374,6 +374,51 @@ func Test成员重置访问码踢出旧设备并解除锁定(t *testing.T) {
 	}
 }
 
+func Test成员重置访问码返回含绝对链接的重置文案(t *testing.T) {
+	s := tbtest.Start(t, tbtest.WithPublicURL("https://taskboard.example.com"))
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	number := mustCreateTicket(t, s, web, "血球仪 BH-7600CS 开机报错 E203")
+	link := mustCreateGuestLink(t, s, web, number, map[string]any{"note": "检验科-张三"})
+	linkKey := strings.TrimPrefix(link.URL, "https://taskboard.example.com/g/")
+
+	var claimed struct {
+		AccessCode string `json:"access_code"`
+	}
+	res := s.Do(t, s.AgentClient(linkKey), http.MethodPost, "/api/v1/guest-links/claim",
+		map[string]string{"author_name": "张三"}, &claimed)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("认领状态码 = %d, 想 201", res.StatusCode)
+	}
+
+	var reset struct {
+		AccessCode string `json:"access_code"`
+		URL        string `json:"url"`
+		ResetText  string `json:"reset_text"`
+		ExpiresAt  string `json:"expires_at"`
+	}
+	res = s.Do(t, web, http.MethodPost,
+		"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(link.ID, 10)+"/reset-access-code",
+		nil, &reset)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("重置访问码状态码 = %d, 想 200", res.StatusCode)
+	}
+	if !strings.HasPrefix(reset.URL, "https://taskboard.example.com/g/") {
+		t.Errorf("重置访问码应返回绝对链接：%q", reset.URL)
+	}
+	for _, want := range []string{
+		"检验科-张三：你的访问码已重置。",
+		"工单「血球仪 BH-7600CS 开机报错 E203」的链接：" + reset.URL,
+		"新访问码：" + reset.AccessCode,
+		"有效期至 2026-11-15",
+		"访问码请勿转发；如果你让 Agent 处理过这张工单，也请把新访问码告诉它。",
+	} {
+		if !strings.Contains(reset.ResetText, want) {
+			t.Errorf("重置文案缺少 %q：%q", want, reset.ResetText)
+		}
+	}
+}
+
 func Test访客链接列表显示认领状态且附件下载用设备凭证(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")

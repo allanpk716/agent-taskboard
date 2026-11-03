@@ -14,7 +14,6 @@ import {
   closeTicket,
   createGuestLink,
   copyGuestLinkShareText,
-  rotateGuestLinkKey,
   discardDraft,
   extendGuestLink,
   fetchBriefDrafting,
@@ -29,8 +28,6 @@ import {
   sendDraft,
   updateDraft,
   removeCollaborator,
-  resetGuestAccessCode,
-  revokeGuestLink,
   uploadMemberAttachment,
   type GuestLink,
   type CreatedGuestLink,
@@ -47,6 +44,7 @@ import { AttachmentChips, DeactivatedBadge, Lightbox } from '../shared/widgets'
 import { absoluteUrl, authorName, closeReasonText, fmtBeijing, fmtLinkExpiry, fmtShort, linkExpired } from '../shared/format'
 import { Confirm, Modal, copyText, invalidate, nav, toast, useLocationSearch } from './ui'
 import { HandoffDialog, PeerHandoffDialog, type HandoffPeer } from './HandoffDialog'
+import { ResetAccessDialog, type ResetAccessAction, type ResetAccessStart } from './ResetAccessDialog'
 import { LabelChips, chipClass, turnLabel } from './TicketsPage'
 import { detailListSource, filtersFromSearch, toQuery, toggleLabelCondition } from './listFilters'
 import { useLayoutTier } from './useLayoutTier'
@@ -425,24 +423,10 @@ async function copyGuestShareTextToClipboard(number: string, id: number) {
   }
 }
 
-async function rotateGuestShareTextToClipboard(number: string, id: number): Promise<string | null> {
-  try {
-    const result = await rotateGuestLinkKey(number, id)
-    const ok = await copyText(result.share_text)
-    toast(ok ? '✓ 新转发文案已复制' : '复制失败，请手动选择文字复制')
-    return ok ? result.url : null
-  } catch (e) {
-    toast(e instanceof ApiError ? `${e.code}：${e.message}` : '换新地址失败')
-    return null
-  }
-}
-
 function useGuestLinkShareActions(
   number: string,
-  onRotated: (id: number, url: string) => void,
+  onResetAccess: (link: GuestLink) => void,
 ) {
-  const [rotating, setRotating] = useState<GuestLink | null>(null)
-
   function renderActions(link: GuestLink, canManageLinks: boolean, dead = false) {
     return (
       <>
@@ -459,35 +443,16 @@ function useGuestLinkShareActions(
         {canManageLinks && !dead && !link.share_text_available && (
           <button
             className="btn sm ghost"
-            onClick={() => {
-              setRotating(link)
-            }}
+            onClick={() => onResetAccess(link)}
           >
-            换新地址并复制
+            🔑 重置链接
           </button>
         )}
       </>
     )
   }
 
-  const confirmDialog = rotating ? (
-    <Confirm
-      title="换新地址并复制？"
-      body={<div>对方手里的旧地址会失效，请把新文案发过去。备注、认领状态、访问码和有效期都保持不变。</div>}
-      yesLabel="换新地址并复制"
-      danger
-      onYes={() => {
-        const target = rotating
-        setRotating(null)
-        void rotateGuestShareTextToClipboard(number, target.id).then((url) => {
-          if (url) onRotated(target.id, url)
-        })
-      }}
-      onCancel={() => setRotating(null)}
-    />
-  ) : null
-
-  return { renderActions, confirmDialog }
+  return { renderActions }
 }
 
 function LinksDialog({
@@ -495,7 +460,7 @@ function LinksDialog({
   links,
   reload,
   onCreated,
-  onRotated,
+  onResetAccess,
   onChanged,
   onClose,
 }: {
@@ -503,7 +468,7 @@ function LinksDialog({
   links: GuestLink[] | null
   reload: () => Promise<void>
   onCreated: (link: CreatedGuestLink) => void
-  onRotated: (id: number, url: string) => void
+  onResetAccess: (link: GuestLink, action: ResetAccessAction, step?: 'action' | 'confirm') => void
   onChanged: () => void
   onClose: () => void
 }) {
@@ -512,11 +477,12 @@ function LinksDialog({
   const [date, setDate] = useState('') // 「指定日期」写法的到期日（YYYY-MM-DD，管满该日全天）
   const [canEdit, setCanEdit] = useState(false)
   const [created, setCreated] = useState<{ url: string } | null>(null)
-  const [resetCode, setResetCode] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [extendDates, setExtendDates] = useState<Record<number, string>>({}) // 每条链接「延期到该日」的日期
   const canManageLinks = ticket.viewer.can?.manage_guest_links !== false
-  const shareActions = useGuestLinkShareActions(ticket.number, onRotated)
+  const shareActions = useGuestLinkShareActions(ticket.number, (link) =>
+    onResetAccess(link, 'link', 'confirm'),
+  )
 
   async function create() {
     if (!note.trim()) {
@@ -537,7 +503,6 @@ function LinksDialog({
               can_edit_brief: canEdit,
             })
       setCreated({ url: link.url })
-      setResetCode(null)
       setErr(null)
       setNote('')
       onCreated(link)
@@ -629,31 +594,14 @@ function LinksDialog({
                         {g.status !== 'unclaimed' && (
                           <button
                             className="btn sm ghost"
-                            onClick={() => {
-                              void resetGuestAccessCode(ticket.number, g.id)
-                                .then((result) => {
-                                  setResetCode(result.access_code)
-                                  toast('✓ 已重置访问码，旧设备已退出')
-                                  void reload()
-                                  onChanged()
-                                })
-                                .catch((e) => toast(e instanceof ApiError ? e.message : '重置访问码失败'))
-                            }}
+                            onClick={() => onResetAccess(g, 'code', 'action')}
                           >
                             重置访问码
                           </button>
                         )}{' '}
                         <button
                           className="btn sm ghost"
-                          onClick={() => {
-                            void revokeGuestLink(ticket.number, g.id)
-                              .then(() => {
-                                toast('已撤销，对方再打开会看到链接失效页')
-                                void reload()
-                                onChanged()
-                              })
-                              .catch((e) => toast(e instanceof ApiError ? e.message : '撤销失败'))
-                          }}
+                          onClick={() => onResetAccess(g, 'revoke', 'confirm')}
                         >
                           撤销
                         </button>
@@ -666,7 +614,6 @@ function LinksDialog({
           )}
         </tbody>
       </table>
-      {shareActions.confirmDialog}
       <div className="sec-t">创建新链接</div>
       <div className="inrow">
         <input
@@ -706,14 +653,6 @@ function LinksDialog({
           >
             复制链接
           </button>
-        </div>
-      )}
-      {resetCode && (
-        <div className="okbox">
-          ✓ 新访问码只显示这一次，请私下转给访客本人。
-          <div className="linkbox" data-reset-code>
-            {resetCode}
-          </div>
         </div>
       )}
       <div className="mrow">
@@ -850,7 +789,7 @@ function TicketInfoColumn({
   links,
   knownUrls,
   accessRecords,
-  onRotated,
+  onResetAccess,
   onAssign,
   onCollaborators,
   onLabels,
@@ -861,7 +800,7 @@ function TicketInfoColumn({
   links: GuestLink[] | null
   knownUrls: Record<number, string>
   accessRecords: AccessRecordsResponse | null
-  onRotated: (id: number, url: string) => void
+  onResetAccess: (link: GuestLink, action?: ResetAccessAction, step?: 'action' | 'confirm') => void
   onAssign: () => void
   onCollaborators: () => void
   onLabels: () => void
@@ -870,7 +809,7 @@ function TicketInfoColumn({
 }) {
   const open = ticket.status === 'open'
   const canManageLinks = ticket.viewer.can?.manage_guest_links !== false
-  const shareActions = useGuestLinkShareActions(ticket.number, onRotated)
+  const shareActions = useGuestLinkShareActions(ticket.number, (link) => onResetAccess(link, 'link', 'confirm'))
   return (
     <aside className="dinfo" role="region" aria-label="工单信息">
       <section>
@@ -953,7 +892,6 @@ function TicketInfoColumn({
           })
         )}
       </section>
-      {shareActions.confirmDialog}
       <AccessRecordsPanel data={accessRecords} />
     </aside>
   )
@@ -1146,6 +1084,7 @@ export function TicketDetailPage({
   const [lightbox, setLightbox] = useState<string | null>(null)
   const [actor, setActor] = useState<ActorFilter>('all')
   const [dialog, setDialog] = useState<'label' | 'brief' | 'assign' | 'collaborators' | 'links' | 'close' | 'reopen' | 'agent' | 'share' | null>(null)
+  const [resetAccess, setResetAccess] = useState<{ start: ResetAccessStart | null } | null>(null)
   const [members, setMembers] = useState<MemberRef[]>([])
   const [guestLinks, setGuestLinks] = useState<GuestLink[] | null>(null)
   const [knownLinkUrls, setKnownLinkUrls] = useState<Record<number, string>>({})
@@ -1217,8 +1156,14 @@ export function TicketDetailPage({
 
   function guestLinkRotated(id: number, url: string) {
     setKnownLinkUrls((m) => ({ ...m, [id]: absoluteUrl(url) }))
-    void reloadGuestLinks()
-    changed()
+  }
+
+  function openResetAccess(
+    link?: GuestLink,
+    action: ResetAccessAction = 'code',
+    step: 'action' | 'confirm' = 'action',
+  ) {
+    setResetAccess(link ? { start: { linkId: link.id, action, step } } : { start: null })
   }
 
   if (error) {
@@ -1259,7 +1204,8 @@ export function TicketDetailPage({
   const deliveredToMe =
     open && ticket.viewer.your_turn && ticket.waiting_on.reason.includes('交付') && ticket.waiting_on.reason.includes('验收')
   const hasActiveGuestLink =
-    guestLinks?.some((link) => !link.revoked_at && !linkExpired(link.expires_at)) ?? false
+    guestLinks !== null && guestLinks.some((link) => !link.revoked_at && !linkExpired(link.expires_at))
+  const canManageLinks = can.manage_guest_links !== false
   // 「复制给对方的 Agent」默认选访客的两个判据：工单由访客创建（反馈/入口
   // 提交，creator 只有链接备注）；或有仍有效的「可填写说明」链接且时间线上
   // 还没有访客的说明修订（说明仍等访客补全）。
@@ -1516,6 +1462,11 @@ export function TicketDetailPage({
                 <button className="btn sm ghost" onClick={() => setDialog('links')}>
                   管理
                 </button>
+              {guestLinks !== null && hasActiveGuestLink && canManageLinks && (
+                <button className="btn sm ghost" onClick={() => openResetAccess()}>
+                  🔑 重置访问
+                </button>
+              )}
               </span>
             </div>
             <div className="kv">
@@ -1551,6 +1502,11 @@ export function TicketDetailPage({
           <button className="btn sm ghost" onClick={() => setDialog('links')}>
             🔗 访客链接
           </button>
+          {guestLinks !== null && hasActiveGuestLink && canManageLinks && (
+            <button className="btn sm warn reset-entry" onClick={() => openResetAccess()}>
+              🔑 重置访问
+            </button>
+          )}
           {(can.manage_collaborators || can.leave_collaborators) && (
             <button className="btn sm ghost" onClick={() => setDialog('collaborators')}>
               🤝 协作者
@@ -1587,7 +1543,7 @@ export function TicketDetailPage({
           links={guestLinks}
           knownUrls={knownLinkUrls}
           accessRecords={accessRecords}
-          onRotated={guestLinkRotated}
+          onResetAccess={openResetAccess}
           onAssign={() => setDialog('assign')}
           onCollaborators={() => setDialog('collaborators')}
           onLabels={() => setDialog('label')}
@@ -1604,7 +1560,7 @@ export function TicketDetailPage({
             links={guestLinks}
             knownUrls={knownLinkUrls}
             accessRecords={accessRecords}
-            onRotated={guestLinkRotated}
+            onResetAccess={openResetAccess}
             onAssign={() => setDialog('assign')}
             onCollaborators={() => setDialog('collaborators')}
             onLabels={() => setDialog('label')}
@@ -1646,9 +1602,22 @@ export function TicketDetailPage({
           onCreated={(link) => {
             setKnownLinkUrls((m) => ({ ...m, [link.id]: absoluteUrl(link.url) }))
           }}
-          onRotated={guestLinkRotated}
+          onResetAccess={(link, action, step) => openResetAccess(link, action, step)}
           onChanged={changed}
           onClose={() => setDialog(null)}
+        />
+      )}
+      {resetAccess !== null && (
+        <ResetAccessDialog
+          ticketNumber={ticket.number}
+          ticketTitle={ticket.title}
+          links={guestLinks}
+          knownUrls={knownLinkUrls}
+          start={resetAccess.start}
+          reload={reloadGuestLinks}
+          onChanged={changed}
+          onLinkRotated={guestLinkRotated}
+          onClose={() => setResetAccess(null)}
         />
       )}
       {dialog === 'agent' && (
@@ -1669,6 +1638,7 @@ export function TicketDetailPage({
           defaultPeer={defaultPeer}
           reloadLinks={reloadGuestLinks}
           onChanged={changed}
+          onResetAccess={(link) => openResetAccess(link, 'link', 'confirm')}
           onClose={() => setDialog(null)}
         />
       )}
