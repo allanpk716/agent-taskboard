@@ -327,14 +327,7 @@ func (w *WindowsToaster) Show(n client.Notification) {
 	}
 	w.items[key] = n
 	w.mu.Unlock()
-	title := n.Ticket.Number + " " + n.Ticket.Title
-	body := n.Text
-	if title == " " {
-		title = n.Text
-		body = ""
-	} else if n.Summary != "" {
-		body += "\n" + n.Summary
-	}
+	title, body := client.NotificationToast(n)
 	notification := toast.Notification{
 		AppID: w.appID, Title: title, Body: body,
 		ActivationType: toast.Foreground, ActivationArguments: key,
