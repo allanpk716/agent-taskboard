@@ -17,6 +17,7 @@ type Item struct {
 	Reason        string
 	Text          string
 	Summary       string
+	Headline      string
 	Number        string
 	Title         string
 	EventSeq      int64
@@ -77,7 +78,7 @@ func (m *Manager) List(ctx context.Context, q ListQuery) (ListResult, error) {
 	if ascending {
 		order = "ASC"
 	}
-	query := `SELECT id, member_id, kind, reason, text, summary, ticket_number, ticket_title,
+	query := `SELECT id, member_id, kind, reason, text, summary, headline, ticket_number, ticket_title,
 		trigger_seq, trigger_type, actor_kind, actor_name, actor_member_id, actor_agent_id, url, created_at, read_at
 		FROM notifications WHERE ` + strings.Join(where, " AND ") + `
 		ORDER BY id ` + order + ` LIMIT ?`
@@ -98,15 +99,17 @@ func (m *Manager) List(ctx context.Context, q ListQuery) (ListResult, error) {
 		var createdAt string
 		var readAt sql.NullString
 		var summary sql.NullString
+		var headline sql.NullString
 		var ticketNumber, ticketTitle, eventType, actorKind, actorName sql.NullString
 		var actorMemberID, actorAgentID, eventSeq sql.NullInt64
 		if err := rows.Scan(&it.ID, &it.MemberID, &it.Kind, &it.Reason, &it.Text, &summary,
-			&ticketNumber, &ticketTitle, &eventSeq, &eventType, &actorKind, &actorName,
+			&headline, &ticketNumber, &ticketTitle, &eventSeq, &eventType, &actorKind, &actorName,
 			&actorMemberID, &actorAgentID, &it.URL,
 			&createdAt, &readAt); err != nil {
 			return ListResult{}, err
 		}
 		it.Summary = summary.String
+		it.Headline = headline.String
 		it.Number = ticketNumber.String
 		it.Title = ticketTitle.String
 		it.EventSeq = eventSeq.Int64
