@@ -57,7 +57,7 @@ func Test公开OpenAPI描述免凭证返回并替换请求地址(t *testing.T) {
 	}
 }
 
-func TestOpenAPI描述恰好二十个真实操作且守住红线(t *testing.T) {
+func TestOpenAPI描述恰好二十一个真实操作且守住红线(t *testing.T) {
 	s := tbtest.Start(t)
 	res := s.Do(t, s.NewClient(), http.MethodGet, "/openapi.yaml", nil, nil)
 	body, err := io.ReadAll(res.Body)
@@ -69,7 +69,7 @@ func TestOpenAPI描述恰好二十个真实操作且守住红线(t *testing.T) {
 		t.Fatalf("解析 OpenAPI YAML 失败：%v", err)
 	}
 
-	ids := make([]string, 0, 20)
+	ids := make([]string, 0, 21)
 	seen := map[string]bool{}
 	for path, operations := range doc.Paths {
 		for method, operation := range operations {
@@ -84,8 +84,8 @@ func TestOpenAPI描述恰好二十个真实操作且守住红线(t *testing.T) {
 			assertOpenAPIRouteExists(t, s, method, path)
 		}
 	}
-	if len(ids) != 20 {
-		t.Fatalf("operation 数量 = %d (%v), 想 20", len(ids), ids)
+	if len(ids) != 21 {
+		t.Fatalf("operation 数量 = %d (%v), 想 21", len(ids), ids)
 	}
 
 	raw := string(body)
