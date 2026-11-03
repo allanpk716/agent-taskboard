@@ -1,0 +1,690 @@
+openapi: 3.1.0
+info:
+  title: agent-taskboard API（成员 Agent 子集）
+  version: v1
+  description: |
+    部门工单平台 agent-taskboard 的成员 Agent 用接口子集。
+
+    起手流程：
+    1. GET /api/v1/session 确认 token 与 draft_mode；
+    2. GET /api/v1/inbox 查看「轮到我」的工单；
+    3. 对每张单 GET /api/v1/tickets/{id}?format=markdown，执行文末操作指引；
+    4. 空闲时用 GET /api/v1/tickets?changed_after=<上次cursor> 增量轮询。
+
+    草稿模式：draft_mode=required 的 Agent 调建单、回复、修订时不产生正式内容，
+    返回 202 草稿响应；把 preview_url 交给主人在网页确认发出。
+
+    支持幂等的写请求建议带 Idempotency-Key；重试时复用同一个值。
+    接口描述只收录成员 Agent 处理工单所需操作，不是完整服务端 API。
+security:
+  - bearerAuth: []
+servers:
+  - url: "{BASE}"
+    description: 按请求方看到的公开地址生成
+    variables:
+      BASE:
+        default: "https://taskboard.invalid"
+        description: 服务端公开时会替换为请求方看到的地址
+tags:
+  - name: session
+    description: 凭证自检
+  - name: inbox
+    description: 待处理工单入口
+  - name: tickets
+    description: 工单读取与处理
+  - name: attachments
+    description: 附件上传与短时下载
+  - name: drafts
+    description: 待确认草稿
+  - name: dictionary
+    description: 标签与模板字典
+paths:
+  /api/v1/session:
+    get:
+      tags: [session]
+      operationId: get_session
+      summary: 当前凭证身份
+      description: 返回 viewer；成员 Agent 带 agent.id、agent.name 和 agent.draft_mode。
+      responses:
+        "200":
+          description: 身份信息
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/inbox:
+    get:
+      tags: [inbox]
+      operationId: list_inbox
+      summary: 轮到我的开启工单
+      description: 同一成员名下所有 Agent 共用一份收件箱；每项带 reason 和读取地址。
+      responses:
+        "200":
+          description: "{member, count, items[]}"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/tickets:
+    get:
+      tags: [tickets]
+      operationId: list_tickets
+      summary: 条件列表与增量轮询
+      description: |
+        只返回当前凭证可见范围内的工单。排序默认 -updated；带 changed_after 时默认 change。
+        format 只有取值 markdown 时返回 text/markdown，其他值返回 JSON。
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, closed, all] }, description: 默认 open }
+        - { name: kind, in: query, schema: { type: string, enum: [task, report] } }
+        - { name: q, in: query, schema: { type: string }, description: 关键词 }
+        - { name: assignee, in: query, schema: { type: string }, description: "成员名、成员 id、me 或 none" }
+        - { name: creator, in: query, schema: { type: string }, description: "成员名、成员 id、me 或 guest" }
+        - { name: waiting_on, in: query, schema: { type: string } }
+        - { name: collaborator, in: query, schema: { type: string, enum: [me] } }
+        - { name: label, in: query, schema: { type: array, items: { type: string } }, description: 可重复；标准值、别名或通配 }
+        - { name: changed_after, in: query, schema: { type: integer }, description: 增量游标 }
+        - { name: sort, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200 }, description: 默认 50 }
+        - { name: page_token, in: query, schema: { type: string } }
+        - { name: include, in: query, schema: { type: string } }
+        - { name: format, in: query, schema: { type: string }, description: markdown 返回 Markdown，其他值返回 JSON }
+      responses:
+        "200":
+          description: "{total, count, items[], next, cursor, filters}"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+    post:
+      tags: [tickets]
+      operationId: create_ticket
+      summary: 建单
+      description: |
+        不用模板时传 title 与 brief_md；用模板时传 template 与 fields。
+        labels 可省略；模板预设标签和维度字段会补标签，最终仍需满足平台的维度标签规则。
+        draft_mode=required 的成员 Agent 返回 202 草稿。
+      parameters:
+        - { name: Idempotency-Key, in: header, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              anyOf:
+                - $ref: "#/components/schemas/CreateTicketPlain"
+                - $ref: "#/components/schemas/CreateTicketTemplate"
+      responses:
+        "201":
+          description: "{number, seq, url, warnings, assignee, waiting_on, share_text}"
+        "202":
+          description: 草稿已保存
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DraftAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/tickets/{id}:
+    get:
+      tags: [tickets]
+      operationId: get_ticket
+      summary: 读取工单
+      description: id 可写工单编号或全局序号；format=markdown 返回面向 Agent 的 Markdown 视图。
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: "工单编号或全局序号（可带 #）" }
+        - { name: format, in: query, schema: { type: string }, description: markdown 返回 Markdown，其他值返回 JSON }
+        - { name: include, in: query, schema: { type: string }, description: 目前支持 brief }
+      responses:
+        "200":
+          description: 工单 JSON 详情或 Markdown 视图
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/Gone"
+    patch:
+      tags: [tickets]
+      operationId: revise_ticket_brief
+      summary: 修订标题或说明
+      description: |
+        只传改动字段；base_revision 必填。非模板工单改 brief_md，模板工单改 fields。
+        draft_mode=required 的成员 Agent 返回 202 草稿。
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: 工单编号或全局序号 }
+        - { name: Idempotency-Key, in: header, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [base_revision]
+              properties:
+                title: { type: string }
+                brief_md: { type: string }
+                fields: { type: object, additionalProperties: { type: string } }
+                attachment_ids: { type: array, items: { type: string } }
+                base_revision: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: "{revision}"
+        "202":
+          description: 草稿已保存
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DraftAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/Gone"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/tickets/{id}/replies:
+    post:
+      tags: [tickets]
+      operationId: reply_ticket
+      summary: 回复工单
+      description: |
+        正文与附件至少一项：body_md 可为空，但正文里的 att: 引用或 attachment_ids 必须有内容。
+        deliver 仅指派人一方可用。draft_mode=required 的成员 Agent 返回 202 草稿。
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: 工单编号或全局序号 }
+        - { name: Idempotency-Key, in: header, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                body_md: { type: string, description: 可为空；不能与附件同时为空 }
+                attachment_ids: { type: array, items: { type: string }, description: att_N 数组 }
+                deliver: { type: boolean, default: false }
+                author_name: { type: string, description: 仅访客凭证采纳；成员署名由凭证决定 }
+      responses:
+        "201":
+          description: "{reply_no, timeline_seq, deliver, author, waiting_on}"
+        "202":
+          description: 草稿已保存
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DraftAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
+        "413":
+          description: 附件数量或插图数量超限
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/tickets/{id}/timeline:
+    get:
+      tags: [tickets]
+      operationId: get_ticket_timeline
+      summary: 读取时间线
+      description: |
+        after 是上次响应 cursor；返回过滤后仍可见的最后一条事件 seq，因此筛选条件下可能跳号。
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: 工单编号或全局序号 }
+        - { name: after, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: actor_kind, in: query, schema: { type: string, enum: [member, agent] } }
+      responses:
+        "200":
+          description: "{events[], cursor, waiting_on, your_turn, status}"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/Gone"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/tickets/{id}/attachments:
+    post:
+      tags: [attachments]
+      operationId: upload_attachment
+      summary: 上传待用附件
+      description: |
+        multipart 字段名 file。返回 att_N 引用与 Markdown 片段，再在回复或修订中引用。
+        上传时检查单文件上限与整单容量；每帖数量和插图数量在回复或修订认领时检查。
+        默认上限可由服务端配置调整。
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: 工单编号或全局序号 }
+        - { name: Idempotency-Key, in: header, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "201":
+          description: "{id, filename, size, state, markdown, note}"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
+        "413":
+          description: 单文件或整单附件容量超限
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/tickets/{id}/close:
+    post:
+      tags: [tickets]
+      operationId: close_ticket
+      summary: 关闭工单
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: 工单编号或全局序号 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, enum: [done, wontfix, duplicate] }
+                duplicate_of:
+                  oneOf:
+                    - type: string
+                    - type: integer
+                  description: reason=duplicate 时必填；可为编号、序号或数字
+      responses:
+        "200":
+          description: "{status, close_reason, duplicate_of?}"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/tickets/{id}/reopen:
+    post:
+      tags: [tickets]
+      operationId: reopen_ticket
+      summary: 重新开启工单
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: 工单编号或全局序号 }
+      responses:
+        "200":
+          description: "{status, waiting_on}"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
+  /api/v1/tickets/{id}/assign:
+    post:
+      tags: [tickets]
+      operationId: assign_ticket
+      summary: 改派工单
+      description: assignee 省略、null 或空字符串表示取消指派；改派给他人时响应交接文案。
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: 工单编号或全局序号 }
+        - { name: Idempotency-Key, in: header, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                assignee: { $ref: "#/components/schemas/AssigneeRef" }
+      responses:
+        "200":
+          description: "{assignee, waiting_on, share_text?}"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/tickets/{id}/labels:
+    post:
+      tags: [tickets]
+      operationId: add_ticket_labels
+      summary: 打标签或摘标签
+      description: |
+        标签解析顺序：完全匹配标准值 → 匹配别名；未命中时返回候选建议。
+        allow_new=true 时允许新建字典值或不带维度的标签。
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: 工单编号或全局序号 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                add: { type: array, items: { type: string } }
+                remove: { type: array, items: { type: string } }
+                allow_new: { type: boolean, default: false }
+      responses:
+        "200":
+          description: "{labels, changed, created_dictionary_values}"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/attachment-links/{att}:
+    get:
+      tags: [attachments]
+      operationId: get_attachment_link
+      summary: 换取单个附件的短时效下载地址
+      description: |
+        仅成员 Agent 可用。调用者必须能读附件所属工单；待用附件返回 404。
+        返回地址 10 分钟有效、绑定该附件和该 Agent，下载时不再带 token；
+        Agent 被撤销或失去权限后立即失效。地址只给本次下载使用，不要转贴。
+      parameters:
+        - { name: att, in: path, required: true, schema: { type: string }, description: 形如 att_N }
+      responses:
+        "200":
+          description: "{url, expires_at, mime, size, filename}"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: 仅成员 Agent 可用
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/Gone"
+  /api/v1/drafts:
+    get:
+      tags: [drafts]
+      operationId: list_drafts
+      summary: 我方待确认草稿
+      responses:
+        "200":
+          description: "{count, drafts[]}"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/drafts/{id}:
+    get:
+      tags: [drafts]
+      operationId: get_draft
+      summary: 读取草稿
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: 形如 dft_N }
+      responses:
+        "200":
+          description: 草稿对象；已发出时带 result 摘要
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: 草稿不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      tags: [drafts]
+      operationId: update_draft
+      summary: 整体替换草稿内容
+      description: request 与原建单、回复或修订请求同形；建单草稿的成员引用同样支持数字或字符串。
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string }, description: 形如 dft_N }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [base_version, request]
+              properties:
+                base_version: { type: integer, minimum: 1 }
+                request: { type: object }
+      responses:
+        "200":
+          description: 完整草稿对象
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: 草稿不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/labels:
+    get:
+      tags: [dictionary]
+      operationId: list_labels
+      summary: 标签字典
+      description: 建单或打标签前先查标准值与别名；指定 dimension 时不返回 plain。
+      parameters:
+        - { name: dimension, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: "{dimensions:[{name,values:[{value,label,aliases}]}], plain?:[]}"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/templates:
+    get:
+      tags: [dictionary]
+      operationId: list_templates
+      summary: 模板列表
+      responses:
+        "200":
+          description: "{templates:[{key,name,kind,version,active,scenario,preset_labels,url}]}"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/templates/{key}:
+    get:
+      tags: [dictionary]
+      operationId: get_template_guide
+      summary: 模板详情或填写指南
+      description: format=markdown 返回填写指南；其他任意值返回模板 JSON 详情。
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+        - { name: format, in: query, schema: { type: string }, description: markdown 返回 Markdown }
+      responses:
+        "200":
+          description: 模板 JSON 详情或填写指南 Markdown
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: 模板不存在
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: 成员 Agent token，前缀 tbag_，由主人在网页「我的 → Agent」签发。
+  responses:
+    BadRequest:
+      description: 请求体或参数不是平台可处理的格式
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: 未登录或凭证无效
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: 当前凭证无权使用该操作
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: 资源不存在或不可见（防枚举）
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: 状态冲突、乐观锁冲突或幂等请求仍在处理
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Gone:
+      description: 工单已归档移除
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UnprocessableEntity:
+      description: 字段校验失败
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            hint: { type: string }
+    DraftAccepted:
+      type: object
+      required: [draft, preview_url, message, next]
+      properties:
+        draft: { type: object, description: 完整草稿对象 }
+        preview_url: { type: string }
+        message: { type: string }
+        next: { type: string }
+    MemberRef:
+      oneOf:
+        - type: integer
+          minimum: 1
+        - type: string
+      description: 正整数成员 id、字符串成员 id 或成员姓名。
+    AssigneeRef:
+      oneOf:
+        - $ref: "#/components/schemas/MemberRef"
+        - type: "null"
+      description: 成员引用；null 或空字符串表示取消指派。
+    CreateTicketPlain:
+      type: object
+      required: [title]
+      properties:
+        kind: { type: string, enum: [task, report], default: task }
+        title: { type: string }
+        brief_md: { type: string }
+        labels: { type: array, items: { type: string } }
+        assignee: { $ref: "#/components/schemas/AssigneeRef" }
+        collaborators:
+          oneOf:
+            - type: array
+              items:
+                $ref: "#/components/schemas/MemberRef"
+            - type: "null"
+    CreateTicketTemplate:
+      type: object
+      required: [template, title]
+      properties:
+        template: { type: string }
+        title: { type: string }
+        fields: { type: object, additionalProperties: { type: string } }
+        labels: { type: array, items: { type: string } }
+        assignee: { $ref: "#/components/schemas/AssigneeRef" }
+        collaborators:
+          oneOf:
+            - type: array
+              items:
+                $ref: "#/components/schemas/MemberRef"
+            - type: "null"

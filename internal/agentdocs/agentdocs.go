@@ -26,6 +26,9 @@ func Handler(publicURL string, next http.Handler) http.Handler {
 		return strings.ReplaceAll(agentMarkdown, "{{BASE}}", base)
 	}))
 	mux.HandleFunc("/api.md", serveMarkdown(publicURL, func(string) string { return docs.APIMarkdown }))
+	mux.HandleFunc("/openapi.yaml", serveDocument(publicURL, "application/yaml", func(base string) string {
+		return strings.ReplaceAll(docs.OpenAPIYAML, "{BASE}", base)
+	}))
 	mux.HandleFunc("/skills/agent-taskboard/SKILL.md", serveMarkdown(publicURL, func(base string) string {
 		return strings.ReplaceAll(skillMarkdown, "{{BASE}}", base)
 	}))
@@ -34,6 +37,10 @@ func Handler(publicURL string, next http.Handler) http.Handler {
 }
 
 func serveMarkdown(publicURL string, render func(base string) string) http.HandlerFunc {
+	return serveDocument(publicURL, "text/markdown; charset=utf-8", render)
+}
+
+func serveDocument(publicURL, contentType string, render func(base string) string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", http.MethodGet)
@@ -41,7 +48,7 @@ func serveMarkdown(publicURL string, render func(base string) string) http.Handl
 			return
 		}
 		base := publicbase.FromRequest(publicURL, r)
-		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Header().Set("Content-Type", contentType)
 		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = w.Write([]byte(render(base)))
 	}

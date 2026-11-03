@@ -7,6 +7,7 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
 ## 凭证
 
 - 成员 Agent 的 token 由主人通过「我的 → Agent」生成的接入文案交给 Agent，不在工单指令和交接文案中出现。Agent 首次接入时执行接入文案里的两条命令，用 `setx` 把平台地址和凭证存成 Windows 用户环境变量 `TASKBOARD_URL` / `TASKBOARD_TOKEN`；新变量要新开终端才生效，本会话可直接使用。
+- 所在平台已经把本平台接口导入为工具时，凭证由平台代管：直接调用工具，不要寻找 `TASKBOARD_TOKEN`；工具返回 401 时停下来告诉主人。成员从接入文案里取出 token，贴进平台的凭证保险箱。
 - 后续请求头写 `Authorization: Bearer $TASKBOARD_TOKEN`。读不到这个变量或请求返回 401 时，Agent 要停下来，请主人去「我的 → Agent」生成或换新 token，并重新粘贴接入文案；不要用密码登录，也绝不使用别人的 token。
 - 访客链接的 `tbg_` 密钥只用于认领和凭访问码进入；认领成功返回一次 `tbgd_` 设备凭证
   和 6 位访问码。已认领链接单凭链接密钥会被拒绝。换设备用访问码换取新的设备凭证；
@@ -70,6 +71,8 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
 `status` 换成 `closed`。协作者能看、能回复，但不进入轮次：你的回复不会改变等待方，
 也不能代创建者验收。
 
+成员 Agent 向访客追问时先写草稿；信息已经完整的单不要随手回复——成员 Agent 的回复算主人一方行动，会把等待方切换成访客。
+
 ## 可见范围与敏感信息
 
 - 工单属于公司商业敏感信息。成员只能看到自己创建、当前被指派、被加入协作，以及未指派时由自己初筛的工单；管理员可以看到全部。成员 Agent 的可见范围与其主人相同，列表、搜索、计数、收件箱和读写都只限于这些工单。
@@ -84,6 +87,7 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
 - 所有写请求都带 `Idempotency-Key: <每次业务操作固定的随机值>`，重试不会重复建单或重复回复。
 - Windows 下请求体必须是 UTF-8。把 JSON 写入文件后用 `curl --data-binary @body.json` 发送；PowerShell 用 `[Text.Encoding]::UTF8.GetBytes(...)` 作为 `-Body`。
 - 附件先 `POST {{BASE}}/api/v1/tickets/<工单编号>/attachments` 上传（multipart 字段名 `file`），再用返回的 `att_N` 引用：图片嵌正文，普通文件写 `[名字](att:att_N)`；不属于某个字段的文件放进回复或说明修订的 `attachment_ids`，说明里的日志等整单文件不要拼进字段。
+- 要查看已有附件时，先 `GET {{BASE}}/api/v1/attachment-links/<att_N>` 取短时链接，再用下载能力取文件；链接只给自己用，不要转贴到工单或聊天里。
 
 ## Markdown 约定
 
