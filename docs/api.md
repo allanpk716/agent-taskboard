@@ -994,7 +994,8 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 - 未认领时除认领接口外一律 401 `link_unclaimed` 并记录被拒访问；已认领后单凭
   `tbg_` 链接密钥 401 `link_claimed`。
 - 可见：标题、说明、全部回复、附件（下载需设备凭证，见「附件（#33）」）、
-  指派人、状态变更和关闭原因、访客链接事件。不可见：`labels` 字段和标签事件（事件序号会跳号，已接受）。
+  指派人、状态变更和关闭原因、访客链接事件；瘦身的横幅、附件占位与
+  附件级瘦身字段与成员看到的一致。不可见：`labels` 字段和标签事件（事件序号会跳号，已接受）。
 - 访问其他工单一律 404 `ticket_not_found`（读、时间线、回复、修订都一样，防枚举）。
 - 回复：自报 `author_name` / `via_agent`；工单关闭后 409 `ticket_closed`，重开后恢复。
   作者结构：`member`/`agent` 为 `null`，带 `link_note`、`author_name`、`via_agent`
@@ -1037,10 +1038,15 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 
   三种 413 的 `hint` 都提示改用 NAS 路径（外部文件引用），如
   `\nas01\共享\工单61016-001\文件名`。
-- 单工单 GET 的 `attachments` 只列已挂上的（`{id, filename, size, url, attached_to}`，
-  `attached_to` 为「说明」或「回复 N」）；`attachment_usage`
+- 单工单 GET 的 `attachments` 只列已挂上的（`{id, filename, size, url, attached_to,
+  slim_removed_at?, slim_package_name?}`，`attached_to` 为「说明」或「回复 N」）；
+  附件带 `slim_removed_at` 表示已被瘦身移出服务器（下载见下方专用错误）；
+  工单级 `slim` 汇总 `{removed_count, last_removed_at, packages, status}` 由附件状态推导，
+  `status` 为 `none` / `partial`（部分附件已瘦身）/ `full`（附件已全部瘦身）；
+  列表项同样带 `slim_status`。`attachment_usage`
   `{used_bytes, used_mb, ticket_limit_mb, file_limit_mb, max_files_per_post, max_images_per_post}`
-  把待用的也计入。`?format=markdown` 附「## 附件」小节（链接 + 用量）。
+  把待用的也计入；已瘦身移出服务器的附件文件不在服务器上，不计入用量、
+  也不占整张工单配额。`?format=markdown` 附「## 附件」小节（链接 + 用量）。
 
 ### 下载（GET /api/v1/attachments/{att_N}/{filename}）
 
@@ -1048,6 +1054,8 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   （Bearer 或 `tb_guest_device` cookie），权限判定与读工单一致（访客取他单附件
   404 `ticket_not_found`，防枚举）。
   只有待用（pending）状态不提供下载（404）。
+  已被瘦身移出的附件返回 410 `attachment_slimmed`，错误对象附
+  `slim_package_name`（与说明文字一致）；不要重试，需要文件时请联系管理员恢复。
 - 访客不再使用签名地址：JSON 与 Markdown 都返回普通附件路径，浏览器用
   `tb_guest_device` cookie，程序化调用用 `tbgd_` Bearer。地址泄露后不能下载；
   每次成功下载记入访问记录，访客署名为链接备注加自报称呼并标注已认领设备。
@@ -1206,6 +1214,8 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   "database_bytes": 123,
   "attachments_bytes": 456,
   "backups_bytes": 789,
+  "slimmable_ticket_count": 2,
+  "slimmable_attachment_bytes": 768,
   "closed_months": 3,
   "cutoff": "2026-07-16T09:00:00+08:00",
   "archivable": [
@@ -1234,6 +1244,9 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   `ticket_count` / `attachment_bytes` 仍以整组为准。
 - `attachment_bytes` 是该月各工单附件（含待用附件）按数据库记录大小的合计；
   附件按 id 落盘，同一存储文件被多处引用只计一次。
+- `slimmable_ticket_count` / `slimmable_attachment_bytes` 按当前 `closed_months`
+  汇总可瘦身工单：只统计仍有附件在服务器上的已关闭工单，只算附件、不算插图，
+  与 `POST /api/v1/admin/slim/preview` 对同一批工单的口径一致；确认瘦身后随之下降。
 - 本接口只做统计，不移动、不删除任何数据；选中工单后的预览、生成、下载与移除见下一节。
 
 ## 归档包（#235/#237）
@@ -1266,6 +1279,7 @@ Agent token 403 `web_session_required`，匿名 401。选择里的每张工单�
 {
   "ticket_count": 1,
   "attachment_bytes": 256,
+  "slim_packages": ["slim-1790000000000000000-a1b2c3d4e5.zip"],
   "tickets": [
     {"number": "20260601-001", "title": "旧工单", "closed_at": "2026-06-01T10:00:00+08:00", "attachment_bytes": 256}
   ],
@@ -1284,6 +1298,7 @@ Agent token 403 `web_session_required`，匿名 401。选择里的每张工单�
   "name": "archive-1790000000000000000-a1b2c3d4e5.zip",
   "ticket_count": 1,
   "attachment_bytes": 256,
+  "slim_packages": ["slim-1790000000000000000-a1b2c3d4e5.zip"],
   "generated_at": "2026-10-30T10:00:00+08:00",
   "expires_at": "2026-11-06T10:00:00+08:00",
   "ticket_numbers": ["20260601-001"],
@@ -1292,6 +1307,11 @@ Agent token 403 `web_session_required`，匿名 401。选择里的每张工单�
   "removed_ticket_count": 0
 }
 ```
+
+`slim_packages` 汇总所选工单里已瘦身附件引用的瘦身包名（去重排序）。预览与生成
+响应都带它；管理页据此提示「这些工单引用了瘦身包 X、Y，请一并保存」——只保存
+归档包而丢了瘦身包，将无法完整还原这些附件。归档包内已瘦身的附件只有元数据与
+占位，文件本体不进归档包（见下方瘦身包一节）。
 
 - 包暂存在 `data_dir/archive-packages/`；生成先写同目录临时文件、成功后原子 rename。
   有效期 7 天，由平台注入时钟判定；服务有周期清除任务，列表与下载前也会清除到期包。
@@ -1466,6 +1486,193 @@ JSON 条目单条最大 16 MB。
 成功导入至少一张工单时，平台写入一条 `archive_import` 管理操作，记录操作人、时间、
 成功恢复的工单编号和包名；全部被拒绝时不写操作。
 
+## 瘦身包（#281/#283–#287）
+
+只接受**管理员网页会话**；访客 403 `members_only`，普通成员 403 `admin_required`，
+Agent token 403 `web_session_required`，匿名 401。瘦身只导出并移出**附件**，不碰
+插图；工单本体（说明、回复、时间线、访客链接）全部留在平台上，照常可查、可搜。
+口径与归档一致：`closed_months` 省略时默认 `3`，范围 1–120，否则
+`400 invalid_closed_months`；选择里混入不存在、未关闭、关闭未满 N 个月或已没有
+可瘦身附件的工单时返回 `422 ticket_not_slimmable`。插图按「正文用
+`![…](att:…)` 语法引用且扩展名是图片」判定：不算候选、不进包，也不计入工单级
+瘦身状态的分母（见「附件（#33）」的 `slim` 字段）。
+
+| 方法与路径 | 说明 |
+|---|---|
+| `GET /api/v1/admin/slim/candidates?closed_months=N` | 按关闭月份列出仍有附件在服务器上的可瘦身工单。 |
+| `POST /api/v1/admin/slim/preview` | 预览选择：工单数、附件数、附件字节与未发出草稿。 |
+| `POST /api/v1/admin/slim/packages` | 生成 zip 瘦身包并暂存 7 天。 |
+| `GET /api/v1/admin/slim/packages` | 列出未过期暂存包（新包在前）。 |
+| `GET /api/v1/admin/slim/packages/{name}/download` | 重复下载一个暂存包（`application/zip`）。 |
+| `POST /api/v1/admin/slim/packages/{name}/remove` | 确认已保存后从服务器移出附件文件与备份镜像。 |
+| `POST /api/v1/admin/slim/restore/inspect` | 上传并检查一个瘦身包，按工单给出可否恢复。 |
+| `POST /api/v1/admin/slim/restore` | 恢复包内勾选工单的附件。 |
+
+预览与生成的请求体相同：
+
+```json
+{"closed_months": 3, "ticket_numbers": ["20260601-001"]}
+```
+
+候选响应按月份分组（新月份在前）：
+
+```json
+{
+  "closed_months": 3,
+  "months": [
+    {
+      "month": "2026-06",
+      "ticket_count": 1,
+      "attachment_count": 2,
+      "attachment_bytes": 256,
+      "tickets": [
+        {"number": "20260601-001", "title": "旧工单", "attachment_count": 2, "attachment_bytes": 256}
+      ]
+    }
+  ]
+}
+```
+
+预览响应：
+
+```json
+{
+  "ticket_count": 1,
+  "attachment_count": 2,
+  "attachment_bytes": 256,
+  "tickets": [
+    {"number": "20260601-001", "title": "旧工单", "closed_at": "2026-06-01T10:00:00+08:00",
+     "attachment_count": 2, "attachment_bytes": 256}
+  ],
+  "drafts": [
+    {"id": "dft_1", "ticket_number": "20260601-001", "kind": "reply", "member_name": "陈工",
+     "agent_name": "秘书", "version": 2, "updated_at": "2026-10-30T09:30:00+08:00",
+     "attachment_ids": []}
+  ]
+}
+```
+
+`drafts` 与归档预览同一字段口径，只是提示这些工单还有未发出的草稿；瘦身本身
+不修改、不丢弃草稿。生成响应 / 列表里的 `packages[]` 元素：
+
+```json
+{
+  "name": "slim-1790000000000000000-a1b2c3d4e5.zip",
+  "ticket_numbers": ["20260601-001"],
+  "ticket_count": 1,
+  "attachment_count": 2,
+  "attachment_bytes": 256,
+  "generated_at": "2026-10-30T10:00:00+08:00",
+  "expires_at": "2026-11-06T10:00:00+08:00",
+  "operator_name": "陈工",
+  "download_url": "/api/v1/admin/slim/packages/slim-.../download",
+  "removed_attachment_count": 0
+}
+```
+
+- 包暂存在 `data_dir/slim-packages/`；生成先写同目录临时文件、成功后原子 rename。
+  有效期 7 天，由平台注入时钟判定；服务有周期清除任务，列表与下载前也会清除到期包。
+  请求中断泄漏的 `.restore-*.zip.tmp` 临时文件与无法解析的暂存 zip 同样按文件
+  mtime 超过 7 天后由清除任务删除。到期或不存在时下载返回 `404 slim_package_not_found`。
+- 同一服务进程内同一时刻只执行一次生成；已有生成未结束时再次 `POST` 返回
+  `409 slim_generate_in_progress`。
+- zip 根部有 `manifest.json`：格式版本（当前 `1`）、平台版本、包名、生成时间、
+  操作人、附件数与字节数，以及每个附件的工单编号、所属说明/回复（`attached_to`）、
+  附件 ID、文件名、大小和 SHA-256。附件文件放在
+  `tickets/{工单编号}/attachments/att_{附件ID}/{原文件名}`，路径安全化。
+- 生成成功写一条 `slim_generate` 管理操作；确认移出写 `slim_remove`；恢复写
+  `slim_restore`。瘦身不发通知、不写工单访问记录、不写时间线。
+
+### 确认移出（#283）
+
+移出请求必须显式确认：
+
+```json
+{"saved": true}
+```
+
+`saved` 缺失或为 `false` 时返回 `400 slim_saved_confirmation_required`。成功后，
+服务器在一个数据库事务里重新校验每张工单仍处于生成时的关闭状态（重开或关闭时间
+变化、附件文件缺失、附件已被改动或已瘦身的都会得到 `409 slim_package_stale`），
+给这些附件打上瘦身标记（`slim_removed_at`、`slim_package_name`），写
+`slim_remove` 操作并提交；提交后尽力删除附件主文件与备份目录中的镜像，单个文件
+删除失败只在响应 `cleanup_failures` 里计数。包内附件已全部移出时再次移出返回
+`409 slim_package_removed`；包不存在或已过期返回 `404 slim_package_not_found`。
+
+移出响应：
+
+```json
+{
+  "package_name": "slim-1790000000000000000-a1b2c3d4e5.zip",
+  "ticket_numbers": ["20260601-001"],
+  "attachment_count": 2,
+  "attachment_bytes": 256,
+  "removed_at": "2026-10-30T10:10:00+08:00",
+  "cleanup_failures": 0
+}
+```
+
+`attachment_bytes` 与预览口径一致，按附件本身大小计（备份镜像不重复计入）。
+工单及其说明、回复、时间线保留；列表行内、详情页横幅和附件占位见
+「附件（#33）」的瘦身字段。已瘦身附件不再占用单张工单的附件配额
+（`attachment_usage` 同口径），下载返回 `410 attachment_slimmed`。
+
+### 恢复（#285）
+
+检查与恢复都用 `multipart/form-data` 上传 zip，文件字段名 `package`，上传大小上限
+1 GB（超限 `413 attachment_too_large`，缺少文件字段 `422 file_required`）。上传先
+流式落到瘦身暂存区的临时文件，处理结束即删除。恢复必须逐张勾选：附带
+`ticket_numbers` 字段（可重复）；**省略或留空不代表恢复整包**，返回
+`400 slim_ticket_selection_required`。
+
+```text
+POST /api/v1/admin/slim/restore/inspect
+Content-Type: multipart/form-data
+
+package=<slim-....zip>
+
+POST /api/v1/admin/slim/restore
+Content-Type: multipart/form-data
+
+package=<slim-....zip>
+ticket_numbers=20260601-001
+```
+
+检查响应：
+
+```json
+{
+  "format_version": 1,
+  "package_name": "slim-1790000000000000000-a1b2c3d4e5.zip",
+  "generated_at": "2026-10-30T10:00:00+08:00",
+  "ticket_count": 1,
+  "attachment_count": 2,
+  "attachment_bytes": 256,
+  "tickets": [
+    {
+      "number": "20260601-001",
+      "title": "旧工单",
+      "attachment_count": 2,
+      "attachment_bytes": 256,
+      "restorable": true,
+      "reason": ""
+    }
+  ]
+}
+```
+
+- 整包校验：manifest 合法、路径安全且与清单一致、每个附件的大小与 SHA-256 完全
+  匹配，不能有多余文件；任何一项不符返回 `422 slim_package_invalid`。格式版本高于
+  当前支持的 `1` 返回 `422 slim_format_unsupported`；清单声明的解压总量上限 1 GB，
+  单条 JSON 条目上限 16 MB。
+- 不可恢复的工单 `restorable=false` 并写明 `reason`：包内附件哈希/大小不符、
+  工单已不在平台（例如已整张归档移除）、附件已在服务器上、与清单不匹配等。
+- 执行恢复在一个事务里逐张重新校验并写回文件；期间状态变化（例如工单被归档移除）
+  返回 `409 slim_package_stale`。恢复成功后附件回到原工单、原说明/回复位置，
+  清除瘦身标记并可正常下载；只恢复部分工单时标记变为 `partial`，全部恢复后消失
+  （`none`）。成功恢复至少一张工单时写一条 `slim_restore` 操作。
+- 恢复响应 `restored[]` / `rejected[]` 与检查响应的工单元素同构。
+
 ## 管理操作记录（#235）
 
 只接受**管理员网页会话**；普通成员 403 `admin_required`，Agent token 403
@@ -1475,7 +1682,8 @@ JSON 条目单条最大 16 MB。
 |---|---|
 | `GET /api/v1/admin/operations` | 按时间倒序读取管理操作记录。 |
 
-当前记录类型有 `archive_generate` / `archive_remove` / `archive_import`。响应结构：
+当前记录类型有 `archive_generate` / `archive_remove` / `archive_import` /
+`slim_generate` / `slim_remove` / `slim_restore`。响应结构：
 
 ```json
 {

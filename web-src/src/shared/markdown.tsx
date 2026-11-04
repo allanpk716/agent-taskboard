@@ -174,6 +174,13 @@ export function Markdown(props: MarkdownProps) {
       if (attId) {
         const att = props.attachments.get(attId)
         if (!att) return <span>{children}</span>
+        if (att.slim_removed_at) {
+          return (
+            <span className="att-slimmed">
+              {children}（已瘦身移出，见包 {att.slim_package_name}，下载不可用）
+            </span>
+          )
+        }
         return (
           <a className="att-link" href={att.url} target="_blank" rel="noreferrer">
             {children}

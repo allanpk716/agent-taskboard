@@ -27,6 +27,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/labels"
 	"github.com/allanpk716/agent-taskboard/internal/notifications"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
+	"github.com/allanpk716/agent-taskboard/internal/slim"
 	"github.com/allanpk716/agent-taskboard/internal/storage"
 	"github.com/allanpk716/agent-taskboard/internal/store"
 	"github.com/allanpk716/agent-taskboard/internal/templates"
@@ -48,6 +49,7 @@ type Server struct {
 	AccessRecords *accessrecords.Manager
 	Drafts        *drafts.Manager
 	Archives      *archive.Service
+	Slims         *slim.Service
 
 	handler  http.Handler
 	web      *webapp.Handler
@@ -141,13 +143,14 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	draftStore := drafts.NewManager(st.DB, c, ticketStore, atts)
 	storageStats := storage.NewService(st.DB, cfg.DataDir, atts.Dir(), backups.TargetDir(), c)
 	archives := archive.NewService(st.DB, cfg.DataDir, atts.Dir(), backups.TargetDir(), atts, c)
+	slims := slim.NewService(st.DB, cfg.DataDir, atts.Dir(), backups.TargetDir(), atts, c)
 	draftStore.SetNotifier(notificationStore.DraftNotifier())
 	attachmentLinks, err := attachmentlink.LoadOrCreate(cfg.DataDir)
 	if err != nil {
 		return nil, err
 	}
 	api := httpapi.NewAPI(ident, ticketStore,
-		templateDict, idem, atts, backups, accessRecords, draftStore, storageStats, archives, cfg, c)
+		templateDict, idem, atts, backups, accessRecords, draftStore, storageStats, archives, slims, cfg, c)
 	api.SetCaptchaSource(captchaSrc)
 	api.SetLoginRateLimit(loginRateLimit())
 	api.SetNotifications(notificationStore)
@@ -172,6 +175,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 		AccessRecords: accessRecords,
 		Drafts:        draftStore,
 		Archives:      archives,
+		Slims:         slims,
 		handler:       mux,
 		httpSrv:       &http.Server{Handler: mux},
 		web:           web,
@@ -211,11 +215,11 @@ func (s *Server) Serve(ln net.Listener) error {
 // 判定用注入时钟，测试里直接调 CleanupUnreferenced，不睡真实时间）。
 const attachmentJanitorInterval = 10 * time.Minute
 
-// archiveJanitorInterval 是归档暂存包清除任务的运行间隔（真实时钟；7 天
-// 判定用注入时钟，测试里直接调 CleanupExpired，不睡真实时间）。
+// archiveJanitorInterval 是归档/瘦身暂存包清除任务的运行间隔（真实时钟；
+// 7 天判定用注入时钟，测试里直接调 CleanupExpired，不睡真实时间）。
 const archiveJanitorInterval = 10 * time.Minute
 
-// runArchiveJanitor 周期清除到期归档包。清除失败只影响本轮（下一轮再试）。
+// runArchiveJanitor 周期清除到期归档包和瘦身包。清除失败只影响本轮（下一轮再试）。
 func (s *Server) runArchiveJanitor(done <-chan struct{}) {
 	ticker := time.NewTicker(archiveJanitorInterval)
 	defer ticker.Stop()
@@ -225,6 +229,7 @@ func (s *Server) runArchiveJanitor(done <-chan struct{}) {
 			return
 		case <-ticker.C:
 			_ = s.Archives.CleanupExpired()
+			_ = s.Slims.CleanupExpired()
 		}
 	}
 }

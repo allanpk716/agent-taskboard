@@ -29,6 +29,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/notifications"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
 	"github.com/allanpk716/agent-taskboard/internal/server"
+	"github.com/allanpk716/agent-taskboard/internal/slim"
 	"github.com/allanpk716/agent-taskboard/internal/store"
 )
 
@@ -286,6 +287,9 @@ func (s *Server) Notifications() *notifications.Manager { return s.srv.Notificat
 // Archives 暴露归档模块（#235）：测试里直接触发暂存包到期清除
 // （服务里由定时器周期调用；不睡真实时间，用注入时钟推进后手动跑）。
 func (s *Server) Archives() *archive.Service { return s.srv.Archives }
+
+// Slims 暴露瘦身模块（#281）：测试里直接触发暂存包到期清除。
+func (s *Server) Slims() *slim.Service { return s.srv.Slims }
 
 // Idempotency 暴露幂等模块（评审修正）：测试里直接触发 24 小时清除任务
 // （服务里由定时器周期调用；不睡真实时间，用注入时钟推进后手动跑）。

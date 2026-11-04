@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"github.com/allanpk716/agent-taskboard/internal/store"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,11 +19,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
+	"github.com/allanpk716/agent-taskboard/internal/packagefile"
 	"github.com/allanpk716/agent-taskboard/internal/version"
 )
 
@@ -43,6 +43,7 @@ type PackageInfo struct {
 	TicketNumbers      []string
 	TicketCount        int
 	AttachmentBytes    int64
+	SlimPackages       []string
 	GeneratedAt        time.Time
 	ExpiresAt          time.Time
 	OperatorName       string
@@ -65,18 +66,15 @@ type manifestActor struct {
 	Name     string `json:"name"`
 }
 
-type manifestFile struct {
-	Path   string `json:"path"`
-	SHA256 string `json:"sha256"`
-	Size   int64  `json:"size"`
-}
+type manifestFile = packagefile.ManifestFile
 
 type manifestTicket struct {
-	Number          string `json:"number"`
-	Title           string `json:"title"`
-	ClosedAt        string `json:"closed_at"`
-	AttachmentBytes int64  `json:"attachment_bytes"`
-	ContentSHA256   string `json:"content_sha256"`
+	Number          string   `json:"number"`
+	Title           string   `json:"title"`
+	ClosedAt        string   `json:"closed_at"`
+	AttachmentBytes int64    `json:"attachment_bytes"`
+	SlimPackages    []string `json:"slim_packages,omitempty"`
+	ContentSHA256   string   `json:"content_sha256"`
 }
 
 var attachmentRefPattern = regexp.MustCompile(`att:[A-Za-z0-9_-]+`)
@@ -154,7 +152,7 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 		}
 		encoded = append(encoded, '\n')
 		path := "tickets/" + summary.Number + "/ticket.json"
-		if err := addZipFile(zw, &files, path, encoded); err != nil {
+		if err := packagefile.AddFile(zw, &files, path, encoded); err != nil {
 			_ = zw.Close()
 			return PackageInfo{}, err
 		}
@@ -164,14 +162,14 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 	}
 	for _, summary := range preview.Tickets {
 		export := exps[summary.Seq]
-		atts, err := s.packageAttachments(zw, &files, summary, export)
+		atts, slimmed, err := s.packageAttachments(zw, &files, summary, export)
 		if err != nil {
 			_ = zw.Close()
 			return PackageInfo{}, err
 		}
-		encoded := []byte(markdownOf(summary, export, atts))
+		encoded := []byte(markdownOf(summary, export, atts, slimmed))
 		path := "tickets/" + summary.Number + "/README.md"
-		if err := addZipFile(zw, &files, path, encoded); err != nil {
+		if err := packagefile.AddFile(zw, &files, path, encoded); err != nil {
 			_ = zw.Close()
 			return PackageInfo{}, err
 		}
@@ -184,14 +182,14 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 	for _, t := range preview.Tickets {
 		m.Tickets = append(m.Tickets, manifestTicket{Number: t.Number, Title: t.Title,
 			ClosedAt: t.ClosedAt.Format(time.RFC3339Nano), AttachmentBytes: t.AttachmentBytes,
-			ContentSHA256: t.ContentSHA256})
+			SlimPackages: t.SlimPackages, ContentSHA256: t.ContentSHA256})
 	}
 	manifestBytes, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		_ = zw.Close()
 		return PackageInfo{}, err
 	}
-	if err := addZipEntry(zw, "manifest.json", append(manifestBytes, '\n')); err != nil {
+	if err := packagefile.AddEntry(zw, "manifest.json", append(manifestBytes, '\n')); err != nil {
 		_ = zw.Close()
 		return PackageInfo{}, err
 	}
@@ -222,7 +220,8 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 		return PackageInfo{}, err
 	}
 	return PackageInfo{Name: name, TicketNumbers: numbersOf(preview.Tickets), TicketCount: len(preview.Tickets),
-		AttachmentBytes: preview.AttachmentBytes(), GeneratedAt: now, ExpiresAt: now.Add(Retention),
+		AttachmentBytes: preview.AttachmentBytes(), SlimPackages: distinctSortedSlimPackages(preview.Tickets),
+		GeneratedAt: now, ExpiresAt: now.Add(Retention),
 		OperatorName: operator.Member.Name}, nil
 }
 
@@ -374,15 +373,25 @@ func (s *Service) infoFromZip(name string) (PackageInfo, error) {
 	}
 	numbers := make([]string, 0, len(m.Tickets))
 	var attachmentBytes int64
+	slimSeen := map[string]bool{}
+	slimPackages := []string{}
 	for _, t := range m.Tickets {
 		numbers = append(numbers, t.Number)
 		attachmentBytes += t.AttachmentBytes
+		for _, name := range t.SlimPackages {
+			if !slimSeen[name] {
+				slimSeen[name] = true
+				slimPackages = append(slimPackages, name)
+			}
+		}
 	}
+	sort.Strings(slimPackages)
 	if m.PackageName != name {
 		return PackageInfo{}, ErrPackageNotFound
 	}
 	return PackageInfo{Name: name, TicketNumbers: numbers, TicketCount: len(numbers),
-		AttachmentBytes: attachmentBytes, GeneratedAt: generated, ExpiresAt: generated.Add(Retention),
+		AttachmentBytes: attachmentBytes, SlimPackages: slimPackages,
+		GeneratedAt: generated, ExpiresAt: generated.Add(Retention),
 		OperatorName: m.Operator.Name}, nil
 }
 
@@ -416,8 +425,17 @@ func exportTicket(ctx context.Context, q archiveQueryer, summary TicketSummary) 
 		FROM timeline_events WHERE ticket_seq = ? AND type = 'reply' ORDER BY seq`, summary.Seq); err != nil {
 		return out, err
 	}
-	// 草稿附件会随未发出草稿一起丢弃，不进入归档包。
-	if out.Attachments, err = queryObjects(ctx, q, attachmentColumns+`
+	// 草稿附件会随未发出草稿一起丢弃，不进入归档包。工单涉及瘦身时，附件
+	// 记录连同瘦身状态一起导出；不涉及瘦身的工单保持原包格式。
+	hasSlimmed, err := ticketHasSlimmedAttachments(ctx, q, summary.Seq)
+	if err != nil {
+		return out, err
+	}
+	attachmentQuery := attachmentColumns
+	if hasSlimmed {
+		attachmentQuery += `, slim_removed_at, slim_package_name`
+	}
+	if out.Attachments, err = queryObjects(ctx, q, attachmentQuery+`
 		FROM attachments WHERE ticket_seq = ? AND draft_id IS NULL ORDER BY id`, summary.Seq); err != nil {
 		return out, err
 	}
@@ -544,6 +562,18 @@ const attachmentColumns = `SELECT id, ticket_seq, filename, size, state, attache
 	       uploader_member_id, uploader_agent_id, uploader_link_id, uploader_intake_id,
 	       intake_upload_key, uploaded_at, claimed_at, draft_id`
 
+func ticketHasSlimmedAttachments(ctx context.Context, q archiveQueryer, seq int64) (bool, error) {
+	rows, err := q.QueryContext(ctx, `
+		SELECT 1 FROM attachments
+		WHERE ticket_seq = ? AND draft_id IS NULL AND slim_removed_at IS NOT NULL
+		LIMIT 1`, seq)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	return rows.Next(), rows.Err()
+}
+
 const accessRecordColumns = `SELECT id, ticket_seq, actor_kind, actor_name, actor_member_id,
 	       actor_agent_id, actor_link_id, actor_link_note, entry_method, action, attachment_id,
 	       attachment_ref, attachment_filename, first_at, last_at, count`
@@ -568,7 +598,7 @@ func guestDevices(ctx context.Context, q archiveQueryer, links []map[string]any)
 		return []map[string]any{}, nil
 	}
 	return queryObjects(ctx, q, `SELECT id, guest_link_id, token_hash, created_at, entry_method
-		FROM guest_devices WHERE guest_link_id IN (`+inPlaceholders(len(ids))+`)
+		FROM guest_devices WHERE guest_link_id IN (`+store.Placeholders(len(ids))+`)
 		ORDER BY guest_link_id, id`, ids...)
 }
 
@@ -578,95 +608,47 @@ type packagedAttachment struct {
 	Relative string
 }
 
-func (s *Service) packageAttachments(zw *zip.Writer, files *[]manifestFile, summary TicketSummary, export ticketExport) ([]packagedAttachment, error) {
+// slimmedAttachment 是已瘦身移出、只在清单里留占位的附件。
+type slimmedAttachment struct {
+	Ref         string
+	Filename    string
+	PackageName string
+}
+
+func (s *Service) packageAttachments(zw *zip.Writer, files *[]manifestFile, summary TicketSummary,
+	export ticketExport) ([]packagedAttachment, []slimmedAttachment, error) {
 	out := make([]packagedAttachment, 0, len(export.Attachments))
+	slimmedOut := make([]slimmedAttachment, 0)
 	for _, row := range export.Attachments {
 		id, _ := row["id"].(int64)
 		filename, _ := row["filename"].(string)
 		ref := fmt.Sprintf("att_%d", id)
+		if row["slim_removed_at"] != nil {
+			slimmedOut = append(slimmedOut, slimmedAttachment{Ref: ref, Filename: filename,
+				PackageName: stringValue(row["slim_package_name"])})
+			continue
+		}
 		relative := "attachments/" + ref + "/" + filename
 		path := archiveAttachmentPath(summary.Number, id, filename)
 		src, err := os.Open(filepath.Join(s.attachmentsDir, strconv.FormatInt(id, 10)))
 		if err != nil {
-			return nil, fmt.Errorf("读取附件 %s 失败：%w", ref, err)
+			return nil, nil, fmt.Errorf("读取附件 %s 失败：%w", ref, err)
 		}
 		size, _ := row["size"].(int64)
-		if err := addZipStream(zw, files, path, src, size); err != nil {
+		if err := packagefile.AddStream(zw, files, path, src, size); err != nil {
 			_ = src.Close()
-			return nil, err
+			return nil, nil, err
 		}
 		if err := src.Close(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, packagedAttachment{Ref: ref, Filename: filename, Relative: relative})
 	}
-	return out, nil
+	return out, slimmedOut, nil
 }
 
-func addZipFile(zw *zip.Writer, files *[]manifestFile, path string, body []byte) error {
-	if err := addZipEntry(zw, path, body); err != nil {
-		return err
-	}
-	sum := sha256.Sum256(body)
-	*files = append(*files, manifestFile{Path: path, SHA256: hex.EncodeToString(sum[:]), Size: int64(len(body))})
-	return nil
-}
-
-func addZipEntry(zw *zip.Writer, path string, body []byte) error {
-	path, err := safeZipPath(path)
-	if err != nil {
-		return err
-	}
-	entry, err := zw.Create(path)
-	if err != nil {
-		return err
-	}
-	_, err = entry.Write(body)
-	return err
-}
-
-func addZipStream(zw *zip.Writer, files *[]manifestFile, path string, src io.Reader, size int64) error {
-	path, err := safeZipPath(path)
-	if err != nil {
-		return err
-	}
-	entry, err := zw.Create(path)
-	if err != nil {
-		return err
-	}
-	sum := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(entry, sum), src)
-	if copyErr != nil {
-		return copyErr
-	}
-	if written != size {
-		return fmt.Errorf("附件 %s 大小不一致：数据库 %d，实际 %d", path, size, written)
-	}
-	*files = append(*files, manifestFile{Path: path, SHA256: hex.EncodeToString(sum.Sum(nil)), Size: written})
-	return nil
-}
-
-func safeZipPath(path string) (string, error) {
-	parts := strings.Split(path, "/")
-	for i, part := range parts {
-		part = sanitizeZipSegment(part)
-		if part == "" {
-			return "", fmt.Errorf("归档包路径 %q 包含空路径段", path)
-		}
-		parts[i] = part
-	}
-	return strings.Join(parts, "/"), nil
-}
-
-func sanitizeZipSegment(part string) string {
-	if part == "" || part == "." || part == ".." || strings.ContainsAny(part, `\/`) ||
-		strings.ContainsFunc(part, unicode.IsControl) {
-		return "_"
-	}
-	return part
-}
-
-func markdownOf(summary TicketSummary, export ticketExport, atts []packagedAttachment) string {
+func markdownOf(summary TicketSummary, export ticketExport, atts []packagedAttachment,
+	slimmed []slimmedAttachment) string {
 	refs := map[string]packagedAttachment{}
 	for _, att := range atts {
 		refs[att.Ref] = att
@@ -700,6 +682,9 @@ func markdownOf(summary TicketSummary, export ticketExport, atts []packagedAttac
 	}
 	for _, att := range atts {
 		fmt.Fprintf(&b, "- [%s](%s)\n", att.Filename, escapeMarkdownPath(att.Relative))
+	}
+	for _, att := range slimmed {
+		fmt.Fprintf(&b, "- %s（已瘦身移出，见瘦身包 %s）\n", att.Filename, att.PackageName)
 	}
 	if len(export.Replies) > 0 {
 		b.WriteString("\n## 回复\n")
@@ -774,7 +759,7 @@ func (s *Service) discardPendingDrafts(ctx context.Context, tickets []TicketSumm
 	if len(draftIDs) > 0 {
 		rows, err := tx.QueryContext(ctx, `
 			SELECT a.id FROM attachments a
-			WHERE a.draft_id IN (`+inPlaceholders(len(draftIDs))+`)`, draftIDs...)
+			WHERE a.draft_id IN (`+store.Placeholders(len(draftIDs))+`)`, draftIDs...)
 		if err != nil {
 			return err
 		}
@@ -794,11 +779,11 @@ func (s *Service) discardPendingDrafts(ctx context.Context, tickets []TicketSumm
 	}
 	if len(draftIDs) > 0 {
 		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM attachments WHERE draft_id IN (`+inPlaceholders(len(draftIDs))+`)`, draftIDs...); err != nil {
+			DELETE FROM attachments WHERE draft_id IN (`+store.Placeholders(len(draftIDs))+`)`, draftIDs...); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM drafts WHERE id IN (`+inPlaceholders(len(draftIDs))+`)
+			DELETE FROM drafts WHERE id IN (`+store.Placeholders(len(draftIDs))+`)
 			AND status = 'pending'`, draftIDs...); err != nil {
 			return err
 		}
@@ -814,13 +799,6 @@ func (s *Service) discardPendingDrafts(ctx context.Context, tickets []TicketSumm
 	return nil
 }
 
-func inPlaceholders(n int) string {
-	if n == 0 {
-		return ""
-	}
-	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
-}
-
 func revalidateSelectionTx(ctx context.Context, tx *sql.Tx, tickets []TicketSummary,
 	closedMonths int, now time.Time) error {
 	args := make([]any, 0, len(tickets))
@@ -833,7 +811,7 @@ func revalidateSelectionTx(ctx context.Context, tx *sql.Tx, tickets []TicketSumm
 			WHERE e.ticket_seq = t.seq AND e.type = 'closed'
 			ORDER BY e.seq DESC LIMIT 1
 		)
-		FROM tickets t WHERE t.seq IN (`+inPlaceholders(len(tickets))+`)`, args...)
+		FROM tickets t WHERE t.seq IN (`+store.Placeholders(len(tickets))+`)`, args...)
 	if err != nil {
 		return err
 	}
@@ -878,7 +856,7 @@ func revalidateDraftsTx(ctx context.Context, tx *sql.Tx, drafts []DraftSummary) 
 	}
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id, status, ticket_seq, version, updated_at FROM drafts
-		WHERE id IN (`+inPlaceholders(len(drafts))+`)`, args...)
+		WHERE id IN (`+store.Placeholders(len(drafts))+`)`, args...)
 	if err != nil {
 		return err
 	}

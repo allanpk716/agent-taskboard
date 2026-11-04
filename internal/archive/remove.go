@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"github.com/allanpk716/agent-taskboard/internal/store"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,6 +18,7 @@ import (
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
+	"github.com/allanpk716/agent-taskboard/internal/packagefile"
 )
 
 // ErrAlreadyRemoved 表示归档包对应的工单已经移除。
@@ -218,30 +219,14 @@ func (s *Service) cleanupRemovedFiles(ids []int64) (int64, int) {
 	failures := 0
 	for _, id := range ids {
 		text := strconv.FormatInt(id, 10)
-		bytes, failed := removeFileForCleanup(s.atts.Path(id))
+		bytes, failed := packagefile.RemoveForCleanup(s.atts.Path(id))
 		freed += bytes
 		failures += failed
-		bytes, failed = removeFileForCleanup(filepath.Join(s.backupDir, "attachments", text))
+		bytes, failed = packagefile.RemoveForCleanup(filepath.Join(s.backupDir, "attachments", text))
 		freed += bytes
 		failures += failed
 	}
 	return freed, failures
-}
-
-func removeFileForCleanup(path string) (int64, int) {
-	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		return 0, 0
-	}
-	if err != nil {
-		log.Printf("归档移除后检查文件 %s 失败：%v", path, err)
-		return 0, 1
-	}
-	if err := os.Remove(path); err != nil {
-		log.Printf("归档移除后清理文件 %s 失败：%v", path, err)
-		return 0, 1
-	}
-	return info.Size(), 0
 }
 
 func readPackageManifest(file *os.File) (*manifest, error) {
@@ -303,7 +288,7 @@ func (s *Service) removalState(ctx context.Context, tx *sql.Tx, numbers []string
 			WHERE e.ticket_seq = t.seq AND e.type = 'closed'
 			ORDER BY e.seq DESC LIMIT 1
 		)
-		FROM tickets t WHERE t.number IN (`+inPlaceholders(len(args))+`)`, args...)
+		FROM tickets t WHERE t.number IN (`+store.Placeholders(len(args))+`)`, args...)
 	if err != nil {
 		return removalSnapshot{}, err
 	}
@@ -381,7 +366,7 @@ func (s *Service) removalState(ctx context.Context, tx *sql.Tx, numbers []string
 
 	collabRows, err := tx.QueryContext(ctx, `
 		SELECT ticket_seq, member_id FROM ticket_collaborators
-		WHERE ticket_seq IN (`+inPlaceholders(len(seqArgs))+`) ORDER BY ticket_seq, member_id`, seqArgs...)
+		WHERE ticket_seq IN (`+store.Placeholders(len(seqArgs))+`) ORDER BY ticket_seq, member_id`, seqArgs...)
 	if err != nil {
 		return removalSnapshot{}, err
 	}
@@ -413,7 +398,7 @@ func (s *Service) removalState(ctx context.Context, tx *sql.Tx, numbers []string
 
 	attRows, err := tx.QueryContext(ctx, `
 		SELECT id, COALESCE(size, 0) FROM attachments
-		WHERE ticket_seq IN (`+inPlaceholders(len(seqArgs))+`)`, seqArgs...)
+		WHERE ticket_seq IN (`+store.Placeholders(len(seqArgs))+`)`, seqArgs...)
 	if err != nil {
 		return removalSnapshot{}, err
 	}
@@ -435,7 +420,7 @@ func (s *Service) removalState(ctx context.Context, tx *sql.Tx, numbers []string
 	hashRows, err := tx.QueryContext(ctx, `
 		SELECT l.ticket_seq, l.key_hash, d.token_hash FROM guest_links l
 		LEFT JOIN guest_devices d ON d.guest_link_id = l.id
-		WHERE l.ticket_seq IN (`+inPlaceholders(len(seqArgs))+`)`, seqArgs...)
+		WHERE l.ticket_seq IN (`+store.Placeholders(len(seqArgs))+`)`, seqArgs...)
 	if err != nil {
 		return removalSnapshot{}, err
 	}
@@ -546,7 +531,7 @@ func deleteTicketsTx(ctx context.Context, tx *sql.Tx, tickets []TicketSummary) e
 	for _, t := range tickets {
 		args = append(args, t.Seq)
 	}
-	placeholder := inPlaceholders(len(args))
+	placeholder := store.Placeholders(len(args))
 	_, err := tx.ExecContext(ctx, `DELETE FROM draft_versions WHERE draft_id IN (
 		SELECT id FROM drafts WHERE ticket_seq IN (`+placeholder+`))`, args...)
 	if err != nil {

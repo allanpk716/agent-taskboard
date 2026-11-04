@@ -24,6 +24,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/notifications"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
+	"github.com/allanpk716/agent-taskboard/internal/slim"
 	"github.com/allanpk716/agent-taskboard/internal/storage"
 	"github.com/allanpk716/agent-taskboard/internal/templates"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
@@ -47,6 +48,7 @@ type API struct {
 	storage         *storage.Service
 	archive         *archive.Service
 	attachmentLinks *attachmentlink.Signer
+	slim            *slim.Service
 	cfg             config.Config
 	clk             clock.Clock
 	intakeUploads   *requestRateLimiter
@@ -79,9 +81,9 @@ type captchaRecord struct {
 	used      bool
 }
 
-func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager, backups *ops.Backups, accessRecs *accessrecords.Manager, draftStore *drafts.Manager, storageStats *storage.Service, archives *archive.Service, cfg config.Config, clk clock.Clock) *API {
+func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager, idem *idempotency.Manager, atts *attachments.Manager, backups *ops.Backups, accessRecs *accessrecords.Manager, draftStore *drafts.Manager, storageStats *storage.Service, archives *archive.Service, slims *slim.Service, cfg config.Config, clk clock.Clock) *API {
 	return &API{ident: ident, tickets: tk, templates: tpl, idem: idem, atts: atts, backups: backups,
-		accessRecords: accessRecs, drafts: draftStore, storage: storageStats, archive: archives, cfg: cfg, clk: clk,
+		accessRecords: accessRecs, drafts: draftStore, storage: storageStats, archive: archives, slim: slims, cfg: cfg, clk: clk,
 		intakeUploads: newRequestRateLimiter(cfg.Intake.UploadRatePerMin, clk),
 		clientOnline:  make(map[int64]int),
 		captchaSource: captcha.Random{}, captchas: make(map[string]captchaRecord),
@@ -128,6 +130,12 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/admin/backups", a.handleAdminBackups)
 	mux.HandleFunc("/api/v1/admin/storage", a.handleAdminStorage)
 	mux.HandleFunc("/api/v1/admin/archive/preview", a.handleAdminArchivePreview)
+	mux.HandleFunc("/api/v1/admin/slim/candidates", a.handleAdminSlimCandidates)
+	mux.HandleFunc("/api/v1/admin/slim/preview", a.handleAdminSlimPreview)
+	mux.HandleFunc("/api/v1/admin/slim/packages", a.handleAdminSlimPackages)
+	mux.HandleFunc("/api/v1/admin/slim/packages/", a.handleAdminSlimPackages)
+	mux.HandleFunc("/api/v1/admin/slim/restore", a.handleAdminSlimRestore)
+	mux.HandleFunc("/api/v1/admin/slim/restore/inspect", a.handleAdminSlimRestoreInspect)
 	mux.HandleFunc("/api/v1/admin/archive/packages", a.handleAdminArchivePackages)
 	mux.HandleFunc("/api/v1/admin/archive/packages/", a.handleAdminArchivePackages)
 	mux.HandleFunc("/api/v1/admin/archive/import/inspect", a.handleAdminArchiveImportInspect)

@@ -127,6 +127,7 @@ const (
 	CodeTicketQuotaExceeded     = "ticket_quota_exceeded"     // 整张工单合计超限（413）
 	CodeAttachmentNotUsable     = "attachment_not_usable"     // 引用的附件不可用（422）
 	CodeAttachmentNotFound      = "attachment_not_found"      // 附件不存在（404）
+	CodeAttachmentSlimmed       = "attachment_slimmed"        // 附件已瘦身移出服务器（410，#284）
 	CodeFileRequired            = "file_required"             // multipart 缺文件字段
 	CodeInvalidFilename         = "invalid_filename"          // 文件名缺失或非法
 	CodeAttachmentURLExpired    = "attachment_url_expired"    // 附件签名地址过期（401）
@@ -199,6 +200,17 @@ const (
 	CodeArchivePackageInvalid    = "archive_package_invalid"             // 上传包校验失败（422）
 	CodeArchiveFormatUnsupported = "archive_format_unsupported"          // 上传包格式版本不支持（422）
 	CodeTicketArchived           = "ticket_archived"                     // 工单已归档移出平台（410）
+
+	// #281/#283/#285：附件瘦身与恢复。
+	CodeNotSlimmable          = "ticket_not_slimmable"             // 选择里的工单没有可瘦身附件或不满足关闭月数（422）
+	CodeSlimNotFound          = "slim_package_not_found"           // 瘦身包不存在或已过期（404）
+	CodeSlimGenerateConflict  = "slim_generate_in_progress"        // 已有瘦身生成正在执行（409）
+	CodeSlimSavedRequired     = "slim_saved_confirmation_required" // 未勾选“我已保存瘦身包”（400）
+	CodeSlimRemoved           = "slim_package_removed"             // 瘦身包对应附件已移出（409）
+	CodeSlimPackageStale      = "slim_package_stale"               // 生成后工单或附件变化（409）
+	CodeSlimPackageInvalid    = "slim_package_invalid"             // 上传的瘦身包校验失败（422）
+	CodeSlimFormatUnsupported = "slim_format_unsupported"          // 上传包格式版本太高（422）
+	CodeSlimSelectionRequired = "slim_ticket_selection_required"   // 执行恢复时没有勾选任何工单（400）
 
 	// #80：桌面客户端凭证。
 	CodeInvalidClientPort        = "invalid_client_port"

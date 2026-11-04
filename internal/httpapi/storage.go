@@ -35,6 +35,16 @@ func (a *API) handleAdminStorage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		panic(err)
 	}
+	slimmable, err := a.slim.Candidates(r.Context(), closedMonths)
+	if err != nil {
+		panic(err)
+	}
+	slimmableTickets := 0
+	var slimmableBytes int64
+	for _, month := range slimmable {
+		slimmableTickets += month.TicketCount
+		slimmableBytes += month.AttachmentBytes
+	}
 	months := make([]storageMonthView, 0, len(stats.Archivable))
 	for _, m := range stats.Archivable {
 		view := storageMonthView{
@@ -49,23 +59,28 @@ func (a *API) handleAdminStorage(w http.ResponseWriter, r *http.Request) {
 		months = append(months, view)
 	}
 	writeJSON(w, http.StatusOK, storageStatsView{
-		DatabaseBytes:    stats.DatabaseBytes,
-		AttachmentsBytes: stats.AttachmentsBytes,
-		BackupsBytes:     stats.BackupsBytes,
-		ClosedMonths:     stats.ClosedMonths,
-		Cutoff:           stats.Cutoff.Format(time.RFC3339),
-		Archivable:       months,
+		DatabaseBytes:            stats.DatabaseBytes,
+		AttachmentsBytes:         stats.AttachmentsBytes,
+		BackupsBytes:             stats.BackupsBytes,
+		SlimmableTicketCount:     slimmableTickets,
+		SlimmableAttachmentBytes: slimmableBytes,
+		ClosedMonths:             stats.ClosedMonths,
+		Cutoff:                   stats.Cutoff.Format(time.RFC3339),
+		Archivable:               months,
 	})
 }
 
-// storageStatsView 是 GET /api/v1/admin/storage 的响应（archivable 新月份在前）。
+// storageStatsView 是 GET /api/v1/admin/storage 的响应（archivable 新月份在前；
+// slimmable_* 按当前 N 汇总可瘦身工单，口径复用瘦身候选）。
 type storageStatsView struct {
-	DatabaseBytes    int64              `json:"database_bytes"`
-	AttachmentsBytes int64              `json:"attachments_bytes"`
-	BackupsBytes     int64              `json:"backups_bytes"`
-	ClosedMonths     int                `json:"closed_months"`
-	Cutoff           string             `json:"cutoff"`
-	Archivable       []storageMonthView `json:"archivable"`
+	DatabaseBytes            int64              `json:"database_bytes"`
+	AttachmentsBytes         int64              `json:"attachments_bytes"`
+	BackupsBytes             int64              `json:"backups_bytes"`
+	SlimmableTicketCount     int                `json:"slimmable_ticket_count"`
+	SlimmableAttachmentBytes int64              `json:"slimmable_attachment_bytes"`
+	ClosedMonths             int                `json:"closed_months"`
+	Cutoff                   string             `json:"cutoff"`
+	Archivable               []storageMonthView `json:"archivable"`
 }
 
 // storageMonthView 是一个关闭月份的可归档汇总。

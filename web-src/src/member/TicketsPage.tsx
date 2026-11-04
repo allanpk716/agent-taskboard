@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError } from '../api'
 import { closeReasonText, fmtBeijing, fmtShort } from '../shared/format'
-import type { ArchivedTicket, MemberSummary } from '../shared/types'
+import type { ArchivedTicket, MemberSummary, SlimStatus } from '../shared/types'
 import { DeactivatedBadge } from '../shared/widgets'
 import { api } from '../api'
 import { nav, useInvalidate, useLocationSearch } from './ui'
@@ -37,6 +37,7 @@ export interface TicketListItem {
   waiting_on: { party: string; member?: string | null; text: string; reason: string }
   updated_at: string
   unread: boolean
+  slim_status?: SlimStatus
 }
 
 interface ListResponse {
@@ -96,6 +97,13 @@ export function LabelChips({
       ))}
     </>
   )
+}
+
+/** 瘦身行内标记（#284）：full = 已瘦身，partial = 部分附件已瘦身。 */
+export function SlimBadge({ status }: { status?: SlimStatus }) {
+  if (status === 'full') return <span className="badge slim">已瘦身</span>
+  if (status === 'partial') return <span className="badge slim">部分附件已瘦身</span>
+  return null
 }
 
 export function ticketLabelFilterPath(label: string, search = 'status=open'): string {
@@ -204,6 +212,7 @@ export function TicketCard({
               <div className="pc-row-top">
                 <span className="badge kind">{item.kind === 'task' ? '任务' : '反馈'}</span>
                 <span className="pc-row-number">{item.number}</span>
+                <SlimBadge status={item.slim_status} />
                 <span className="pc-row-time">{fmtShort(item.updated_at)}</span>
               </div>
               <div className={`pc-row-title${item.unread ? ' unread' : ''}`}>
@@ -256,6 +265,7 @@ export function TicketCard({
             <>
               <div className="tc-top">
                 <span className="badge kind">{item.kind === 'task' ? '任务' : '反馈'}</span>
+                <SlimBadge status={item.slim_status} />
                 {item.status === 'closed' ? (
                   <span className="badge closed">已关闭 · {closeReasonText(item.close_reason)}</span>
                 ) : (

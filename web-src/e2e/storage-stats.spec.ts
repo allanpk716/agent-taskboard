@@ -6,6 +6,8 @@ import { ADMIN, login, wang } from './helpers'
 
 type StorageStats = {
   closed_months: number
+  slimmable_ticket_count: number
+  slimmable_attachment_bytes: number
   archivable: { month: string; ticket_count: number; attachment_bytes: number }[]
 }
 
@@ -53,6 +55,11 @@ test('管理员在管理页看到存储占用与可归档月份', async ({ page 
   await expect(page.getByTestId('storage-database')).not.toHaveText(/^0 B$/)
   await expect(page.getByTestId('storage-attachments')).toHaveText(sizeRe)
   await expect(page.getByTestId('storage-backups')).toHaveText(sizeRe)
+  // 可瘦身汇总按这次响应的实际数值渲染，不依赖其他用例留下的数据。
+  const sizePattern = '\\d+(\\.\\d+)? (B|KB|MB|GB)'
+  await expect(page.getByTestId('storage-slimmable')).toHaveText(
+    new RegExp(`^${defaultStats.slimmable_ticket_count} 张工单，附件共 ${sizePattern}$`),
+  )
 
   expect(defaultStats.closed_months).toBe(3)
   await expectArchivableMonths(page, defaultStats)
@@ -82,6 +89,8 @@ test('存储面板按月汇总并随 N 重新请求', async ({ page }) => {
         database_bytes: 123456,
         attachments_bytes: 456789,
         backups_bytes: 789012,
+        slimmable_ticket_count: n === '1' ? 1 : 2,
+        slimmable_attachment_bytes: n === '1' ? 1024 : 4096,
         closed_months: n === '1' ? 1 : 3,
         cutoff: '2026-07-16T09:00:00+08:00',
         archivable,
@@ -91,6 +100,7 @@ test('存储面板按月汇总并随 N 重新请求', async ({ page }) => {
   await login(page, ADMIN)
   await page.goto('/admin')
 
+  await expect(page.getByTestId('storage-slimmable')).toHaveText('2 张工单，附件共 4 KB')
   await expect(page.getByTestId('storage-months-table')).toContainText('2026-08')
   await expect(page.getByTestId('storage-months-table')).toContainText('2026-05')
   await expect(page.getByTestId('storage-month-2026-05')).toContainText('4 张工单')
@@ -98,6 +108,7 @@ test('存储面板按月汇总并随 N 重新请求', async ({ page }) => {
   await expect(page.getByTestId('storage-month-2026-08')).toContainText('2 KB')
 
   await page.getByTestId('storage-months-input').fill('1')
+  await expect(page.getByTestId('storage-slimmable')).toHaveText('1 张工单，附件共 1 KB')
   await expect(page.getByTestId('storage-month-2026-05')).toHaveCount(0)
   await expect(page.getByTestId('storage-month-2026-08')).toBeVisible()
 })

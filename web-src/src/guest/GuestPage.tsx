@@ -13,6 +13,7 @@ import { guestApi } from './guestApi'
 import { guestDeviceToken, guestRawApi, saveGuestDeviceToken } from './guestApi'
 import { fmtDateCN } from '../shared/format'
 import { VersionBanner } from '../shared/VersionBanner'
+import { SlimBanner } from '../shared/widgets'
 import { useVersionCheck } from '../shared/versionCheck'
 import { Modal, copyText } from '../member/ui'
 import type { ArchivedTicket, GuestSession, TicketView } from '../shared/types'
@@ -297,6 +298,7 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
       <>
         {banner}
         <main className="guest-root fillroot">
+          <SlimBanner slim={ticket.slim} />
           <GroupedBriefForm
             linkKey={linkKey}
             ticket={ticket}
@@ -325,6 +327,7 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
             📨 复制给对方的 Agent
           </button>
         </div>
+        <SlimBanner slim={ticket.slim} />
         {/* 工单关闭后不能再修订说明（服务端 409 ticket_closed），入口随之隐藏 */}
         <Conversation
           ticket={ticket}

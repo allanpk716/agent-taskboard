@@ -481,7 +481,7 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 			panic(err)
 		}
 	}
-	atts, usage, err := a.attachmentProjection(r.Context(), full, viewer)
+	atts, usage, slim, err := a.attachmentProjection(r.Context(), full, viewer)
 	if err != nil {
 		panic(err)
 	}
@@ -519,7 +519,7 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 			a.fillDimensionOptions(r.Context(), &v.Brief.TemplateFields[i])
 		}
 	}
-	v.Attachments, v.Usage = atts, usage
+	v.Attachments, v.Usage, v.Slim = atts, usage, newSlimTicketView(slim)
 	writeJSON(w, http.StatusOK, v)
 }
 
@@ -962,6 +962,7 @@ type ticketView struct {
 	Brief         briefView          `json:"brief"`
 	Attachments   []attachmentView   `json:"attachments"`      // 已挂上的（#33）
 	Usage         attachmentUsage    `json:"attachment_usage"` // 含待用附件（#33）
+	Slim          slimTicketView     `json:"slim"`             // 附件瘦身汇总（#284）
 	Viewer        ticketViewerView   `json:"viewer"`
 	Timeline      []eventView        `json:"timeline"`
 	MyDraft       *draftView         `json:"my_draft"`
@@ -982,6 +983,28 @@ type attachmentView struct {
 	Size       int64  `json:"size"` // 字节数
 	URL        string `json:"url"`
 	AttachedTo string `json:"attached_to"` // 「说明」或「回复 N」
+	// 瘦身标记（#284）：slim_removed_at 存在表示附件文件已移出服务器；
+	// url 仍给出原位置，下载会得到 410 attachment_slimmed 与包名。
+	SlimRemovedAt   *time.Time `json:"slim_removed_at,omitempty"`
+	SlimPackageName string     `json:"slim_package_name,omitempty"`
+}
+
+// slimTicketView 是工单级瘦身汇总（#284）：由附件状态推导，不另存冗余标记。
+type slimTicketView struct {
+	RemovedCount  int        `json:"removed_count"`
+	LastRemovedAt *time.Time `json:"last_removed_at,omitempty"`
+	Packages      []string   `json:"packages"`
+	Status        string     `json:"status"` // none | partial | full
+}
+
+func newSlimTicketView(summary attachments.SlimSummary) slimTicketView {
+	v := slimTicketView{
+		RemovedCount: summary.RemovedCount, Packages: summary.Packages, Status: summary.Status,
+	}
+	if !summary.LastRemovedAt.IsZero() {
+		v.LastRemovedAt = &summary.LastRemovedAt
+	}
+	return v
 }
 
 // attachmentUsage 是附件用量回显（#33）：待用附件也计入 used。
@@ -1171,6 +1194,7 @@ func ticketMarkdownInput(full tickets.Full, viewer identity.Viewer, atts []attac
 		in.Attachments = append(in.Attachments, markdownview.Attachment{
 			Filename: att.Filename, URL: att.URL,
 			SizeLabel: sizeLabel(att.Size), AttachedTo: att.AttachedTo,
+			Slimmed: att.SlimRemovedAt != nil, SlimPackageName: att.SlimPackageName,
 		})
 	}
 	if full.TemplateDef != nil {
