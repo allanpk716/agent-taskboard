@@ -142,6 +142,7 @@ export function TicketCard({
   desktop,
   me,
   onLabelClick,
+  inbox,
 }: {
   item: TicketListItem
   href?: string
@@ -149,6 +150,15 @@ export function TicketCard({
   desktop?: boolean
   me?: { name: string }
   onLabelClick?: (label: string) => void
+  inbox?: {
+    phrase: string
+    time: string
+    timeTitle: string
+    timeIso: string
+    reasonClass: string
+    waiting?: boolean
+    showDetails?: boolean
+  }
 }) {
   const target = href ?? `/t/${item.number}`
   const creator = memberSummaryText(item.creator)
@@ -156,7 +166,9 @@ export function TicketCard({
   const mine = item.waiting_on.member === me?.name
   return (
     <a
-      className={`tcard${desktop ? ' pc-row' : ''}${selected ? ' selected' : ''}`}
+      className={`tcard${desktop ? ' pc-row' : ''}${selected ? ' selected' : ''}${inbox ? ' inbox-card' : ''}${
+        inbox?.waiting ? ' waiting-card waiting' : ''
+      }`}
       aria-current={selected ? 'true' : undefined}
       href={target}
       onClick={(e) => {
@@ -166,52 +178,118 @@ export function TicketCard({
     >
       {desktop ? (
         <>
-          <div className="pc-row-top">
-            <span className="badge kind">{item.kind === 'task' ? '任务' : '反馈'}</span>
-            <span className="pc-row-number">{item.number}</span>
-            <SlimBadge status={item.slim_status} />
-            <span className="pc-row-time">{fmtShort(item.updated_at)}</span>
-          </div>
-          <div className={`pc-row-title${item.unread ? ' unread' : ''}`}>
-            {item.unread && <span className="unread-dot" aria-hidden="true" />}
-            {item.title}
-          </div>
-          <div className={`pc-row-turn${mine ? ' mine' : ''}`}>
-            {item.status === 'closed' ? '已关闭' : turnLabel(item.waiting_on, mine)} · 指派{' '}
-            {assignee}
-            {item.assignee_deactivated && <DeactivatedBadge />}
-          </div>
-          <div className="pc-row-labels">
-            <LabelChips labels={item.labels} onToggle={onLabelClick} />
-          </div>
+          {inbox && <span className={`strip ${inbox.reasonClass}`} aria-hidden="true" />}
+          {inbox ? (
+            <>
+              <div className={`inbox-first-line${inbox.waiting ? ' waiting' : ''}`}>
+                <span className="inbox-phrase">{inbox.phrase}</span>
+                <time className="inbox-time" dateTime={inbox.timeIso} title={inbox.timeTitle}>
+                  {inbox.time}
+                </time>
+              </div>
+              <div className={`pc-row-title${item.unread ? ' unread' : ''}`}>
+                {item.unread && <span className="unread-dot" aria-label="未读" />}
+                <span>{item.title}</span>
+              </div>
+              {inbox.showDetails !== false && (
+                <>
+                  <div className="pc-row-meta">
+                    <span className="mono">{item.number}</span>
+                    <span className="sep">·</span>
+                    <span>{item.kind === 'task' ? '任务' : '反馈'}</span>
+                    <span className="sep">·</span>
+                    <span>发起人 {creator}</span>
+                    {item.assignee_deactivated && <DeactivatedBadge />}
+                  </div>
+                  <div className="pc-row-labels">
+                    <LabelChips labels={item.labels} onToggle={onLabelClick} />
+                  </div>
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="pc-row-top">
+                <span className="badge kind">{item.kind === 'task' ? '任务' : '反馈'}</span>
+                <span className="pc-row-number">{item.number}</span>
+                <SlimBadge status={item.slim_status} />
+                <span className="pc-row-time">{fmtShort(item.updated_at)}</span>
+              </div>
+              <div className={`pc-row-title${item.unread ? ' unread' : ''}`}>
+                {item.unread && <span className="unread-dot" aria-hidden="true" />}
+                {item.title}
+              </div>
+              <div className={`pc-row-turn${mine ? ' mine' : ''}`}>
+                {item.status === 'closed' ? '已关闭' : turnLabel(item.waiting_on, mine)} · 指派{' '}
+                {assignee}
+                {item.assignee_deactivated && <DeactivatedBadge />}
+              </div>
+              <div className="pc-row-labels">
+                <LabelChips labels={item.labels} onToggle={onLabelClick} />
+              </div>
+            </>
+          )}
         </>
       ) : (
         <>
-          <div className="tc-top">
-            <span className="badge kind">{item.kind === 'task' ? '任务' : '反馈'}</span>
-            <SlimBadge status={item.slim_status} />
-            {item.status === 'closed' ? (
-              <span className="badge closed">已关闭 · {closeReasonText(item.close_reason)}</span>
-            ) : (
-              <span className="hint">{turnLabel(item.waiting_on, mine)}</span>
-            )}
-            <span className="hint" style={{ marginLeft: 'auto' }}>
-              {fmtShort(item.updated_at)}
-            </span>
-          </div>
-          <div className={`tc-title${item.unread ? ' unread' : ''}`}>
-            {item.unread && <span className="unread-dot" aria-hidden="true" />}
-            {item.title}
-          </div>
-          <div className="tc-meta">
-            {item.number} · 发起人 {creator}
-            {item.creator_deactivated && <DeactivatedBadge />}
-            {' '}· 指派 {assignee}
-            {item.assignee_deactivated && <DeactivatedBadge />}
-          </div>
-          <div className="tc-foot">
-            <LabelChips labels={item.labels} onToggle={onLabelClick} />
-          </div>
+          {inbox ? (
+            <>
+              <span className={`strip ${inbox.reasonClass}`} aria-hidden="true" />
+              <div className={`inbox-first-line${inbox.waiting ? ' waiting' : ''}`}>
+                <span className="inbox-phrase">{inbox.phrase}</span>
+                <time className="inbox-time" dateTime={inbox.timeIso} title={inbox.timeTitle}>
+                  {inbox.time}
+                </time>
+              </div>
+              <div className={`tc-title${item.unread ? ' unread' : ''}`}>
+                {item.unread && <span className="unread-dot" aria-label="未读" />}
+                <span>{item.title}</span>
+              </div>
+              {inbox.showDetails !== false && (
+                <>
+                  <div className="tc-meta">
+                    <span className="mono">{item.number}</span>
+                    <span className="sep">·</span>
+                    <span>{item.kind === 'task' ? '任务' : '反馈'}</span>
+                    <span className="sep">·</span>
+                    <span>发起人 {creator}</span>
+                    {item.assignee_deactivated && <DeactivatedBadge />}
+                  </div>
+                  <div className="tc-foot">
+                    <LabelChips labels={item.labels} onToggle={onLabelClick} />
+                  </div>
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="tc-top">
+                <span className="badge kind">{item.kind === 'task' ? '任务' : '反馈'}</span>
+                <SlimBadge status={item.slim_status} />
+                {item.status === 'closed' ? (
+                  <span className="badge closed">已关闭 · {closeReasonText(item.close_reason)}</span>
+                ) : (
+                  <span className="hint">{turnLabel(item.waiting_on, mine)}</span>
+                )}
+                <span className="hint" style={{ marginLeft: 'auto' }}>
+                  {fmtShort(item.updated_at)}
+                </span>
+              </div>
+              <div className={`tc-title${item.unread ? ' unread' : ''}`}>
+                {item.unread && <span className="unread-dot" aria-hidden="true" />}
+                {item.title}
+              </div>
+              <div className="tc-meta">
+                {item.number} · 发起人 {creator}
+                {item.creator_deactivated && <DeactivatedBadge />}
+                {' '}· 指派 {assignee}
+                {item.assignee_deactivated && <DeactivatedBadge />}
+              </div>
+              <div className="tc-foot">
+                <LabelChips labels={item.labels} onToggle={onLabelClick} />
+              </div>
+            </>
+          )}
         </>
       )}
     </a>

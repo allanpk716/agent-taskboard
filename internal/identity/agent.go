@@ -250,6 +250,36 @@ func (m *Manager) ViewerFromAgentToken(ctx context.Context, token string) (Viewe
 	return Viewer{Kind: ViewerMember, Member: member, Agent: &agent}, nil
 }
 
+// ViewerFromAgentID 供短时效附件链接在下载时重新核对签发 Agent：
+// Agent token 或所属成员被停用后立即失效。
+func (m *Manager) ViewerFromAgentID(ctx context.Context, agentID int64) (Viewer, error) {
+	var (
+		agent       Agent
+		member      Member
+		isAdmin     int
+		revokedAt   sql.NullString
+		deactivated sql.NullString
+	)
+	err := m.db.QueryRowContext(ctx, `
+		SELECT t.id, t.name, t.draft_mode, t.revoked_at,
+		       m.id, m.username, m.name, m.is_admin, m.deactivated_at
+		FROM agent_tokens t JOIN members m ON m.id = t.member_id
+		WHERE t.id = ?`, agentID).
+		Scan(&agent.ID, &agent.Name, &agent.DraftMode, &revokedAt,
+			&member.ID, &member.Username, &member.Name, &isAdmin, &deactivated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Viewer{}, ErrInvalidCredentials
+	}
+	if err != nil {
+		return Viewer{}, err
+	}
+	if revokedAt.Valid || deactivated.Valid {
+		return Viewer{}, ErrInvalidCredentials
+	}
+	member.IsAdmin = isAdmin == 1
+	return Viewer{Kind: ViewerMember, Member: member, Agent: &agent}, nil
+}
+
 func (m *Manager) SetAgentTokenDraftMode(ctx context.Context, member Member, id int64, mode string) error {
 	if mode != "required" && mode != "direct" {
 		return ErrInvalidDraftMode

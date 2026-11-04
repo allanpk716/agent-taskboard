@@ -40,7 +40,7 @@ test('老访客链接换新地址前先确认再复制', async ({ page, request 
   expect(linkRes.status(), `创建访客链接失败：${await linkRes.text()}`).toBe(201)
   const link = (await linkRes.json()) as { id: number; url: string }
   const newURL = '/g/tbg-e2e-rotated-link'
-  const shareText = `检验科-张三：请打开新地址 ${newURL}`
+  const resetText = '检验科-张三：这张工单的链接已更换，旧链接已失效。请打开新地址，不要转发。'
 
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
   await page.setViewportSize({ width: 1440, height: 800 })
@@ -55,7 +55,14 @@ test('老访客链接换新地址前先确认再复制', async ({ page, request 
     await route.fulfill({ json: raw })
   })
   await page.route(`**/api/v1/tickets/${number}/guest-links/${link.id}/rotate-key`, async (route) => {
-    await route.fulfill({ json: { url: newURL, share_text: shareText } })
+    await route.fulfill({
+      json: {
+        url: newURL,
+        share_text: `检验科-张三：请打开新地址 ${newURL}`,
+        reset_text: resetText,
+        expires_at: '2026-11-15T09:00:00+08:00',
+      },
+    })
   })
   await page.route(`**/api/v1/tickets/${number}`, async (route) => {
     const response = await route.fetch()
@@ -76,27 +83,32 @@ test('老访客链接换新地址前先确认再复制', async ({ page, request 
   await page.goto(`/t/${number}?status=open`)
 
   const info = page.getByRole('region', { name: '工单信息', exact: true })
-  const cardButton = info.getByRole('button', { name: '换新地址并复制' })
+  const cardButton = info.getByRole('button', { name: '🔑 重置链接' })
   await expect(cardButton).toBeVisible()
   await expect(page.getByText('更换了访客链接「检验科-张三」的地址')).toBeVisible()
   await cardButton.click()
-  const confirm = page.getByRole('dialog', { name: '换新地址并复制？', exact: true })
-  await expect(confirm).toContainText('对方手里的旧地址会失效，请把新文案发过去')
-  await confirm.getByRole('button', { name: '换新地址并复制' }).click()
-  await expect(page.locator('#toast')).toHaveText('✓ 新转发文案已复制')
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(shareText)
+  const confirm = page.getByRole('dialog', { name: '🔑 重置访问' })
+  await expect(confirm).toContainText('旧链接地址立即失效，无法再打开')
+  await confirm.getByRole('button', { name: '确认重置链接' }).click()
+  const result = page.getByRole('dialog', { name: '重置链接完成' })
+  await result.getByRole('button', { name: '📋 一键复制' }).click()
+  await expect(result.locator('.reset-copy-button')).toHaveText('✓ 已复制')
+  await expect(page.locator('#toast')).toHaveText('已复制，可直接粘贴给对方')
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(resetText)
+  await result.getByRole('button', { name: '关闭' }).click()
 
   await info
     .locator('article.link-card', { hasText: '检验科-张三' })
     .getByRole('button', { name: '管理' })
     .click()
-  const dialogButton = page.locator('.modal').getByRole('button', { name: '换新地址并复制' })
+  const dialogButton = page.locator('.modal').getByRole('button', { name: '🔑 重置链接' })
   await expect(dialogButton).toBeVisible()
   await dialogButton.click()
-  const rotateConfirm = page.getByRole('dialog', { name: '换新地址并复制？', exact: true })
-  await expect(rotateConfirm).toContainText('对方手里的旧地址会失效，请把新文案发过去')
-  await rotateConfirm.getByRole('button', { name: '换新地址并复制' }).click()
-  await expect(page.locator('#toast')).toHaveText('✓ 新转发文案已复制')
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(shareText)
+  const rotateConfirm = page.getByRole('dialog', { name: '🔑 重置访问' })
+  await rotateConfirm.getByRole('button', { name: '确认重置链接' }).click()
+  const rotatedResult = page.getByRole('dialog', { name: '重置链接完成' })
+  await rotatedResult.getByRole('button', { name: '📋 一键复制' }).click()
+  await expect(rotatedResult.locator('.reset-copy-button')).toHaveText('✓ 已复制')
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(resetText)
   await page.unrouteAll({ behavior: 'ignoreErrors' })
 })

@@ -15,6 +15,7 @@ import (
 
 	accessrecords "github.com/allanpk716/agent-taskboard/internal/accessrecords"
 	"github.com/allanpk716/agent-taskboard/internal/archive"
+	"github.com/allanpk716/agent-taskboard/internal/attachmentlink"
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
@@ -35,28 +36,29 @@ const GuestDeviceCookieName = "tb_guest_device"
 
 // API 挂载 /api/v1 下的接口。
 type API struct {
-	ident          *identity.Manager
-	tickets        *tickets.Manager
-	templates      *templates.Manager
-	idem           *idempotency.Manager
-	atts           *attachments.Manager
-	backups        *ops.Backups
-	notifications  *notifications.Manager
-	accessRecords  *accessrecords.Manager
-	drafts         *drafts.Manager
-	storage        *storage.Service
-	archive        *archive.Service
-	slim           *slim.Service
-	cfg            config.Config
-	clk            clock.Clock
-	intakeUploads  *requestRateLimiter
-	clientOnlineMu sync.Mutex
-	clientOnline   map[int64]int
-	captchaSource  captcha.Source
-	captchaMu      sync.Mutex
-	captchas       map[string]captchaRecord
-	loginLimits    *requestRateLimiter
-	loginLocks     *loginLockStore
+	ident           *identity.Manager
+	tickets         *tickets.Manager
+	templates       *templates.Manager
+	idem            *idempotency.Manager
+	atts            *attachments.Manager
+	backups         *ops.Backups
+	notifications   *notifications.Manager
+	accessRecords   *accessrecords.Manager
+	drafts          *drafts.Manager
+	storage         *storage.Service
+	archive         *archive.Service
+	attachmentLinks *attachmentlink.Signer
+	slim            *slim.Service
+	cfg             config.Config
+	clk             clock.Clock
+	intakeUploads   *requestRateLimiter
+	clientOnlineMu  sync.Mutex
+	clientOnline    map[int64]int
+	captchaSource   captcha.Source
+	captchaMu       sync.Mutex
+	captchas        map[string]captchaRecord
+	loginLimits     *requestRateLimiter
+	loginLocks      *loginLockStore
 }
 
 // SetCaptchaSource 装配登录验证码来源（生产固定随机，测试可注入）。
@@ -106,6 +108,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/drafts", a.handleDrafts)
 	mux.HandleFunc("/api/v1/drafts/", a.handleDraft)
 	mux.HandleFunc("/api/v1/inbox", a.handleInbox)
+	mux.HandleFunc("/api/v1/inbox/waiting-on-counterparts", a.handleWaitingCounterparts)
 	mux.HandleFunc("/api/v1/notifications", a.handleNotifications)
 	mux.HandleFunc("/api/v1/notifications/unread", a.handleNotificationsUnread)
 	mux.HandleFunc("/api/v1/notifications/read", a.handleNotificationsRead)
@@ -118,6 +121,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/members/", a.handleMembersRef)
 	mux.HandleFunc("/api/v1/labels", a.handleLabelsRoot)
 	mux.HandleFunc("/api/v1/labels/", a.handleLabelsSub)
+	mux.HandleFunc("/api/v1/attachment-links/", a.handleAttachmentLink)
 	mux.HandleFunc("/api/v1/attachments/", a.handleAttachmentDownload)
 	mux.HandleFunc("/api/v1/templates", a.handleTemplatesRoot)
 	mux.HandleFunc("/api/v1/templates/", a.handleTemplateRef)

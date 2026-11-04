@@ -14,8 +14,9 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 - 所有写请求建议带 `Idempotency-Key`；地址、凭证用法和起手流程见公开说明书
   `GET /agent.md`（`/llms.txt` 是它的别名），完整接口清单见 `GET /api.md`；支持技能的
   Agent 还可公开读取 `GET /skills/agent-taskboard/SKILL.md` 并装成用户级技能
-  `agent-taskboard`（技能只指向说明书，不带凭证）。这些 Markdown
-  无需凭证，正文中的地址按 `[server] public_url`（未配置时按请求的 scheme/host）生成绝对地址。
+  `agent-taskboard`（技能只指向说明书，不带凭证）。OpenAPI 接口描述见 `GET /openapi.yaml`
+  （只收录成员 Agent 处理工单所需操作）。这些公开文档无需凭证，正文中的地址按
+  `[server] public_url`（未配置时按请求的 scheme/host）生成绝对地址。
 - 凭证四种，统一解析成一个 Viewer（`kind` 为 `member` / `guest`，成员带 `member` 与 `agent` / `client`，访客带 `guest_link`，见 spec「身份与凭证」模块）：
   1. **成员本人**：网页会话 cookie `tb_session`（HttpOnly + Secure + SameSite=Lax）。本人操作的唯一来源。
   2. **成员 Agent**：`Authorization: Bearer <Agent token>`，token 由 `POST /api/v1/me/agent-tokens` 签发（前缀 `tbag_`）。ADR 0003：用 token 的操作一律署名为「某成员 的 Agent · 名字」，永远不算本人。
@@ -245,7 +246,8 @@ spec 用户故事 84），没有 `inbox`：
 | `GET /api/v1/tickets/{id}/access-records` | 读取访问记录（仅可见范围内的成员与成员 Agent；只读，无删改接口）。 |
 | `POST /api/v1/tickets/{id}/attachments` | 上传一个待用附件（multipart；见「附件（#33）」）。 |
 | `GET /api/v1/attachments/{att_N}/{filename}` | 附件下载（与工单相同的凭证，或访客链接的签名地址）。 |
-| `GET /api/v1/inbox` | 收件箱（#36，仅成员）：轮到我且在我可见范围内的开启工单 + 原因 + `read_new`。 |
+| `GET /api/v1/inbox` | 收件箱（#36，仅成员）：轮到我且在我可见范围内的开启工单 + 原因 + 触发者 + 最后回复时间 + 往来对象。 |
+| `GET /api/v1/inbox/waiting-on-counterparts` | 「在等他」（仅成员）：我创建或指派、当前轮到往来对象的开启工单；不计入收件箱数量。 |
 
 （labels 在 #31；guest-links 见下。）
 
@@ -583,13 +585,25 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 ### GET /api/v1/inbox（仅成员）
 
 - 访客 403 `members_only`（决议 4），匿名 401。
-- 列出「现在轮到我」的**开启**工单，按工单序号；同一成员名下所有 Agent 共用一份
+- 列出「现在轮到我」的**开启**工单，按最后回复时间倒序；没有回复的按创建时间。
+  同一成员名下所有 Agent 共用一份
   （Agent 定时轮询它即可，不靠人口头转告）；未指派、轮到本部门的工单进入有效
   初筛人的收件箱。响应：`{member, count, items}`，每项：
   - `{number, title, role(assignee|creator|triager), reason, reason_code, since_seq,
-    read_new, read_full, kind, creator, assignee, labels, waiting_on, who, updated_at, unread}`。
+    read_new, read_full, kind, creator, assignee, labels, waiting_on, who, updated_at,
+    trigger, last_reply_at, created_at, counterpart, unread}`。
     `kind` 到 `updated_at` 是列表摘要字段，供网页收件箱栏使用；`assignee` 为作者结构，
     指派给已停用成员时其 `member.deactivated` 为 `true`（#115）。
+  - `trigger = {type, name, action?, member?, agent?}` 表示让工单进入收件箱的一方：
+    `type=member|guest|member_agent`；成员 Agent 同时带 `member` 与 `agent`，
+    `name` 使用「王工 的 Agent · 笔记本」这类完整署名。新指派/改派取执行指派的人；
+    访客未补全说明没有触发动作，仍取访客本身。`action` 只在 `reason_code=new`
+    时出现：`assigned`（此前没有指派人）/`reassigned`（改派，之前已有指派人）。
+  - `last_reply_at` 是最后一条回复时间；访客修订/补全说明也计入。没有回复时为
+    `null`，用 `created_at` 显示「创建于 …」。
+  - `counterpart = {type, name?, member?}` 是按术语「往来对象」的归组结果：
+    `member`（对方成员）、`guest`（访客）、`self`（自派自，仍带成员摘要）或
+    `pending_triage`（待初筛，不指向任何人）。归属只看身份，不随最后是谁回复而变。
   - `reason` 文案：新指派给你 / 已交付，待你验收 / 指派人回复了，待你答复 /
     发起人退回修改 / 发起人回复了 / 你的 Agent 回复了 / 访客回复了 /
     访客补全了说明 / 访客修订了说明 / 访客未补全说明。
@@ -601,6 +615,14 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   - `read_new` = `/api/v1/tickets/<编号>/timeline?after=<我在该单最后一条任意事件的 seq>`
     （不只回复——要读的是「上次我看过之后别人做了什么」）；`read_full` =
     `/api/v1/tickets/<编号>?format=markdown`。
+
+### GET /api/v1/inbox/waiting-on-counterparts（仅成员）
+
+- 「在等他」只读查询，供按往来对象分组视图展开弱化列表：列出我作为创建者或
+  指派人、当前轮到往来对象一方的**开启**工单。自派自和待初筛不算「等对方」。
+- 响应结构与收件箱同为 `{member, count, items}`，`items` 字段与收件箱项一致；
+  这里可忽略 `reason`。`count` 是「在等他」自己的数量，**不能**并入
+  `GET /api/v1/inbox` 的 `count`；这些工单不属于收件箱，也不触发通知。
 
 ## 查询与计数（#37）
 
@@ -903,9 +925,9 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 | `GET /api/v1/tickets/{id}/guest-links` | 列表（可见范围内的成员；**不回显密钥**，每项带 `share_text_available`）。 |
 | `DELETE /api/v1/tickets/{id}/guest-links/{链接id}` | 撤销（立即生效，幂等 204）。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/extend` | 延期：`{"valid_days"|"expires_at"}`（二选一，必填其一）。 |
-| `POST /api/v1/tickets/{id}/guest-links/{链接id}/reset-access-code` | 重置访问码：作废旧设备与新码，成功返回一次 `{access_code}`。 |
+| `POST /api/v1/tickets/{id}/guest-links/{链接id}/reset-access-code` | 重置访问码：作废旧设备与新码，成功返回一次 `{access_code, url, reset_text, expires_at}`。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/share-text` | 再次复制同一条有效链接的转发文案，成功 `{share_text}`；响应带 `Cache-Control: no-store`。 |
-| `POST /api/v1/tickets/{id}/guest-links/{链接id}/rotate-key` | 换新地址（一般用于老链接，也可用于疑似外泄），成功 `{url, share_text}`；旧地址立即失效，响应带 `Cache-Control: no-store`，支持 `Idempotency-Key`。 |
+| `POST /api/v1/tickets/{id}/guest-links/{链接id}/rotate-key` | 重置链接（一般用于老链接，也可用于疑似外泄），成功 `{url, share_text, reset_text, expires_at, access_code?}`；旧地址立即失效，已认领链接同时返回一次新访问码，响应带 `Cache-Control: no-store`，支持 `Idempotency-Key`。 |
 | `GET /api/v1/guest-link` | 用 `tbg_` 密钥读取认领页信息：邀请人、备注、有效期、可见范围提示；未认领时不返回工单内容。 |
 | `POST /api/v1/guest-links/claim` | 用 `tbg_` 密钥认领：`{"author_name"}`；成功返回一次 `device_token` 并写 `guest_link_claimed` 事件。 |
 | `POST /api/v1/guest-links/enter` | 用 `tbg_` 密钥凭访问码进入：`{"access_code"}`；成功返回一次新 `device_token`。 |
@@ -930,9 +952,12 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   `Cache-Control: no-store`。已撤销或已过期返回 409 `link_not_extendable`；上线前没有
   加密密钥的老链接返回 409 `share_text_unavailable`，hint 提示换一个新地址；服务端加密密钥本身不可用时仍返回这个错误码，但 hint 改为请管理员检查。复制本身不写时间线。
   服务端密钥文件丢失或换过后解不开的密文同样按老链接处理，返回同一个 409。
-- `POST …/rotate-key` 给同一条链接写入新的哈希与加密密钥并返回新的 `{url, share_text}`；
-  旧地址立即失效，新文案按当前标题、有效期和认领状态生成。备注、认领状态、设备凭证、
-  访问码、有效期与「可填写说明」权限都保持不变。一般只在 `share_text_available` 为 false 时
+- `POST …/rotate-key` 给同一条链接写入新的哈希与加密密钥并返回新的
+  `{url, share_text, reset_text, expires_at, access_code?}`；旧地址立即失效。
+  已认领链接同时删除全部设备凭证、重置访问码并在响应里一次性返回 `access_code`；
+  未认领链接尚无访问码，字段省略。`share_text` 保持常规转发文案语义，成员和前端应复制
+  `reset_text`（按新链接、新访问码、当前标题与有效期生成）。备注、认领状态、有效期与
+  「可填写说明」权限保持不变。一般只在 `share_text_available` 为 false 时
   使用（老链接或服务端加密密钥丢失）；链接疑似外泄时也可以换地址，但无论哪种情况都应先和成员确认。
   只限可见范围内、有 `manage_guest_links`
   能力的成员凭证（访客 403 `members_only`）；已撤销或已过期返回 409
@@ -1037,6 +1062,16 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 - 响应头：图片、PDF、`.txt`、`.log` 以 `inline` 返回，其余（含 HTML、SVG）一律
   `Content-Disposition: attachment`（RFC 5987 编码文件名）；所有附件响应都带
   `X-Content-Type-Options: nosniff`。
+
+### 成员 Agent 附件链接（GET /api/v1/attachment-links/{att_N}）
+
+- 仅成员 Agent（`tbag_` token）可调用；网页会话和访客返回 `403 agents_only`。调用者
+  必须能读附件所属工单，否则 `404`；pending 附件同样 `404`。
+- 返回 `{url, expires_at, mime, size, filename}`。`url` 指向现有附件下载路由并带
+  HMAC 签名，10 分钟有效，绑定这一个附件和签发它的成员 Agent；下载时不需要再带
+  token。Agent 被撤销或失去该工单读取权限后，链接立即失效。
+- 签名下载每次仍会重新核对签名、有效期、Agent 状态和工单权限，成功下载按该成员
+  Agent 写访问记录，响应头沿用上面的 inline/attachment 规则。
 
 - 仅成员的接口（建单、标签全套、关闭、重开、访客链接管理，以及 #35 起的反馈入口
   管理）对访客统一 403 `members_only`（决议 4）。

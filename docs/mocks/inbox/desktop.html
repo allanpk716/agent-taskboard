@@ -1,0 +1,645 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>收件箱 · 方案 A · 电脑端</title>
+  <style>
+    :root {
+      --blue: #2a6fdb;
+      --blue-dark: #24589f;
+      --green: #23a06b;
+      --guest: #22707a;
+      --back: #d98a2b;
+      --page: #eef1f6;
+      --line: #e2e6ee;
+      --text: #22304a;
+      --muted: #697386;
+      --faint: #7d8798;
+      --card: #fff;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--text);
+      font: 15px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+      overflow: hidden;
+    }
+    button { font: inherit; }
+    .shell {
+      display: flex;
+      height: 100vh;
+      width: 1440px;
+      margin: 0 auto;
+      background: var(--page);
+    }
+
+    /* 左侧窄导航 */
+    .rail {
+      width: 84px;
+      flex: none;
+      background: #fff;
+      border-right: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      padding: 14px 8px 10px;
+      z-index: 5;
+    }
+    .mark {
+      height: 38px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      background: var(--blue);
+      border-radius: 10px;
+      font-size: 18px;
+      font-weight: 800;
+      margin: 0 4px 15px;
+      letter-spacing: -1px;
+    }
+    .nav {
+      display: grid;
+      gap: 3px;
+    }
+    .nav a {
+      color: #55607a;
+      text-decoration: none;
+      border-radius: 8px;
+      padding: 9px 2px 7px;
+      display: grid;
+      justify-items: center;
+      gap: 2px;
+      font-size: 11.5px;
+      line-height: 1.25;
+      position: relative;
+    }
+    .nav .ico {
+      font-size: 18px;
+      line-height: 1;
+    }
+    .nav a:hover { background: #f2f5fa; color: var(--text); }
+    .nav a.on {
+      background: #e5edfb;
+      color: var(--blue-dark);
+      font-weight: 700;
+    }
+    .nav a.on::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 10px;
+      width: 3px;
+      height: 26px;
+      border-radius: 0 3px 3px 0;
+      background: var(--blue);
+    }
+    .nav .count {
+      position: absolute;
+      right: 9px;
+      top: 3px;
+      min-width: 17px;
+      height: 17px;
+      display: grid;
+      place-items: center;
+      padding: 0 4px;
+      border-radius: 9px;
+      background: #e5554f;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .me {
+      margin-top: auto;
+      border-top: 1px solid #edf0f5;
+      padding-top: 9px;
+      text-align: center;
+      color: var(--faint);
+      font-size: 11px;
+    }
+    .me .av {
+      width: 29px;
+      height: 29px;
+      margin: 0 auto 4px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: #22304a;
+      color: #fff;
+      font-weight: 700;
+    }
+
+    /* 中间收件箱列表 */
+    .inbox-pane {
+      width: 420px;
+      flex: none;
+      min-width: 0;
+      height: 100vh;
+      background: #f7f9fc;
+      border-right: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+    }
+    .inbox-head {
+      flex: none;
+      background: #fff;
+      border-bottom: 1px solid #e6eaf2;
+      padding: 15px 18px 14px;
+      z-index: 6;
+    }
+    .title-row {
+      display: flex;
+      align-items: baseline;
+      gap: 7px;
+      margin-bottom: 11px;
+    }
+    .title-row h1 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.25;
+      letter-spacing: -0.2px;
+    }
+    .title-row strong {
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .title-row .hint {
+      margin-left: auto;
+      color: #98a1b3;
+      font-size: 11.5px;
+    }
+    .seg {
+      display: inline-flex;
+      width: 100%;
+      padding: 2px;
+      border: 1px solid #d7dde8;
+      border-radius: 10px;
+      background: #f2f5fa;
+      gap: 2px;
+    }
+    .seg button {
+      flex: 1;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #55607a;
+      padding: 6px 10px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .seg button + button { margin-left: 0; }
+    .seg button[aria-selected="true"] {
+      background: #fff;
+      color: var(--blue-dark);
+      font-weight: 750;
+      box-shadow: 0 1px 3px rgba(20,30,50,.10);
+    }
+    .seg button:focus-visible, .wait-toggle:focus-visible, .ticket-card:focus-visible {
+      outline: 2px solid var(--blue);
+      outline-offset: 2px;
+    }
+    .list-scroll {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding: 12px 12px 24px;
+      scrollbar-color: #cbd4e0 transparent;
+      scrollbar-width: thin;
+    }
+    [hidden] { display: none !important; }
+
+    /* 按时间卡片 */
+    .stack { display: grid; gap: 9px; }
+    .ticket-card {
+      --reason: var(--blue);
+      position: relative;
+      display: block;
+      min-width: 0;
+      padding: 12px 14px 11px 18px;
+      background: var(--card);
+      color: inherit;
+      text-decoration: none;
+      border: 1px solid #e5eaf2;
+      border-radius: 12px;
+      box-shadow: 0 1px 2px rgba(20,30,50,.04);
+      transition: border-color .15s, box-shadow .15s, transform .15s;
+    }
+    .ticket-card:hover {
+      border-color: #cbd9f4;
+      box-shadow: 0 5px 14px rgba(20,30,50,.08);
+      transform: translateY(-1px);
+    }
+    .ticket-card::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 5px;
+      border-radius: 12px 0 0 12px;
+      background: var(--reason);
+    }
+    .reason-line {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .reason {
+      min-width: 0;
+      color: #1f2d47;
+      font-size: 13.5px;
+      font-weight: 800;
+      line-height: 1.38;
+    }
+    .last-time {
+      flex: none;
+      color: var(--faint);
+      font-size: 11.5px;
+      font-weight: 500;
+      white-space: nowrap;
+      cursor: help;
+    }
+    .ticket-title {
+      display: block;
+      min-width: 0;
+      margin: 0 0 7px;
+      color: #26354f;
+      font-size: 15px;
+      line-height: 1.48;
+      font-weight: 500;
+      overflow: visible;
+      white-space: normal;
+      word-break: normal;
+      overflow-wrap: anywhere;
+    }
+    .ticket-card.unread .ticket-title {
+      color: #17233a;
+      font-weight: 800;
+    }
+    .unread-dot {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      margin: 0 6px 2px 0;
+      border-radius: 50%;
+      background: var(--blue);
+      vertical-align: baseline;
+    }
+    .ticket-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      color: var(--faint);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .ticket-meta .sep { color: #c8cfdb; }
+    .kind {
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 8px;
+      background: #e8ecf7;
+      color: #4459a8;
+      font-size: 11.5px;
+      font-weight: 650;
+    }
+    .chip {
+      display: inline-block;
+      padding: 1px 8px;
+      border-radius: 9px;
+      background: #eef1f6;
+      color: #55607a;
+      font-size: 11.5px;
+      white-space: nowrap;
+    }
+    .c-blue { background: #e3ecfa; color: #2a5db0; }
+    .c-green { background: #e8f4ea; color: #24754b; }
+    .c-teal { background: #e6f2f3; color: #22707a; }
+
+    /* 按人分组与吸顶组头 */
+    .groups { display: grid; gap: 12px; }
+    .person-group {
+      background: transparent;
+    }
+    .group-head {
+      position: sticky;
+      top: 0;
+      z-index: 4;
+      display: grid;
+      grid-template-columns: 35px minmax(0,1fr) auto;
+      align-items: center;
+      gap: 9px;
+      min-height: 54px;
+      padding: 8px 9px;
+      background: rgba(247,249,252,.97);
+      border: 1px solid #e4e9f1;
+      border-radius: 11px;
+      box-shadow: 0 2px 8px rgba(20,30,50,.04);
+      backdrop-filter: blur(5px);
+    }
+    .group-avatar {
+      width: 35px;
+      height: 35px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: #e5edfb;
+      color: var(--blue-dark);
+      font-size: 14px;
+      font-weight: 800;
+    }
+    .group-avatar.visitor { background: #e6f2f3; color: var(--guest); }
+    .group-avatar.self { background: #22304a; color: #fff; }
+    .group-avatar.triage { background: #fff1d6; color: #a35f00; }
+    .group-name {
+      min-width: 0;
+      font-size: 15px;
+      font-weight: 800;
+      line-height: 1.3;
+    }
+    .group-counts {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+      white-space: nowrap;
+    }
+    .group-counts b { color: var(--blue-dark); font-weight: 750; }
+    .group-counts .wait-num { color: #7d8798; }
+    .group-body {
+      position: relative;
+      margin: 8px 0 0 8px;
+      padding-left: 11px;
+      display: grid;
+      gap: 9px;
+    }
+    .group-body::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 2px;
+      bottom: 6px;
+      width: 1px;
+      background: #d8dee9;
+    }
+    .wait-toggle {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 1px 0 0;
+      padding: 7px 10px;
+      border: 1px dashed #cfd6e2;
+      border-radius: 9px;
+      background: rgba(255,255,255,.72);
+      color: var(--muted);
+      font-size: 12.5px;
+      cursor: pointer;
+    }
+    .wait-toggle:hover { border-color: #b9c5d8; color: var(--text); background: #fff; }
+    .wait-toggle .caret {
+      transition: transform .15s;
+      color: #98a1b3;
+    }
+    .person-group.expanded .wait-toggle .caret { transform: rotate(90deg); }
+    .waiting-list { display: none; }
+    .person-group.expanded .waiting-list { display: grid; gap: 8px; }
+    .waiting-list .ticket-card {
+      background: #f3f5f8;
+      border-color: #e0e5ed;
+      box-shadow: none;
+      color: #59637a;
+    }
+    .waiting-list .ticket-card:hover { transform: none; border-color: #d4dbe7; box-shadow: none; }
+    .waiting-list .ticket-card::before { opacity: .55; }
+    .waiting-list .reason { color: #697386; font-weight: 700; }
+    .waiting-list .ticket-title { color: #5c667d; font-weight: 450; }
+    .waiting-list .ticket-meta { color: #828da0; }
+
+    /* 右侧详情占位 */
+    .detail {
+      flex: 1;
+      min-width: 0;
+      height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #fff;
+    }
+    .placeholder {
+      width: 290px;
+      text-align: center;
+      color: #98a1b3;
+    }
+    .placeholder .box {
+      width: 68px;
+      height: 54px;
+      margin: 0 auto 15px;
+      border: 2px solid #e3e8f0;
+      border-radius: 10px;
+      position: relative;
+      background: #fafbfd;
+    }
+    .placeholder .box::before,
+    .placeholder .box::after {
+      content: "";
+      position: absolute;
+      left: 10px;
+      right: 10px;
+      height: 2px;
+      border-radius: 2px;
+      background: #e3e8f0;
+    }
+    .placeholder .box::before { top: 13px; }
+    .placeholder .box::after { top: 24px; width: 32%; right: auto; }
+    .placeholder strong {
+      display: block;
+      color: #7d8798;
+      font-size: 15px;
+      font-weight: 650;
+    }
+    .placeholder span { display: block; margin-top: 5px; font-size: 12.5px; }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav class="rail" aria-label="主导航">
+      <div class="mark" aria-hidden="true">工</div>
+      <div class="nav">
+        <a href="#" class="on" aria-current="page"><span class="ico" aria-hidden="true">📥</span><span>收件箱</span><span class="count">9</span></a>
+        <a href="#"><span class="ico" aria-hidden="true">🗂️</span><span>全部工单</span></a>
+        <a href="#"><span class="ico" aria-hidden="true">👥</span><span>协作中</span></a>
+        <a href="#"><span class="ico" aria-hidden="true">👤</span><span>我的</span></a>
+      </div>
+      <div class="me"><div class="av" aria-hidden="true">陈</div>陈明</div>
+    </nav>
+
+    <main class="inbox-pane">
+      <header class="inbox-head">
+        <div class="title-row">
+          <h1>收件箱</h1><strong>9</strong><span class="hint">仅显示轮到我的工单</span>
+        </div>
+        <div class="seg" role="tablist" aria-label="收件箱视图">
+          <button type="button" id="timeTab" role="tab" aria-selected="true" aria-controls="timeView">按时间</button>
+          <button type="button" id="personTab" role="tab" aria-selected="false" aria-controls="personView">按人</button>
+        </div>
+      </header>
+
+      <div class="list-scroll">
+        <section id="timeView" class="stack" role="tabpanel" aria-label="按时间视图">
+          <a class="ticket-card unread" href="#" style="--reason:#2a6fdb">
+            <div class="reason-line"><span class="reason">张三 派给你</span><time class="last-time" datetime="2026-11-03T16:10" title="2026-11-03 16:10">20 分钟前</time></div>
+            <h2 class="ticket-title"><span class="unread-dot" aria-label="未读"></span>生产线 3 号机型在高温环境下连续运行 48 小时后出现间歇性通讯中断，需要排查固件看门狗和 CAN 总线重连逻辑并给出修复方案</h2>
+            <div class="ticket-meta"><span>T-0412</span><span class="sep">·</span><span class="kind">任务</span><span class="sep">·</span><span>发起人 张三</span><span class="chip c-blue">产品线/A100</span><span class="chip c-blue">系统/固件</span></div>
+          </a>
+          <a class="ticket-card unread" href="#" style="--reason:#23a06b">
+            <div class="reason-line"><span class="reason">李四 交付了，等你验收</span><time class="last-time" datetime="2026-11-03T15:30" title="2026-11-03 15:30">1 小时前</time></div>
+            <h2 class="ticket-title"><span class="unread-dot" aria-label="未读"></span>季度报表导出</h2>
+            <div class="ticket-meta"><span>T-0408</span><span class="sep">·</span><span class="kind">任务</span><span class="sep">·</span><span>发起人 陈明</span><span class="chip c-green">部门/质量</span></div>
+          </a>
+          <a class="ticket-card unread" href="#" style="--reason:#22707a">
+            <div class="reason-line"><span class="reason">访客 王五 回复了</span><time class="last-time" datetime="2026-11-03T14:30" title="2026-11-03 14:30">2 小时前</time></div>
+            <h2 class="ticket-title"><span class="unread-dot" aria-label="未读"></span>客户反馈：设备开机界面在英文系统下有一半文字显示为乱码，截图见附件，客户希望下个版本修复</h2>
+            <div class="ticket-meta"><span>T-0405</span><span class="sep">·</span><span class="kind">反馈</span><span class="sep">·</span><span>发起人 王五（访客）</span><span class="chip c-teal">系统/界面</span></div>
+          </a>
+          <a class="ticket-card" href="#" style="--reason:#2a6fdb">
+            <div class="reason-line"><span class="reason">张三 回复了，问你一个问题</span><time class="last-time" datetime="2026-11-03T11:30" title="2026-11-03 11:30">5 小时前</time></div>
+            <h2 class="ticket-title">更新内部部署手册</h2>
+            <div class="ticket-meta"><span>T-0401</span><span class="sep">·</span><span class="kind">任务</span><span class="sep">·</span><span>发起人 张三</span></div>
+          </a>
+          <a class="ticket-card" href="#" style="--reason:#2a6fdb">
+            <div class="reason-line"><span class="reason">你的 Agent 回复了</span><time class="last-time" datetime="2026-11-02T18:05" title="2026-11-02 18:05">昨天 18:05</time></div>
+            <h2 class="ticket-title">整理我自己的周计划模板</h2>
+            <div class="ticket-meta"><span>T-0398</span><span class="sep">·</span><span class="kind">任务</span><span class="sep">·</span><span>发起人 陈明</span></div>
+          </a>
+          <a class="ticket-card unread" href="#" style="--reason:#2a6fdb">
+            <div class="reason-line"><span class="reason">赵六 新建，等你初筛</span><time class="last-time" datetime="2026-11-02T10:12" title="2026-11-02 10:12">创建于 昨天 10:12</time></div>
+            <h2 class="ticket-title"><span class="unread-dot" aria-label="未读"></span>新员工账号批量开通</h2>
+            <div class="ticket-meta"><span>T-0396</span><span class="sep">·</span><span class="kind">任务</span><span class="sep">·</span><span>发起人 赵六</span></div>
+          </a>
+          <a class="ticket-card" href="#" style="--reason:#d98a2b">
+            <div class="reason-line"><span class="reason">李四 退回了，要你修改</span><time class="last-time" datetime="2026-11-01T16:30" title="2026-11-01 16:30">2 天前</time></div>
+            <h2 class="ticket-title">算法模块 v2 接口文档与旧版本的差异对照表，需要覆盖所有已废弃字段以及新增的置信度参数说明</h2>
+            <div class="ticket-meta"><span>T-0390</span><span class="sep">·</span><span class="kind">任务</span><span class="sep">·</span><span>发起人 李四</span><span class="chip c-blue">算法/检测</span></div>
+          </a>
+          <a class="ticket-card" href="#" style="--reason:#22707a">
+            <div class="reason-line"><span class="reason">访客 王五 还没填说明</span><time class="last-time" datetime="2026-10-31T16:30" title="2026-10-31 16:30">创建于 3 天前</time></div>
+            <h2 class="ticket-title">打印模块偶发卡纸</h2>
+            <div class="ticket-meta"><span>T-0385</span><span class="sep">·</span><span class="kind">反馈</span><span class="sep">·</span><span>发起人 陈明</span></div>
+          </a>
+          <a class="ticket-card" href="#" style="--reason:#2a6fdb">
+            <div class="reason-line"><span class="reason">李四 改派给你</span><time class="last-time" datetime="2026-10-30T16:30" title="2026-10-30 16:30">4 天前</time></div>
+            <h2 class="ticket-title">测试环境数据库迁移</h2>
+            <div class="ticket-meta"><span>T-0380</span><span class="sep">·</span><span class="kind">任务</span><span class="sep">·</span><span>发起人 张三</span><span class="chip c-teal">系统/后端</span></div>
+          </a>
+        </section>
+
+        <section id="personView" class="groups" role="tabpanel" aria-label="按人视图" hidden>
+          <article class="person-group">
+            <header class="group-head"><div class="group-avatar" aria-hidden="true">张</div><div class="group-name">张三</div><div class="group-counts">轮到我 <b>3</b> · <span class="wait-num">等他 1</span></div></header>
+            <div class="group-body">
+              <a class="ticket-card unread" href="#" style="--reason:#2a6fdb"><div class="reason-line"><span class="reason">张三 派给你</span><time class="last-time" datetime="2026-11-03T16:10" title="2026-11-03 16:10">20 分钟前</time></div><h2 class="ticket-title"><span class="unread-dot" aria-label="未读"></span>生产线 3 号机型在高温环境下连续运行 48 小时后出现间歇性通讯中断，需要排查固件看门狗和 CAN 总线重连逻辑并给出修复方案</h2><div class="ticket-meta"><span>T-0412</span><span class="sep">·</span><span class="kind">任务</span><span class="sep">·</span><span>发起人 张三</span><span class="chip c-blue">产品线/A100</span><span class="chip c-blue">系统/固件</span></div></a>
+              <a class="ticket-card" href="#" style="--reason:#2a6fdb"><div class="reason-line"><span class="reason">张三 回复了，问你一个问题</span><time class="last-time" datetime="2026-11-03T11:30" title="2026-11-03 11:30">5 小时前</time></div><h2 class="ticket-title">更新内部部署手册</h2><div class="ticket-meta"><span>T-0401</span><span class="sep">·</span><span class="kind">任务</span><span class="sep">·</span><span>发起人 张三</span></div></a>
+              <a class="ticket-card" href="#" style="--reason:#2a6fdb"><div class="reason-line"><span class="reason">李四 改派给你</span><time class="last-time" datetime="2026-10-30T16:30" title="2026-10-30 16:30">4 天前</time></div><h2 class="ticket-title">测试环境数据库迁移</h2><div class="ticket-meta"><span>T-0380</span><span class="sep">·</span><span class="kind">任务</span><span class="sep">·</span><span>发起人 张三</span><span class="chip c-teal">系统/后端</span></div></a>
+              <button class="wait-toggle" type="button" aria-expanded="false"><span>在等他 1 张</span><span class="caret" aria-hidden="true">▸</span></button>
+              <div class="waiting-list">
+                <a class="ticket-card" href="#" style="--reason:#2a6fdb"><div class="reason-line"><span class="reason">等 张三 处理</span><time class="last-time" datetime="2026-11-03T13:30" title="2026-11-03 13:30">3 小时前</time></div><h2 class="ticket-title">采购申请：示波器两台</h2><div class="ticket-meta"><span>T-0410</span><span class="sep">·</span><span class="kind">任务</span><span class="sep">·</span><span>发起人 陈明</span></div></a>
+              </div>
+            </div>
+          </article>
+
+          <article class="person-group" id="group-li-si">
+            <header class="group-head"><div class="group-avatar" aria-hidden="true">李</div><div class="group-name">李四</div><div class="group-counts">轮到我 <b>2</b> · <span class="wait-num">等他 3</span></div></header>
+            <div class="group-body">
+              <a class="ticket-card unread" href="#" style="--reason:#23a06b"><div class="reason-line"><span class="reason">李四 交付了，等你验收</span><time class="last-time" datetime="2026-11-03T15:30" title="2026-11-03 15:30">1 小时前</time></div><h2 class="ticket-title"><span class="unread-dot" aria-label="未读"></span>季度报表导出</h2><div class="ticket-meta"><span>T-0408</span><span class="sep">·</span><span class="kind">任务</span><span class="sep">·</span><span>发起人 陈明</span><span class="chip c-green">部门/质量</span></div></a>
+              <a class="ticket-card" href="#" style="--reason:#d98a2b"><div class="reason-line"><span class="reason">李四 退回了，要你修改</span><time class="last-time" datetime="2026-11-01T16:30" title="2026-11-01 16:30">2 天前</time></div><h2 class="ticket-title">算法模块 v2 接口文档与旧版本的差异对照表，需要覆盖所有已废弃字段以及新增的置信度参数说明</h2><div class="ticket-meta"><span>T-0390</span><span class="sep">·</span><span class="kind">任务</span><span class="sep">·</span><span>发起人 李四</span><span class="chip c-blue">算法/检测</span></div></a>
+              <button class="wait-toggle" type="button" aria-expanded="false"><span>在等他 3 张</span><span class="caret" aria-hidden="true">▸</span></button>
+              <div class="waiting-list">
+                <a class="ticket-card" href="#" id="card-T-0402" style="--reason:#2a6fdb"><div class="reason-line"><span class="reason">等 李四 处理</span><time class="last-time" datetime="2026-11-02T16:30" title="2026-11-02 16:30">1 天前</time></div><h2 class="ticket-title">质检规范 2026 版修订，请按新国标逐条核对并标注差异</h2><div class="ticket-meta"><span>T-0402</span><span class="sep">·</span><span class="kind">任务</span><span class="sep">·</span><span>发起人 陈明</span></div></a>
+                <a class="ticket-card" href="#" style="--reason:#2a6fdb"><div class="reason-line"><span class="reason">等 李四 处理</span><time class="last-time" datetime="2026-11-01T16:30" title="2026-11-01 16:30">2 天前</time></div><h2 class="ticket-title">会议室投影仪维修</h2><div class="ticket-meta"><span>T-0399</span><span class="sep">·</span><span class="kind">任务</span><span class="sep">·</span><span>发起人 陈明</span></div></a>
+                <a class="ticket-card" href="#" style="--reason:#2a6fdb"><div class="reason-line"><span class="reason">等 李四 处理</span><time class="last-time" datetime="2026-10-29T16:30" title="2026-10-29 16:30">5 天前</time></div><h2 class="ticket-title">版本发布说明</h2><div class="ticket-meta"><span>T-0377</span><span class="sep">·</span><span class="kind">任务</span><span class="sep">·</span><span>发起人 陈明</span></div></a>
+              </div>
+            </div>
+          </article>
+
+          <article class="person-group">
+            <header class="group-head"><div class="group-avatar visitor" aria-hidden="true">王</div><div class="group-name">王五（访客）</div><div class="group-counts">轮到我 <b>2</b> · <span class="wait-num">等他 1</span></div></header>
+            <div class="group-body">
+              <a class="ticket-card unread" href="#" style="--reason:#22707a"><div class="reason-line"><span class="reason">访客 王五 回复了</span><time class="last-time" datetime="2026-11-03T14:30" title="2026-11-03 14:30">2 小时前</time></div><h2 class="ticket-title"><span class="unread-dot" aria-label="未读"></span>客户反馈：设备开机界面在英文系统下有一半文字显示为乱码，截图见附件，客户希望下个版本修复</h2><div class="ticket-meta"><span>T-0405</span><span class="sep">·</span><span class="kind">反馈</span><span class="sep">·</span><span>发起人 王五（访客）</span><span class="chip c-teal">系统/界面</span></div></a>
+              <a class="ticket-card" href="#" style="--reason:#22707a"><div class="reason-line"><span class="reason">访客 王五 还没填说明</span><time class="last-time" datetime="2026-10-31T16:30" title="2026-10-31 16:30">创建于 3 天前</time></div><h2 class="ticket-title">打印模块偶发卡纸</h2><div class="ticket-meta"><span>T-0385</span><span class="sep">·</span><span class="kind">反馈</span><span class="sep">·</span><span>发起人 陈明</span></div></a>
+              <button class="wait-toggle" type="button" aria-expanded="false"><span>在等他 1 张</span><span class="caret" aria-hidden="true">▸</span></button>
+              <div class="waiting-list">
+                <a class="ticket-card" href="#" style="--reason:#22707a"><div class="reason-line"><span class="reason">等 访客 王五 回复</span><time class="last-time" datetime="2026-10-31T16:30" title="2026-10-31 16:30">3 天前</time></div><h2 class="ticket-title">客户现场问题补充信息</h2><div class="ticket-meta"><span>T-0388</span><span class="sep">·</span><span class="kind">反馈</span><span class="sep">·</span><span>发起人 陈明</span></div></a>
+              </div>
+            </div>
+          </article>
+
+          <article class="person-group">
+            <header class="group-head"><div class="group-avatar self" aria-hidden="true">陈</div><div class="group-name">我自己</div><div class="group-counts">轮到我 <b>1</b> · <span class="wait-num">等他 0</span></div></header>
+            <div class="group-body">
+              <a class="ticket-card" href="#" style="--reason:#2a6fdb"><div class="reason-line"><span class="reason">你的 Agent 回复了</span><time class="last-time" datetime="2026-11-02T18:05" title="2026-11-02 18:05">昨天 18:05</time></div><h2 class="ticket-title">整理我自己的周计划模板</h2><div class="ticket-meta"><span>T-0398</span><span class="sep">·</span><span class="kind">任务</span><span class="sep">·</span><span>发起人 陈明</span></div></a>
+            </div>
+          </article>
+
+          <article class="person-group">
+            <header class="group-head"><div class="group-avatar triage" aria-hidden="true">初</div><div class="group-name">待初筛</div><div class="group-counts">轮到我 <b>1</b> · <span class="wait-num">等他 0</span></div></header>
+            <div class="group-body">
+              <a class="ticket-card unread" href="#" style="--reason:#2a6fdb"><div class="reason-line"><span class="reason">赵六 新建，等你初筛</span><time class="last-time" datetime="2026-11-02T10:12" title="2026-11-02 10:12">创建于 昨天 10:12</time></div><h2 class="ticket-title"><span class="unread-dot" aria-label="未读"></span>新员工账号批量开通</h2><div class="ticket-meta"><span>T-0396</span><span class="sep">·</span><span class="kind">任务</span><span class="sep">·</span><span>发起人 赵六</span></div></a>
+            </div>
+          </article>
+        </section>
+      </div>
+    </main>
+
+    <section class="detail" aria-label="工单详情">
+      <div class="placeholder">
+        <div class="box" aria-hidden="true"></div>
+        <strong>选择一张工单查看</strong>
+        <span>左侧列表保持不动，详情会在这里展开</span>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    (function () {
+      var timeTab = document.getElementById('timeTab');
+      var personTab = document.getElementById('personTab');
+      var timeView = document.getElementById('timeView');
+      var personView = document.getElementById('personView');
+
+      function selectTab(selected) {
+        var isTime = selected === 'time';
+        timeTab.setAttribute('aria-selected', String(isTime));
+        personTab.setAttribute('aria-selected', String(!isTime));
+        timeTab.tabIndex = isTime ? 0 : -1;
+        personTab.tabIndex = isTime ? -1 : 0;
+        timeView.hidden = !isTime;
+        personView.hidden = isTime;
+      }
+
+      timeTab.addEventListener('click', function () { selectTab('time'); });
+      personTab.addEventListener('click', function () { selectTab('person'); });
+
+      document.querySelectorAll('.wait-toggle').forEach(function (button) {
+        button.addEventListener('click', function () {
+          var group = button.closest('.person-group');
+          var expanded = group.classList.toggle('expanded');
+          button.setAttribute('aria-expanded', String(expanded));
+        });
+      });
+
+      selectTab('time');
+    })();
+  </script>
+</body>
+</html>

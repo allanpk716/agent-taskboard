@@ -7,7 +7,7 @@ import { ADMIN, claimGuestLink, createTicket, login, loginAdmin, wang } from './
 // #42 的成员账号接口创建，见 helpers.ts）。
 
 // 1. 登录后进入成员网页：顶栏、底部标签栏（收件箱/工单/＋建单/工具/我的），
-//    收件箱按原因显示卡片（新指派给你）。
+//    收件箱按一句话显示是谁让工单轮到我。
 test('登录后进入成员网页，收件箱按原因显示卡片', async ({ page, request }) => {
   const number = await createTicket(request, { title: '收件箱原因卡片的工单', assignee: '管理员' })
   await login(page, ADMIN)
@@ -22,7 +22,7 @@ test('登录后进入成员网页，收件箱按原因显示卡片', async ({ pa
   // 卡片：原因色条 + 编号 + 标题；点击进入详情
   const card = page.locator('.tcard', { hasText: number })
   await expect(card).toBeVisible()
-  await expect(card.locator('.badge.reason')).toHaveText('新指派给你')
+  await expect(card.locator('.inbox-phrase')).toHaveText('管理员 派给你')
   await expect(card).toContainText('收件箱原因卡片的工单')
   await card.click()
   await expect(page).toHaveURL(new RegExp(`/t/${number}(\\?|$)`))
@@ -138,7 +138,7 @@ test('派活到验收：A建单指派B，B收件箱交付，A验收关闭', asyn
   await login(page, await wang())
   const card = page.locator('.tcard', { hasText: number })
   await expect(card).toBeVisible()
-  await expect(card.locator('.badge.reason')).toHaveText('新指派给你')
+  await expect(card.locator('.inbox-phrase')).toHaveText('管理员 派给你')
   await card.click()
 
   // 详情：写回复并标记为交付
@@ -159,7 +159,7 @@ test('派活到验收：A建单指派B，B收件箱交付，A验收关闭', asyn
   await login(page, ADMIN)
   const acceptCard = page.locator('.tcard', { hasText: number })
   await expect(acceptCard).toBeVisible()
-  await expect(acceptCard.locator('.badge.reason')).toHaveText('已交付，待你验收')
+  await expect(acceptCard.locator('.inbox-phrase')).toHaveText('王工 交付了，等你验收')
   await acceptCard.click()
 
   // 验收通过，以「完成」关闭
@@ -193,7 +193,7 @@ test('自派自任务：Agent交付后本人验收界面', async ({ page, reques
   await login(page, ADMIN)
   const card = page.locator('.tcard', { hasText: number })
   await expect(card).toBeVisible()
-  await expect(card.locator('.badge.reason')).toHaveText('已交付，待你验收')
+  await expect(card.locator('.inbox-phrase')).toHaveText('你的 Agent 交付了，等你验收')
   await card.click()
   await expect(page.locator('.badge.myturn')).toHaveText('● 现在轮到你（已交付，待你验收）')
   await expect(page.locator('.accept')).toContainText('已交付，等待你的验收')
@@ -490,6 +490,7 @@ test('访客链接支持指定日期创建与延期', async ({ page, request }) 
 
   // 撤销后不再提供延期（已失效，不能延期）
   await row.getByRole('button', { name: '撤销', exact: true }).click()
+  await page.getByRole('button', { name: '确认撤销链接' }).click()
   await expect(row).toContainText('已失效，不能延期')
   await expect(row.getByRole('button', { name: '延期 30 天' })).toHaveCount(0)
   await expect(row.getByRole('button', { name: '延期到该日' })).toHaveCount(0)

@@ -18,6 +18,7 @@ type notificationItemView struct {
 	Kind      string                  `json:"kind"`
 	Reason    string                  `json:"reason"`
 	Text      string                  `json:"text"`
+	Headline  string                  `json:"headline,omitempty"`
 	Event     notificationEventView   `json:"event"`
 	Summary   string                  `json:"summary"`
 	ReadNew   string                  `json:"read_new"`
@@ -229,8 +230,9 @@ func newNotificationItemView(it notifications.Item) notificationItemView {
 		readAt = formatTime(*it.ReadAt)
 	}
 	v := notificationItemView{
-		ID: it.ID, Kind: it.Kind, Reason: it.Reason, Text: it.Text, Summary: it.Summary,
-		URL: it.URL, CreatedAt: formatTime(it.CreatedAt),
+		ID: it.ID, Kind: it.Kind, Reason: it.Reason, Text: it.Text, Headline: it.Headline,
+		Summary: it.Summary,
+		URL:     it.URL, CreatedAt: formatTime(it.CreatedAt),
 	}
 	if it.Number != "" {
 		v.Ticket = &notificationTicketView{Number: it.Number, Title: it.Title, URL: "/t/" + it.Number}

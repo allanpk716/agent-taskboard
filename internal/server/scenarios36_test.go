@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
 )
@@ -19,15 +20,42 @@ type inboxBody struct {
 }
 
 type inboxItemBody struct {
-	Number   string      `json:"number"`
-	Title    string      `json:"title"`
-	Role     string      `json:"role"`
-	Reason   string      `json:"reason"`
-	SinceSeq *int64      `json:"since_seq"`
-	ReadNew  string      `json:"read_new"`
-	ReadFull string      `json:"read_full"`
-	Unread   bool        `json:"unread"`
-	Assignee *authorBody `json:"assignee"`
+	Number      string           `json:"number"`
+	Title       string           `json:"title"`
+	Role        string           `json:"role"`
+	Reason      string           `json:"reason"`
+	SinceSeq    *int64           `json:"since_seq"`
+	ReadNew     string           `json:"read_new"`
+	ReadFull    string           `json:"read_full"`
+	Trigger     inboxActorBody   `json:"trigger"`
+	LastReplyAt *time.Time       `json:"last_reply_at"`
+	CreatedAt   time.Time        `json:"created_at"`
+	Counterpart inboxCounterpart `json:"counterpart"`
+	Unread      bool             `json:"unread"`
+	Assignee    *authorBody      `json:"assignee"`
+}
+
+type inboxActorBody struct {
+	Type   string      `json:"type"`
+	Name   string      `json:"name"`
+	Member *memberBody `json:"member,omitempty"`
+	Agent  *agentBody  `json:"agent,omitempty"`
+}
+
+type memberBody struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+type agentBody struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+type inboxCounterpart struct {
+	Type   string      `json:"type"`
+	Name   *string     `json:"name,omitempty"`
+	Member *memberBody `json:"member,omitempty"`
 }
 
 func (b inboxBody) itemByNumber(number string) *inboxItemBody {

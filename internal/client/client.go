@@ -37,12 +37,13 @@ const (
 
 // Notification 是客户端对外展示的一条通知。
 type Notification struct {
-	ID      int64  `json:"id"`
-	Kind    string `json:"kind"`
-	Reason  string `json:"reason"`
-	Text    string `json:"text"`
-	Summary string `json:"summary"`
-	Ticket  struct {
+	ID       int64  `json:"id"`
+	Kind     string `json:"kind"`
+	Reason   string `json:"reason"`
+	Text     string `json:"text"`
+	Summary  string `json:"summary"`
+	Headline string `json:"headline,omitempty"`
+	Ticket   struct {
 		Number string `json:"number"`
 		Title  string `json:"title"`
 		URL    string `json:"url"`

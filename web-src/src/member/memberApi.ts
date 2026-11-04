@@ -10,6 +10,7 @@ import type {
   DraftView,
   TicketView,
 } from '../shared/types'
+import type { InboxActor, InboxCounterpart } from './inboxText'
 
 export type { Collaborator } from '../shared/types'
 
@@ -36,6 +37,10 @@ export interface InboxItem {
   waiting_on: string
   who: string
   updated_at: string
+  trigger: InboxActor
+  last_reply_at: string | null
+  created_at: string
+  counterpart: InboxCounterpart
   unread: boolean
 }
 
@@ -136,6 +141,10 @@ export async function markDraftsIntroSeen(): Promise<void> {
 
 export async function fetchInbox(): Promise<InboxResponse> {
   return api('/api/v1/inbox')
+}
+
+export async function fetchWaitingOnCounterparts(): Promise<InboxResponse> {
+  return api('/api/v1/inbox/waiting-on-counterparts')
 }
 
 export async function fetchDrafts(): Promise<{ count: number; drafts: DraftView[] }> {
@@ -762,7 +771,13 @@ export async function rotateGuestLinkKey(
   number: string,
   id: number,
   idemKey: string = crypto.randomUUID(),
-): Promise<{ url: string; share_text: string }> {
+): Promise<{
+  url: string
+  share_text: string
+  reset_text: string
+  access_code?: string
+  expires_at: string
+}> {
   return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}/rotate-key`, {
     method: 'POST',
     idempotencyKey: idemKey,
@@ -776,7 +791,12 @@ export async function revokeGuestLink(number: string, id: number): Promise<void>
 export async function resetGuestAccessCode(
   number: string,
   id: number,
-): Promise<{ access_code: string }> {
+): Promise<{
+  access_code: string
+  url: string
+  reset_text: string
+  expires_at: string
+}> {
   return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}/reset-access-code`, {
     method: 'POST',
   })

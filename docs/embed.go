@@ -5,3 +5,6 @@ import _ "embed"
 
 //go:embed api.md
 var APIMarkdown string
+
+//go:embed openapi.yaml
+var OpenAPIYAML string

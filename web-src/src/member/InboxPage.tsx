@@ -4,11 +4,18 @@
 // 的开启工单，未读在前；侧栏/底栏角标仍只算「轮到我」。
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
-import { fetchInbox, reasonClass, type InboxItem, type InboxResponse } from './memberApi'
-import { DeactivatedBadge } from '../shared/widgets'
+import { fetchInbox, fetchWaitingOnCounterparts, type InboxItem, type InboxResponse } from './memberApi'
 import { nav, useInvalidate, useLocationSearch } from './ui'
 import { TicketCard, ticketLabelFilterPath, type TicketListItem } from './TicketsPage'
 import { parsePasteLink } from './pasteLink'
+import {
+  inboxCounterpartName,
+  inboxActivityTime,
+  inboxPhrase,
+  inboxReasonClass,
+  waitingOnCounterpartPhrase,
+  type InboxCounterpart,
+} from './inboxText'
 
 function inboxDetailPath(number: string, search: string): string {
   const params = new URLSearchParams(search)
@@ -17,6 +24,16 @@ function inboxDetailPath(number: string, search: string): string {
 }
 
 type InboxMode = 'mine' | 'guest' | 'collab'
+type InboxView = 'time' | 'person'
+const inboxViewKey = 'tb:inbox-view'
+
+function readInboxView(): InboxView {
+  try {
+    return localStorage.getItem(inboxViewKey) === 'person' ? 'person' : 'time'
+  } catch {
+    return 'time'
+  }
+}
 
 interface CollaboratingResponse {
   total: number
@@ -63,6 +80,174 @@ function sortCollaborating(items: TicketListItem[]): TicketListItem[] {
   })
 }
 
+function inboxSearch(item: InboxItem, q: string): boolean {
+  return !q || item.title.includes(q) || item.number.includes(q) || item.labels.some((l) => l.includes(q))
+}
+
+function counterpartKey(counterpart: InboxCounterpart): string {
+  switch (counterpart.type) {
+    case 'guest':
+      return `guest:${counterpart.name ?? ''}`
+    case 'self':
+      return 'self'
+    case 'pending_triage':
+      return 'pending-triage'
+    default:
+      return `member:${counterpart.member?.id ?? counterpart.member?.name ?? counterpart.name ?? ''}`
+  }
+}
+
+function activityTimestamp(item: InboxItem): number {
+  return Date.parse(item.last_reply_at ?? item.created_at)
+}
+
+function groupInbox(items: InboxItem[], waiting: InboxItem[]) {
+  const groups = new Map<
+    string,
+    { key: string; name: string; avatar: string; avatarClass: string; mine: InboxItem[]; waiting: InboxItem[] }
+  >()
+  const groupOf = (item: InboxItem) => {
+    const key = counterpartKey(item.counterpart)
+    if (!groups.has(key)) {
+      const name = inboxCounterpartName(item.counterpart)
+      groups.set(key, {
+        key,
+        name,
+        avatar:
+          item.counterpart.type === 'pending_triage'
+            ? '筛'
+            : item.counterpart.type === 'self'
+              ? '我'
+              : name.slice(0, 1),
+        avatarClass:
+          item.counterpart.type === 'guest'
+            ? ' visitor'
+            : item.counterpart.type === 'self'
+              ? ' self'
+              : item.counterpart.type === 'pending_triage'
+                ? ' triage'
+                : '',
+        mine: [],
+        waiting: [],
+      })
+    }
+    return groups.get(key)!
+  }
+  for (const item of items) groupOf(item).mine.push(item)
+  for (const item of waiting) groupOf(item).waiting.push(item)
+  return [...groups.values()]
+    .sort((a, b) => {
+      const latest = (group: typeof a) =>
+        Math.max(...group.mine.map(activityTimestamp), ...group.waiting.map(activityTimestamp))
+      return latest(b) - latest(a)
+    })
+}
+
+function asTicketListItem(it: InboxItem): TicketListItem {
+  return {
+    ...it,
+    seq: 0,
+    status: 'open',
+    creator: it.creator,
+    assignee: it.assignee?.member?.name ?? null,
+    assignee_deactivated: it.assignee?.member?.deactivated,
+    waiting_on: { party: '', member: it.who || null, text: it.waiting_on, reason: it.reason },
+  }
+}
+
+function inboxCardInfo(it: InboxItem, me?: { name: string }, waiting = false) {
+  const activity = inboxActivityTime(it)
+  return {
+    phrase: waiting ? waitingOnCounterpartPhrase(it) : inboxPhrase(it, me),
+    time: activity.label,
+    timeTitle: activity.full,
+    timeIso: activity.iso,
+    reasonClass: waiting ? 'new' : inboxReasonClass(it.reason_code),
+    waiting,
+    showDetails: !waiting,
+  }
+}
+
+function InboxGroups({
+  items,
+  waiting,
+  me,
+  search,
+  selected,
+  desktop,
+  expanded,
+  onToggle,
+}: {
+  items: InboxItem[]
+  waiting: InboxItem[]
+  me?: { name: string }
+  search: string
+  selected?: string
+  desktop?: boolean
+  expanded: Set<string>
+  onToggle: (key: string) => void
+}) {
+  const groups = groupInbox(items, waiting)
+  return (
+    <div className="inbox-person-view">
+      {groups.map((group) => (
+        <section className="person-group" key={group.key} aria-label={group.name}>
+          <header className="group-head">
+            <span className={`group-avatar${group.avatarClass}`} aria-hidden="true">
+              {group.avatar}
+            </span>
+            <span className="group-name">{group.name}</span>
+            <span className="group-counts">
+              轮到我 {group.mine.length} · 等他 {group.waiting.length}
+            </span>
+          </header>
+          <div className="group-body">
+            {group.mine.map((it) => (
+              <TicketCard
+                key={it.number}
+                item={asTicketListItem(it)}
+                desktop={desktop}
+                me={me}
+                selected={selected === it.number}
+                href={inboxDetailPath(it.number, search)}
+                inbox={inboxCardInfo(it, me)}
+                onLabelClick={(label) => nav(ticketLabelFilterPath(label))}
+              />
+            ))}
+          </div>
+          {group.waiting.length > 0 && (
+            <>
+              <button
+                type="button"
+                className="wait-toggle"
+                aria-expanded={expanded.has(group.key)}
+                aria-controls={`${group.key}-waiting`}
+                onClick={() => onToggle(group.key)}
+              >
+                <span>在等他 {group.waiting.length} 张</span>
+                <span className="arrow" aria-hidden="true">
+                  ▸
+                </span>
+              </button>
+              <div className="waiting-list" id={`${group.key}-waiting`} hidden={!expanded.has(group.key)}>
+                {group.waiting.map((it) => (
+                  <TicketCard
+                    key={it.number}
+                    item={asTicketListItem(it)}
+                    desktop={desktop}
+                    href={inboxDetailPath(it.number, search)}
+                    inbox={inboxCardInfo(it, me, true)}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </section>
+      ))}
+    </div>
+  )
+}
+
 export function InboxPage({
   desktop,
   selected,
@@ -74,8 +259,10 @@ export function InboxPage({
 }) {
   const search = useLocationSearch()
   const [data, setData] = useState<InboxResponse | null>(null)
+  const [waitingData, setWaitingData] = useState<InboxResponse | null>(null)
   const [collab, setCollab] = useState<CollaboratingResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [waitingError, setWaitingError] = useState<string | null>(null)
   const [collabError, setCollabError] = useState<string | null>(null)
   const [pasteOpen, setPasteOpen] = useState(false)
   const [pasteValue, setPasteValue] = useState('')
@@ -84,6 +271,8 @@ export function InboxPage({
   const modeParam = params.get('inbox')
   const mode: InboxMode = modeParam === 'collab' ? 'collab' : modeParam === 'guest' ? 'guest' : 'mine'
   const q = params.get('q') ?? ''
+  const [view, setView] = useState<InboxView>(readInboxView)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
 
   const load = useCallback(async () => {
     // 两个分页各自读取：一边失败不影响另一边展示。
@@ -93,6 +282,12 @@ export function InboxPage({
         setError(null)
       })
       .catch((e: any) => setError(e?.message ?? '读取收件箱失败'))
+    void fetchWaitingOnCounterparts()
+      .then((body) => {
+        setWaitingData(body)
+        setWaitingError(null)
+      })
+      .catch((e: any) => setWaitingError(e?.message ?? '读取在等他失败'))
     // 复用列表接口的 collaborator=me + status=open；limit 取上限，翻页场景
     // （超过 200 张协作工单）按更新时间倒序取最前面的即可。
     void api('/api/v1/tickets?collaborator=me&status=open&sort=-updated&limit=200')
@@ -108,6 +303,26 @@ export function InboxPage({
   }, [load])
   useInvalidate(load)
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(inboxViewKey, view)
+    } catch {}
+  }, [view])
+
+  useEffect(() => {
+    const head = document.querySelector('.b-top')
+    if (!head) return
+    const syncOffset = () => {
+      document.documentElement.style.setProperty(
+        '--inbox-sticky-top',
+        `${Math.max(0, head.getBoundingClientRect().bottom)}px`,
+      )
+    }
+    syncOffset()
+    window.addEventListener('resize', syncOffset)
+    return () => window.removeEventListener('resize', syncOffset)
+  }, [mode, view])
+
   function updateInbox(patch: Record<string, string>) {
     const params = new URLSearchParams(search)
     for (const [key, value] of Object.entries(patch)) params.set(key, value)
@@ -117,6 +332,16 @@ export function InboxPage({
   const collaborating = sortCollaborating(collab?.items ?? [])
   const collaboratingUnread = collaborating.filter((it) => it.unread).length
   const collaboratingLabel = collaboratingUnread > 0 ? `协作中 · ${collaboratingUnread}` : '协作中'
+  const mobileInboxItems = data?.items ?? []
+
+  function toggleWaitingGroup(key: string) {
+    setExpandedGroups((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   function recognizePastedText(text: string) {
     const result = parsePasteLink(text)
@@ -191,14 +416,15 @@ export function InboxPage({
     const collabShown = q
       ? collaborating.filter((it) => it.title.includes(q) || it.number.includes(q) || it.labels.some((l) => l.includes(q)))
       : collaborating
-    const asCardItem = (it: InboxItem) => ({
-      ...it,
-      seq: 0,
-      status: 'open',
-      creator: it.creator,
-      assignee: it.assignee?.member?.name ?? null,
-      waiting_on: { party: '', member: it.who || null, text: it.waiting_on, reason: it.reason },
-    })
+    const asCardItem = (it: InboxItem) => asTicketListItem(it)
+    const asInboxCard = (it: InboxItem) => inboxCardInfo(it, me)
+    const personWaiting = (waitingData?.items ?? []).filter((it) => inboxSearch(it, q))
+    const showPersonGroups = view === 'person' && mode === 'mine'
+    const showEmptyInbox =
+      !error &&
+      data &&
+      shown.length === 0 &&
+      !(showPersonGroups && (!waitingData || personWaiting.length > 0))
     return (
       <div className="pc-list-pane inbox" data-testid="inbox-list-pane">
         <header className="pc-list-head">
@@ -220,6 +446,26 @@ export function InboxPage({
             }}
           />
         </header>
+        {mode === 'mine' && (
+          <div className="inbox-view-switch" role="tablist" aria-label="收件箱视图">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === 'time'}
+              onClick={() => setView('time')}
+            >
+              按时间
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={view === 'person'}
+              onClick={() => setView('person')}
+            >
+              按人
+            </button>
+          </div>
+        )}
         {pasteFallback}
         <div className="pc-filter-row">
           <button
@@ -247,22 +493,37 @@ export function InboxPage({
             {collaboratingLabel}
           </button>
         </div>
-        <div className="pc-list-scroll">
+        <div className={`pc-list-scroll${view === 'person' && mode === 'mine' ? ' inbox-person-scroll' : ''}`}>
           {error && <div className="ecard">{error}</div>}
+          {view === 'person' && waitingError && <div className="ecard">{waitingError}</div>}
           {mode !== 'collab' ? (
             <>
-              {!error && shown.length === 0 && data && <div className="ecard">收件箱是空的。</div>}
-              {shown.map((it) => (
-                <TicketCard
-                  key={it.number}
-                  item={asCardItem(it)}
-                  desktop
+              {showEmptyInbox && <div className="ecard">收件箱是空的。</div>}
+              {showPersonGroups ? (
+                <InboxGroups
+                  items={shown}
+                  waiting={personWaiting}
                   me={me}
-                  selected={selected === it.number}
-                  href={inboxDetailPath(it.number, search)}
-                  onLabelClick={(label) => nav(ticketLabelFilterPath(label))}
+                  search={search}
+                  selected={selected}
+                  desktop
+                  expanded={expandedGroups}
+                  onToggle={toggleWaitingGroup}
                 />
-              ))}
+              ) : (
+                shown.map((it) => (
+                  <TicketCard
+                    key={it.number}
+                    item={asCardItem(it)}
+                    desktop
+                    me={me}
+                    inbox={asInboxCard(it)}
+                    selected={selected === it.number}
+                    href={inboxDetailPath(it.number, search)}
+                    onLabelClick={(label) => nav(ticketLabelFilterPath(label))}
+                  />
+                ))
+              )}
             </>
           ) : (
             <>
@@ -335,6 +596,26 @@ export function InboxPage({
           {collaboratingLabel}
         </button>
       </div>
+      {mode === 'mine' && (
+        <div className="inbox-view-switch mobile" role="tablist" aria-label="收件箱视图">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === 'time'}
+            onClick={() => setView('time')}
+          >
+            按时间
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={view === 'person'}
+            onClick={() => setView('person')}
+          >
+            按人
+          </button>
+        </div>
+      )}
       {mode === 'collab' ? (
         <>
           <div className="b-note">你作为协作者（抄送）跟进的开启工单。</div>
@@ -370,36 +651,36 @@ export function InboxPage({
       ) : (
         <>
           <div className="b-note">现在轮到你处理的工单。</div>
-          {(data?.items ?? []).length === 0 ? (
+          {view === 'person' && waitingError && <div className="ecard">{waitingError}</div>}
+          {mobileInboxItems.length === 0 &&
+          !(
+            view === 'person' &&
+            mode === 'mine' &&
+            (!waitingData || (waitingData.items ?? []).length > 0)
+          ) ? (
             <div className="ecard">收件箱是空的。</div>
           ) : (
-            (data?.items ?? []).map((it) => (
-              <a
-                key={it.number}
-                className="tcard"
-                href={`/t/${it.number}`}
-                onClick={(e) => {
-                  e.preventDefault()
-                  nav(`/t/${it.number}?list=inbox`)
-                }}
-              >
-                <span className={`strip ${reasonClass(it.reason)}`} aria-hidden="true" />
-                <div className="tc-top">
-                  <span className="badge reason">{it.reason}</span>
-                  <span className="hint">
-                    {it.role === 'assignee' ? '我是指派人' : it.role === 'triager' ? '我是初筛人' : '我是发起人'}
-                  </span>
-                </div>
-                <div className={`tc-title${it.unread ? ' unread' : ''}`}>
-                  {it.unread && <span className="unread-dot" aria-hidden="true" />}
-                  {it.title}
-                </div>
-                <div className="tc-meta">
-                  {it.number}
-                  {it.assignee?.member?.deactivated && <DeactivatedBadge />}
-                </div>
-              </a>
-            ))
+            view === 'person' && mode === 'mine' ? (
+              <InboxGroups
+                items={mobileInboxItems}
+                waiting={waitingData?.items ?? []}
+                me={me}
+                search={search}
+                expanded={expandedGroups}
+                onToggle={toggleWaitingGroup}
+              />
+            ) : (
+              mobileInboxItems.map((it) => (
+                <TicketCard
+                  key={it.number}
+                  item={asTicketListItem(it)}
+                  me={me}
+                  href={inboxDetailPath(it.number, search)}
+                  inbox={inboxCardInfo(it, me)}
+                  onLabelClick={(label) => nav(ticketLabelFilterPath(label))}
+                />
+              ))
+            )
           )}
         </>
       )}

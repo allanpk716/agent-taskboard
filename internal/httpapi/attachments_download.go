@@ -15,6 +15,7 @@ import (
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
 
@@ -41,23 +42,36 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 			"附件引用从上传响应或工单读取接口拿")
 		return
 	}
-	viewer, ok := a.viewerFromRequest(w, r)
-	if !ok {
-		return
+	var viewer identity.Viewer
+	var ok bool
+	if r.URL.Query().Get("sig") != "" && !requestHasCredential(r) {
+		viewer, ok = a.viewerFromSignedAttachment(w, r, ref)
+		if !ok {
+			return
+		}
+	} else {
+		viewer, ok = a.viewerFromRequest(w, r)
+		if !ok {
+			return
+		}
 	}
 	_, err = a.tickets.ForViewer(r.Context(), viewer, strconv.FormatInt(att.TicketSeq, 10))
-	var invisible *tickets.TicketInvisibleError
-	switch {
-	case errors.As(err, &invisible):
-		if err := a.accessRecords.RecordDenied(r.Context(), invisible.Seq, invisible.Viewer, att); err != nil {
-			panic(err)
-		}
-		WriteError(w, http.StatusNotFound, CodeAttachmentNotFound, "没有这个附件",
-			"附件引用从上传响应或工单读取接口拿")
-	case err != nil:
-		a.writeTicketError(w, r, att.Ref(), err)
-	}
 	if err != nil {
+		if r.URL.Query().Get("sig") != "" && !requestHasCredential(r) {
+			a.writeUnauthenticatedAttachment(w, r)
+			return
+		}
+		var invisible *tickets.TicketInvisibleError
+		switch {
+		case errors.As(err, &invisible):
+			if err := a.accessRecords.RecordDenied(r.Context(), invisible.Seq, invisible.Viewer, att); err != nil {
+				panic(err)
+			}
+			WriteError(w, http.StatusNotFound, CodeAttachmentNotFound, "没有这个附件",
+				"附件引用从上传响应或工单读取接口拿")
+		case err != nil:
+			a.writeTicketError(w, r, att.Ref(), err)
+		}
 		return
 	}
 	draftOwner := att.State == "pending" && att.DraftID != 0 &&
@@ -91,13 +105,6 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 	if r.Method == http.MethodGet {
-		viewer, ok := viewerFromContext(r.Context())
-		if !ok {
-			viewer, ok = a.viewerFromRequest(w, r)
-			if !ok {
-				return
-			}
-		}
 		if err := a.accessRecords.RecordDownload(r.Context(), att, viewer); err != nil {
 			panic(err)
 		}
@@ -118,6 +125,17 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(content)
+}
+
+func requestHasCredential(r *http.Request) bool {
+	if _, ok := bearerToken(r); ok {
+		return true
+	}
+	if cookie, err := r.Cookie(SessionCookieName); err == nil && cookie.Value != "" {
+		return true
+	}
+	cookie, err := r.Cookie(GuestDeviceCookieName)
+	return err == nil && cookie.Value != ""
 }
 
 // contentTypeOf 按扩展名给 Content-Type；文本类补 charset，未知的用
