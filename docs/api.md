@@ -246,7 +246,8 @@ spec 用户故事 84），没有 `inbox`：
 | `GET /api/v1/tickets/{id}/access-records` | 读取访问记录（仅可见范围内的成员与成员 Agent；只读，无删改接口）。 |
 | `POST /api/v1/tickets/{id}/attachments` | 上传一个待用附件（multipart；见「附件（#33）」）。 |
 | `GET /api/v1/attachments/{att_N}/{filename}` | 附件下载（与工单相同的凭证，或访客链接的签名地址）。 |
-| `GET /api/v1/inbox` | 收件箱（#36，仅成员）：轮到我且在我可见范围内的开启工单 + 原因 + `read_new`。 |
+| `GET /api/v1/inbox` | 收件箱（#36，仅成员）：轮到我且在我可见范围内的开启工单 + 原因 + 触发者 + 最后回复时间 + 往来对象。 |
+| `GET /api/v1/inbox/waiting-on-counterparts` | 「在等他」（仅成员）：我创建或指派、当前轮到往来对象的开启工单；不计入收件箱数量。 |
 
 （labels 在 #31；guest-links 见下。）
 
@@ -584,13 +585,25 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 ### GET /api/v1/inbox（仅成员）
 
 - 访客 403 `members_only`（决议 4），匿名 401。
-- 列出「现在轮到我」的**开启**工单，按工单序号；同一成员名下所有 Agent 共用一份
+- 列出「现在轮到我」的**开启**工单，按最后回复时间倒序；没有回复的按创建时间。
+  同一成员名下所有 Agent 共用一份
   （Agent 定时轮询它即可，不靠人口头转告）；未指派、轮到本部门的工单进入有效
   初筛人的收件箱。响应：`{member, count, items}`，每项：
   - `{number, title, role(assignee|creator|triager), reason, reason_code, since_seq,
-    read_new, read_full, kind, creator, assignee, labels, waiting_on, who, updated_at, unread}`。
+    read_new, read_full, kind, creator, assignee, labels, waiting_on, who, updated_at,
+    trigger, last_reply_at, created_at, counterpart, unread}`。
     `kind` 到 `updated_at` 是列表摘要字段，供网页收件箱栏使用；`assignee` 为作者结构，
     指派给已停用成员时其 `member.deactivated` 为 `true`（#115）。
+  - `trigger = {type, name, action?, member?, agent?}` 表示让工单进入收件箱的一方：
+    `type=member|guest|member_agent`；成员 Agent 同时带 `member` 与 `agent`，
+    `name` 使用「王工 的 Agent · 笔记本」这类完整署名。新指派/改派取执行指派的人；
+    访客未补全说明没有触发动作，仍取访客本身。`action` 只在 `reason_code=new`
+    时出现：`assigned`（此前没有指派人）/`reassigned`（改派，之前已有指派人）。
+  - `last_reply_at` 是最后一条回复时间；访客修订/补全说明也计入。没有回复时为
+    `null`，用 `created_at` 显示「创建于 …」。
+  - `counterpart = {type, name?, member?}` 是按术语「往来对象」的归组结果：
+    `member`（对方成员）、`guest`（访客）、`self`（自派自，仍带成员摘要）或
+    `pending_triage`（待初筛，不指向任何人）。归属只看身份，不随最后是谁回复而变。
   - `reason` 文案：新指派给你 / 已交付，待你验收 / 指派人回复了，待你答复 /
     发起人退回修改 / 发起人回复了 / 你的 Agent 回复了 / 访客回复了 /
     访客补全了说明 / 访客修订了说明 / 访客未补全说明。
@@ -602,6 +615,14 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   - `read_new` = `/api/v1/tickets/<编号>/timeline?after=<我在该单最后一条任意事件的 seq>`
     （不只回复——要读的是「上次我看过之后别人做了什么」）；`read_full` =
     `/api/v1/tickets/<编号>?format=markdown`。
+
+### GET /api/v1/inbox/waiting-on-counterparts（仅成员）
+
+- 「在等他」只读查询，供按往来对象分组视图展开弱化列表：列出我作为创建者或
+  指派人、当前轮到往来对象一方的**开启**工单。自派自和待初筛不算「等对方」。
+- 响应结构与收件箱同为 `{member, count, items}`，`items` 字段与收件箱项一致；
+  这里可忽略 `reason`。`count` 是「在等他」自己的数量，**不能**并入
+  `GET /api/v1/inbox` 的 `count`；这些工单不属于收件箱，也不触发通知。
 
 ## 查询与计数（#37）
 

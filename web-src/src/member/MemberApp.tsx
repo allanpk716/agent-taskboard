@@ -212,7 +212,7 @@ export function MemberApp() {
           <b>›</b>
         </a>
       )}
-      {route.page === 'inbox' && <InboxPage key={route.page} />}
+      {route.page === 'inbox' && <InboxPage key={route.page} me={me} />}
       {route.page === 'tickets' && <TicketsPage key={route.page} me={me} />}
       {route.page === 'drafts' && <DraftsPage key={navSeq} />}
       {(route.page === 'new' || route.page === 'feedback') && (

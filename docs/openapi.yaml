@@ -55,7 +55,26 @@ paths:
       tags: [inbox]
       operationId: list_inbox
       summary: 轮到我的开启工单
-      description: 同一成员名下所有 Agent 共用一份收件箱；每项带 reason 和读取地址。
+      description: |
+        同一成员名下所有 Agent 共用一份收件箱；按 last_reply_at 倒序，无回复按 created_at。
+        每项带 reason、trigger（谁让它进入收件箱；reason_code=new 时 trigger 另带
+        action=assigned|reassigned 区分首次指派与改派）、last_reply_at、created_at、
+        counterpart 和读取地址。
+      responses:
+        "200":
+          description: "{member, count, items[]}"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/inbox/waiting-on-counterparts:
+    get:
+      tags: [inbox]
+      operationId: list_waiting_on_counterparts
+      summary: 在等往来对象的开启工单
+      description: |
+        只读参考清单：当前成员作为创建者或指派人、当前轮到往来对象一方的开启工单。
+        items 字段与收件箱一致；count 属于这份清单，不计入收件箱 count。
       responses:
         "200":
           description: "{member, count, items[]}"

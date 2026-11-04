@@ -10,6 +10,7 @@ import type {
   DraftView,
   TicketView,
 } from '../shared/types'
+import type { InboxActor, InboxCounterpart } from './inboxText'
 
 export type { Collaborator } from '../shared/types'
 
@@ -36,6 +37,10 @@ export interface InboxItem {
   waiting_on: string
   who: string
   updated_at: string
+  trigger: InboxActor
+  last_reply_at: string | null
+  created_at: string
+  counterpart: InboxCounterpart
   unread: boolean
 }
 
@@ -136,6 +141,10 @@ export async function markDraftsIntroSeen(): Promise<void> {
 
 export async function fetchInbox(): Promise<InboxResponse> {
   return api('/api/v1/inbox')
+}
+
+export async function fetchWaitingOnCounterparts(): Promise<InboxResponse> {
+  return api('/api/v1/inbox/waiting-on-counterparts')
 }
 
 export async function fetchDrafts(): Promise<{ count: number; drafts: DraftView[] }> {

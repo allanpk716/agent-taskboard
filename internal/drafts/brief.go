@@ -50,7 +50,8 @@ func (m *Manager) SaveBriefRevision(ctx context.Context, viewer identity.Viewer,
 	}
 	if m.notes != nil {
 		if err = m.notes.NotifyDraftTx(ctx, tx, viewer.Member.ID, full.Seq, full.Number, full.Title,
-			"你的 Agent · "+viewer.Agent.Name+" 写了说明修订草稿待确认", d.BaseTimelineSeq,
+			"你的 Agent · "+viewer.Agent.Name+" 写了说明修订草稿待确认",
+			"你的 Agent 写了说明修订草稿", d.BaseTimelineSeq,
 			viewer.Agent.ID, viewer.Agent.Name, "/t/"+full.Number+"#draft"); err != nil {
 			return Draft{}, err
 		}

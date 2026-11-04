@@ -71,14 +71,16 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 		if in.Event.CollaboratorID != 0 && !selfAction(in.Actor, in.Event.CollaboratorID) {
 			out = append(out, Decision{
 				MemberID: in.Event.CollaboratorID, Kind: KindFYI, Reason: ReasonCollaboratorAdded,
-				Text: notificationTextActor(in.Actor) + " 把你加入了工单「" + in.After.Title + "」的协作",
+				Text:     notificationTextActor(in.Actor) + " 把你加入了工单「" + in.After.Title + "」的协作",
+				Headline: notificationHeadlineActor(in.Actor) + " 把你加入了协作",
 			})
 		}
 	case "collaborator_removed":
 		if in.Event.CollaboratorID != 0 && !selfAction(in.Actor, in.Event.CollaboratorID) {
 			out = append(out, Decision{
 				MemberID: in.Event.CollaboratorID, Kind: KindFYI, Reason: ReasonCollaboratorRemoved,
-				Text: notificationTextActor(in.Actor) + " 把你移出了工单「" + in.After.Title + "」的协作",
+				Text:     notificationTextActor(in.Actor) + " 把你移出了工单「" + in.After.Title + "」的协作",
+				Headline: notificationHeadlineActor(in.Actor) + " 把你移出了协作",
 			})
 		}
 	case "created":
@@ -91,21 +93,33 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 				continue
 			}
 			out = append(out, Decision{MemberID: id, Kind: KindTurn, Reason: ReasonDepartment,
-				Text: "新工单「" + in.After.Title + "」轮到本部门，待初筛"})
+				Text:     "新工单「" + in.After.Title + "」轮到本部门，待初筛",
+				Headline: notificationHeadlineActor(in.Actor) + " 新建，等你初筛",
+			})
 		}
 	case ReasonAssigned:
 		turn := tickets.WaitingOnOf(in.After, in.GuestLinks, in.Now)
 		if turn.Party == "assignee" && turn.MemberID != 0 && !selfAction(in.Actor, turn.MemberID) {
+			action := " 派给你"
+			if in.Before.AssigneeID != 0 {
+				action = " 改派给你"
+			}
 			out = append(out, Decision{
 				MemberID: turn.MemberID, Kind: KindTurn, Reason: ReasonAssigned,
-				Text: notificationTextActor(in.Actor) + " 把工单「" + in.After.Title + "」指派给你",
+				Text:     notificationTextActor(in.Actor) + " 把工单「" + in.After.Title + "」指派给你",
+				Headline: notificationHeadlineActor(in.Actor) + action,
 			})
 		}
 		if in.Before.AssigneeID != 0 && in.Before.AssigneeID != in.After.AssigneeID &&
 			!selfAction(in.Actor, in.Before.AssigneeID) {
+			unassignedHeadline := notificationHeadlineActor(in.Actor) + " 取消了指派"
+			if in.After.AssigneeID != 0 {
+				unassignedHeadline = notificationHeadlineActor(in.Actor) + " 改派给了 " + in.After.AssigneeName
+			}
 			out = append(out, Decision{
 				MemberID: in.Before.AssigneeID, Reason: ReasonUnassigned, Kind: KindFYI,
-				Text: notificationTextActor(in.Actor) + unassignText(in.After, in.Before.AssigneeName),
+				Text:     notificationTextActor(in.Actor) + unassignText(in.After, in.Before.AssigneeName),
+				Headline: unassignedHeadline,
 			})
 		}
 	case "reply":
@@ -115,8 +129,9 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 				if !selfAction(in.Actor, id) && !hasDecisionFor(out, id) {
 					out = append(out, Decision{
 						MemberID: id, Reason: ReasonDepartment, Kind: KindTurn,
-						Text:    "工单「" + in.After.Title + "」轮到本部门，待初筛",
-						Summary: replySummary(in.Event.BodyMD),
+						Text:     "工单「" + in.After.Title + "」轮到本部门，待初筛",
+						Headline: notificationHeadlineActor(in.Actor) + " 回复了，等你初筛",
+						Summary:  replySummary(in.Event.BodyMD),
 					})
 				}
 			}
@@ -126,14 +141,16 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 			summary := replySummary(in.Event.BodyMD)
 			out = append(out, Decision{
 				MemberID: turn.MemberID, Kind: KindTurn, Reason: notificationReason(turn.Why),
-				Text:    notificationTextActor(in.Actor) + replySuffix(turn.Why) + "「" + in.After.Title + "」",
-				Summary: summary,
+				Text:     notificationTextActor(in.Actor) + replySuffix(turn.Why) + "「" + in.After.Title + "」",
+				Headline: notificationHeadline(in.Actor, turn.Why),
+				Summary:  summary,
 			})
 		}
 		if in.Actor.MemberID != 0 && in.Actor.MemberID != in.After.Creator.MemberID &&
 			in.Actor.MemberID != in.After.AssigneeID {
 			out = append(out, fyiForStakeholders(in, ReasonThirdPartyReply,
-				notificationTextActor(in.Actor)+" 回复了「"+in.After.Title+"」")...)
+				notificationTextActor(in.Actor)+" 回复了「"+in.After.Title+"」",
+				notificationHeadlineActor(in.Actor)+" 回复了")...)
 		}
 		for _, c := range in.After.Collaborators {
 			if selfAction(in.Actor, c.ID) || hasDecisionFor(out, c.ID) {
@@ -141,8 +158,9 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 			}
 			out = append(out, Decision{
 				MemberID: c.ID, Kind: KindFYI, Reason: ReasonCollaboratorReplied,
-				Text:    notificationTextActor(in.Actor) + " 回复了「" + in.After.Title + "」",
-				Summary: replySummary(in.Event.BodyMD),
+				Text:     notificationTextActor(in.Actor) + " 回复了「" + in.After.Title + "」",
+				Headline: notificationHeadlineActor(in.Actor) + " 回复了",
+				Summary:  replySummary(in.Event.BodyMD),
 			})
 		}
 	case ReasonBriefRevised:
@@ -158,13 +176,15 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 						Kind:     KindTurn,
 						Reason:   ReasonDepartment,
 						Text:     "工单「" + in.After.Title + "」轮到本部门，待初筛",
+						Headline: notificationHeadlineActor(in.Actor) + " 修订了说明，等你初筛",
 					})
 				}
 			}
 		} else if turn.MemberID != 0 && !hasDecisionFor(out, turn.MemberID) {
 			out = append(out, Decision{
 				MemberID: turn.MemberID, Kind: KindTurn, Reason: notificationReason(turn.Why),
-				Text: notificationTextActor(in.Actor) + replySuffix(turn.Why) + "「" + in.After.Title + "」",
+				Text:     notificationTextActor(in.Actor) + replySuffix(turn.Why) + "「" + in.After.Title + "」",
+				Headline: notificationHeadline(in.Actor, turn.Why),
 			})
 		}
 		fyiText := notificationTextActor(in.Actor) + " 修订了「" + in.After.Title + "」的说明"
@@ -172,17 +192,22 @@ func (Rules) Decide(in tickets.NotificationInput) []Decision {
 			if id == 0 || hasDecisionFor(out, id) {
 				continue
 			}
-			out = append(out, Decision{MemberID: id, Kind: KindFYI, Reason: ReasonBriefRevised, Text: fyiText})
+			out = append(out, Decision{
+				MemberID: id, Kind: KindFYI, Reason: ReasonBriefRevised, Text: fyiText,
+				Headline: notificationHeadlineActor(in.Actor) + " 修订了说明",
+			})
 		}
 		for i := range out {
 			out[i].Summary = "第 " + strconv.FormatInt(in.Event.Revision, 10) + " 版"
 		}
 	case ReasonClosed:
 		out = append(out, fyiForStakeholders(in, ReasonClosed,
-			notificationTextActor(in.Actor)+" 关闭了「"+in.After.Title+"」")...)
+			notificationTextActor(in.Actor)+" 关闭了「"+in.After.Title+"」",
+			notificationHeadlineActor(in.Actor)+" 关闭了工单")...)
 	case ReasonReopened:
 		out = append(out, fyiForStakeholders(in, ReasonReopened,
-			notificationTextActor(in.Actor)+" 重新开启了「"+in.After.Title+"」")...)
+			notificationTextActor(in.Actor)+" 重新开启了「"+in.After.Title+"」",
+			notificationHeadlineActor(in.Actor)+" 重新开启了工单")...)
 	}
 	return out
 }
@@ -193,6 +218,7 @@ type Decision struct {
 	Reason   string
 	Text     string
 	Summary  string
+	Headline string
 }
 
 func selfAction(actor tickets.Author, memberID int64) bool {
@@ -206,7 +232,7 @@ func unassignText(after tickets.Full, from string) string {
 	return " 把工单「" + after.Title + "」从 " + from + " 改派给 " + after.AssigneeName
 }
 
-func fyiForStakeholders(in tickets.NotificationInput, reason, text string) []Decision {
+func fyiForStakeholders(in tickets.NotificationInput, reason, text, headline string) []Decision {
 	ids := []int64{in.After.Creator.MemberID, in.After.AssigneeID}
 	for _, c := range in.After.Collaborators {
 		ids = append(ids, c.ID)
@@ -216,7 +242,7 @@ func fyiForStakeholders(in tickets.NotificationInput, reason, text string) []Dec
 		if id == 0 || selfAction(in.Actor, id) || hasDecisionFor(out, id) {
 			continue
 		}
-		out = append(out, Decision{MemberID: id, Kind: "fyi", Reason: reason, Text: text,
+		out = append(out, Decision{MemberID: id, Kind: "fyi", Reason: reason, Text: text, Headline: headline,
 			Summary: replySummary(in.Event.BodyMD)})
 	}
 	return out
@@ -311,11 +337,11 @@ func (m *Manager) NotifyTx(ctx context.Context, tx *sql.Tx, in tickets.Notificat
 			INSERT INTO notifications (
 				member_id, ticket_seq, ticket_number, ticket_title, kind, reason, text,
 				trigger_seq, trigger_type, actor_kind, actor_name, actor_member_id, actor_agent_id,
-				summary, url, created_at, read_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+					summary, headline, url, created_at, read_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
 			d.MemberID, in.After.Seq, in.After.Number, in.After.Title, d.Kind, d.Reason, d.Text,
 			in.Event.Seq, in.Event.Type, actorKind, actorName,
-			nullInt(in.Actor.MemberID), nullInt(in.Actor.AgentID), d.Summary,
+			nullInt(in.Actor.MemberID), nullInt(in.Actor.AgentID), d.Summary, d.Headline,
 			"/t/"+in.After.Number, now.Format(time.RFC3339Nano)); err != nil {
 			return nil, err
 		}
@@ -330,6 +356,7 @@ type DraftNotificationInput struct {
 	TicketNumber    string
 	TicketTitle     string
 	Text            string
+	Headline        string
 	BaseTimelineSeq int64
 	AgentID         int64
 	AgentName       string
@@ -342,18 +369,28 @@ func (m *Manager) NotifyDraftTx(ctx context.Context, tx *sql.Tx, in DraftNotific
 		INSERT INTO notifications (
 			member_id, ticket_seq, ticket_number, ticket_title, kind, reason, text,
 			trigger_seq, trigger_type, actor_kind, actor_name, actor_member_id, actor_agent_id,
-			url, created_at, read_at
-		) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, 'draft', 'agent', ?, ?, ?, ?, ?, NULL)`,
+			url, headline, created_at, read_at
+		) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, 'draft', 'agent', ?, ?, ?, ?, ?, ?, NULL)`,
 		in.MemberID, in.TicketSeq, in.TicketNumber, in.TicketTitle, ReasonDraftPending, in.Text,
 		in.BaseTimelineSeq, in.AgentName, in.MemberID, in.AgentID, in.URL,
+		draftHeadline(in.Headline, in.Text),
 		m.clk.Now().Format(time.RFC3339Nano))
 	return err
+}
+
+// draftHeadline 保证弹窗标题是短句：优先用调用方按草稿类型生成的短语，
+// 旧调用没带时才退回正文。
+func draftHeadline(headline, text string) string {
+	if headline != "" {
+		return headline
+	}
+	return text
 }
 
 func (m *Manager) DraftNotifier() DraftSink { return draftSink{m} }
 
 type DraftSink interface {
-	NotifyDraftTx(ctx context.Context, tx *sql.Tx, memberID, ticketSeq int64, number, title, text string,
+	NotifyDraftTx(ctx context.Context, tx *sql.Tx, memberID, ticketSeq int64, number, title, text, headline string,
 		baseTimelineSeq, agentID int64, agentName, url string) error
 	NotifyCreateDraftTx(ctx context.Context, tx *sql.Tx, memberID, agentID int64,
 		memberName, agentName, title, url string) error
@@ -363,10 +400,11 @@ type DraftSink interface {
 type draftSink struct{ m *Manager }
 
 func (s draftSink) NotifyDraftTx(ctx context.Context, tx *sql.Tx, memberID, ticketSeq int64,
-	number, title, text string, baseTimelineSeq, agentID int64, agentName, url string) error {
+	number, title, text, headline string, baseTimelineSeq, agentID int64, agentName, url string) error {
 	return s.m.NotifyDraftTx(ctx, tx, DraftNotificationInput{
 		MemberID: memberID, TicketSeq: ticketSeq, TicketNumber: number, TicketTitle: title,
-		Text: text, BaseTimelineSeq: baseTimelineSeq, AgentID: agentID, AgentName: agentName, URL: url,
+		Text: text, Headline: headline, BaseTimelineSeq: baseTimelineSeq, AgentID: agentID,
+		AgentName: agentName, URL: url,
 	})
 }
 
@@ -602,4 +640,43 @@ func notificationTextActor(actor tickets.Author) string {
 		return actor.MemberName + " 的 Agent · " + actor.AgentName
 	}
 	return notificationActorName(actor)
+}
+
+func notificationHeadline(actor tickets.Author, why string) string {
+	switch why {
+	case tickets.WhyNew:
+		return notificationHeadlineActor(actor) + " 派给你"
+	case tickets.WhyGuestReplied:
+		return notificationHeadlineActor(actor) + " 回复了"
+	case tickets.WhyGuestCompleted:
+		return notificationHeadlineActor(actor) + " 补全了说明"
+	case tickets.WhyGuestRevised:
+		return notificationHeadlineActor(actor) + " 修订了说明"
+	case tickets.WhyDelivered:
+		return notificationHeadlineActor(actor) + " 交付了，等你验收"
+	case tickets.WhyAssigneeReply, tickets.WhyCreatorReplied:
+		return notificationHeadlineActor(actor) + " 回复了，问你一个问题"
+	case tickets.WhySentBack:
+		return notificationHeadlineActor(actor) + " 退回了，要你修改"
+	case tickets.WhyAgentReplied:
+		return "你的 Agent 回复了"
+	}
+	return ""
+}
+
+func notificationHeadlineActor(actor tickets.Author) string {
+	if actor.System {
+		return "系统"
+	}
+	if actor.MemberID != 0 {
+		if actor.AgentID != 0 {
+			return actor.MemberName + "的 Agent"
+		}
+		return actor.MemberName
+	}
+	name := notificationActorName(actor)
+	if name == "" {
+		return "访客"
+	}
+	return "访客 " + name
 }

@@ -106,6 +106,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/drafts", a.handleDrafts)
 	mux.HandleFunc("/api/v1/drafts/", a.handleDraft)
 	mux.HandleFunc("/api/v1/inbox", a.handleInbox)
+	mux.HandleFunc("/api/v1/inbox/waiting-on-counterparts", a.handleWaitingCounterparts)
 	mux.HandleFunc("/api/v1/notifications", a.handleNotifications)
 	mux.HandleFunc("/api/v1/notifications/unread", a.handleNotificationsUnread)
 	mux.HandleFunc("/api/v1/notifications/read", a.handleNotificationsRead)

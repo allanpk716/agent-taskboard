@@ -190,6 +190,35 @@
   width: 100%;
   box-sizing: border-box;
 }
+.inbox-view-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  padding: 10px 14px 12px;
+  border-bottom: 1px solid #e6eaf2;
+  background: #e6ebf4;
+}
+.inbox-view-switch button {
+  min-height: 32px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #697386;
+  font-size: 13px;
+  font-weight: 700;
+}
+.inbox-view-switch button[aria-selected='true'] {
+  background: #fff;
+  color: #24589f;
+  box-shadow: 0 1px 4px rgba(34, 48, 74, 0.12);
+}
+.inbox-view-switch.mobile {
+  margin: 10px 0;
+  border: 0;
+  padding: 3px;
+  border-radius: 10px;
+  background: #e6ebf4;
+}
 .pc-filter-row {
   display: flex;
   align-items: center;
@@ -461,6 +490,174 @@
   font-weight: 700;
   line-height: 1.35;
   margin: 7px 0 4px;
+}
+.pc-row-title.unread,
+.tc-title.unread {
+  font-weight: 760;
+}
+.tcard.inbox-card .pc-row-title,
+.tcard.inbox-card .tc-title {
+  font-weight: 600;
+}
+.tcard.inbox-card .pc-row-title.unread,
+.tcard.inbox-card .tc-title.unread {
+  font-weight: 760;
+}
+.tcard.inbox-card .unread-dot {
+  background: #e5554f;
+}
+.pc-row-title > span,
+.tc-title > span {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.inbox-first-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.inbox-phrase {
+  min-width: 0;
+  color: #22304a;
+  font-size: 13px;
+  font-weight: 760;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.inbox-time {
+  flex: none;
+  color: #7d8798;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.pc-row-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  color: #697386;
+  font-size: 12px;
+}
+.pc-row-meta .sep,
+.tc-meta .sep {
+  color: #b8c0d0;
+}
+.inbox-person-view {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+}
+.pc-list-scroll.inbox-person-scroll {
+  padding-top: 0;
+}
+.person-group {
+  min-width: 0;
+  border-radius: 12px;
+  background: #f4f7fb;
+  box-shadow: 0 1px 3px rgba(20, 30, 50, 0.05);
+}
+.group-head {
+  position: sticky;
+  top: var(--inbox-sticky-top, 0);
+  z-index: 10;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 7px 10px;
+  border-bottom: 1px solid #dde3ee;
+  border-radius: 12px 12px 0 0;
+  background: #fff;
+}
+.pc-list-scroll .group-head {
+  top: 0;
+}
+.group-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #e7f0ff;
+  color: #24589f;
+  font-size: 13px;
+  font-weight: 750;
+}
+.group-avatar.visitor {
+  background: #e6f2f3;
+  color: #22707a;
+}
+.group-avatar.self {
+  background: #edf0f4;
+  color: #55607a;
+}
+.group-avatar.triage {
+  background: #fff1d6;
+  color: #a35f00;
+}
+.group-name {
+  min-width: 0;
+  color: #22304a;
+  font-size: 13.5px;
+  font-weight: 760;
+  overflow-wrap: anywhere;
+}
+.group-counts {
+  flex: none;
+  color: #697386;
+  font-size: 12px;
+}
+.group-body {
+  padding: 8px;
+}
+.wait-toggle {
+  display: flex;
+  width: calc(100% - 16px);
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 8px 8px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px dashed #cbd4e0;
+  border-radius: 8px;
+  background: #eef2f8;
+  color: #697386;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.wait-toggle .arrow {
+  transition: transform 0.15s ease;
+}
+.wait-toggle[aria-expanded='true'] .arrow {
+  transform: rotate(90deg);
+}
+.waiting-list {
+  padding: 0 8px 8px;
+}
+.waiting-list[hidden] {
+  display: none;
+}
+.tcard.waiting {
+  opacity: 0.82;
+  box-shadow: none;
+  background: #f7f9fc;
+}
+.tcard.waiting .inbox-phrase {
+  color: #697386;
+}
+.tcard.waiting .pc-row-title,
+.tcard.waiting .tc-title {
+  color: #5c667d;
+}
+.bpage .inbox-phrase {
+  font-size: 15px;
+}
+.bpage .inbox-time {
+  font-size: 12px;
 }
 .pc-row-title.unread,
 .tc-title.unread {
@@ -1201,6 +1398,10 @@
   margin: 5px 0 3px;
 }
 .tc-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
   font-size: 12.5px;
   color: #8a94a6;
 }
