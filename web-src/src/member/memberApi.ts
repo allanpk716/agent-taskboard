@@ -762,7 +762,13 @@ export async function rotateGuestLinkKey(
   number: string,
   id: number,
   idemKey: string = crypto.randomUUID(),
-): Promise<{ url: string; share_text: string }> {
+): Promise<{
+  url: string
+  share_text: string
+  reset_text: string
+  access_code?: string
+  expires_at: string
+}> {
   return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}/rotate-key`, {
     method: 'POST',
     idempotencyKey: idemKey,
@@ -776,7 +782,12 @@ export async function revokeGuestLink(number: string, id: number): Promise<void>
 export async function resetGuestAccessCode(
   number: string,
   id: number,
-): Promise<{ access_code: string }> {
+): Promise<{
+  access_code: string
+  url: string
+  reset_text: string
+  expires_at: string
+}> {
   return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}/reset-access-code`, {
     method: 'POST',
   })

@@ -9,10 +9,9 @@ import {
   copyGuestLinkShareText,
   createGuestLink,
   fetchAgentTokens,
-  rotateGuestLinkKey,
   type GuestLink,
 } from './memberApi'
-import { Confirm, Modal, copyText, nav, toast } from './ui'
+import { Modal, copyText, nav, toast } from './ui'
 
 export type HandoffMode = 'agent' | 'share'
 
@@ -123,6 +122,7 @@ export interface PeerHandoffPanelProps {
   defaultPeer: HandoffPeer
   reloadLinks: () => Promise<void>
   onChanged: () => void
+  onResetAccess: (link: GuestLink) => void
 }
 
 /** 与访客链接管理弹窗一致的新建链接字段；建好后由弹窗立即选中并显示转发文案。 */
@@ -212,6 +212,7 @@ export function PeerHandoffPanel({
   defaultPeer,
   reloadLinks,
   onChanged,
+  onResetAccess,
 }: PeerHandoffPanelProps) {
   const [peer, setPeer] = useState<HandoffPeer>(defaultPeer)
   const activeLinks = (links ?? []).filter((l) => !l.revoked_at && !linkExpired(l.expires_at))
@@ -220,7 +221,6 @@ export function PeerHandoffPanel({
   const [loadingShare, setLoadingShare] = useState(false)
   const [shareErr, setShareErr] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
-  const [rotating, setRotating] = useState<GuestLink | null>(null)
   const [copied, setCopied] = useState(false)
   const selected = activeLinks.find((l) => l.id === selectedId) ?? null
 
@@ -360,14 +360,14 @@ export function PeerHandoffPanel({
           )}
           {selected && !selected.share_text_available && (
             <div className="warnbox">
-              这是老访客链接，要先换新地址才能复制转发文案。
+              这是老访客链接，要先重置链接才能复制转发文案。重置后旧地址和旧设备会失效；已认领链接会同时换新访问码，请在结果弹窗把新文案发给对方。
               <button
                 type="button"
                 className="btn sm"
                 style={{ marginLeft: 8 }}
-                onClick={() => setRotating(selected)}
+                onClick={() => onResetAccess(selected)}
               >
-                换新地址并复制
+                🔑 重置链接
               </button>
             </div>
           )}
@@ -402,32 +402,6 @@ export function PeerHandoffPanel({
         </>
       )}
 
-      {rotating && (
-        <Confirm
-          title="换新地址并复制？"
-          body={
-            <div>
-              对方手里的旧地址会失效，请把新文案发过去。备注、认领状态、访问码和有效期都保持不变。
-            </div>
-          }
-          yesLabel="换新地址并复制"
-          danger
-          onYes={() => {
-            const target = rotating
-            setRotating(null)
-            void rotateGuestLinkKey(ticketNumber, target.id)
-              .then(async (result) => {
-                setShareText(result.share_text)
-                setShareErr(null)
-                await reloadLinks()
-                onChanged()
-                toast('✓ 已换新地址')
-              })
-              .catch((e) => toast(e instanceof ApiError ? `${e.code}：${e.message}` : '换新地址失败'))
-          }}
-          onCancel={() => setRotating(null)}
-        />
-      )}
     </div>
   )
 }

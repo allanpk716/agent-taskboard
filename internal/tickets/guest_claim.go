@@ -190,57 +190,61 @@ func (m *Manager) verifyGuestAccessCode(ctx context.Context, link identity.Guest
 	return nil
 }
 
-// ResetGuestAccessCode 让所有已记住设备失效并签发新的访问码；
-// 不重新开放链接给别人认领。
-func (m *Manager) ResetGuestAccessCode(ctx context.Context, viewer identity.Viewer, ref string, id int64) (string, error) {
+// ResetGuestAccessCode 让所有已记住设备失效并签发新的访问码，不重新开放链接
+// 给别人认领。返回链接当前状态，供 HTTP 层生成一次性重置文案。
+func (m *Manager) ResetGuestAccessCode(ctx context.Context, viewer identity.Viewer, ref string, id int64) (GuestLinkShare, error) {
 	full, err := m.ForViewer(ctx, viewer, ref)
 	if err != nil {
-		return "", err
+		return GuestLinkShare{}, err
 	}
 	code, err := identity.NewAccessCode()
 	if err != nil {
-		return "", err
+		return GuestLinkShare{}, err
 	}
 	now := m.clk.Now()
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
-		return "", err
+		return GuestLinkShare{}, err
 	}
 	defer tx.Rollback()
 
-	var claimedAt sql.NullString
-	if err := tx.QueryRowContext(ctx, `
-		SELECT claimed_at FROM guest_links WHERE id = ? AND ticket_seq = ?`, id, full.Seq).
-		Scan(&claimedAt); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", ErrGuestLinkNotFound
-		}
-		return "", err
+	row, err := m.activeLinkRowForTicketTx(ctx, tx, full.Seq, id, now)
+	if err != nil {
+		return GuestLinkShare{}, err
 	}
-	if !claimedAt.Valid {
-		return "", ErrLinkNotClaimed
+	if !row.ClaimedAt.Valid {
+		return GuestLinkShare{}, ErrLinkNotClaimed
+	}
+	if m.guestLinkCipher == nil {
+		return GuestLinkShare{}, ErrGuestLinkCipherUnavailable
+	}
+	if !row.KeyCiphertext.Valid {
+		return GuestLinkShare{}, ErrGuestShareTextUnavailable
+	}
+	key, err := m.guestLinkCipher.Decrypt(row.KeyCiphertext.String)
+	if err != nil {
+		return GuestLinkShare{}, ErrGuestShareTextUnavailable
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM guest_devices WHERE guest_link_id = ?`, id); err != nil {
-		return "", err
+		return GuestLinkShare{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE guest_links
 		SET access_code_hash = ?, access_code_failures = 0, access_code_locked_at = NULL
 		WHERE id = ?`, identity.CredentialHash(code), id); err != nil {
-		return "", err
-	}
-	var note string
-	if err := tx.QueryRowContext(ctx, `SELECT note FROM guest_links WHERE id = ?`, id).Scan(&note); err != nil {
-		return "", err
+		return GuestLinkShare{}, err
 	}
 	if err := m.insertLinkEvent(ctx, tx, full.Seq, authorOf(viewer), "guest_access_reset",
-		note, "", now); err != nil {
-		return "", err
+		row.Note, "", now); err != nil {
+		return GuestLinkShare{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		return "", err
+		return GuestLinkShare{}, err
 	}
-	return code, nil
+	return GuestLinkShare{
+		Key: key, Note: row.Note, Title: full.Title, ExpiresAt: row.ExpiresAtTime,
+		Claimed: true, AccessCode: code,
+	}, nil
 }
 
 // GuestLinkStatus 只读取认领界面需要的状态字段。

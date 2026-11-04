@@ -490,6 +490,7 @@ test('访客链接支持指定日期创建与延期', async ({ page, request }) 
 
   // 撤销后不再提供延期（已失效，不能延期）
   await row.getByRole('button', { name: '撤销', exact: true }).click()
+  await page.getByRole('button', { name: '确认撤销链接' }).click()
   await expect(row).toContainText('已失效，不能延期')
   await expect(row.getByRole('button', { name: '延期 30 天' })).toHaveCount(0)
   await expect(row.getByRole('button', { name: '延期到该日' })).toHaveCount(0)

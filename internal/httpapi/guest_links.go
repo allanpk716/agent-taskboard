@@ -26,6 +26,25 @@ type guestLinkRequest struct {
 	CanEditBrief bool   `json:"can_edit_brief"`
 }
 
+// rotateGuestLinkResponse 是换新地址的一次性响应。已认领链接的 access_code
+// 只在这里出现；未认领链接没有访问码，字段整个省略。
+type rotateGuestLinkResponse struct {
+	URL        string `json:"url"`
+	ShareText  string `json:"share_text"`
+	ResetText  string `json:"reset_text"`
+	AccessCode string `json:"access_code,omitempty"`
+	ExpiresAt  string `json:"expires_at"`
+}
+
+// resetGuestAccessCodeResponse 是重置访问码的一次性响应；url 供网页展示
+// 「保持不变的链接」，reset_text 是成员可直接转发给访客本人的整段文案。
+type resetGuestAccessCodeResponse struct {
+	AccessCode string `json:"access_code"`
+	URL        string `json:"url"`
+	ResetText  string `json:"reset_text"`
+	ExpiresAt  string `json:"expires_at"`
+}
+
 // guestLinkBase 是访客链接响应的公共字段：单建链接的创建响应、建单响应里
 // 嵌套的 guest_link（#64）与列表项共用（列表项不带 url）。
 type guestLinkBase struct {
@@ -166,9 +185,12 @@ func (a *API) rotateGuestLinkKey(w http.ResponseWriter, r *http.Request, ref str
 			return
 		}
 		url := a.absURL("/g/" + link.Key)
-		writeJSON(w, http.StatusOK, map[string]any{
-			"url":        url,
-			"share_text": tickets.GuestShareText(link.Note, link.Title, url, link.ExpiresAt, link.Claimed),
+		writeJSON(w, http.StatusOK, rotateGuestLinkResponse{
+			URL:        url,
+			ShareText:  tickets.GuestShareText(link.Note, link.Title, url, link.ExpiresAt, link.Claimed),
+			ResetText:  tickets.GuestLinkResetText(link.Note, link.Title, url, link.AccessCode, link.ExpiresAt),
+			AccessCode: link.AccessCode,
+			ExpiresAt:  link.ExpiresAt.Format(time.RFC3339Nano),
 		})
 	})
 }
@@ -182,19 +204,30 @@ func (a *API) resetGuestAccessCode(w http.ResponseWriter, r *http.Request, ref s
 		a.writeTicketError(w, r, ref, err)
 		return
 	}
-	code, err := a.tickets.ResetGuestAccessCode(r.Context(), viewer, ref, id)
+	link, err := a.tickets.ResetGuestAccessCode(r.Context(), viewer, ref, id)
 	if err != nil {
 		switch {
 		case errors.Is(err, tickets.ErrGuestLinkNotFound):
 			a.writeTicketError(w, r, ref, err)
 		case errors.Is(err, tickets.ErrLinkNotClaimed):
 			WriteError(w, http.StatusConflict, CodeLinkUnclaimed, "这条链接尚未认领，不需要重置访问码", "等待访客认领后再重置")
+		case errors.Is(err, tickets.ErrGuestLinkCipherUnavailable):
+			a.writeTicketError(w, r, ref, err)
+		case errors.Is(err, tickets.ErrGuestShareTextUnavailable):
+			WriteError(w, http.StatusConflict, CodeShareTextUnavailable, err.Error(),
+				"这是老访客链接，请改用「重置链接」后再把新文案发给对方")
 		default:
 			a.writeTicketError(w, r, ref, err)
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"access_code": code})
+	url := a.absURL("/g/" + link.Key)
+	writeJSON(w, http.StatusOK, resetGuestAccessCodeResponse{
+		AccessCode: link.AccessCode,
+		URL:        url,
+		ResetText:  tickets.GuestAccessCodeResetText(link.Note, link.Title, url, link.AccessCode, link.ExpiresAt),
+		ExpiresAt:  link.ExpiresAt.Format(time.RFC3339Nano),
+	})
 }
 
 func (a *API) createGuestLink(w http.ResponseWriter, r *http.Request, ref string) {
