@@ -5,10 +5,12 @@
 package attachments
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -166,6 +168,7 @@ type Manager struct {
 	db                 *sql.DB
 	clk                clock.Clock
 	dir                string // data_dir/attachments
+	store              Storage
 	limits             Limits
 	intakePendingBytes int64
 }
@@ -173,13 +176,24 @@ type Manager struct {
 // SetIntakeLimits 设置入口附件的临时配额（[intake] pending_quota_mb）。
 func (m *Manager) SetIntakeLimits(pendingBytes int64) { m.intakePendingBytes = pendingBytes }
 
-// NewManager 建目录并返回管理器。dataDir 是 config.toml 的 data_dir。
+// NewManager 用本地后端建管理器。dataDir 是 config.toml 的 data_dir。
 func NewManager(db *sql.DB, dataDir string, c clock.Clock, limits Limits) (*Manager, error) {
+	local, err := NewLocalStorage(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	return NewManagerWithStorage(db, dataDir, local, c, limits)
+}
+
+// NewManagerWithStorage 用指定后端建管理器（测试注入内存假存储用）。本地
+// attachments 目录仍会创建：Dir() 供统计、备份镜像和包服务沿用，附件对象
+// 读写一律走 store。
+func NewManagerWithStorage(db *sql.DB, dataDir string, store Storage, c clock.Clock, limits Limits) (*Manager, error) {
 	dir := filepath.Join(dataDir, "attachments")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("创建附件目录 %s 失败：%w", dir, err)
 	}
-	return &Manager{db: db, clk: c, dir: dir, limits: limits}, nil
+	return &Manager{db: db, clk: c, dir: dir, store: store, limits: limits}, nil
 }
 
 // Limits 返回生效的上限。
@@ -187,6 +201,9 @@ func (m *Manager) Limits() Limits { return m.limits }
 
 // Dir 返回附件目录（备份镜像用）。
 func (m *Manager) Dir() string { return m.dir }
+
+// Storage 返回附件对象的后端。上传、下载、删除都从这里走（#315）。
+func (m *Manager) Storage() Storage { return m.store }
 
 // Path 返回附件 id 的文件路径。
 func (m *Manager) Path(id int64) string { return filepath.Join(m.dir, strconv.FormatInt(id, 10)) }
@@ -206,14 +223,21 @@ func ValidateFilename(name string) error {
 	return nil
 }
 
-// Upload 存一个待用附件：校验单文件与整单上限，文件写到 data_dir/attachments/<id>，
+// Upload 存一个待用附件：校验单文件与整单上限，文件经存储接口写入，
 // 元数据入库（state=pending）。返回引用与现成的 Markdown 片段。
 func (m *Manager) Upload(ctx context.Context, ticketSeq int64, filename string, content []byte, principal Principal) (AttachmentInfo, string, error) {
+	return m.UploadStream(ctx, ticketSeq, filename, int64(len(content)), bytes.NewReader(content), PutMeta{}, principal)
+}
+
+// UploadStream 流式存一个待用附件：大小来自 multipart 头，内容交给限长
+// reader，不整读进内存。写入顺序是「插 DB 行 → Put → 提交」；Put 失败回滚
+// DB 行，提交失败删除已写入的对象。
+func (m *Manager) UploadStream(ctx context.Context, ticketSeq int64, filename string, size int64,
+	src io.Reader, meta PutMeta, principal Principal) (AttachmentInfo, string, error) {
 	filename = strings.TrimSpace(filename)
 	if err := ValidateFilename(filename); err != nil {
 		return AttachmentInfo{}, "", err
 	}
-	size := int64(len(content))
 	if size > m.limits.MaxFileBytes {
 		return AttachmentInfo{}, "", &TooLargeError{Size: size, Limit: m.limits.MaxFileBytes}
 	}
@@ -253,12 +277,12 @@ func (m *Manager) Upload(ctx context.Context, ticketSeq int64, filename string, 
 		now.Format(time.RFC3339Nano)).Scan(&id); err != nil {
 		return AttachmentInfo{}, "", fmt.Errorf("写入附件元数据失败：%w", err)
 	}
-	// 先落盘再提交：写文件失败就回滚这一行。
-	if err := os.WriteFile(m.Path(id), content, 0o644); err != nil {
+	// 先写对象再提交：Put 失败就回滚这一行。
+	if err := m.store.Put(ctx, id, src, size, meta); err != nil {
 		return AttachmentInfo{}, "", fmt.Errorf("写附件文件失败：%w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		_ = os.Remove(m.Path(id))
+		_ = m.store.Delete(context.WithoutCancel(ctx), id)
 		return AttachmentInfo{}, "", err
 	}
 
@@ -272,6 +296,12 @@ func (m *Manager) Upload(ctx context.Context, ticketSeq int64, filename string, 
 // UploadToIntake 匿名上传到反馈入口：附件暂不挂工单，等提交时按入口和
 // Idempotency-Key 认领；24 小时未认领由 CleanupUnreferenced 清除。
 func (m *Manager) UploadToIntake(ctx context.Context, intakeID int64, uploadKey, filename string, content []byte) (AttachmentInfo, string, error) {
+	return m.UploadToIntakeStream(ctx, intakeID, uploadKey, filename, int64(len(content)), bytes.NewReader(content), PutMeta{})
+}
+
+// UploadToIntakeStream 流式上传到反馈入口，语义同 UploadToIntake。
+func (m *Manager) UploadToIntakeStream(ctx context.Context, intakeID int64, uploadKey, filename string,
+	size int64, src io.Reader, meta PutMeta) (AttachmentInfo, string, error) {
 	filename = strings.TrimSpace(filename)
 	if err := ValidateFilename(filename); err != nil {
 		return AttachmentInfo{}, "", err
@@ -279,7 +309,6 @@ func (m *Manager) UploadToIntake(ctx context.Context, intakeID int64, uploadKey,
 	if uploadKey == "" {
 		return AttachmentInfo{}, "", ErrNotUsable
 	}
-	size := int64(len(content))
 	if size > m.limits.MaxFileBytes {
 		return AttachmentInfo{}, "", &TooLargeError{Size: size, Limit: m.limits.MaxFileBytes}
 	}
@@ -306,11 +335,11 @@ func (m *Manager) UploadToIntake(ctx context.Context, intakeID int64, uploadKey,
 		filename, size, intakeID, uploadKey, now.Format(time.RFC3339Nano)).Scan(&id); err != nil {
 		return AttachmentInfo{}, "", fmt.Errorf("写入入口附件元数据失败：%w", err)
 	}
-	if err := os.WriteFile(m.Path(id), content, 0o644); err != nil {
+	if err := m.store.Put(ctx, id, src, size, meta); err != nil {
 		return AttachmentInfo{}, "", fmt.Errorf("写附件文件失败：%w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		_ = os.Remove(m.Path(id))
+		_ = m.store.Delete(context.WithoutCancel(ctx), id)
 		return AttachmentInfo{}, "", err
 	}
 	info := AttachmentInfo{ID: id, Filename: filename, Size: size, State: "pending", UploadedAt: now}
