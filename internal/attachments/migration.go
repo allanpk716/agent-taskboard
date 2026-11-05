@@ -7,12 +7,17 @@ import (
 	"fmt"
 	"hash/crc64"
 	"io"
+	"path/filepath"
 )
 
 // MigrationOptions 控制一次离线附件迁移。
 type MigrationOptions struct {
 	// Target 是迁移完成后要写入数据库的实际后端标记。
 	Target BackendMarker
+	// DataDir 是目标为 local 时的数据目录，用于检查目标分区剩余空间。
+	DataDir string
+	// FreeSpace 供测试注入磁盘剩余空间检测；生产路径留空使用系统实现。
+	FreeSpace func(path string) (uint64, error)
 }
 
 // MigrationResult 是迁移汇总；清单里的 id 按升序排列。
@@ -45,6 +50,13 @@ func MigrateAttachments(ctx context.Context, db *sql.DB, source, target Storage,
 	}
 	for _, record := range records {
 		res.TotalSize += record.size
+	}
+	if opts.Target.Backend == AttachmentBackendLocal {
+		if err := checkLocalFreeSpace(opts, res.TotalSize); err != nil {
+			return res, err
+		}
+	}
+	for _, record := range records {
 		copied, err := migrateAttachment(ctx, record, source, target)
 		switch {
 		case err == nil && copied:
@@ -66,6 +78,27 @@ func MigrateAttachments(ctx context.Context, db *sql.DB, source, target Storage,
 		return res, err
 	}
 	return res, nil
+}
+
+func checkLocalFreeSpace(opts MigrationOptions, total int64) error {
+	required := total + total/10
+	if required < total {
+		return fmt.Errorf("磁盘剩余空间检查失败：附件总大小 %d 字节溢出", total)
+	}
+	freeSpace := opts.FreeSpace
+	if freeSpace == nil {
+		freeSpace = diskFreeSpace
+	}
+	path := filepath.Join(opts.DataDir, "attachments")
+	free, err := freeSpace(path)
+	if err != nil {
+		return fmt.Errorf("读取 %s 所在分区剩余空间失败：%w", path, err)
+	}
+	if free < uint64(required) {
+		return fmt.Errorf("磁盘剩余空间不足：%s 需要 %d 字节（含 10%% 余量），实际只有 %d 字节",
+			path, required, free)
+	}
+	return nil
 }
 
 func migrationRecords(ctx context.Context, db *sql.DB) ([]migrationRecord, error) {

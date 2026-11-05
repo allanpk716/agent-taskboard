@@ -3,6 +3,7 @@ package attachments_test
 import (
 	"context"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -101,5 +102,47 @@ func Test附件迁移本地到OSS全量后标记与内容正确(t *testing.T) {
 	}
 	if got := readAttachment(t, source, 1); got != "已挂附件" {
 		t.Fatalf("本地源附件 1 迁移后被改动：%q", got)
+	}
+}
+
+func Test附件迁移OSS到本地前检查磁盘剩余空间(t *testing.T) {
+	ctx := context.Background()
+	st, dataDir := newMigrationDatabase(t)
+	if err := attachments.WriteBackendMarker(ctx, st.DB, attachments.BackendMarker{
+		Backend: attachments.AttachmentBackendOSS, Bucket: "files", Prefix: "agent-taskboard/prod/",
+	}); err != nil {
+		t.Fatalf("写入源后端标记失败：%v", err)
+	}
+	source := attachments.NewMemoryStorage()
+	putMigrationAttachment(t, source, 1, strings.Repeat("a", 10))
+	putMigrationAttachment(t, source, 2, strings.Repeat("b", 20))
+	addMigrationRecord(t, st, 1, "一.txt", strings.Repeat("a", 10), "attached")
+	addMigrationRecord(t, st, 2, "二.txt", strings.Repeat("b", 20), "pending")
+	target, err := attachments.NewLocalStorage(dataDir)
+	if err != nil {
+		t.Fatalf("创建本地存储失败：%v", err)
+	}
+
+	var checkedPath string
+	_, err = attachments.MigrateAttachments(ctx, st.DB, source, target, attachments.MigrationOptions{
+		Target:  attachments.BackendMarker{Backend: attachments.AttachmentBackendLocal},
+		DataDir: dataDir,
+		FreeSpace: func(path string) (uint64, error) {
+			checkedPath = path
+			return 32, nil // 30 字节附件加 10% 余量后需要 33 字节。
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "磁盘剩余空间不足") {
+		t.Fatalf("空间不足 err = %v, 想明确拒绝", err)
+	}
+	if checkedPath != filepath.Join(dataDir, "attachments") {
+		t.Fatalf("检查目录 = %q, 想附件目录", checkedPath)
+	}
+	if _, ok := target.Stat(ctx, 1); ok {
+		t.Fatal("空间不足时不应开始复制")
+	}
+	marker, exists, err := attachments.ReadBackendMarker(ctx, st.DB)
+	if err != nil || !exists || marker.Backend != attachments.AttachmentBackendOSS {
+		t.Fatalf("失败后标记 = (%+v, %v, %v), 想保持 OSS", marker, exists, err)
 	}
 }
