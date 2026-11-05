@@ -4,7 +4,7 @@ import { unified } from 'unified'
 import remarkBreaks from 'remark-breaks'
 import remarkGfm from 'remark-gfm'
 import remarkParse from 'remark-parse'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { Attachment } from './types'
 
 export interface MarkdownProps {
@@ -73,11 +73,8 @@ function InlineImage({
   alt: string
   onClick?: (url: string) => void
 }) {
+  // url 变化时由调用处的 key={url} 重建组件，failed 状态自然归零。
   const [failed, setFailed] = useState(false)
-
-  useEffect(() => {
-    setFailed(false)
-  }, [url])
 
   if (failed) return <span className="att-missing">🖼 {alt}</span>
   return (
@@ -198,6 +195,7 @@ export function Markdown(props: MarkdownProps) {
         if (att) {
           return (
             <InlineImage
+              key={att.url}
               url={att.url}
               alt={alt || att.filename}
               onClick={props.onImageClick}
