@@ -110,7 +110,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	limits := attachments.LimitsOf(
 		cfg.Attachments.MaxFileMB, cfg.Attachments.MaxFilesPerPost,
 		cfg.Attachments.MaxImagesPerPost, cfg.Attachments.MaxTicketMB)
-	atts, err = attachments.NewManagerWithStorage(st.DB, cfg.DataDir, attachmentBackend.storage, c, limits)
+	atts, err = attachments.NewManagerWithStorage(st.DB, attachmentBackend.storage, c, limits)
 	if err != nil {
 		return nil, err
 	}
@@ -139,6 +139,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	if err != nil {
 		return nil, err
 	}
+	backups.SetAttachmentStorage(atts.Storage())
 	idem := idempotency.NewManager(st.DB, c)
 	notificationStore := notifications.NewManager(st.DB, c)
 	backups.SetNotifier(notificationStore)
@@ -157,9 +158,9 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	ticketStore.SetNotifier(notificationStore)
 	ticketStore.SetSystemNotifier(notificationStore)
 	draftStore := drafts.NewManager(st.DB, c, ticketStore, atts)
-	storageStats := storage.NewService(st.DB, cfg.DataDir, atts.Dir(), backups.TargetDir(), c)
-	archives := archive.NewService(st.DB, cfg.DataDir, atts.Dir(), backups.TargetDir(), atts, c)
-	slims := slim.NewService(st.DB, cfg.DataDir, atts.Dir(), backups.TargetDir(), atts, c)
+	storageStats := storage.NewService(st.DB, cfg.DataDir, backups.TargetDir(), atts.Storage(), c)
+	archives := archive.NewService(st.DB, cfg.DataDir, backups.TargetDir(), atts, c)
+	slims := slim.NewService(st.DB, cfg.DataDir, backups.TargetDir(), atts, c)
 	draftStore.SetNotifier(notificationStore.DraftNotifier())
 	attachmentLinks, err := attachmentlink.LoadOrCreate(cfg.DataDir)
 	if err != nil {
@@ -202,7 +203,8 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 func (s *Server) Handler() http.Handler { return s.handler }
 
 // Serve 在 ln 上对外服务，直到 Shutdown 或关闭连接。服务期间周期运行附件
-// 清除任务（未引用满 24 小时的待用附件；时钟可注入，见 internal/attachments）、
+// 清除任务（未引用满 24 小时的待用附件，以及后端对象的附件对账；时钟可注入，
+// 见 internal/attachments）、
 // 归档暂存包清除任务（满 7 天；时钟同样可注入，见 internal/archive）
 // 和备份调度（每天 daily_at；备份时刻同样由注入时钟决定，见 internal/ops）。
 func (s *Server) Serve(ln net.Listener) error {
@@ -227,8 +229,9 @@ func (s *Server) Serve(ln net.Listener) error {
 	return err
 }
 
-// attachmentJanitorInterval 是附件清除任务的运行间隔（真实时钟；24 小时的
-// 判定用注入时钟，测试里直接调 CleanupUnreferenced，不睡真实时间）。
+// attachmentJanitorInterval 是附件清除与对账任务的运行间隔（真实时钟；
+// 24 小时的判定用注入时钟，测试里直接调 CleanupUnreferenced /
+// ReconcileStorage，不睡真实时间）。
 const attachmentJanitorInterval = 10 * time.Minute
 
 // archiveJanitorInterval 是归档/瘦身暂存包清除任务的运行间隔（真实时钟；
@@ -250,8 +253,8 @@ func (s *Server) runArchiveJanitor(done <-chan struct{}) {
 	}
 }
 
-// runAttachmentJanitor 周期清除未引用的待用附件。清除失败只影响本轮
-// （下一轮再试），不影响服务。
+// runAttachmentJanitor 周期清除未引用的待用附件，再对账清理后端孤儿对象。
+// 任一步失败只影响本轮（下一轮再试），不影响服务。
 func (s *Server) runAttachmentJanitor(done <-chan struct{}) {
 	ticker := time.NewTicker(attachmentJanitorInterval)
 	defer ticker.Stop()
@@ -261,6 +264,9 @@ func (s *Server) runAttachmentJanitor(done <-chan struct{}) {
 			return
 		case <-ticker.C:
 			_, _ = s.Atts.CleanupUnreferenced(context.Background())
+			if _, err := s.Atts.ReconcileStorage(context.Background()); err != nil {
+				log.Printf("附件对账失败：%v", err)
+			}
 		}
 	}
 }

@@ -7,6 +7,7 @@
 package ops
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/guestlinkkey"
 	"github.com/allanpk716/agent-taskboard/internal/store"
 )
@@ -43,6 +45,13 @@ type RestoreResult struct {
 // （#244），并从备份文件旁的镜像目录（<备份所在目录>\attachments\，与备份时
 // 写的镜像同源）补齐主存储里缺的附件文件。port 上有服务在监听时拒绝执行。
 func Restore(dataDir string, port int, backupFile string, now time.Time) (RestoreResult, error) {
+	return RestoreWithStorage(dataDir, port, backupFile, now, nil)
+}
+
+// RestoreWithStorage 用指定附件后端补齐恢复后的附件对象；storage 为 nil 时
+// 懒加载本地后端，独立 restore 命令因此保持旧用法。
+func RestoreWithStorage(dataDir string, port int, backupFile string, now time.Time,
+	storage attachments.Storage) (RestoreResult, error) {
 	res := RestoreResult{BackupFile: backupFile, DBPath: filepath.Join(dataDir, "taskboard.db")}
 
 	// 1. 确认服务已停止。
@@ -114,55 +123,70 @@ func Restore(dataDir string, port int, backupFile string, now time.Time) (Restor
 		return res, fmt.Errorf("读备份里的访客链接加密密钥 %s 失败：%w", keyBackup, err)
 	}
 
-	// 5. 从镜像中补齐附件：库里有记录、主存储里缺文件的，从备份旁边的镜像拷回。
+	// 5. 从镜像中补齐附件：库里有记录、主存储里缺对象的，从备份旁边的镜像
+	// 读出并通过存储接口写回。
 	// store.Open 会执行迁移：用旧备份配上新二进制时，库会升到当前版本的表结构。
 	st, err := store.Open(dataDir)
 	if err != nil {
 		return res, fmt.Errorf("打开恢复后的库失败：%w", err)
 	}
 	defer st.Close()
-	ids, err := attachmentIDs(st.DB)
+	records, err := attachmentRecords(st.DB)
 	if err != nil {
 		return res, err
 	}
-	mirror := filepath.Join(filepath.Dir(backupFile), "attachments")
-	attsDir := filepath.Join(dataDir, "attachments")
-	if err := os.MkdirAll(attsDir, 0o755); err != nil {
-		return res, err
+	mirror := attachments.NewBackupMirror(filepath.Dir(backupFile))
+	if storage == nil {
+		local, err := attachments.NewLocalStorage(dataDir)
+		if err != nil {
+			return res, err
+		}
+		storage = local
 	}
-	for _, id := range ids {
-		dest := filepath.Join(attsDir, id)
-		if _, err := os.Stat(dest); err == nil {
+	ctx := context.Background()
+	for _, record := range records {
+		if _, exists := storage.Stat(ctx, record.id); exists {
 			continue // 主存储里已有
 		}
-		from := filepath.Join(mirror, id)
-		if _, err := os.Stat(from); err != nil {
-			res.MissingAttachments = append(res.MissingAttachments, id)
+		file, size, err := mirror.Open(record.id)
+		if err != nil {
+			res.MissingAttachments = append(res.MissingAttachments, strconv.FormatInt(record.id, 10))
 			continue
 		}
-		if err := copyFile(from, dest); err != nil {
-			return res, err
+		meta := attachments.PutMeta{ContentType: attachments.ContentTypeOf(record.filename)}
+		putErr := storage.Put(ctx, record.id, file, size, meta)
+		closeErr := file.Close()
+		if putErr != nil {
+			return res, putErr
+		}
+		if closeErr != nil {
+			return res, closeErr
 		}
 		res.AttachmentsRestored++
 	}
 	return res, nil
 }
 
-// attachmentIDs 列出库里有记录的附件 id（文件名就是 id）。
-func attachmentIDs(db *sql.DB) ([]string, error) {
-	rows, err := db.Query(`SELECT id FROM attachments ORDER BY id`)
+type attachmentRecord struct {
+	id       int64
+	filename string
+}
+
+// attachmentRecords 列出库里有记录的附件对象。
+func attachmentRecords(db *sql.DB) ([]attachmentRecord, error) {
+	rows, err := db.Query(`SELECT id, filename FROM attachments ORDER BY id`)
 	if err != nil {
 		// 备份里还没有附件表（比 #33 更早的库）：没有附件可补。
 		return nil, nil
 	}
 	defer rows.Close()
-	var ids []string
+	records := []attachmentRecord{}
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return ids, err
+		var record attachmentRecord
+		if err := rows.Scan(&record.id, &record.filename); err != nil {
+			return records, err
 		}
-		ids = append(ids, strconv.FormatInt(id, 10))
+		records = append(records, record)
 	}
-	return ids, rows.Err()
+	return records, rows.Err()
 }

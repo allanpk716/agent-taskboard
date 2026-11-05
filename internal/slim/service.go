@@ -91,20 +91,20 @@ func (p Preview) AttachmentBytes() int64 {
 
 // Service 提供瘦身预览、包生成、暂存、下载与移出。
 type Service struct {
-	db             *sql.DB
-	clk            clock.Clock
-	dataDir        string
-	attachmentsDir string
-	backupDir      string
-	atts           *attachments.Manager
-	generateMu     sync.Mutex
+	db         *sql.DB
+	clk        clock.Clock
+	dataDir    string
+	backupDir  string
+	mirror     *attachments.BackupMirror
+	atts       *attachments.Manager
+	generateMu sync.Mutex
 }
 
 // NewService 建瘦身服务。
-func NewService(db *sql.DB, dataDir, attachmentsDir, backupDir string,
+func NewService(db *sql.DB, dataDir, backupDir string,
 	atts *attachments.Manager, c clock.Clock) *Service {
-	return &Service{db: db, clk: c, dataDir: dataDir, attachmentsDir: attachmentsDir,
-		backupDir: backupDir, atts: atts}
+	return &Service{db: db, clk: c, dataDir: dataDir,
+		backupDir: backupDir, mirror: attachments.NewBackupMirror(backupDir), atts: atts}
 }
 
 // Preview 校验管理员选择并汇总仍留在服务器上的附件。

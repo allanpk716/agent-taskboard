@@ -12,14 +12,12 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/store"
 	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
-	"github.com/allanpk716/agent-taskboard/internal/packagefile"
 )
 
 // ErrAlreadyRemoved 表示归档包对应的工单已经移除。
@@ -219,7 +217,6 @@ func (s *Service) cleanupRemovedFiles(ctx context.Context, ids []int64) (int64, 
 	var freed int64
 	failures := 0
 	for _, id := range ids {
-		text := strconv.FormatInt(id, 10)
 		objects := s.atts.Storage()
 		if size, exists := objects.Stat(ctx, id); exists {
 			if err := objects.Delete(ctx, id); err != nil {
@@ -229,7 +226,7 @@ func (s *Service) cleanupRemovedFiles(ctx context.Context, ids []int64) (int64, 
 				freed += size
 			}
 		}
-		bytes, failed := packagefile.RemoveForCleanup(filepath.Join(s.backupDir, "attachments", text))
+		bytes, failed := s.mirror.RemoveForCleanup(id)
 		freed += bytes
 		failures += failed
 	}

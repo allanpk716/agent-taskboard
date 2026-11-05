@@ -14,11 +14,11 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/adminops"
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/packagefile"
@@ -139,7 +139,7 @@ func (s *Service) Restore(ctx context.Context, readerAt io.ReaderAt, size int64,
 	defer tx.Rollback()
 	result := RestoreResult{PackageName: parsed.Manifest.PackageName, RestoredAt: now,
 		Restored: []RestoreTicket{}, Rejected: []RestoreTicket{}}
-	written := []string{}
+	written := []int64{}
 	restoredNumbers := []string{}
 	for _, number := range parsed.Numbers {
 		if !want[number] {
@@ -147,7 +147,7 @@ func (s *Service) Restore(ctx context.Context, readerAt io.ReaderAt, size int64,
 		}
 		candidate, err := s.restoreCandidate(ctx, tx, parsed, number)
 		if err != nil {
-			removeRestoreFiles(written)
+			s.removeRestoreFiles(ctx, written)
 			return RestoreResult{}, err
 		}
 		if !candidate.Restorable {
@@ -156,12 +156,11 @@ func (s *Service) Restore(ctx context.Context, readerAt io.ReaderAt, size int64,
 		}
 		for _, file := range parsed.ByNumber[number] {
 			id, _ := attachmentNumericID(file.AttachmentID)
-			target := filepath.Join(s.attachmentsDir, strconv.FormatInt(id, 10))
-			if err := writeRestoreAttachment(parsed.Files[file.Path], target); err != nil {
-				removeRestoreFiles(written)
+			if err := s.writeRestoreAttachment(ctx, parsed.Files[file.Path], id, file.Filename, file.Size); err != nil {
+				s.removeRestoreFiles(ctx, written)
 				return RestoreResult{}, err
 			}
-			written = append(written, target)
+			written = append(written, id)
 			res, err := tx.ExecContext(ctx, `
 				UPDATE attachments
 				SET slim_removed_at = NULL, slim_package_name = ''
@@ -170,12 +169,12 @@ func (s *Service) Restore(ctx context.Context, readerAt io.ReaderAt, size int64,
 				  AND slim_removed_at IS NOT NULL AND slim_package_name = ?`,
 				id, file.TicketNumber, file.Filename, file.Size, parsed.Manifest.PackageName)
 			if err != nil {
-				removeRestoreFiles(written)
+				s.removeRestoreFiles(ctx, written)
 				return RestoreResult{}, err
 			}
 			affected, err := res.RowsAffected()
 			if err != nil || affected != 1 {
-				removeRestoreFiles(written)
+				s.removeRestoreFiles(ctx, written)
 				return RestoreResult{}, fmt.Errorf("%w：%s", ErrPackageStale, file.AttachmentID)
 			}
 		}
@@ -192,12 +191,12 @@ func (s *Service) Restore(ctx context.Context, readerAt io.ReaderAt, size int64,
 	if len(result.Restored) > 0 {
 		if err := adminops.InsertTx(ctx, tx, "slim_restore", operator.Member.ID, now,
 			restoredNumbers, parsed.Manifest.PackageName); err != nil {
-			removeRestoreFiles(written)
+			s.removeRestoreFiles(ctx, written)
 			return RestoreResult{}, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		removeRestoreFiles(written)
+		s.removeRestoreFiles(ctx, written)
 		return RestoreResult{}, err
 	}
 	return result, nil
@@ -382,11 +381,8 @@ func (s *Service) restoreFileReason(ctx context.Context, q restoreQueryer,
 		state != "attached" || draftID.Valid {
 		return "附件与瘦身包清单不匹配", nil
 	}
-	path := filepath.Join(s.attachmentsDir, strconv.FormatInt(id, 10))
-	if _, statErr := os.Stat(path); statErr == nil {
+	if _, exists := s.atts.Storage().Stat(ctx, id); exists {
 		return "附件已在服务器上", nil
-	} else if !os.IsNotExist(statErr) {
-		return "", statErr
 	}
 	if !slimmedAt.Valid {
 		return "附件不在服务器上，也没有这个包的瘦身标记", nil
@@ -494,36 +490,23 @@ func firstReason(current, next string) string {
 	return next
 }
 
-func writeRestoreAttachment(entry *zip.File, target string) error {
+func (s *Service) writeRestoreAttachment(ctx context.Context, entry *zip.File, id int64, filename string, size int64) error {
 	rc, err := entry.Open()
 	if err != nil {
 		return err
 	}
 	defer rc.Close()
-	dst, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	written, copyErr := io.Copy(dst, rc)
-	syncErr := dst.Sync()
-	closeErr := dst.Close()
-	if copyErr != nil {
-		return copyErr
-	}
-	if syncErr != nil {
-		return syncErr
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	if entry.FileInfo().Size() != 0 && written != entry.FileInfo().Size() {
-		return fmt.Errorf("附件 %s 写回大小不符：%d/%d", entry.Name, written, entry.FileInfo().Size())
+	meta := attachments.PutMeta{ContentType: attachments.ContentTypeOf(filename)}
+	if err := s.atts.Storage().Put(ctx, id, rc, size, meta); err != nil {
+		return fmt.Errorf("附件 %s 写回失败：%w", entry.Name, err)
 	}
 	return nil
 }
 
-func removeRestoreFiles(files []string) {
-	for _, path := range files {
-		_ = os.Remove(path)
+func (s *Service) removeRestoreFiles(ctx context.Context, ids []int64) {
+	objects := s.atts.Storage()
+	ctx = context.WithoutCancel(ctx)
+	for _, id := range ids {
+		_ = objects.Delete(ctx, id)
 	}
 }

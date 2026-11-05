@@ -1,4 +1,4 @@
-// Package storage 提供管理页「存储统计」（#234）：数据库、附件目录、备份目录
+// Package storage 提供管理页「存储统计」（#234）：数据库、附件对象、备份目录
 // 三类空间占用，以及按关闭月份汇总的「已关闭满 N 个月」可归档工单。
 // 统计只读：不改数据库 schema，不移动、不删除任何文件。
 package storage
@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 )
 
@@ -40,20 +41,21 @@ type Stats struct {
 	Archivable       []MonthStat
 }
 
-// Service 汇总存储统计。目录都由装配处传入：附件目录来自附件模块，
-// 备份目录来自备份模块的 TargetDir（配置 [backup] 留空时是 data_dir/backups），
-// 统计口径因此与实际生效的配置一致。
+// Service 汇总存储统计。附件对象来自当前存储后端；备份目录来自备份模块的
+// TargetDir（配置 [backup] 留空时是 data_dir/backups），统计口径因此与实际
+// 生效的配置一致。
 type Service struct {
-	db             *sql.DB
-	clk            clock.Clock
-	dataDir        string
-	attachmentsDir string
-	backupsDir     string
+	db                *sql.DB
+	clk               clock.Clock
+	dataDir           string
+	attachmentStorage attachments.Storage
+	backupsDir        string
 }
 
 // NewService 建存储统计服务。
-func NewService(db *sql.DB, dataDir, attachmentsDir, backupsDir string, c clock.Clock) *Service {
-	return &Service{db: db, clk: c, dataDir: dataDir, attachmentsDir: attachmentsDir, backupsDir: backupsDir}
+func NewService(db *sql.DB, dataDir, backupsDir string, attachmentStorage attachments.Storage, c clock.Clock) *Service {
+	return &Service{db: db, clk: c, dataDir: dataDir,
+		attachmentStorage: attachmentStorage, backupsDir: backupsDir}
 }
 
 // Stats 返回三类占用与可归档工单汇总。closedMonths 是「已关闭满 N 个月」的 N
@@ -64,14 +66,27 @@ func (s *Service) Stats(ctx context.Context, closedMonths int) (Stats, error) {
 	if err != nil {
 		return Stats{}, err
 	}
+	attachmentsBytes, err := s.attachmentsBytes(ctx)
+	if err != nil {
+		return Stats{}, err
+	}
 	return Stats{
 		DatabaseBytes:    DatabaseBytes(s.dataDir),
-		AttachmentsBytes: DirBytes(s.attachmentsDir, s.backupsDir),
-		BackupsBytes:     DirBytes(s.backupsDir, s.attachmentsDir),
+		AttachmentsBytes: attachmentsBytes,
+		BackupsBytes:     DirBytes(s.backupsDir),
 		ClosedMonths:     closedMonths,
 		Cutoff:           cutoff,
 		Archivable:       archivable,
 	}, nil
+}
+
+func (s *Service) attachmentsBytes(ctx context.Context) (int64, error) {
+	var total int64
+	err := s.attachmentStorage.List(ctx, func(_ int64, size int64, _ time.Time) error {
+		total += size
+		return nil
+	})
+	return total, err
 }
 
 // ArchivableByMonth 找出当前状态为已关闭、且最近一次关闭时间 <= cutoff 的工单，

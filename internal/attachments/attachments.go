@@ -11,8 +11,7 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
-	"path/filepath"
+	"mime"
 	"regexp"
 	"strconv"
 	"strings"
@@ -166,7 +165,6 @@ func (a AttachmentInfo) Ref() string { return "att_" + strconv.FormatInt(a.ID, 1
 type Manager struct {
 	db                 *sql.DB
 	clk                clock.Clock
-	dir                string // data_dir/attachments
 	store              Storage
 	limits             Limits
 	intakePendingBytes int64
@@ -181,25 +179,16 @@ func NewManager(db *sql.DB, dataDir string, c clock.Clock, limits Limits) (*Mana
 	if err != nil {
 		return nil, err
 	}
-	return NewManagerWithStorage(db, dataDir, local, c, limits)
+	return NewManagerWithStorage(db, local, c, limits)
 }
 
-// NewManagerWithStorage 用指定后端建管理器（测试注入内存假存储用）。本地
-// attachments 目录仍会创建：Dir() 供统计、备份镜像和包服务沿用，附件对象
-// 读写一律走 store。
-func NewManagerWithStorage(db *sql.DB, dataDir string, store Storage, c clock.Clock, limits Limits) (*Manager, error) {
-	dir := filepath.Join(dataDir, "attachments")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("创建附件目录 %s 失败：%w", dir, err)
-	}
-	return &Manager{db: db, clk: c, dir: dir, store: store, limits: limits}, nil
+// NewManagerWithStorage 用指定后端建管理器（测试注入内存假存储用）。
+func NewManagerWithStorage(db *sql.DB, store Storage, c clock.Clock, limits Limits) (*Manager, error) {
+	return &Manager{db: db, clk: c, store: store, limits: limits}, nil
 }
 
 // Limits 返回生效的上限。
 func (m *Manager) Limits() Limits { return m.limits }
-
-// Dir 返回附件目录（备份镜像用）。
-func (m *Manager) Dir() string { return m.dir }
 
 // Storage 返回附件对象的后端。上传、下载、删除都从这里走（#315）。
 func (m *Manager) Storage() Storage { return m.store }
@@ -217,6 +206,27 @@ func ValidateFilename(name string) error {
 		return ErrInvalidFilename
 	}
 	return nil
+}
+
+// ContentTypeOf 按文件名推断对象元数据里的 Content-Type。文本类补 charset；
+// 未知类型用 application/octet-stream，避免依赖存储后端嗅探。
+func ContentTypeOf(filename string) string {
+	ext := ""
+	if i := strings.LastIndexByte(filename, '.'); i >= 0 {
+		ext = strings.ToLower(filename[i:])
+	}
+	switch ext {
+	case ".html", ".htm":
+		return "text/html; charset=utf-8"
+	case ".svg":
+		return "image/svg+xml"
+	case ".txt", ".log":
+		return "text/plain; charset=utf-8"
+	}
+	if typ := mime.TypeByExtension(ext); typ != "" {
+		return typ
+	}
+	return "application/octet-stream"
 }
 
 // UploadStream 存一个待用附件：校验单文件与整单上限后流式写入存储接口，

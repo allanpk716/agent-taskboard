@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -112,10 +111,15 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 				_ = zw.Close()
 				return PackageInfo{}, err
 			}
-			src, err := os.Open(filepath.Join(s.attachmentsDir, strconv.FormatInt(att.ID, 10)))
+			src, actualSize, err := s.atts.Storage().Open(ctx, att.ID)
 			if err != nil {
 				_ = zw.Close()
 				return PackageInfo{}, fmt.Errorf("读取附件 %s 失败：%w", att.Ref, err)
+			}
+			if actualSize != att.Size {
+				_ = src.Close()
+				_ = zw.Close()
+				return PackageInfo{}, fmt.Errorf("附件 %s 大小不符：数据库 %d 字节，存储 %d 字节", att.Ref, att.Size, actualSize)
 			}
 			entry, err := packagefile.AddStreamEntry(zw, path, src, att.Size)
 			if err != nil {

@@ -162,7 +162,7 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 	}
 	for _, summary := range preview.Tickets {
 		export := exps[summary.Seq]
-		atts, slimmed, err := s.packageAttachments(zw, &files, summary, export)
+		atts, slimmed, err := s.packageAttachments(ctx, zw, &files, summary, export)
 		if err != nil {
 			_ = zw.Close()
 			return PackageInfo{}, err
@@ -615,7 +615,7 @@ type slimmedAttachment struct {
 	PackageName string
 }
 
-func (s *Service) packageAttachments(zw *zip.Writer, files *[]manifestFile, summary TicketSummary,
+func (s *Service) packageAttachments(ctx context.Context, zw *zip.Writer, files *[]manifestFile, summary TicketSummary,
 	export ticketExport) ([]packagedAttachment, []slimmedAttachment, error) {
 	out := make([]packagedAttachment, 0, len(export.Attachments))
 	slimmedOut := make([]slimmedAttachment, 0)
@@ -630,11 +630,15 @@ func (s *Service) packageAttachments(zw *zip.Writer, files *[]manifestFile, summ
 		}
 		relative := "attachments/" + ref + "/" + filename
 		path := archiveAttachmentPath(summary.Number, id, filename)
-		src, err := os.Open(filepath.Join(s.attachmentsDir, strconv.FormatInt(id, 10)))
+		src, actualSize, err := s.atts.Storage().Open(ctx, id)
 		if err != nil {
 			return nil, nil, fmt.Errorf("读取附件 %s 失败：%w", ref, err)
 		}
 		size, _ := row["size"].(int64)
+		if actualSize != size {
+			_ = src.Close()
+			return nil, nil, fmt.Errorf("附件 %s 大小不符：数据库 %d 字节，存储 %d 字节", ref, size, actualSize)
+		}
 		if err := packagefile.AddStream(zw, files, path, src, size); err != nil {
 			_ = src.Close()
 			return nil, nil, err

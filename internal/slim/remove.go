@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -17,7 +16,6 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/adminops"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
-	"github.com/allanpk716/agent-taskboard/internal/packagefile"
 )
 
 var (
@@ -151,7 +149,7 @@ func (s *Service) removalState(ctx context.Context, q removalQueryer, m *manifes
 		if err != nil || at.After(generatedAt) {
 			return nil, fmt.Errorf("%w：%s", ErrPackageStale, file.TicketNumber)
 		}
-		if info, err := os.Stat(filepath.Join(s.attachmentsDir, strconv.FormatInt(att.ID, 10))); err != nil || info.Size() != att.Size {
+		if size, exists := s.atts.Storage().Stat(ctx, att.ID); !exists || size != att.Size {
 			return nil, fmt.Errorf("%w：%s 的服务器文件已不在", ErrPackageStale, attachmentID(att.ID))
 		}
 		att.Ref = file.AttachmentID
@@ -164,7 +162,6 @@ func (s *Service) cleanupFiles(ctx context.Context, atts []removalAttachment) (i
 	var freed int64
 	failures := 0
 	for _, att := range atts {
-		text := strconv.FormatInt(att.ID, 10)
 		objects := s.atts.Storage()
 		if _, exists := objects.Stat(ctx, att.ID); exists {
 			if err := objects.Delete(ctx, att.ID); err != nil {
@@ -172,7 +169,7 @@ func (s *Service) cleanupFiles(ctx context.Context, atts []removalAttachment) (i
 				failures++
 			}
 		}
-		_, failed := packagefile.RemoveForCleanup(filepath.Join(s.backupDir, "attachments", text))
+		_, failed := s.mirror.RemoveForCleanup(att.ID)
 		failures += failed
 		// 释放字节数与预览口径一致：只按附件本身大小计，不把备份镜像
 		// 重复计入（镜像删除失败只进 failures）。
