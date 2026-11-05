@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"mime"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -217,6 +218,27 @@ func ValidateFilename(name string) error {
 		return ErrInvalidFilename
 	}
 	return nil
+}
+
+// ContentTypeOf 按文件名推断对象元数据里的 Content-Type。文本类补 charset；
+// 未知类型用 application/octet-stream，避免依赖存储后端嗅探。
+func ContentTypeOf(filename string) string {
+	ext := ""
+	if i := strings.LastIndexByte(filename, '.'); i >= 0 {
+		ext = strings.ToLower(filename[i:])
+	}
+	switch ext {
+	case ".html", ".htm":
+		return "text/html; charset=utf-8"
+	case ".svg":
+		return "image/svg+xml"
+	case ".txt", ".log":
+		return "text/plain; charset=utf-8"
+	}
+	if typ := mime.TypeByExtension(ext); typ != "" {
+		return typ
+	}
+	return "application/octet-stream"
 }
 
 // UploadStream 存一个待用附件：校验单文件与整单上限后流式写入存储接口，
