@@ -422,6 +422,27 @@ func (s *OSSStorage) DownloadURL(ctx context.Context, id int64, opts DownloadURL
 	return target.String(), true, nil
 }
 
+// ObjectChecksum 返回 OSS 对象自带的 CRC64（ECMA-182）十进制值。
+func (s *OSSStorage) ObjectChecksum(ctx context.Context, id int64) (uint64, bool, error) {
+	result, err := s.client.HeadObject(ctx, &oss.HeadObjectRequest{
+		Bucket: oss.Ptr(s.config.Bucket), Key: oss.Ptr(s.attachmentKey(id)),
+	})
+	if objectNotFound(err) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, true, fmt.Errorf("读取 OSS 附件 CRC64 失败：%w", err)
+	}
+	if result.HashCRC64 == nil {
+		return 0, true, fmt.Errorf("OSS 附件 %d 未返回 CRC64", id)
+	}
+	sum, err := strconv.ParseUint(*result.HashCRC64, 10, 64)
+	if err != nil {
+		return 0, true, fmt.Errorf("解析 OSS 附件 %d 的 CRC64 %q 失败：%w", id, *result.HashCRC64, err)
+	}
+	return sum, true, nil
+}
+
 func sha256Sum(data []byte) []byte {
 	sum := sha256.Sum256(data)
 	return sum[:]
