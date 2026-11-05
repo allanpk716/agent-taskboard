@@ -6,10 +6,10 @@ package httpapi
 
 import (
 	"errors"
+	"io"
 	"mime"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 
@@ -96,14 +96,15 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := os.ReadFile(a.atts.Path(att.ID))
+	body, size, err := a.atts.Storage().Open(r.Context(), att.ID)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, attachments.ErrObjectNotFound) {
 			WriteError(w, http.StatusNotFound, CodeAttachmentNotFound, "附件文件缺失", "")
 			return
 		}
 		panic(err)
 	}
+	defer body.Close()
 	if r.Method == http.MethodGet {
 		if err := a.accessRecords.RecordDownload(r.Context(), att, viewer); err != nil {
 			panic(err)
@@ -118,13 +119,15 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Disposition",
 		mime.FormatMediaType(disposition, map[string]string{"filename": att.Filename}))
-	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	if r.Method == http.MethodHead {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(content)
+	if _, err := io.Copy(w, body); err != nil {
+		panic(err)
+	}
 }
 
 func requestHasCredential(r *http.Request) bool {

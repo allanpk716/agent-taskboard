@@ -93,13 +93,14 @@ func (a *API) handleIntakeAttachments(w http.ResponseWriter, r *http.Request, sl
 		return
 	}
 	defer file.Close()
-	content, err := io.ReadAll(file)
-	if err != nil {
-		WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "读文件内容失败："+err.Error(), "")
+	filename := clientBaseName(header.Filename)
+	limits := a.atts.Limits()
+	if header.Size > limits.MaxFileBytes {
+		a.writeIntakeAttachmentError(w, &attachments.TooLargeError{Size: header.Size, Limit: limits.MaxFileBytes}, filename)
 		return
 	}
-	filename := clientBaseName(header.Filename)
-	info, markdown, err := a.atts.UploadToIntake(r.Context(), in.ID, uploadKey, filename, content)
+	info, markdown, err := a.atts.UploadToIntakeStream(r.Context(), in.ID, uploadKey, filename,
+		header.Size, io.LimitReader(file, header.Size), attachments.PutMeta{ContentType: contentTypeOf(filename)})
 	if err != nil {
 		a.writeIntakeAttachmentError(w, err, filename)
 		return

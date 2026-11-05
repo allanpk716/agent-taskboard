@@ -63,6 +63,7 @@ type Option func(*options)
 type options struct {
 	captchaSource              captcha.Source
 	guestLinkCipherUnavailable bool
+	attachmentStorage          attachments.Storage
 }
 
 // WithCaptchaSource 指定登录验证码来源。
@@ -74,6 +75,12 @@ func WithCaptchaSource(source captcha.Source) Option {
 // 生产装配仍然总是尝试读取或生成密钥。
 func WithGuestLinkCipherUnavailable() Option {
 	return func(o *options) { o.guestLinkCipherUnavailable = true }
+}
+
+// WithAttachmentStorage 指定附件对象后端（默认本地）。黑盒测试用它注入
+// 内存假存储；生产装配不传。
+func WithAttachmentStorage(store attachments.Storage) Option {
+	return func(o *options) { o.attachmentStorage = store }
 }
 
 // New 打开数据库、装配 API 与静态站点。webDir 不存在会报错。
@@ -95,9 +102,16 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	if err := labelDict.SeedIfEmpty(context.Background()); err != nil {
 		return nil, fmt.Errorf("导入标签字典种子失败：%w", err)
 	}
-	atts, err := attachments.NewManager(st.DB, cfg.DataDir, c, attachments.LimitsOf(
+	var atts *attachments.Manager
+	var err error
+	limits := attachments.LimitsOf(
 		cfg.Attachments.MaxFileMB, cfg.Attachments.MaxFilesPerPost,
-		cfg.Attachments.MaxImagesPerPost, cfg.Attachments.MaxTicketMB))
+		cfg.Attachments.MaxImagesPerPost, cfg.Attachments.MaxTicketMB)
+	if o.attachmentStorage != nil {
+		atts, err = attachments.NewManagerWithStorage(st.DB, cfg.DataDir, o.attachmentStorage, c, limits)
+	} else {
+		atts, err = attachments.NewManager(st.DB, cfg.DataDir, c, limits)
+	}
 	if err != nil {
 		return nil, err
 	}

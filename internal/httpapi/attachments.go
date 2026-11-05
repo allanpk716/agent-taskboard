@@ -67,15 +67,19 @@ func (a *API) handleTicketAttachments(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 	defer file.Close()
-	content, err := io.ReadAll(file)
-	if err != nil {
-		WriteError(w, http.StatusBadRequest, CodeInvalidJSON, "读文件内容失败："+err.Error(), "")
+	filename := clientBaseName(header.Filename)
+	// 流式上传的第一步：按 multipart 头的大小校验，超限错误码与整读时一致。
+	limits := a.atts.Limits()
+	if header.Size > limits.MaxFileBytes {
+		a.writeAttachmentError(w, &attachments.TooLargeError{Size: header.Size, Limit: limits.MaxFileBytes},
+			full.Number, filename, viewer.Kind == identity.ViewerGuest)
 		return
 	}
-
-	filename := clientBaseName(header.Filename)
+	// 限长 reader 交给 Put：服务端不再把整个文件读进内存。
+	src := io.LimitReader(file, header.Size)
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
-		info, markdown, err := a.atts.Upload(r.Context(), full.Seq, filename, content, attachments.PrincipalOf(viewer))
+		info, markdown, err := a.atts.UploadStream(r.Context(), full.Seq, filename, header.Size, src,
+			attachments.PutMeta{ContentType: contentTypeOf(filename)}, attachments.PrincipalOf(viewer))
 		if err != nil {
 			a.writeAttachmentError(w, err, full.Number, filename, viewer.Kind == identity.ViewerGuest)
 			return

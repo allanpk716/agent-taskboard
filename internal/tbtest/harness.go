@@ -65,6 +65,7 @@ type options struct {
 	startupErr    *error
 
 	withoutGuestLinkCipher bool
+	attachmentStorage      attachments.Storage
 }
 
 // WithWebDir 指定前端目录（默认用临时目录里的一页 index.html 占位）。
@@ -120,6 +121,11 @@ func WithListenHost(host string) Option { return func(o *options) { o.listenHost
 // 测试专用；生产由 guestlinkkey.LoadOrCreate 的结果决定）。
 func WithGuestLinkCipherUnavailable() Option {
 	return func(o *options) { o.withoutGuestLinkCipher = true }
+}
+
+// WithAttachmentStorage 注入内存假存储等测试后端，并可从测试侧查看对象。
+func WithAttachmentStorage(store attachments.Storage) Option {
+	return func(o *options) { o.attachmentStorage = store }
 }
 
 // WithUpdate 指定更新源配置（#45；默认不配置任何源：管理端点会明确报
@@ -194,6 +200,9 @@ func Start(t testing.TB, opts ...Option) *Server {
 	if o.withoutGuestLinkCipher {
 		srvOpts = append(srvOpts, server.WithGuestLinkCipherUnavailable())
 	}
+	if o.attachmentStorage != nil {
+		srvOpts = append(srvOpts, server.WithAttachmentStorage(o.attachmentStorage))
+	}
 	srv, err := server.New(cfg, st, clk, srvOpts...)
 	if err != nil {
 		if o.startupErr != nil {
@@ -253,6 +262,9 @@ func (s *Server) Shutdown(t testing.TB) {
 
 // DataDir 返回本测试独占的数据目录。
 func (s *Server) DataDir() string { return s.dataDir }
+
+// AttachmentStorage 返回注入的附件存储后端（默认是本地实现）。
+func (s *Server) AttachmentStorage() attachments.Storage { return s.srv.Atts.Storage() }
 
 // WebDir 返回本测试使用的前端目录。
 func (s *Server) WebDir() string { return s.webDir }
