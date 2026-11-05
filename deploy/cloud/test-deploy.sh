@@ -66,7 +66,7 @@ cleanup() {
     $had_registry || docker rmi registry:2 >/dev/null 2>&1
     for dir in ${temp_dirs[@]+"${temp_dirs[@]}"}; do
         rm -f "$dir/docker-compose.yml" "$dir/config.toml" "$dir/deploy.env" "$dir/oss.env" \
-            "$dir/deploy.sh" "$dir/bin/curl"
+            "$dir/deploy.sh" "$dir/bin/curl" "$dir"/docker-compose.yml.bak-*
         rmdir "$dir/bin" "$dir" >/dev/null 2>&1
     done
     set -e
@@ -356,3 +356,5 @@ assert_image_tag "$oss_old_image_dir" "$registry_url:0.1.0"
 echo "old image guard passed"
 
 echo "deploy script tests passed"
+trap - EXIT
+cleanup
