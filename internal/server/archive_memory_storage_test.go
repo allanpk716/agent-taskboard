@@ -54,6 +54,9 @@ func Test内存假存储下归档生成移除导入走存储接口(t *testing.T)
 		map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, &pkg); res.StatusCode != http.StatusCreated {
 		t.Fatalf("生成归档包状态码 = %d, 想 201", res.StatusCode)
 	}
+	if _, exists := mem.ObjectByKey("archive-packages/" + pkg.Name); exists {
+		t.Fatal("本地后端生成归档包不应上传 OSS 对象")
+	}
 	pkgRes := s.Do(t, admin, http.MethodGet, pkg.DownloadURL, nil, nil)
 	if pkgRes.StatusCode != http.StatusOK {
 		t.Fatalf("下载归档包状态码 = %d, 想 200", pkgRes.StatusCode)

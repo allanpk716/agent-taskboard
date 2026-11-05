@@ -42,6 +42,9 @@ func Test内存假存储下瘦身生成移出恢复走存储接口(t *testing.T)
 		map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, &pkg); res.StatusCode != http.StatusCreated {
 		t.Fatalf("生成瘦身包状态码 = %d, 想 201", res.StatusCode)
 	}
+	if _, exists := mem.ObjectByKey("archive-packages/" + pkg.Name); exists {
+		t.Fatal("本地后端生成瘦身包不应上传 OSS 对象")
+	}
 	pkgRes := s.Do(t, admin, http.MethodGet, pkg.DownloadURL, nil, nil)
 	if pkgRes.StatusCode != http.StatusOK {
 		t.Fatalf("下载瘦身包状态码 = %d, 想 200", pkgRes.StatusCode)
