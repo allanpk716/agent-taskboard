@@ -193,3 +193,24 @@ func Test附件后端标记与配置不一致时拒绝启动(t *testing.T) {
 		t.Fatalf("配置为 OSS 而库里是 local 时错误 = %v, 想提示迁移命令", err)
 	}
 }
+
+func Test新库OSS探测失败修复后可重新启动(t *testing.T) {
+	t.Setenv("OSS_ACCESS_KEY_ID", "ak")
+	t.Setenv("OSS_ACCESS_KEY_SECRET", "sk")
+	dataDir := t.TempDir()
+	failing := newStartupFakeOSS(t)
+	failing.fail = true
+	if err := startBackendError(t, ossAttachments(failing.server.URL, "agent-taskboard/prod/"), dataDir); err == nil {
+		t.Fatal("探测失败应拒绝启动")
+	}
+
+	fake := newStartupFakeOSS(t)
+	s := tbtest.Start(t,
+		tbtest.WithDataDir(dataDir),
+		tbtest.WithAttachmentConfig(ossAttachments(fake.server.URL, "agent-taskboard/prod/")),
+	)
+	var backend string
+	if err := s.Store().DB.QueryRow(`SELECT value FROM settings WHERE key='attachments_backend'`).Scan(&backend); err != nil || backend != "oss" {
+		t.Fatalf("修复后的后端标记 = %q/%v, 想 oss", backend, err)
+	}
+}

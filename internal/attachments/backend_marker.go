@@ -64,8 +64,12 @@ func WriteBackendMarker(ctx context.Context, db *sql.DB, marker BackendMarker) e
 		if err := upsert("attachments_backend_prefix", marker.Prefix); err != nil {
 			return fmt.Errorf("改写附件后端标记失败：%w", err)
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM settings WHERE key='attachments_backend_initializing'`); err != nil {
+			return fmt.Errorf("改写附件后端标记失败：%w", err)
+		}
 	} else if _, err := tx.ExecContext(ctx, `DELETE FROM settings
-		WHERE key IN ('attachments_backend_bucket', 'attachments_backend_prefix')`); err != nil {
+		WHERE key IN ('attachments_backend_bucket', 'attachments_backend_prefix',
+		              'attachments_backend_initializing')`); err != nil {
 		return fmt.Errorf("改写附件后端标记失败：%w", err)
 	}
 	if err := tx.Commit(); err != nil {

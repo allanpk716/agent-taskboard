@@ -64,7 +64,31 @@ func Open(dataDir string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := s.recordInitialDatabase(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return s, nil
+}
+
+// recordInitialDatabase 给新库留下未完成初始化的标记。首次启动可能在 OSS
+// 探测阶段失败；修复配置后应能重试，而不是把迁移默认值 local 当成老库状态。
+func (s *Store) recordInitialDatabase() error {
+	if s.New {
+		_, err := s.DB.Exec(`INSERT INTO settings(key,value,updated_at)
+			VALUES ('attachments_backend_initializing', '1', datetime('now'))
+			ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
+		return err
+	}
+	var initializing string
+	if err := s.DB.QueryRow(`SELECT value FROM settings WHERE key='attachments_backend_initializing'`).Scan(&initializing); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	s.New = initializing == "1"
+	return nil
 }
 
 func storeDatabaseIsNew(path string) bool {
