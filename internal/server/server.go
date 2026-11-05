@@ -157,7 +157,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	draftStore := drafts.NewManager(st.DB, c, ticketStore, atts)
 	storageStats := storage.NewService(st.DB, cfg.DataDir, atts.Dir(), backups.TargetDir(), c)
 	archives := archive.NewService(st.DB, cfg.DataDir, backups.TargetDir(), atts, c)
-	slims := slim.NewService(st.DB, cfg.DataDir, atts.Dir(), backups.TargetDir(), atts, c)
+	slims := slim.NewService(st.DB, cfg.DataDir, backups.TargetDir(), atts, c)
 	draftStore.SetNotifier(notificationStore.DraftNotifier())
 	attachmentLinks, err := attachmentlink.LoadOrCreate(cfg.DataDir)
 	if err != nil {

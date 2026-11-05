@@ -151,7 +151,7 @@ func (s *Service) removalState(ctx context.Context, q removalQueryer, m *manifes
 		if err != nil || at.After(generatedAt) {
 			return nil, fmt.Errorf("%w：%s", ErrPackageStale, file.TicketNumber)
 		}
-		if info, err := os.Stat(filepath.Join(s.attachmentsDir, strconv.FormatInt(att.ID, 10))); err != nil || info.Size() != att.Size {
+		if size, exists := s.atts.Storage().Stat(ctx, att.ID); !exists || size != att.Size {
 			return nil, fmt.Errorf("%w：%s 的服务器文件已不在", ErrPackageStale, attachmentID(att.ID))
 		}
 		att.Ref = file.AttachmentID
