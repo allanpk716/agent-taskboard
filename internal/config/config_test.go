@@ -47,6 +47,49 @@ deploy = ''
 	}
 }
 
+func Test附件存储后端默认为本地并可配置OSS(t *testing.T) {
+	cfg, err := config.Load(writeConfig(t, ""))
+	if err != nil {
+		t.Fatalf("空配置应能加载：%v", err)
+	}
+	if cfg.Attachments.Backend != config.AttachmentBackendLocal {
+		t.Fatalf("默认后端 = %q, 想 local", cfg.Attachments.Backend)
+	}
+
+	path := writeConfig(t, `[attachments]
+backend = 'oss'
+
+[attachments.oss]
+region = 'cn-hangzhou'
+bucket = 'urithub-files'
+prefix = 'agent-taskboard/prod/'
+internal_endpoint = 'oss-cn-hangzhou-internal.aliyuncs.com'
+signing_host = 'files.example.test'
+`)
+	cfg, err = config.Load(path)
+	if err != nil {
+		t.Fatalf("OSS 配置应能加载：%v", err)
+	}
+	if cfg.Attachments.Backend != config.AttachmentBackendOSS ||
+		cfg.Attachments.OSS.Region != "cn-hangzhou" ||
+		cfg.Attachments.OSS.Bucket != "urithub-files" ||
+		cfg.Attachments.OSS.Prefix != "agent-taskboard/prod/" ||
+		cfg.Attachments.OSS.InternalEndpoint != "oss-cn-hangzhou-internal.aliyuncs.com" ||
+		cfg.Attachments.OSS.SigningHost != "files.example.test" {
+		t.Fatalf("OSS 配置 = %+v", cfg.Attachments)
+	}
+}
+
+func Test附件存储后端值非法时拒绝加载(t *testing.T) {
+	path := writeConfig(t, `[attachments]
+backend = 'minio'
+`)
+	_, err := config.Load(path)
+	if err == nil || !strings.Contains(err.Error(), "backend") {
+		t.Fatalf("非法后端应拒绝并提示 backend：%v", err)
+	}
+}
+
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.toml")

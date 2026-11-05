@@ -7,6 +7,17 @@ web_dir = '/app/web'
 public_url = 'https://taskboard.example.com'
 deploy = 'container'
 
+[attachments]
+# 默认本地存储；切 OSS 前必须先完成附件迁移。连接参数示例：
+# [attachments.oss]
+# region = 'cn-hangzhou'
+# bucket = 'urithub-files'
+# prefix = 'agent-taskboard/prod/'
+# internal_endpoint = 'oss-cn-hangzhou-internal.aliyuncs.com'
+# signing_host = ''
+# AccessKey 只用容器环境变量 OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET 注入。
+backend = 'local'
+
 [backup]
 # 备份留在挂载的数据卷内；异地备份由后续工单统一设计。
 target = '/app/data/backups'

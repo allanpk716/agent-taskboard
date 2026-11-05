@@ -51,9 +51,17 @@ const (
 	DeployContainer = "container"
 )
 
+// 附件存储后端。local 是默认值；oss 是可选对象存储后端。
+const (
+	AttachmentBackendLocal = "local"
+	AttachmentBackendOSS   = "oss"
+)
+
 // Attachments 是 [attachments] 小节：服务端只检查上限，不压缩图片
 // （压缩在前端做；spec「附件显示与安全」）。
 type Attachments struct {
+	// Backend 是附件对象后端：local（默认）或 oss。凭证不进配置文件。
+	Backend string `toml:"backend"`
 	// MaxFileMB 是单个文件的上限（MB），超过返回 413 attachment_too_large。
 	MaxFileMB int `toml:"max_file_mb"`
 	// MaxFilesPerPost 是每条说明或回复的附件个数上限（插图另计）。
@@ -62,6 +70,17 @@ type Attachments struct {
 	MaxImagesPerPost int `toml:"max_images_per_post"`
 	// MaxTicketMB 是整张工单附件合计的上限（MB），待用附件也计入。
 	MaxTicketMB int `toml:"max_ticket_mb"`
+	// OSS 是 backend = "oss" 时的连接参数；local 时也可以保留，供迁移命令使用。
+	OSS OSS `toml:"oss"`
+}
+
+// OSS 是 [attachments.oss] 小节：只放连接参数，不放 AccessKey。
+type OSS struct {
+	Region           string `toml:"region"`
+	Bucket           string `toml:"bucket"`
+	Prefix           string `toml:"prefix"`
+	InternalEndpoint string `toml:"internal_endpoint"`
+	SigningHost      string `toml:"signing_host"`
 }
 
 // Intake 是 [intake] 小节：入口匿名附件上传的限流与临时配额。
@@ -146,6 +165,13 @@ func Load(path string) (Config, error) {
 	if t := cfg.Backup.Target; strings.HasPrefix(t, `\`) && !strings.HasPrefix(t, `\\`) {
 		return cfg, fmt.Errorf(`解析 %s 失败：[backup] target = %q 只有一个反斜杠开头；UNC 路径要以 \\ 开头，如 '\\nas01\taskboard-backup'`, path, t)
 	}
+	if cfg.Attachments.Backend == "" {
+		cfg.Attachments.Backend = AttachmentBackendLocal
+	}
+	if cfg.Attachments.Backend != AttachmentBackendLocal && cfg.Attachments.Backend != AttachmentBackendOSS {
+		return cfg, fmt.Errorf("解析 %s 失败：[attachments] backend = %q 无效（只能是 local 或 oss）",
+			path, cfg.Attachments.Backend)
+	}
 	// TASKBOARD_DEPLOY 优先于 [server] deploy，供镜像内置默认值覆盖仍沿用原地
 	// 部署的配置文件；未设置时完全使用配置文件。
 	deploy, ok := os.LookupEnv("TASKBOARD_DEPLOY")
@@ -170,6 +196,9 @@ func ApplyDefaults(cfg *Config) {
 	}
 	if cfg.WebDir == "" {
 		cfg.WebDir = "web"
+	}
+	if cfg.Attachments.Backend == "" {
+		cfg.Attachments.Backend = AttachmentBackendLocal
 	}
 	if cfg.Attachments.MaxFileMB == 0 {
 		cfg.Attachments.MaxFileMB = 5
