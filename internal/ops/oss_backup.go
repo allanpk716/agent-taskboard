@@ -80,6 +80,11 @@ func downloadObject(ctx context.Context, objects attachments.ObjectStorage, relK
 		return err
 	}
 	defer body.Close()
+	if fileExists(path) {
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("替换已下载对象 %s 失败：%w", path, err)
+		}
+	}
 	if err := copyReaderTo(body, path); err != nil {
 		return err
 	}

@@ -6,6 +6,7 @@
 //	taskboard create-admin 创建首位管理员账号
 //	taskboard backup       手动备份（定时备份在 serve 内置）
 //	taskboard restore <备份文件> 恢复（需先停止服务）
+//	taskboard backup-url <备份名> 打印 OSS 备份的一小时签名地址
 //	taskboard migrate-attachments 附件在本地与 OSS 间离线迁移
 //	taskboard healthcheck  容器健康检查（按配置端口请求 health）
 //	taskboard update       检查并安装更新（前后端；-check 只检查）
@@ -57,6 +58,8 @@ func run(args []string) error {
 		return cmdCreateAdmin(args)
 	case "backup":
 		return cmdBackup(args)
+	case "backup-url":
+		return cmdBackupURL(args)
 	case "healthcheck":
 		return cmdHealthcheck(args)
 	case "restore":
@@ -83,8 +86,9 @@ func usage(w io.Writer) {
   taskboard serve [flags]              启动服务（默认，内置每日备份调度）
   taskboard create-admin [flags]       创建管理员账号
   taskboard backup [flags]             手动备份一次（与定时备份同一段代码）
+	  taskboard backup-url <备份名> [flags] 打印 OSS 库备份的 1 小时签名地址
   taskboard healthcheck [flags]        按配置端口请求 health（镜像 HEALTHCHECK 用）
-  taskboard restore <备份文件> [flags] 恢复（先停止服务，见 docs/deploy-and-release.md）
+	  taskboard restore <备份文件> [flags] 恢复（先停止服务；也可 -from-oss <备份名|latest>）
   taskboard migrate-attachments -to oss|local [flags] 附件离线迁移（-dry-run 只列计划）
     -accept-missing                   源端缺失时按清单切换后端
   taskboard update [flags]             检查并安装更新（-check 只检查不安装）
@@ -187,6 +191,12 @@ func cmdBackup(args []string) error {
 	if err != nil {
 		return err
 	}
+	storage, objects, _, err := configuredAttachmentBackends(cfg)
+	if err != nil {
+		return err
+	}
+	b.SetAttachmentStorage(storage)
+	b.SetObjectStorage(objects)
 	var rec ops.Record
 	if *preupdate {
 		rec, err = b.Preupdate(context.Background())
@@ -203,6 +213,46 @@ func cmdBackup(args []string) error {
 	}
 	fmt.Printf("备份完成：%s（%d 字节，完整性校验通过，附件镜像新增 %d 个文件）\n",
 		rec.Filename, rec.Size, rec.FilesAdded)
+	return nil
+}
+
+// cmdBackupURL 签出一个 OSS 库备份的一小时下载地址；不在网页上提供入口。
+func cmdBackupURL(args []string) error {
+	configPath, name := "config.toml", ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-config", "--config":
+			if i+1 >= len(args) {
+				return fmt.Errorf("-config 需要一个配置文件路径")
+			}
+			i++
+			configPath = args[i]
+		default:
+			if name != "" {
+				return fmt.Errorf("backup-url 只接受一个备份名：%q 多余", args[i])
+			}
+			name = args[i]
+		}
+	}
+	if name == "" {
+		return fmt.Errorf("backup-url 需要一个备份名：taskboard backup-url <备份名>")
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return err
+	}
+	_, objects, _, err := configuredAttachmentBackends(cfg)
+	if err != nil {
+		return err
+	}
+	if objects == nil {
+		return fmt.Errorf("backup-url 只能在 [attachments] backend = \"oss\" 时使用")
+	}
+	target, err := ops.BackupObjectURL(context.Background(), objects, name)
+	if err != nil {
+		return err
+	}
+	fmt.Println(target)
 	return nil
 }
 
@@ -238,7 +288,7 @@ func cmdHealthcheck(args []string) error {
 func cmdRestore(args []string) error {
 	// restore 的自然写法是「taskboard restore <文件> -config …」（文件在前），
 	// 标准库 flag 不支持位置参数后的 flag，这里自己拆。
-	configPath, backupFile := "config.toml", ""
+	configPath, backupFile, fromOSS := "config.toml", "", ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "-config", "--config":
@@ -247,6 +297,12 @@ func cmdRestore(args []string) error {
 			}
 			i++
 			configPath = args[i]
+		case "-from-oss", "--from-oss":
+			if i+1 >= len(args) {
+				return fmt.Errorf("-from-oss 需要一个备份名或 latest")
+			}
+			i++
+			fromOSS = args[i]
 		default:
 			if backupFile != "" {
 				return fmt.Errorf("restore 只接受一个备份文件参数：%q 多余", args[i])
@@ -254,17 +310,75 @@ func cmdRestore(args []string) error {
 			backupFile = args[i]
 		}
 	}
-	if backupFile == "" {
+	if backupFile != "" && fromOSS != "" {
+		return fmt.Errorf("restore 不能同时使用备份文件和 -from-oss")
+	}
+	if backupFile == "" && fromOSS == "" {
 		return fmt.Errorf("restore 需要一个备份文件参数：taskboard restore <文件> -config <配置>")
+	}
+	if fromOSS != "" {
+		return restoreFromOSS(configPath, fromOSS)
 	}
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return err
 	}
-	res, err := ops.Restore(cfg.DataDir, cfg.Port, backupFile, clock.Real{}.Now())
+	storage, _, marker, err := configuredAttachmentBackends(cfg)
 	if err != nil {
 		return err
 	}
+	res, err := ops.RestoreWithStorageAndMarker(cfg.DataDir, cfg.Port, backupFile,
+		clock.Real{}.Now(), storage, marker)
+	if err != nil {
+		return err
+	}
+	printRestoreResult(res)
+	return nil
+}
+
+func restoreFromOSS(configPath, selector string) error {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return err
+	}
+	if err := attachments.EnsureServiceStopped(cfg.Port); err != nil {
+		return err
+	}
+	storage, objects, marker, err := configuredAttachmentBackends(cfg)
+	if err != nil {
+		return err
+	}
+	if objects == nil {
+		return fmt.Errorf("restore -from-oss 只能在 [attachments] backend = \"oss\" 时使用")
+	}
+	name := selector
+	if name == "latest" {
+		st, err := store.Open(cfg.DataDir)
+		if err != nil {
+			return fmt.Errorf("解析 latest 前打开当前库失败：%w（本机库也不可用时请用具体备份名）", err)
+		}
+		name, err = ops.LatestBackupFileName(context.Background(), st.DB)
+		_ = st.Close()
+		if err != nil {
+			return err
+		}
+	}
+	backupFile, err := ops.DownloadBackupFromOSS(context.Background(), objects,
+		filepath.Join(cfg.DataDir, "backups"), name)
+	if err != nil {
+		return err
+	}
+	res, err := ops.RestoreWithStorageAndMarker(cfg.DataDir, cfg.Port, backupFile,
+		clock.Real{}.Now(), storage, marker)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("已从 OSS 下载备份：%s\n", filepath.Base(res.BackupFile))
+	printRestoreResult(res)
+	return nil
+}
+
+func printRestoreResult(res ops.RestoreResult) {
 	if res.SavedCurrentAs != "" {
 		fmt.Printf("已另存当前库：%s\n", filepath.Base(res.SavedCurrentAs))
 	}
@@ -282,7 +396,6 @@ func cmdRestore(args []string) error {
 		fmt.Println("备份里没有访客链接加密密钥：恢复后的访客链接按老链接处理，照常可用，需换新地址后才能再次复制")
 	}
 	fmt.Println("恢复完成：请启动服务（NSSM 下执行 nssm start <服务名>，或直接 taskboard serve）")
-	return nil
 }
 
 // cmdMigrateAttachments 在停服状态下把附件在本地上传和 OSS 之间双向迁移。
@@ -415,11 +528,91 @@ func printIDList(title string, ids []int64) {
 	fmt.Printf("%s：%s\n", title, strings.Join(parts, "、"))
 }
 
+// configuredAttachmentBackends 按配置构造离线命令要用的附件后端。这里不探测
+// 桶：第一条备份/恢复请求会暴露连接问题，也让 backup-url 可以只做本地签名。
+func configuredAttachmentBackends(cfg config.Config) (attachments.Storage,
+	attachments.ObjectStorage, attachments.BackendMarker, error) {
+	none := attachments.BackendMarker{}
+	switch cfg.Attachments.Backend {
+	case "", config.AttachmentBackendLocal:
+		storage, err := attachments.NewLocalStorage(cfg.DataDir)
+		if err != nil {
+			return nil, nil, none, err
+		}
+		return storage, nil, attachments.BackendMarker{
+			Backend: attachments.AttachmentBackendLocal,
+		}, nil
+	case config.AttachmentBackendOSS:
+		marker := attachments.BackendMarker{
+			Backend: attachments.AttachmentBackendOSS,
+			Bucket:  strings.TrimSpace(cfg.Attachments.OSS.Bucket),
+		}
+		var err error
+		marker.Prefix, err = attachments.NormalizeOSSPrefix(cfg.Attachments.OSS.Prefix)
+		if err != nil {
+			return nil, nil, none, err
+		}
+		if marker.Bucket == "" {
+			return nil, nil, none, fmt.Errorf("backend = \"oss\" 时必须配置 bucket")
+		}
+		storage, err := attachments.NewOSSStorage(attachments.OSSConfig{
+			Region: cfg.Attachments.OSS.Region, Bucket: marker.Bucket, Prefix: marker.Prefix,
+			InternalEndpoint: cfg.Attachments.OSS.InternalEndpoint,
+			SigningHost:      cfg.Attachments.OSS.SigningHost,
+		}, attachments.OSSStorageOptions{
+			AccessKeyID:     os.Getenv("OSS_ACCESS_KEY_ID"),
+			AccessKeySecret: os.Getenv("OSS_ACCESS_KEY_SECRET"),
+		})
+		if err != nil {
+			return nil, nil, none, err
+		}
+		objects := attachments.ObjectStorageOf(storage)
+		if objects == nil {
+			return nil, nil, none, fmt.Errorf("OSS 附件后端不支持备份对象接口")
+		}
+		return storage, objects, marker, nil
+	default:
+		return nil, nil, none, fmt.Errorf("[attachments] backend = %q 无效（只能是 local 或 oss）",
+			cfg.Attachments.Backend)
+	}
+}
+
 // updateOptions 从配置构造更新选项（三个更新入口共用 internal/updater）。
 func updateOptions(cfg config.Config, exePath string, logf func(string, ...any)) updater.Options {
 	return updater.Options{
 		Update: cfg.Update, DataDir: cfg.DataDir, Backup: cfg.Backup, WebDir: cfg.WebDir,
 		ExePath: exePath, Port: cfg.Port, Log: logf,
+		Preupdate: func(ctx context.Context) (updater.PreupdateBackup, error) {
+			st, err := store.Open(cfg.DataDir)
+			if err != nil {
+				return updater.PreupdateBackup{}, err
+			}
+			defer st.Close()
+			b, err := ops.NewBackups(st.DB, cfg.DataDir, cfg.Backup.BackupOptions(), clock.Real{})
+			if err != nil {
+				return updater.PreupdateBackup{}, err
+			}
+			storage, objects, _, err := configuredAttachmentBackends(cfg)
+			if err != nil {
+				return updater.PreupdateBackup{}, err
+			}
+			b.SetAttachmentStorage(storage)
+			b.SetObjectStorage(objects)
+			rec, err := b.Preupdate(ctx)
+			if err != nil {
+				return updater.PreupdateBackup{}, err
+			}
+			return updater.PreupdateBackup{
+				Filename: rec.Filename, Local: rec.Location == ops.LocationLocal,
+			}, nil
+		},
+		RestoreBackup: func(dataDir string, port int, backupFile string, now time.Time) (ops.RestoreResult, error) {
+			storage, _, marker, err := configuredAttachmentBackends(cfg)
+			if err != nil {
+				return ops.RestoreResult{}, err
+			}
+			return ops.RestoreWithStorageAndMarker(dataDir, port, backupFile, now, storage, marker)
+		},
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/config"
+	"github.com/allanpk716/agent-taskboard/internal/ops"
 	"github.com/allanpk716/agent-taskboard/internal/release"
 	"github.com/allanpk716/agent-taskboard/internal/version"
 )
@@ -34,6 +35,8 @@ type Options struct {
 	// Preupdate 做一次更新前备份，返回备份文件名和是否只在本机；为 nil 时用默认实现
 	// （打开 data_dir 的库调 ops.Backups.Preupdate）。
 	Preupdate func(ctx context.Context) (PreupdateBackup, error)
+	// RestoreBackup 供回滚按当前附件配置恢复备份；为 nil 时按本地后端恢复。
+	RestoreBackup func(dataDir string, port int, backupFile string, now time.Time) (ops.RestoreResult, error)
 	// HTTP 可注入的客户端（测试用）。
 	HTTP *http.Client
 	// Log 输出进度；为空时静默。

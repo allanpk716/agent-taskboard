@@ -323,10 +323,6 @@ func (b *Backups) backupLocalOnly(ctx context.Context, now time.Time, kind Kind)
 		return b.fail(ctx, rec, err)
 	}
 	rec.FilesAdded = added
-	rec.IntegrityOK = true
-	if err := b.uploadBackupObjects(ctx, path, rec.Filename); err != nil {
-		return b.fail(ctx, rec, err)
-	}
 
 	ok, err := verifyCopy(path)
 	if err != nil || !ok {
@@ -337,6 +333,10 @@ func (b *Backups) backupLocalOnly(ctx context.Context, now time.Time, kind Kind)
 			return b.fail(ctx, rec, fmt.Errorf("副本 %s 完整性校验出错：%w", rec.Filename, err))
 		}
 		return b.fail(ctx, rec, fmt.Errorf("副本 %s 完整性校验未通过", rec.Filename))
+	}
+	rec.IntegrityOK = true
+	if err := b.uploadBackupObjects(ctx, path, rec.Filename); err != nil {
+		return b.fail(ctx, rec, err)
 	}
 	if err := b.insertRecord(ctx, rec); err != nil {
 		return rec, err

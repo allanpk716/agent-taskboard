@@ -63,7 +63,7 @@ func EnsureServiceStopped(port int) error {
 		return nil
 	}
 	_ = conn.Close()
-	return fmt.Errorf("127.0.0.1:%d 仍有服务在监听：先停止 taskboard 服务（如 nssm stop <服务名>）再迁移附件", port)
+	return fmt.Errorf("127.0.0.1:%d 仍有服务在监听：先停止 taskboard 服务（如 nssm stop <服务名>）再执行离线命令", port)
 }
 
 // MigrateAttachments 把附件对象从 source 复制到 target，全部校验通过后
