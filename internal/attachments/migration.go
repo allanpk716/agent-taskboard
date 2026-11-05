@@ -101,6 +101,9 @@ func MigrateAttachments(ctx context.Context, db *sql.DB, source, target Storage,
 				res.Skipped++
 			}
 		}
+		if res.Failed != 0 || (res.Missing != 0 && !opts.AcceptMissing) {
+			return res, fmt.Errorf("附件迁移演练发现问题：失败 %d 个、源端缺失 %d 个", res.Failed, res.Missing)
+		}
 		return res, nil
 	}
 	if opts.Target.Backend == AttachmentBackendLocal {

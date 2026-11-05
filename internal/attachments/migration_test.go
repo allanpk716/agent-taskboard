@@ -216,8 +216,8 @@ func Test附件迁移DryRun只列计划不写入(t *testing.T) {
 		},
 		DryRun: true,
 	})
-	if err != nil {
-		t.Fatalf("dry-run 失败：%v", err)
+	if err == nil || !strings.Contains(err.Error(), "源端缺失") {
+		t.Fatalf("dry-run err = %v, 想提示后续迁移会因缺失失败", err)
 	}
 	if res.DryRun != true || res.Planned != 1 || res.Skipped != 1 || res.Missing != 1 ||
 		len(res.MissingIDs) != 1 || res.MissingIDs[0] != 3 {

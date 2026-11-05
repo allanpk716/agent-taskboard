@@ -393,7 +393,8 @@ func cmdMigrateAttachments(args []string) error {
 func printMigrationResult(res attachments.MigrationResult) {
 	if res.DryRun {
 		fmt.Printf("附件迁移计划：附件 %d 个、共 %d 字节；需复制 %d 个、已一致 %d 个、源端缺失 %d 个\n",
-			res.Planned+res.Skipped+res.Missing, res.TotalSize, res.Planned, res.Skipped, res.Missing)
+			res.Planned+res.Skipped+res.Missing+res.Failed, res.TotalSize,
+			res.Planned, res.Skipped, res.Missing)
 	} else {
 		fmt.Printf("附件迁移汇总：复制 %d 个、跳过 %d 个、失败 %d 个、源端缺失 %d 个\n",
 			res.Copied, res.Skipped, res.Failed, res.Missing)
