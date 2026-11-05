@@ -196,6 +196,9 @@ func (s *OSSStorage) Probe(ctx context.Context) error {
 	return nil
 }
 
+// headBucket 手写签名而不是用 SDK 的 HeadBucket：探测要按 internal_endpoint
+// 是域名还是 IP 分别组虚拟主机/路径风格地址，并复用可注入的 httpClient 供
+// 协议级测试；签名本身用 SDK 的 signer/v4，与 SDK 行为一致。
 func (s *OSSStorage) headBucket(ctx context.Context) error {
 	target := *s.endpoint
 	if net.ParseIP(target.Hostname()) == nil {
@@ -486,8 +489,11 @@ func (s *OSSStorage) ListObjects(ctx context.Context, relPrefix string) ([]Objec
 	}
 }
 
-// signedObjectURL 生成 V4 签名地址。roundTo 是签名时间的取整粒度：0 表示
-// 用精确当前时间签名，保证剩余有效期等于 ttl。
+// signedObjectURL 手写 V4 签名而不是用 SDK 的 Presign：Presign 无法固定
+// 签名时间，而这里既要注入时钟，又要让附件地址在时间桶内稳定、备份地址
+// 从签出起算满 ttl。算法已与 SDK v1.6.1 的 signer/v4.go 逐项核对一致。
+// roundTo 是签名时间的取整粒度：0 表示用精确当前时间签名，保证剩余有效
+// 期等于 ttl。
 func (s *OSSStorage) signedObjectURL(ctx context.Context, key string, ttl time.Duration,
 	disposition string, roundTo time.Duration) (string, bool, error) {
 	if ttl <= 0 {
