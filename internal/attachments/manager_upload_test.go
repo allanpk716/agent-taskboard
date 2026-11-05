@@ -28,7 +28,7 @@ func newUploadManager(t *testing.T, mem *attachments.MemoryStorage) (*attachment
 		VALUES (1, 'chen', '陈工', 'x', '2026-10-16T09:00:00+08:00')`); err != nil {
 		t.Fatalf("造成员失败：%v", err)
 	}
-	m, err := attachments.NewManagerWithStorage(st.DB, dataDir, mem,
+	m, err := attachments.NewManagerWithStorage(st.DB, mem,
 		clock.NewFake(time.Date(2026, 10, 16, 9, 0, 0, 0, clock.Beijing)), attachments.LimitsOf(5, 5, 10, 50))
 	if err != nil {
 		t.Fatalf("建附件管理器失败：%v", err)

@@ -108,7 +108,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 		cfg.Attachments.MaxFileMB, cfg.Attachments.MaxFilesPerPost,
 		cfg.Attachments.MaxImagesPerPost, cfg.Attachments.MaxTicketMB)
 	if o.attachmentStorage != nil {
-		atts, err = attachments.NewManagerWithStorage(st.DB, cfg.DataDir, o.attachmentStorage, c, limits)
+		atts, err = attachments.NewManagerWithStorage(st.DB, o.attachmentStorage, c, limits)
 	} else {
 		atts, err = attachments.NewManager(st.DB, cfg.DataDir, c, limits)
 	}
