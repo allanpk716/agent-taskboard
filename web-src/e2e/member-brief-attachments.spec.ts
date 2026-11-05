@@ -93,6 +93,30 @@ test('插图地址失效时显示替代文字占位', async ({ page, request }) 
   await expect(brief.locator('img.inline-img')).toHaveCount(0)
 })
 
+test('点开图片附件用 Lightbox 查看，普通附件照旧打开', async ({ page, request }) => {
+  const number = await createTicket(request, { title: '图片附件 Lightbox' })
+  const image = await uploadImage(request, number, '设备照片.png', onePixelPng)
+  const log = await upload(request, number, '设备日志.log', 'device log')
+  const res = await request.patch(`/api/v1/tickets/${number}`, {
+    data: { attachment_ids: [image.id, log.id], base_revision: 1 },
+  })
+  expect(res.status(), `挂附件失败：${await res.text()}`).toBe(200)
+  const view = await (await request.get(`/api/v1/tickets/${number}`)).json()
+  const logUrl = view.attachments.find((a: any) => a.id === log.id).url as string
+
+  await login(page, ADMIN)
+  await page.goto(`/t/${number}`)
+  const chips = page.locator('[data-bubble="brief"] .atts .att')
+  await chips.filter({ hasText: '设备照片.png' }).click()
+  await expect(page.locator('.lightbox img')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.lightbox')).toBeHidden()
+
+  const logChip = chips.filter({ hasText: '设备日志.log' })
+  await expect(logChip).toHaveAttribute('href', logUrl)
+  await expect(logChip).toHaveAttribute('target', '_blank')
+})
+
 test('建单时字段内附件留在字段下，不进整张工单的附件', async ({ page }) => {
   await login(page, ADMIN)
   await page.locator('.b-tabs').getByRole('link', { name: '建单' }).click()
