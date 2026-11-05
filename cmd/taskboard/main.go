@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"io"
@@ -421,14 +422,27 @@ func cmdMigrateAttachments(args []string) error {
 	if err := attachments.EnsureServiceStopped(cfg.Port); err != nil {
 		return err
 	}
-	st, err := store.Open(cfg.DataDir)
+	var db *sql.DB
+	if *dryRun {
+		// dry-run 绝不能写任何东西：不跑迁移、不切 WAL、不新建库。
+		db, err = store.OpenReadOnly(cfg.DataDir)
+		if err == nil {
+			defer db.Close()
+		}
+	} else {
+		var st *store.Store
+		st, err = store.Open(cfg.DataDir)
+		if err == nil {
+			defer st.Close()
+			db = st.DB
+		}
+	}
 	if err != nil {
 		return err
 	}
-	defer st.Close()
 
 	ctx := context.Background()
-	marker, exists, err := attachments.ReadBackendMarker(ctx, st.DB)
+	marker, exists, err := attachments.ReadBackendMarker(ctx, db)
 	if err != nil {
 		return err
 	}
@@ -483,7 +497,7 @@ func cmdMigrateAttachments(args []string) error {
 		return err
 	}
 
-	res, migrateErr := attachments.MigrateAttachments(ctx, st.DB, source, destination, attachments.MigrationOptions{
+	res, migrateErr := attachments.MigrateAttachments(ctx, db, source, destination, attachments.MigrationOptions{
 		Target: want, DataDir: cfg.DataDir, DryRun: *dryRun,
 		AcceptMissing: *acceptMissing,
 		Progress: func(done, total int) {

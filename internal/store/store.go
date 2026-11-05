@@ -71,6 +71,30 @@ func Open(dataDir string) (*Store, error) {
 	return s, nil
 }
 
+// OpenReadOnly 以只读方式打开现有库：不执行迁移、不切 WAL、库不存在时报错，
+// 供 migrate-attachments -dry-run 这类绝不能写任何文件的命令使用。immutable
+// 让 SQLite 完全不创建 -wal/-shm；代价是崩溃残留的未检查点 WAL 内容不可见
+// （dry-run 只是预览，正式迁移仍用 Open 正常恢复）。
+func OpenReadOnly(dataDir string) (*sql.DB, error) {
+	path := filepath.Join(dataDir, "taskboard.db")
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("数据库 %s 不存在：dry-run 只检查现有库，请先完成启动或用具体备份恢复", path)
+		}
+		return nil, fmt.Errorf("读取数据库 %s 信息失败：%w", path, err)
+	}
+	dsn := FileURI(path) + "?immutable=1&_pragma=busy_timeout(10000)"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("打开数据库失败：%w", err)
+	}
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("只读打开数据库 %s 失败：%w", path, err)
+	}
+	return db, nil
+}
+
 // recordInitialDatabase 给新库留下未完成初始化的标记。首次启动可能在 OSS
 // 探测阶段失败；修复配置后应能重试，而不是把迁移默认值 local 当成老库状态。
 func (s *Store) recordInitialDatabase() error {
