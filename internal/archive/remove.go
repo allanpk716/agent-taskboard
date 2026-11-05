@@ -218,7 +218,13 @@ func (s *Service) cleanupRemovedFiles(ctx context.Context, ids []int64) (int64, 
 	failures := 0
 	for _, id := range ids {
 		objects := s.atts.Storage()
-		if size, exists := objects.Stat(ctx, id); exists {
+		size, exists, err := objects.Stat(ctx, id)
+		if err != nil {
+			log.Printf("归档移除后检查附件对象 att_%d 失败：%v", id, err)
+			failures++
+			continue
+		}
+		if exists {
 			if err := objects.Delete(ctx, id); err != nil {
 				log.Printf("归档移除后删除附件对象 att_%d 失败：%v", id, err)
 				failures++

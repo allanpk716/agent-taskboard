@@ -77,12 +77,15 @@ func (s *LocalStorage) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-func (s *LocalStorage) Stat(ctx context.Context, id int64) (int64, bool) {
+func (s *LocalStorage) Stat(ctx context.Context, id int64) (int64, bool, error) {
 	info, err := os.Stat(s.path(id))
 	if err != nil {
-		return 0, false
+		if os.IsNotExist(err) {
+			return 0, false, nil
+		}
+		return 0, false, fmt.Errorf("读取本地附件 att_%d 信息失败：%w", id, err)
 	}
-	return info.Size(), true
+	return info.Size(), true, nil
 }
 
 func (s *LocalStorage) List(ctx context.Context, fn func(id int64, size int64, modTime time.Time) error) error {
@@ -103,7 +106,10 @@ func (s *LocalStorage) List(ctx context.Context, fn func(id int64, size int64, m
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	for _, id := range ids {
-		size, ok := s.Stat(ctx, id)
+		size, ok, err := s.Stat(ctx, id)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			continue
 		}

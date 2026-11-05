@@ -163,7 +163,11 @@ func RestoreWithStorageAndMarker(dataDir string, port int, backupFile string, no
 	}
 	ctx := context.Background()
 	for _, record := range records {
-		if _, exists := storage.Stat(ctx, record.id); exists {
+		_, exists, statErr := storage.Stat(ctx, record.id)
+		if statErr != nil {
+			return res, statErr
+		}
+		if exists {
 			continue // 主存储里已有
 		}
 		file, size, err := mirror.Open(record.id)

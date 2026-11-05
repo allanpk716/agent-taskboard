@@ -73,11 +73,11 @@ func Test附件对账清理超过二十四小时的孤儿对象_本地(t *testin
 		"待用":  int(attachmentNumericID(t, pending.ID)),
 		"新孤儿": int(freshID),
 	} {
-		if _, ok := storage.Stat(ctx, int64(id)); !ok {
+		if _, ok, err := storage.Stat(ctx, int64(id)); err != nil || !ok {
 			t.Errorf("%s附件对象应保留", name)
 		}
 	}
-	if _, ok := storage.Stat(ctx, staleID); ok {
+	if _, ok, err := storage.Stat(ctx, staleID); err != nil || ok {
 		t.Error("超过 24 小时的孤儿对象应删除")
 	}
 }

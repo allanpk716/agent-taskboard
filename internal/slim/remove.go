@@ -149,7 +149,11 @@ func (s *Service) removalState(ctx context.Context, q removalQueryer, m *manifes
 		if err != nil || at.After(generatedAt) {
 			return nil, fmt.Errorf("%w：%s", ErrPackageStale, file.TicketNumber)
 		}
-		if size, exists := s.atts.Storage().Stat(ctx, att.ID); !exists || size != att.Size {
+		size, exists, statErr := s.atts.Storage().Stat(ctx, att.ID)
+		if statErr != nil {
+			return nil, statErr
+		}
+		if !exists || size != att.Size {
 			return nil, fmt.Errorf("%w：%s 的服务器文件已不在", ErrPackageStale, attachmentID(att.ID))
 		}
 		att.Ref = file.AttachmentID
@@ -163,7 +167,13 @@ func (s *Service) cleanupFiles(ctx context.Context, atts []removalAttachment) (i
 	failures := 0
 	for _, att := range atts {
 		objects := s.atts.Storage()
-		if _, exists := objects.Stat(ctx, att.ID); exists {
+		_, exists, statErr := objects.Stat(ctx, att.ID)
+		if statErr != nil {
+			log.Printf("瘦身移出后检查附件对象 att_%d 失败：%v", att.ID, statErr)
+			failures++
+			continue
+		}
+		if exists {
 			if err := objects.Delete(ctx, att.ID); err != nil {
 				log.Printf("瘦身移出后删除附件对象 att_%d 失败：%v", att.ID, err)
 				failures++

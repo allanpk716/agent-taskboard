@@ -373,18 +373,21 @@ func (s *OSSStorage) DeleteObject(ctx context.Context, relKey string) error {
 	return s.DeleteKey(ctx, key)
 }
 
-func (s *OSSStorage) Stat(ctx context.Context, id int64) (int64, bool) {
+func (s *OSSStorage) Stat(ctx context.Context, id int64) (int64, bool, error) {
 	result, err := s.client.HeadObject(ctx, &oss.HeadObjectRequest{
 		Bucket: oss.Ptr(s.config.Bucket), Key: oss.Ptr(s.attachmentKey(id)),
 	})
+	if objectNotFound(err) {
+		return 0, false, nil
+	}
 	if err != nil {
-		return 0, false
+		return 0, false, fmt.Errorf("读取 OSS 附件 att_%d 信息失败：%w", id, err)
 	}
 	size := result.ContentLength
 	if size < 0 {
 		size = 0
 	}
-	return size, true
+	return size, true, nil
 }
 
 func (s *OSSStorage) List(ctx context.Context, fn func(id int64, size int64, modTime time.Time) error) error {

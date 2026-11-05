@@ -381,7 +381,11 @@ func (s *Service) restoreFileReason(ctx context.Context, q restoreQueryer,
 		state != "attached" || draftID.Valid {
 		return "附件与瘦身包清单不匹配", nil
 	}
-	if _, exists := s.atts.Storage().Stat(ctx, id); exists {
+	_, exists, err := s.atts.Storage().Stat(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if exists {
 		return "附件已在服务器上", nil
 	}
 	if !slimmedAt.Valid {

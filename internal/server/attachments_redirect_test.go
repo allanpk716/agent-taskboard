@@ -1,6 +1,9 @@
 package server_test
 
 import (
+	"bytes"
+	"errors"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -103,5 +106,44 @@ func Test外链存储下附件下载返回302(t *testing.T) {
 	}
 	if downloads != 3 || deniedCount != 1 {
 		t.Fatalf("访问记录 downloads=%d denied=%d, 想 3 和 1（HEAD 不写下载记录）", downloads, deniedCount)
+	}
+}
+
+// 签名地址后端的元数据检查失败是后端故障：下载接口要返回 5xx 并写日志，
+// 不能误报 404“附件文件缺失”。
+func Test签名地址后端Stat故障时下载返回500(t *testing.T) {
+	var logs bytes.Buffer
+	oldLogWriter := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(oldLogWriter)
+
+	mem := attachments.NewMemoryStorage()
+	mem.DownloadURLPrefix = "https://oss.example.test/signed/"
+	mem.StatErr = errors.New("oss metadata unavailable")
+	s := tbtest.Start(t,
+		tbtest.WithAttachmentStorage(mem),
+		tbtest.WithAttachmentConfig(config.Attachments{
+			Backend: config.AttachmentBackendOSS,
+			OSS: config.OSS{
+				Region: "cn-hangzhou", Bucket: "files", Prefix: "agent-taskboard/prod/",
+				InternalEndpoint: "oss-cn-hangzhou-internal.aliyuncs.com",
+			},
+		}),
+	)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	mine := mustCreateTicket(t, s, web, "签名地址故障工单")
+	uploaded := mustUploadAttachment(t, s, web, mine, "现场.png", []byte("png"))
+	if res := claimByReply(t, s, web, mine, map[string]any{"attachment_ids": []string{uploaded.ID}}); res.StatusCode != http.StatusCreated {
+		t.Fatalf("挂附件状态码 = %d, 想 201", res.StatusCode)
+	}
+	path := "/api/v1/attachments/" + uploaded.ID + "/" + url.PathEscape("现场.png")
+
+	res := downloadAttachment(t, s, noRedirect(t, web), path)
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("状态码 = %d, 想 500", res.StatusCode)
+	}
+	if !strings.Contains(logs.String(), "oss metadata unavailable") {
+		t.Fatalf("日志 = %q，想包含后端故障原因", logs.String())
 	}
 }

@@ -198,7 +198,11 @@ func planAttachment(ctx context.Context, record migrationRecord, source, target 
 	if closeErr != nil {
 		return false, closeErr
 	}
-	if targetSize, exists := target.Stat(ctx, record.id); exists && targetSize == size {
+	targetSize, exists, statErr := target.Stat(ctx, record.id)
+	if statErr != nil {
+		return false, statErr
+	}
+	if exists && targetSize == size {
 		targetSum, err := objectChecksum(ctx, target, record.id)
 		if err != nil {
 			return false, err
@@ -268,7 +272,10 @@ func copyIfNeeded(ctx context.Context, record migrationRecord, source, target St
 		return 0, false, err
 	}
 	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
-	targetSize, targetExists := target.Stat(ctx, record.id)
+	targetSize, targetExists, statErr := target.Stat(ctx, record.id)
+	if statErr != nil {
+		return 0, false, statErr
+	}
 	_, copyErr := io.Copy(io.Discard, io.TeeReader(body, hash))
 	closeErr := body.Close()
 	if copyErr != nil {
@@ -311,7 +318,11 @@ func putVerified(ctx context.Context, record migrationRecord, source, target Sto
 	if targetSum != hash.Sum64() {
 		return 0, false, fmt.Errorf("CRC64 校验不符：源端 %d，目标端 %d", hash.Sum64(), targetSum)
 	}
-	if targetSize, exists := target.Stat(ctx, record.id); !exists || targetSize != size {
+	targetSize, exists, statErr := target.Stat(ctx, record.id)
+	if statErr != nil {
+		return 0, false, statErr
+	}
+	if !exists || targetSize != size {
 		return 0, false, fmt.Errorf("目标对象大小不符：应为 %d 字节，实际 %d", size, targetSize)
 	}
 	return targetSum, true, nil

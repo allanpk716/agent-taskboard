@@ -6,6 +6,7 @@ package httpapi
 
 import (
 	"errors"
+	"log"
 	"io"
 	"mime"
 	"net/http"
@@ -106,7 +107,13 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 	if hasExternalURL {
-		if _, exists := a.atts.Storage().Stat(r.Context(), att.ID); !exists {
+		_, exists, statErr := a.atts.Storage().Stat(r.Context(), att.ID)
+		if statErr != nil {
+			log.Printf("检查附件 %s 所在对象失败：%v", att.Ref(), statErr)
+			WriteError(w, http.StatusInternalServerError, CodeInternal, "读取附件存储失败", "")
+			return
+		}
+		if !exists {
 			WriteError(w, http.StatusNotFound, CodeAttachmentNotFound, "附件文件缺失", "")
 			return
 		}

@@ -120,7 +120,7 @@ func TestRealOSSSmoke(t *testing.T) {
 	if err := store.Delete(ctx, attachmentID); err != nil {
 		t.Fatalf("删除附件对象失败：%v", err)
 	}
-	if _, exists := store.Stat(ctx, attachmentID); exists {
+	if _, exists, err := store.Stat(ctx, attachmentID); err != nil || exists {
 		t.Fatal("附件对象删除后仍然存在")
 	}
 

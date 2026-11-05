@@ -29,7 +29,9 @@ type Storage interface {
 	Put(ctx context.Context, id int64, src io.Reader, size int64, meta PutMeta) error
 	Open(ctx context.Context, id int64) (io.ReadCloser, int64, error)
 	Delete(ctx context.Context, id int64) error
-	Stat(ctx context.Context, id int64) (size int64, exists bool)
+	// Stat 返回对象大小与是否存在；err 非空表示后端故障（网络、鉴权等），
+	// 此时 exists 没有意义，调用方必须把错误往上交，不能当成对象缺失。
+	Stat(ctx context.Context, id int64) (size int64, exists bool, err error)
 	List(ctx context.Context, fn func(id int64, size int64, modTime time.Time) error) error
 	// DownloadURL 返回可直达对象的外链。返回 ok=false 表示这个后端不提供
 	// 外链，调用方照旧从 Open 流式返回文件。

@@ -32,6 +32,7 @@ type fakeOSS struct {
 	objects                map[string]string
 	rejectPersistentHeader bool
 	headChecksum           string
+	headFail               bool
 }
 
 func newFakeOSS(t *testing.T) *fakeOSS {
@@ -62,6 +63,10 @@ func newFakeOSS(t *testing.T) *fakeOSS {
 			f.objects[r.URL.Path] = string(body)
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodHead && r.URL.Path != "/files/":
+			if f.headFail {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			body, ok := f.objects[r.URL.Path]
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)
@@ -89,6 +94,34 @@ func newFakeOSS(t *testing.T) *fakeOSS {
 	}))
 	t.Cleanup(f.server.Close)
 	return f
+}
+
+// Stat 只把确认不存在当成“没有对象”；网络或鉴权故障必须把错误交给调用方，
+// 不能伪装成对象缺失。
+func TestOSS存储Stat后端故障返回错误(t *testing.T) {
+	fake := newFakeOSS(t)
+	fake.objects["/files/agent-taskboard/prod/attachments/7"] = "内容"
+	fake.headFail = true
+	store, err := attachments.NewOSSStorage(attachments.OSSConfig{
+		Region: "cn-hangzhou", Bucket: "files", Prefix: "agent-taskboard/prod/",
+		InternalEndpoint: fake.server.URL,
+	}, attachments.OSSStorageOptions{AccessKeyID: "ak", AccessKeySecret: "sk"})
+	if err != nil {
+		t.Fatalf("创建 OSS 存储失败：%v", err)
+	}
+	ctx := context.Background()
+	if size, exists, err := store.Stat(ctx, 7); err == nil {
+		t.Fatalf("后端故障时 Stat = (%d, %v, %v)，想把错误交给调用方", size, exists, err)
+	}
+	fake.mu.Lock()
+	fake.headFail = false
+	fake.mu.Unlock()
+	if size, exists, err := store.Stat(ctx, 7); err != nil || !exists || size != int64(len("内容")) {
+		t.Fatalf("故障恢复后 Stat = (%d, %v, %v)", size, exists, err)
+	}
+	if size, exists, err := store.Stat(ctx, 404); err != nil || exists || size != 0 {
+		t.Fatalf("对象不存在时 Stat = (%d, %v, %v)，想 (0, false, nil)", size, exists, err)
+	}
 }
 
 // listObjectsXML 按前缀返回 ListObjectsV2 的 XML；调用方持有 mu。
@@ -300,8 +333,8 @@ func TestOSS存储协议与签名地址(t *testing.T) {
 	if string(gotBody) != content || size != int64(len(content)) {
 		t.Fatalf("Open = (%q, %d)", gotBody, size)
 	}
-	if got, ok := store.Stat(ctx, 7); !ok || got != int64(len(content)) {
-		t.Fatalf("Stat = (%d, %v)", got, ok)
+	if got, ok, err := store.Stat(ctx, 7); err != nil || !ok || got != int64(len(content)) {
+		t.Fatalf("Stat = (%d, %v, %v)", got, ok, err)
 	}
 
 	disposition := `attachment; filename="报告.txt"`

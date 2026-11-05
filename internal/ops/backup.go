@@ -561,7 +561,10 @@ func (b *Backups) syncMirror(ctx context.Context) (int, error) {
 	added := 0
 	for _, record := range records {
 		id := record.id
-		backendSize, exists := b.attachmentStorage.Stat(ctx, id)
+		backendSize, exists, statErr := b.attachmentStorage.Stat(ctx, id)
+		if statErr != nil {
+			return 0, statErr
+		}
 		if mirrorSize, mirrored := mirror.Stat(id); exists && mirrored && mirrorSize == backendSize {
 			// 已镜像过。同步不删除；归档移除会在事务提交后单独删除对应镜像。
 			continue

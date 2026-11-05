@@ -39,8 +39,8 @@ func runStorageContract(t *testing.T, newStorage func(t *testing.T) attachments.
 		if size != int64(len(content)) {
 			t.Fatalf("Open 返回大小 = %d, 想 %d", size, len(content))
 		}
-		if statSize, ok := store.Stat(ctx, 7); !ok || statSize != int64(len(content)) {
-			t.Fatalf("Stat = (%d, %v), 想 (%d, true)", statSize, ok, len(content))
+		if statSize, ok, err := store.Stat(ctx, 7); err != nil || !ok || statSize != int64(len(content)) {
+			t.Fatalf("Stat = (%d, %v, %v), 想 (%d, true, nil)", statSize, ok, err, len(content))
 		}
 	})
 
@@ -53,8 +53,8 @@ func runStorageContract(t *testing.T, newStorage func(t *testing.T) attachments.
 
 	t.Run("Stat 不存在的对象返回不存在", func(t *testing.T) {
 		store := newStorage(t)
-		if size, ok := store.Stat(ctx, 404); ok || size != 0 {
-			t.Fatalf("Stat 不存在的对象 = (%d, %v), 想 (0, false)", size, ok)
+		if size, ok, err := store.Stat(ctx, 404); err != nil || ok || size != 0 {
+			t.Fatalf("Stat 不存在的对象 = (%d, %v, %v), 想 (0, false, nil)", size, ok, err)
 		}
 	})
 
@@ -95,7 +95,7 @@ func runStorageContract(t *testing.T, newStorage func(t *testing.T) attachments.
 		if _, _, err := store.Open(ctx, 9); !errors.Is(err, attachments.ErrObjectNotFound) {
 			t.Fatalf("删除后 Open err = %v, 想 ErrObjectNotFound", err)
 		}
-		if _, ok := store.Stat(ctx, 9); ok {
+		if _, ok, err := store.Stat(ctx, 9); err != nil || ok {
 			t.Fatal("删除后 Stat 应返回不存在")
 		}
 		// 删除不存在的对象不是错误：四处删除调用方都依赖这个幂等语义。
@@ -141,7 +141,7 @@ func runStorageContract(t *testing.T, newStorage func(t *testing.T) attachments.
 		if err := store.Put(ctx, 21, bytes.NewReader([]byte("短内容")), 100, attachments.PutMeta{}); err == nil {
 			t.Fatal("声明 100 字节只给 6 字节应返回错误")
 		}
-		if _, ok := store.Stat(ctx, 21); ok {
+		if _, ok, err := store.Stat(ctx, 21); err != nil || ok {
 			t.Fatal("失败的 Put 不应留下对象")
 		}
 	})

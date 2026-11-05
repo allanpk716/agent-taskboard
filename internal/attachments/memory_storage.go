@@ -25,6 +25,8 @@ type MemoryStorage struct {
 	PutErr error
 	// PutObjectErr 非空时 PutObject 直接返回它（测试注入非附件对象故障）。
 	PutObjectErr error
+	// StatErr 非空时 Stat 直接返回它（测试注入元数据读取故障）。
+	StatErr error
 	// DeleteErr 非空时 Delete / DeleteObject 直接返回它（测试注入清理故障）。
 	DeleteErr error
 	// AfterPut 在对象写入后、Put 返回前调用，用来在「Put 已成功、事务
@@ -194,11 +196,15 @@ func (s *MemoryStorage) ListObjects(ctx context.Context, relPrefix string) ([]Ob
 	return objects, nil
 }
 
-func (s *MemoryStorage) Stat(ctx context.Context, id int64) (int64, bool) {
+func (s *MemoryStorage) Stat(ctx context.Context, id int64) (int64, bool, error) {
 	s.mu.Lock()
+	fault := s.StatErr
 	obj, ok := s.objects[id]
 	s.mu.Unlock()
-	return obj.Size, ok
+	if fault != nil {
+		return 0, false, fault
+	}
+	return obj.Size, ok, nil
 }
 
 // SetModTime 供测试把对象调整为指定的存在时间（如 24 小时边界），返回对象

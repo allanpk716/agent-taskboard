@@ -142,7 +142,7 @@ func Test附件迁移OSS到本地前检查磁盘剩余空间(t *testing.T) {
 	if checkedPath != filepath.Join(dataDir, "attachments") {
 		t.Fatalf("检查目录 = %q, 想附件目录", checkedPath)
 	}
-	if _, ok := target.Stat(ctx, 1); ok {
+	if _, ok, err := target.Stat(ctx, 1); err != nil || ok {
 		t.Fatal("空间不足时不应开始复制")
 	}
 	marker, exists, err := attachments.ReadBackendMarker(ctx, st.DB)
@@ -264,7 +264,7 @@ func Test附件迁移DryRun只列计划不写入(t *testing.T) {
 	if len(res.SourceOnlyIDs) != 1 || res.SourceOnlyIDs[0] != 99 {
 		t.Fatalf("源端孤儿 = %v, 想 [99]", res.SourceOnlyIDs)
 	}
-	if _, ok := target.Stat(ctx, 2); ok {
+	if _, ok, err := target.Stat(ctx, 2); err != nil || ok {
 		t.Fatal("dry-run 不应写目标对象")
 	}
 	marker, exists, err := attachments.ReadBackendMarker(ctx, st.DB)
