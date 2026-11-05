@@ -18,6 +18,8 @@ type MigrationOptions struct {
 	DataDir string
 	// FreeSpace 供测试注入磁盘剩余空间检测；生产路径留空使用系统实现。
 	FreeSpace func(path string) (uint64, error)
+	// AcceptMissing 表示源端缺失的附件按缺失清单切换；复制失败仍会阻止切换。
+	AcceptMissing bool
 }
 
 // MigrationResult 是迁移汇总；清单里的 id 按升序排列。
@@ -71,7 +73,7 @@ func MigrateAttachments(ctx context.Context, db *sql.DB, source, target Storage,
 			res.FailedIDs = append(res.FailedIDs, record.id)
 		}
 	}
-	if res.Failed != 0 || res.Missing != 0 {
+	if res.Failed != 0 || (res.Missing != 0 && !opts.AcceptMissing) {
 		return res, fmt.Errorf("附件迁移未完成：失败 %d 个、源端缺失 %d 个", res.Failed, res.Missing)
 	}
 	if err := WriteBackendMarker(ctx, db, opts.Target); err != nil {
