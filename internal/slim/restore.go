@@ -505,6 +505,7 @@ func (s *Service) writeRestoreAttachment(ctx context.Context, entry *zip.File, i
 
 func (s *Service) removeRestoreFiles(ctx context.Context, ids []int64) {
 	objects := s.atts.Storage()
+	ctx = context.WithoutCancel(ctx)
 	for _, id := range ids {
 		_ = objects.Delete(ctx, id)
 	}

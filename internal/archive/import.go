@@ -1016,6 +1016,7 @@ func (s *Service) streamImportAttachment(ctx context.Context, entry *zip.File, i
 
 func (s *Service) removeImportFiles(ctx context.Context, ids []int64) {
 	objects := s.atts.Storage()
+	ctx = context.WithoutCancel(ctx)
 	for _, id := range ids {
 		_ = objects.Delete(ctx, id)
 	}
