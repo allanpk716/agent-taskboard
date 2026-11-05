@@ -101,7 +101,7 @@ func Test外链存储下附件下载返回302(t *testing.T) {
 		FROM access_records WHERE attachment_ref=?`, uploaded.ID).Scan(&downloads, &deniedCount); err != nil {
 		t.Fatalf("查访问记录失败：%v", err)
 	}
-	if downloads != 4 || deniedCount != 1 {
-		t.Fatalf("访问记录 downloads=%d denied=%d, 想 4 和 1（含 HEAD）", downloads, deniedCount)
+	if downloads != 3 || deniedCount != 1 {
+		t.Fatalf("访问记录 downloads=%d denied=%d, 想 3 和 1（HEAD 不写下载记录）", downloads, deniedCount)
 	}
 }

@@ -110,8 +110,10 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusNotFound, CodeAttachmentNotFound, "附件文件缺失", "")
 			return
 		}
-		if err := a.accessRecords.RecordDownload(r.Context(), att, viewer); err != nil {
-			panic(err)
+		if r.Method == http.MethodGet {
+			if err := a.accessRecords.RecordDownload(r.Context(), att, viewer); err != nil {
+				panic(err)
+			}
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Location", signedURL)
