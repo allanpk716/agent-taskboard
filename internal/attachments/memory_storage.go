@@ -27,6 +27,8 @@ type MemoryStorage struct {
 	PutObjectErr error
 	// StatErr 非空时 Stat 直接返回它（测试注入元数据读取故障）。
 	StatErr error
+	// StatCalls 记录 Stat 被调用的次数，供测试断言调用路径。
+	StatCalls int
 	// DeleteErr 非空时 Delete / DeleteObject 直接返回它（测试注入清理故障）。
 	DeleteErr error
 	// AfterPut 在对象写入后、Put 返回前调用，用来在「Put 已成功、事务
@@ -198,6 +200,7 @@ func (s *MemoryStorage) ListObjects(ctx context.Context, relPrefix string) ([]Ob
 
 func (s *MemoryStorage) Stat(ctx context.Context, id int64) (int64, bool, error) {
 	s.mu.Lock()
+	s.StatCalls++
 	fault := s.StatErr
 	obj, ok := s.objects[id]
 	s.mu.Unlock()

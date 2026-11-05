@@ -560,32 +560,34 @@ func (b *Backups) syncMirror(ctx context.Context) (int, error) {
 	}
 	added := 0
 	for _, record := range records {
-		id := record.id
-		backendSize, exists, statErr := b.attachmentStorage.Stat(ctx, id)
-		if statErr != nil {
-			return 0, statErr
-		}
-		if mirrorSize, mirrored := mirror.Stat(id); exists && mirrored && mirrorSize == backendSize {
-			// 已镜像过。同步不删除；归档移除会在事务提交后单独删除对应镜像。
+		// 先看镜像：镜像写入是原子的（.part 改名），存在即完整，不必再问
+		// 后端要大小。同步不删除；归档移除会在事务提交后单独删除对应镜像。
+		if _, mirrored := mirror.Stat(record.id); mirrored {
 			continue
 		}
-		src, actualSize, err := b.attachmentStorage.Open(ctx, id)
-		if err != nil {
-			return 0, fmt.Errorf("从当前后端读附件 att_%d 失败：%w", id, err)
-		}
-		defer src.Close()
-		size := actualSize
-		if actualSize < 0 {
-			_ = src.Close()
-			return 0, fmt.Errorf("附件 att_%d 对象大小无效：%d", id, actualSize)
-		}
-		if err := mirror.Write(id, src, size); err != nil {
-			_ = src.Close()
-			return 0, err
+		if err := b.copyAttachmentToMirror(ctx, mirror, record.id); err != nil {
+			return added, err
 		}
 		added++
 	}
 	return added, nil
+}
+
+// copyAttachmentToMirror 从当前后端读一个附件并写入镜像。独立成小函数让
+// defer 在每个附件复制完成后立即释放后端句柄，而不是拖到整轮同步结束。
+func (b *Backups) copyAttachmentToMirror(ctx context.Context, mirror *attachments.BackupMirror, id int64) error {
+	src, size, err := b.attachmentStorage.Open(ctx, id)
+	if err != nil {
+		return fmt.Errorf("从当前后端读附件 att_%d 失败：%w", id, err)
+	}
+	defer src.Close()
+	if size < 0 {
+		return fmt.Errorf("附件 att_%d 对象大小无效：%d", id, size)
+	}
+	if err := mirror.Write(id, src, size); err != nil {
+		return err
+	}
+	return nil
 }
 
 // syncGuestLinkKey 把数据目录里的访客链接加密密钥文件复制到备份目录（原子替换），
