@@ -1,0 +1,179 @@
+package attachments
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"hash/crc64"
+	"io"
+)
+
+// MigrationOptions 控制一次离线附件迁移。
+type MigrationOptions struct {
+	// Target 是迁移完成后要写入数据库的实际后端标记。
+	Target BackendMarker
+}
+
+// MigrationResult 是迁移汇总；清单里的 id 按升序排列。
+type MigrationResult struct {
+	Copied     int
+	Skipped    int
+	Failed     int
+	Missing    int
+	TotalSize  int64
+	MissingIDs []int64
+	FailedIDs  []int64
+}
+
+type migrationRecord struct {
+	id       int64
+	filename string
+	size     int64
+}
+
+// MigrateAttachments 把附件对象从 source 复制到 target，全部校验通过后
+// 在一个事务里写入 target marker。源端对象保留不删。
+func MigrateAttachments(ctx context.Context, db *sql.DB, source, target Storage, opts MigrationOptions) (MigrationResult, error) {
+	var res MigrationResult
+	if opts.Target.Backend != AttachmentBackendLocal && opts.Target.Backend != AttachmentBackendOSS {
+		return res, fmt.Errorf("迁移目标后端 %q 无效（只能是 local 或 oss）", opts.Target.Backend)
+	}
+	records, err := migrationRecords(ctx, db)
+	if err != nil {
+		return res, err
+	}
+	for _, record := range records {
+		res.TotalSize += record.size
+		copied, err := migrateAttachment(ctx, record, source, target)
+		switch {
+		case err == nil && copied:
+			res.Copied++
+		case err == nil:
+			res.Skipped++
+		case errors.Is(err, ErrObjectNotFound):
+			res.Missing++
+			res.MissingIDs = append(res.MissingIDs, record.id)
+		default:
+			res.Failed++
+			res.FailedIDs = append(res.FailedIDs, record.id)
+		}
+	}
+	if res.Failed != 0 || res.Missing != 0 {
+		return res, fmt.Errorf("附件迁移未完成：失败 %d 个、源端缺失 %d 个", res.Failed, res.Missing)
+	}
+	if err := WriteBackendMarker(ctx, db, opts.Target); err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
+func migrationRecords(ctx context.Context, db *sql.DB) ([]migrationRecord, error) {
+	rows, err := db.QueryContext(ctx, `SELECT id, filename, size FROM attachments ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("读取附件记录失败：%w", err)
+	}
+	defer rows.Close()
+	records := []migrationRecord{}
+	for rows.Next() {
+		var record migrationRecord
+		if err := rows.Scan(&record.id, &record.filename, &record.size); err != nil {
+			return nil, fmt.Errorf("读取附件记录失败：%w", err)
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("读取附件记录失败：%w", err)
+	}
+	return records, nil
+}
+
+func migrateAttachment(ctx context.Context, record migrationRecord, source, target Storage) (bool, error) {
+	_, copied, err := copyIfNeeded(ctx, record, source, target)
+	if err != nil {
+		return false, fmt.Errorf("附件 %d 迁移失败：%w", record.id, err)
+	}
+	return copied, err
+}
+
+func copyIfNeeded(ctx context.Context, record migrationRecord, source, target Storage) (uint64, bool, error) {
+	body, size, err := source.Open(ctx, record.id)
+	if err != nil {
+		return 0, false, err
+	}
+	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
+	if targetSize, exists := target.Stat(ctx, record.id); exists && targetSize == size {
+		_, copyErr := io.Copy(io.Discard, io.TeeReader(body, hash))
+		closeErr := body.Close()
+		if copyErr != nil {
+			return 0, false, copyErr
+		}
+		if closeErr != nil {
+			return 0, false, closeErr
+		}
+		targetSum, err := objectChecksum(ctx, target, record.id)
+		if err != nil {
+			return 0, false, err
+		}
+		if targetSum == hash.Sum64() {
+			return targetSum, false, nil
+		}
+	}
+	if err := body.Close(); err != nil {
+		return 0, false, err
+	}
+	return putVerified(ctx, record, source, target)
+}
+
+func putVerified(ctx context.Context, record migrationRecord, source, target Storage) (uint64, bool, error) {
+	body, size, err := source.Open(ctx, record.id)
+	if err != nil {
+		return 0, false, err
+	}
+	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
+	putErr := target.Put(ctx, record.id, io.TeeReader(body, hash), size,
+		PutMeta{ContentType: ContentTypeOf(record.filename)})
+	closeErr := body.Close()
+	if putErr != nil {
+		return 0, false, putErr
+	}
+	if closeErr != nil {
+		return 0, false, closeErr
+	}
+	targetSum, err := objectChecksum(ctx, target, record.id)
+	if err != nil {
+		return 0, false, err
+	}
+	if targetSum != hash.Sum64() {
+		return 0, false, fmt.Errorf("CRC64 校验不符：源端 %d，目标端 %d", hash.Sum64(), targetSum)
+	}
+	if targetSize, exists := target.Stat(ctx, record.id); !exists || targetSize != size {
+		return 0, false, fmt.Errorf("目标对象大小不符：应为 %d 字节，实际 %d", size, targetSize)
+	}
+	return targetSum, true, nil
+}
+
+func objectChecksum(ctx context.Context, storage Storage, id int64) (uint64, error) {
+	if withChecksum, ok := storage.(interface {
+		ObjectChecksum(ctx context.Context, id int64) (uint64, bool, error)
+	}); ok {
+		sum, exists, err := withChecksum.ObjectChecksum(ctx, id)
+		if err != nil {
+			return 0, err
+		}
+		if !exists {
+			return 0, ErrObjectNotFound
+		}
+		return sum, nil
+	}
+	body, _, err := storage.Open(ctx, id)
+	if err != nil {
+		return 0, err
+	}
+	defer body.Close()
+	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
+	if _, err := io.Copy(hash, body); err != nil {
+		return 0, err
+	}
+	return hash.Sum64(), nil
+}
