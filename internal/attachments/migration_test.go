@@ -189,6 +189,41 @@ func Test附件迁移接受源端缺失时切换并列出清单(t *testing.T) {
 	}
 }
 
+// 瘦身移出的附件对象已从源端删除，属于正常状态：迁移不应把它们算成缺失。
+func Test附件迁移跳过已瘦身附件(t *testing.T) {
+	ctx := context.Background()
+	st, dataDir := newMigrationDatabase(t)
+	source, err := attachments.NewLocalStorage(dataDir)
+	if err != nil {
+		t.Fatalf("创建本地存储失败：%v", err)
+	}
+	putMigrationAttachment(t, source, 1, "普通附件")
+	addMigrationRecord(t, st, 1, "普通.txt", "普通附件", "attached")
+	addMigrationRecord(t, st, 2, "已瘦身.txt", "已瘦身附件", "attached")
+	if _, err := st.DB.Exec(`UPDATE attachments
+		SET slim_removed_at = '2026-11-01T10:00:00+08:00', slim_package_name = 'slim-1.zip'
+		WHERE id = 2`); err != nil {
+		t.Fatalf("标记瘦身附件失败：%v", err)
+	}
+	target := attachments.NewMemoryStorage()
+
+	res, err := attachments.MigrateAttachments(ctx, st.DB, source, target, attachments.MigrationOptions{
+		Target: attachments.BackendMarker{Backend: attachments.AttachmentBackendOSS},
+	})
+	if err != nil {
+		t.Fatalf("有瘦身附件时迁移失败：%v", err)
+	}
+	if res.Missing != 0 || len(res.MissingIDs) != 0 {
+		t.Fatalf("迁移结果 = %+v，瘦身附件不应算缺失", res)
+	}
+	if res.Copied != 1 {
+		t.Fatalf("迁移结果 = %+v，想只复制 1 个普通附件", res)
+	}
+	if _, exists := target.Object(2); exists {
+		t.Fatal("瘦身附件没有源端对象，不应出现在目标端")
+	}
+}
+
 func Test附件迁移DryRun只列计划不写入(t *testing.T) {
 	ctx := context.Background()
 	st, dataDir := newMigrationDatabase(t)

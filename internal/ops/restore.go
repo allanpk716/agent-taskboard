@@ -210,9 +210,10 @@ type attachmentRecord struct {
 	filename string
 }
 
-// attachmentRecords 列出库里有记录的附件对象。
+// attachmentRecords 列出库里应有对象的附件记录。瘦身移出的附件对象已经
+// 删除，库记录只是线索，不属于“应存在”，镜像同步和恢复补附件都要跳过。
 func attachmentRecords(db *sql.DB) ([]attachmentRecord, error) {
-	rows, err := db.Query(`SELECT id, filename FROM attachments ORDER BY id`)
+	rows, err := db.Query(`SELECT id, filename FROM attachments WHERE slim_removed_at IS NULL ORDER BY id`)
 	if err != nil {
 		// 备份里还没有附件表（比 #33 更早的库）：没有附件可补。
 		return nil, nil

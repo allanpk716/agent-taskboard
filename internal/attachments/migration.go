@@ -232,7 +232,10 @@ func checkLocalFreeSpace(opts MigrationOptions, total int64) error {
 }
 
 func migrationRecords(ctx context.Context, db *sql.DB) ([]migrationRecord, error) {
-	rows, err := db.QueryContext(ctx, `SELECT id, filename, size FROM attachments ORDER BY id`)
+	// 瘦身移出的附件对象已删除、库记录仍在：它们不算“应存在”，不能计成
+	// 源端缺失，也不需要复制。
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, filename, size FROM attachments WHERE slim_removed_at IS NULL ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("读取附件记录失败：%w", err)
 	}

@@ -222,6 +222,47 @@ func Test恢复后改写后端标记并列出缺失附件(t *testing.T) {
 	}
 }
 
+// 瘦身移出的附件在镜像和当前后端都没有对象是正常的：恢复不应把它们列进
+// 缺失清单，也不应尝试补回。
+func Test恢复不把瘦身附件列进缺失清单(t *testing.T) {
+	target := t.TempDir()
+	b, clk, dataDir := newBackups(t, target)
+	st, err := store.Open(dataDir)
+	if err != nil {
+		t.Fatalf("打开库失败：%v", err)
+	}
+	defer st.Close()
+	if _, err := st.DB.Exec(`INSERT INTO tickets (seq, number, kind, title, created_at)
+		VALUES (1, '20261016-001', 'task', '瘦身恢复工单', ?)`,
+		clk.Now().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB.Exec(`INSERT INTO attachments
+		(ticket_seq, filename, size, state, attached_to, uploaded_at, slim_removed_at, slim_package_name)
+		VALUES (1, '已瘦身.txt', 6, 'attached', '说明', ?, ?, 'slim-1.zip')`,
+		clk.Now().Format(time.RFC3339Nano), clk.Now().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	record, err := b.BackupNow(context.Background(), ops.KindDaily)
+	if err != nil {
+		t.Fatalf("生成备份失败：%v", err)
+	}
+	st.Close()
+
+	destination := attachments.NewMemoryStorage()
+	result, err := ops.RestoreWithStorage(t.TempDir(), 0,
+		filepath.Join(target, record.Filename), clk.Now(), destination)
+	if err != nil {
+		t.Fatalf("恢复失败：%v", err)
+	}
+	if len(result.MissingAttachments) != 0 || result.AttachmentsRestored != 0 {
+		t.Fatalf("恢复结果 = %+v，瘦身附件不应缺失也不应补回", result)
+	}
+	if _, exists := destination.Object(1); exists {
+		t.Fatal("瘦身附件不应被补进当前后端")
+	}
+}
+
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	content, err := os.ReadFile(path)
