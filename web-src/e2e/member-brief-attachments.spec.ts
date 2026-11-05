@@ -73,6 +73,26 @@ test('插图直接使用附件地址加载', async ({ page, request }) => {
   await expect(img).toHaveAttribute('src', url)
 })
 
+test('插图地址失效时显示替代文字占位', async ({ page, request }) => {
+  const number = await createTicket(request, { title: '失效插图显示占位' })
+  const image = await uploadImage(request, number, '失效照片.png', onePixelPng)
+  const res = await request.patch(`/api/v1/tickets/${number}`, {
+    data: { brief_md: `![失效照片](att:${image.id})`, base_revision: 1 },
+  })
+  expect(res.status(), `挂插图失败：${await res.text()}`).toBe(200)
+  const view = await (await request.get(`/api/v1/tickets/${number}`)).json()
+  const url = view.attachments.find((a: any) => a.id === image.id).url as string
+
+  await login(page, ADMIN)
+  await page.route(`**${url}`, (route) =>
+    route.fulfill({ status: 404, contentType: 'text/plain', body: 'attachment expired' }),
+  )
+  await page.goto(`/t/${number}`)
+  const brief = page.locator('[data-bubble="brief"]')
+  await expect(brief.locator('.att-missing')).toHaveText('🖼 失效照片')
+  await expect(brief.locator('img.inline-img')).toHaveCount(0)
+})
+
 test('建单时字段内附件留在字段下，不进整张工单的附件', async ({ page }) => {
   await login(page, ADMIN)
   await page.locator('.b-tabs').getByRole('link', { name: '建单' }).click()
