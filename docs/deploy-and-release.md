@@ -184,7 +184,7 @@ docker compose run --rm --no-deps --entrypoint /bin/sh taskboard \
 - ECS 公网带宽保持固定带宽，设计仍按 1M 出口预算。按流量计费只作为备选：它能避免固定峰值限制，但费用随附件和页面流量放大，切换前必须同时在费用中心设置预算和流量告警，并评估对同机其他服务的影响。
 - 运维与费用监控是本 spec 的已知缺口：代码不做 OSS 费用告警。上线前只在阿里云控制台配置 OSS 费用、外网流出流量和账户余额告警；对象存储异常如何接入系统通知留作后续工单。
 
-真实 OSS 冒烟任务在 `.github/workflows/oss-smoke.yml`，只有 `workflow_dispatch` 手动触发。所需 secret 任一缺失时任务输出警告并成功跳过；全部配置后才运行带 `oss_smoke` build tag 的 Go 测试，覆盖桶探测、上传、签名下载、删除、前缀外 403 和前缀外删除被拒。默认 `go test ./...` 不编译该测试。
+真实 OSS 冒烟任务在 `.github/workflows/oss-smoke.yml`，只有 `workflow_dispatch` 手动触发。所需 secret 任一缺失时任务输出警告并成功跳过；全部配置后才运行带 `oss_smoke` build tag 的 Go 测试，用真实 HTTP 服务覆盖桶探测、上传、附件 302、签名下载、删除和前缀外删除被拒。默认 `go test ./...` 不编译该测试。
 
 ## 前端：访客输入不丢失
 

@@ -52,4 +52,4 @@ jobs:
 
       - name: 真实 OSS 冒烟
         if: steps.config.outputs.available == 'true'
-        run: go test -tags oss_smoke ./internal/attachments -run '^TestRealOSSSmoke$' -v
+        run: go test -tags oss_smoke ./internal/server -run '^TestRealOSSSmoke$' -v
