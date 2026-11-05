@@ -265,6 +265,10 @@ docker build --build-arg APP_VERSION=0.0.0-local -t taskboard:local .
 
 ### 首次部署
 
+0. 部署机安装 Docker Compose ≥ 2.24：`docker-compose.yml` 用了
+   `env_file` 的 `path` + `required: false` 写法（OSS 凭证文件可选），
+   这个语法需要 2.24 及以上才支持，低版本启动时报「validating …
+   additional property required is not allowed」；
 1. 在服务器上建部署目录，把 `deploy/cloud/docker-compose.yml` 复制进去，`image` 改成镜像仓库地址加版本号（目前是 `ghcr.io/allanpk716/agent-taskboard:X.Y.Z`，启用 ACR 后换成 ACR 的 VPC 地址）；
 2. 从 `config.container.example.toml` 复制出 `config.toml`，改 `public_url`。缺少 `public_url` 时服务拒绝启动，避免对外链接依赖可被伪造的请求头。端口只由 `config.toml` 的 `port` 决定；
 3. 写 `deploy.env`（格式见 `deploy/cloud/deploy.env.example`）；
