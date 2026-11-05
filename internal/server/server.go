@@ -140,6 +140,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 		return nil, err
 	}
 	backups.SetAttachmentStorage(atts.Storage())
+	backups.SetObjectStorage(attachmentBackend.objectStorage)
 	idem := idempotency.NewManager(st.DB, c)
 	notificationStore := notifications.NewManager(st.DB, c)
 	backups.SetNotifier(notificationStore)

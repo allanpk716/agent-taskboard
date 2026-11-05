@@ -23,6 +23,11 @@ func ArchivePackageRelKey(name string) string {
 	return "archive-packages/" + name
 }
 
+// BackupRelKey 是库备份副本与随备份保存的密钥文件在系统根前缀下的相对键。
+func BackupRelKey(name string) string {
+	return "backups/" + name
+}
+
 // ObjectStorageOf 返回当前后端的非附件对象接口。本地后端的归档包只留在
 // 暂存目录，因此不提供这个接口。
 func ObjectStorageOf(storage Storage) ObjectStorage {

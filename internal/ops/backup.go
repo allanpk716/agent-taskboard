@@ -143,6 +143,8 @@ type Backups struct {
 	// attachmentStorage 是附件主存储；生产装配注入当前后端，独立调用
 	// Backups 时懒加载本地实现以保持旧用法可用。
 	attachmentStorage attachments.Storage
+	// objectStorage 是当前后端的非附件对象接口；只有 OSS 后端非空。
+	objectStorage attachments.ObjectStorage
 }
 
 // BackupNotifier 是备份模块向系统通知模块发出的告警接口；测试可注入假实现。
@@ -159,6 +161,11 @@ func (b *Backups) SetNotifier(n BackupNotifier) { b.notifier = n }
 // SetAttachmentStorage 注入附件对象后端。备份镜像从这里列出并读出对象。
 func (b *Backups) SetAttachmentStorage(storage attachments.Storage) {
 	b.attachmentStorage = storage
+}
+
+// SetObjectStorage 注入库备份等非附件对象后端。本地后端不传。
+func (b *Backups) SetObjectStorage(objects attachments.ObjectStorage) {
+	b.objectStorage = objects
 }
 
 // NewBackups 建备份管理器。daily_at 写错（不是 HH:MM）会返回错误。
@@ -245,6 +252,9 @@ func (b *Backups) BackupNow(ctx context.Context, kind Kind) (Record, error) {
 	}
 	rec.FilesAdded = added
 	rec.IntegrityOK = true
+	if err := b.uploadBackupObjects(ctx, filepath.Join(b.opts.Target, name), name); err != nil {
+		return b.fail(ctx, rec, err)
+	}
 
 	episodeStart, hadFailure := b.failureEpisodeStart(ctx)
 	if err := b.insertRecord(ctx, rec); err != nil {
@@ -313,6 +323,10 @@ func (b *Backups) backupLocalOnly(ctx context.Context, now time.Time, kind Kind)
 		return b.fail(ctx, rec, err)
 	}
 	rec.FilesAdded = added
+	rec.IntegrityOK = true
+	if err := b.uploadBackupObjects(ctx, path, rec.Filename); err != nil {
+		return b.fail(ctx, rec, err)
+	}
 
 	ok, err := verifyCopy(path)
 	if err != nil || !ok {
@@ -324,8 +338,6 @@ func (b *Backups) backupLocalOnly(ctx context.Context, now time.Time, kind Kind)
 		}
 		return b.fail(ctx, rec, fmt.Errorf("副本 %s 完整性校验未通过", rec.Filename))
 	}
-	rec.IntegrityOK = true
-
 	if err := b.insertRecord(ctx, rec); err != nil {
 		return rec, err
 	}
@@ -354,6 +366,53 @@ func (b *Backups) writeTarget(ctx context.Context, staging, name string) error {
 			return err
 		}
 		return fmt.Errorf("目标副本 %s 完整性校验未通过", name)
+	}
+	return nil
+}
+
+// uploadBackupObjects 在完整性检查通过后，把库副本和访客链接密钥上传到
+// OSS 的 backups/ 目录。附件镜像永远留在本地备份目标，不上传。
+func (b *Backups) uploadBackupObjects(ctx context.Context, dbPath, name string) error {
+	if b.objectStorage == nil {
+		return nil
+	}
+	file, err := os.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("读要上传的库副本 %s 失败：%w", dbPath, err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return fmt.Errorf("读要上传的库副本 %s 大小失败：%w", dbPath, err)
+	}
+	dbErr := b.objectStorage.PutObject(ctx, attachments.BackupRelKey(name), file, info.Size(),
+		attachments.PutMeta{ContentType: "application/octet-stream"})
+	closeErr := file.Close()
+	if dbErr != nil {
+		return fmt.Errorf("上传库副本 %s 到 OSS 失败：%w", name, dbErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("关闭库副本 %s 失败：%w", dbPath, closeErr)
+	}
+
+	keyPath := filepath.Join(filepath.Dir(dbPath), guestlinkkey.FileName)
+	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("读访客链接加密密钥 %s 失败：%w", keyPath, err)
+	}
+	key, err := os.Open(keyPath)
+	if err != nil {
+		return fmt.Errorf("读访客链接加密密钥 %s 失败：%w", keyPath, err)
+	}
+	defer key.Close()
+	keyInfo, err := key.Stat()
+	if err != nil {
+		return fmt.Errorf("读访客链接加密密钥 %s 大小失败：%w", keyPath, err)
+	}
+	if err := b.objectStorage.PutObject(ctx, attachments.BackupRelKey(guestlinkkey.FileName),
+		key, keyInfo.Size(), attachments.PutMeta{ContentType: "application/octet-stream"}); err != nil {
+		return fmt.Errorf("上传访客链接加密密钥到 OSS 失败：%w", err)
 	}
 	return nil
 }
@@ -493,34 +552,35 @@ func (b *Backups) syncMirror(ctx context.Context) (int, error) {
 	if err := mirror.Ensure(); err != nil {
 		return 0, err
 	}
+	records, err := attachmentRecords(b.db)
+	if err != nil {
+		return 0, err
+	}
 	added := 0
-	copyErr := error(nil)
-	err := b.attachmentStorage.List(ctx, func(id int64, size int64, _ time.Time) error {
-		if mirrorSize, exists := mirror.Stat(id); exists && mirrorSize == size {
+	for _, record := range records {
+		id := record.id
+		backendSize, exists := b.attachmentStorage.Stat(ctx, id)
+		if mirrorSize, mirrored := mirror.Stat(id); exists && mirrored && mirrorSize == backendSize {
 			// 已镜像过。同步不删除；归档移除会在事务提交后单独删除对应镜像。
-			return nil
+			continue
 		}
 		src, actualSize, err := b.attachmentStorage.Open(ctx, id)
 		if err != nil {
-			copyErr = err
-			return err
+			return 0, fmt.Errorf("从当前后端读附件 att_%d 失败：%w", id, err)
 		}
 		defer src.Close()
-		if actualSize != size {
-			copyErr = fmt.Errorf("附件 att_%d 对象大小在列举和读取之间变化：%d/%d", id, size, actualSize)
-			return copyErr
+		size := actualSize
+		if actualSize < 0 {
+			_ = src.Close()
+			return 0, fmt.Errorf("附件 att_%d 对象大小无效：%d", id, actualSize)
 		}
 		if err := mirror.Write(id, src, size); err != nil {
-			copyErr = err
-			return err
+			_ = src.Close()
+			return 0, err
 		}
 		added++
-		return nil
-	})
-	if err != nil {
-		return added, err
 	}
-	return added, copyErr
+	return added, nil
 }
 
 // syncGuestLinkKey 把数据目录里的访客链接加密密钥文件复制到备份目录（原子替换），
@@ -568,14 +628,66 @@ func (b *Backups) sweepAndRotate(dir, skip string) {
 		byKind[Kind(m[3])] = append(byKind[Kind(m[3])], name)
 	}
 	keep := map[Kind]int{KindDaily: b.opts.KeepDaily, KindMonthly: b.opts.KeepMonthly, KindPreupdate: b.opts.KeepPreupdate}
+	localNames := map[string]bool{}
 	for kind, names := range byKind {
 		// 文件名里的时间戳保证字典序就是时间序。
 		sort.Sort(sort.Reverse(sort.StringSlice(names)))
+		for _, name := range names {
+			localNames[name] = true
+		}
 		if len(names) > keep[kind] {
 			for _, name := range names[keep[kind]:] {
-				_ = os.Remove(filepath.Join(dir, name))
+				if err := os.Remove(filepath.Join(dir, name)); err != nil {
+					log.Printf("轮换删除本地备份 %s 失败：%v", name, err)
+					continue
+				}
+				b.deleteRemoteBackup(name)
 			}
 		}
+	}
+	b.reconcileRemoteBackups(localNames)
+}
+
+func (b *Backups) deleteRemoteBackup(name string) {
+	if b.objectStorage == nil {
+		return
+	}
+	if err := b.objectStorage.DeleteObject(context.Background(), attachments.BackupRelKey(name)); err != nil {
+		log.Printf("轮换删除 OSS 备份 %s 失败，下一轮重试：%v", name, err)
+	}
+}
+
+// reconcileRemoteBackups 补做上一轮失败的 OSS 删除：本地已经轮换掉、库记录
+// 里仍存在的成功副本，如果 OSS 上还有同名对象，一并清掉。
+func (b *Backups) reconcileRemoteBackups(localNames map[string]bool) {
+	if b.objectStorage == nil {
+		return
+	}
+	rows, err := b.db.Query(`
+		SELECT filename FROM backup_records
+		WHERE error IS NULL AND integrity_ok = 1 AND location = 'target'`)
+	if err != nil {
+		log.Printf("查询待同步删除的 OSS 备份失败：%v", err)
+		return
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			log.Printf("读取待同步删除的 OSS 备份失败：%v", err)
+			return
+		}
+		if !localNames[name] {
+			names = append(names, name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("读取待同步删除的 OSS 备份失败：%v", err)
+		return
+	}
+	for _, name := range names {
+		b.deleteRemoteBackup(name)
 	}
 }
 
