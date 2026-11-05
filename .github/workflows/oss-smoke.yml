@@ -1,0 +1,55 @@
+# 手动触发的真实 OSS 冒烟任务。不配置任一 secret 时任务显示警告并成功跳过；
+# 只有所有连接参数和 AK 都存在时才运行带 oss_smoke tag 的 Go 测试。
+name: oss-smoke
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    env:
+      OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+      OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+      OSS_SMOKE_REGION: ${{ secrets.OSS_SMOKE_REGION }}
+      OSS_SMOKE_BUCKET: ${{ secrets.OSS_SMOKE_BUCKET }}
+      OSS_SMOKE_PREFIX: ${{ secrets.OSS_SMOKE_PREFIX }}
+      OSS_SMOKE_ENDPOINT: ${{ secrets.OSS_SMOKE_ENDPOINT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: 检查冒烟配置
+        id: config
+        run: |
+          set -euo pipefail
+          names=(
+            OSS_ACCESS_KEY_ID OSS_ACCESS_KEY_SECRET OSS_SMOKE_REGION
+            OSS_SMOKE_BUCKET OSS_SMOKE_PREFIX OSS_SMOKE_ENDPOINT
+          )
+          missing=()
+          for name in "${names[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -eq 0 ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "missing=${missing[*]}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 缺少 secret 时跳过
+        if: steps.config.outputs.available != 'true'
+        run: |
+          echo "::warning::Missing OSS smoke secrets: ${{ steps.config.outputs.missing }}; skipping."
+
+      - name: 真实 OSS 冒烟
+        if: steps.config.outputs.available == 'true'
+        run: go test -tags oss_smoke ./internal/attachments -run '^TestRealOSSSmoke$' -v
