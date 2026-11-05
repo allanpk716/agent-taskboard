@@ -51,7 +51,7 @@ done
 
 cleanup() {
     set +e
-    local id volume dir
+    local id volume dir file
     for id in $(docker ps -aq --filter name=deploy-test); do
         docker rm -f "$id" >/dev/null 2>&1
     done
@@ -65,8 +65,11 @@ cleanup() {
     docker rm -f "$registry_name" >/dev/null 2>&1
     $had_registry || docker rmi registry:2 >/dev/null 2>&1
     for dir in ${temp_dirs[@]+"${temp_dirs[@]}"}; do
-        rm -f "$dir/docker-compose.yml" "$dir/config.toml" "$dir/deploy.env" "$dir/oss.env" \
-            "$dir/deploy.sh" "$dir/bin/curl" "$dir"/docker-compose.yml.bak-*
+        for file in "$dir/docker-compose.yml" "$dir/config.toml" "$dir/deploy.env" \
+            "$dir/oss.env" "$dir/deploy.sh" "$dir/bin/curl" \
+            "$dir"/docker-compose.yml.bak-*; do
+            [ ! -f "$file" ] || unlink "$file"
+        done
         rmdir "$dir/bin" "$dir" >/dev/null 2>&1
     done
     set -e
@@ -117,7 +120,7 @@ RUN printf '#!/bin/sh\necho "taskboard: unknown command" >&2\nexit 2\n' \
 USER taskboard
 EOF
     docker build -t taskboard:deploy-test-old - < "$old_dockerfile" >/dev/null
-    rm -f "$old_dockerfile"
+    unlink "$old_dockerfile"
 }
 
 push_images() {
