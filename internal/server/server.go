@@ -137,6 +137,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	if err != nil {
 		return nil, err
 	}
+	backups.SetAttachmentStorage(atts.Storage())
 	idem := idempotency.NewManager(st.DB, c)
 	notificationStore := notifications.NewManager(st.DB, c)
 	backups.SetNotifier(notificationStore)

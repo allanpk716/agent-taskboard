@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/guestlinkkey"
 	"github.com/allanpk716/agent-taskboard/internal/store"
@@ -138,6 +139,10 @@ type Backups struct {
 	started  bool
 	nextDue  time.Time
 	notifier BackupNotifier
+
+	// attachmentStorage 是附件主存储；生产装配注入当前后端，独立调用
+	// Backups 时懒加载本地实现以保持旧用法可用。
+	attachmentStorage attachments.Storage
 }
 
 // BackupNotifier 是备份模块向系统通知模块发出的告警接口；测试可注入假实现。
@@ -150,6 +155,11 @@ type BackupNotifier interface {
 
 // SetNotifier 注入系统通知实现；不注入时备份照常运行，只写记录和日志。
 func (b *Backups) SetNotifier(n BackupNotifier) { b.notifier = n }
+
+// SetAttachmentStorage 注入附件对象后端。备份镜像从这里列出并读出对象。
+func (b *Backups) SetAttachmentStorage(storage attachments.Storage) {
+	b.attachmentStorage = storage
+}
 
 // NewBackups 建备份管理器。daily_at 写错（不是 HH:MM）会返回错误。
 func NewBackups(db *sql.DB, dataDir string, opts BackupOptions, c clock.Clock) (*Backups, error) {
@@ -182,9 +192,6 @@ func (b *Backups) TargetDir() string {
 	}
 	return filepath.Join(b.dataDir, "backups")
 }
-
-// attachmentsDir 返回附件主存储目录（data_dir\attachments）。
-func (b *Backups) attachmentsDir() string { return filepath.Join(b.dataDir, "attachments") }
 
 // Now 立刻做一次备份（taskboard backup、定时任务和更新前备份共用）：
 // 导出（VACUUM INTO）→ 附件增量镜像（同步不删除）→ 对副本 PRAGMA integrity_check
@@ -227,7 +234,7 @@ func (b *Backups) BackupNow(ctx context.Context, kind Kind) (Record, error) {
 		return b.fallbackLocal(ctx, rec, staging, localDir, name, err)
 	}
 
-	added, err := b.syncMirror()
+	added, err := b.syncMirror(ctx)
 	if err != nil {
 		_ = os.Remove(filepath.Join(b.opts.Target, name))
 		return b.fallbackLocal(ctx, rec, staging, localDir, name, err)
@@ -298,7 +305,7 @@ func (b *Backups) backupLocalOnly(ctx context.Context, now time.Time, kind Kind)
 		rec.Size = info.Size()
 	}
 
-	added, err := b.syncMirror()
+	added, err := b.syncMirror(ctx)
 	if err != nil {
 		return b.fail(ctx, rec, err)
 	}
@@ -474,38 +481,47 @@ func fileExists(path string) bool {
 // syncMirror 把附件主存储增量镜像到目标下的 attachments\，同步不删除：
 // 已存在且同大小的文件跳过（附件写入后不再修改；大小不一致说明上次拷贝
 // 没写完整，重拷一份）。返回本次新增的文件数。
-func (b *Backups) syncMirror() (int, error) {
-	src := b.attachmentsDir()
-	dst := filepath.Join(b.TargetDir(), "attachments")
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, nil // 还没有任何附件
+func (b *Backups) syncMirror(ctx context.Context) (int, error) {
+	if b.attachmentStorage == nil {
+		local, err := attachments.NewLocalStorage(b.dataDir)
+		if err != nil {
+			return 0, err
 		}
-		return 0, fmt.Errorf("读附件目录 %s 失败：%w", src, err)
+		b.attachmentStorage = local
 	}
+	dst := filepath.Join(b.TargetDir(), "attachments")
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return 0, fmt.Errorf("连不上备份目标 %s：%w", dst, err)
 	}
 	added := 0
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
+	copyErr := error(nil)
+	err := b.attachmentStorage.List(ctx, func(id int64, size int64, _ time.Time) error {
+		to := filepath.Join(dst, strconv.FormatInt(id, 10))
+		if info, err := os.Stat(to); err == nil && info.Size() == size {
+			// 已镜像过。同步不删除；归档移除会在事务提交后单独删除对应镜像。
+			return nil
 		}
-		from := filepath.Join(src, e.Name())
-		to := filepath.Join(dst, e.Name())
-		if info, err := os.Stat(to); err == nil {
-			if srcInfo, serr := e.Info(); serr == nil && info.Size() == srcInfo.Size() {
-				// 已镜像过。同步不删除；归档移除会在事务提交后单独删除对应镜像。
-				continue
-			}
+		src, actualSize, err := b.attachmentStorage.Open(ctx, id)
+		if err != nil {
+			copyErr = err
+			return err
 		}
-		if err := copyFile(from, to); err != nil {
-			return added, err
+		defer src.Close()
+		if actualSize != size {
+			copyErr = fmt.Errorf("附件 att_%d 对象大小在列举和读取之间变化：%d/%d", id, size, actualSize)
+			return copyErr
+		}
+		if err := copyReaderTo(src, to); err != nil {
+			copyErr = err
+			return err
 		}
 		added++
+		return nil
+	})
+	if err != nil {
+		return added, err
 	}
-	return added, nil
+	return added, copyErr
 }
 
 // syncGuestLinkKey 把数据目录里的访客链接加密密钥文件复制到备份目录（原子替换），
@@ -586,15 +602,19 @@ func copyFile(from, to string) error {
 		return fmt.Errorf("读 %s 失败：%w", from, err)
 	}
 	defer in.Close()
+	return copyReaderTo(in, to)
+}
+
+func copyReaderTo(src io.Reader, to string) error {
 	tmp := to + ".part"
 	out, err := os.Create(tmp)
 	if err != nil {
 		return fmt.Errorf("写 %s 失败：%w", to, err)
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	if _, err := io.Copy(out, src); err != nil {
 		out.Close()
 		_ = os.Remove(tmp)
-		return fmt.Errorf("拷贝 %s → %s 失败：%w", from, to, err)
+		return fmt.Errorf("写 %s 失败：%w", to, err)
 	}
 	if err := out.Close(); err != nil {
 		_ = os.Remove(tmp)
