@@ -3,7 +3,6 @@ package attachments
 import (
 	"context"
 	"database/sql"
-	"os"
 )
 
 // ReserveDraftTx 把草稿最新版引用的待用附件标记为草稿占用。引用规则与
@@ -125,9 +124,9 @@ func (m *Manager) DeleteDraftTx(ctx context.Context, tx *sql.Tx, draftID int64) 
 	return ids, nil
 }
 
-// RemoveFiles 删除附件文件本体；行已经不存在时文件也应该尽快消失。
-func (m *Manager) RemoveFiles(ids []int64) {
+// RemoveFiles 删除附件对象；行已经不存在时对象也应该尽快消失。
+func (m *Manager) RemoveFiles(ctx context.Context, ids []int64) {
 	for _, id := range ids {
-		_ = os.Remove(m.Path(id))
+		_ = m.store.Delete(ctx, id)
 	}
 }

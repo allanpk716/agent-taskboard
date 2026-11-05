@@ -721,7 +721,7 @@ func (m *Manager) Delete(ctx context.Context, viewer identity.Viewer, id string)
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	m.atts.RemoveFiles(fileIDs)
+	m.atts.RemoveFiles(ctx, fileIDs)
 	return nil
 }
 

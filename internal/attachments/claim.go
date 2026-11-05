@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
 	"time"
 )
 
@@ -297,8 +296,8 @@ func (m *Manager) CleanupUnreferenced(ctx context.Context) (int, error) {
 		if n == 0 {
 			continue
 		}
-		// 行删掉之后再删文件；删失败只留下孤儿文件，不影响配额（下次清除会再试）。
-		if err := os.Remove(m.Path(p.id)); err != nil && !os.IsNotExist(err) {
+		// 行删掉之后再删对象；删失败只留下孤儿对象，不影响配额（下次清除会再试）。
+		if err := m.store.Delete(ctx, p.id); err != nil {
 			return 0, err
 		}
 	}

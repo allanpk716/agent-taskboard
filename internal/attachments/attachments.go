@@ -5,7 +5,6 @@
 package attachments
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -205,9 +204,6 @@ func (m *Manager) Dir() string { return m.dir }
 // Storage 返回附件对象的后端。上传、下载、删除都从这里走（#315）。
 func (m *Manager) Storage() Storage { return m.store }
 
-// Path 返回附件 id 的文件路径。
-func (m *Manager) Path(id int64) string { return filepath.Join(m.dir, strconv.FormatInt(id, 10)) }
-
 // ValidateFilename 校验客户端文件名（存储时不用它做路径，按 id 落盘）。
 func ValidateFilename(name string) error {
 	name = strings.TrimSpace(name)
@@ -223,15 +219,10 @@ func ValidateFilename(name string) error {
 	return nil
 }
 
-// Upload 存一个待用附件：校验单文件与整单上限，文件经存储接口写入，
-// 元数据入库（state=pending）。返回引用与现成的 Markdown 片段。
-func (m *Manager) Upload(ctx context.Context, ticketSeq int64, filename string, content []byte, principal Principal) (AttachmentInfo, string, error) {
-	return m.UploadStream(ctx, ticketSeq, filename, int64(len(content)), bytes.NewReader(content), PutMeta{}, principal)
-}
-
-// UploadStream 流式存一个待用附件：大小来自 multipart 头，内容交给限长
-// reader，不整读进内存。写入顺序是「插 DB 行 → Put → 提交」；Put 失败回滚
-// DB 行，提交失败删除已写入的对象。
+// UploadStream 存一个待用附件：校验单文件与整单上限后流式写入存储接口，
+// 元数据入库（state=pending）。大小来自 multipart 头，内容交给限长 reader，
+// 不整读进内存。写入顺序是「插 DB 行 → Put → 提交」；Put 失败回滚 DB 行，
+// 提交失败删除已写入的对象。
 func (m *Manager) UploadStream(ctx context.Context, ticketSeq int64, filename string, size int64,
 	src io.Reader, meta PutMeta, principal Principal) (AttachmentInfo, string, error) {
 	filename = strings.TrimSpace(filename)
@@ -293,13 +284,8 @@ func (m *Manager) UploadStream(ctx context.Context, ticketSeq int64, filename st
 	return info, MarkdownSnippet(info), nil
 }
 
-// UploadToIntake 匿名上传到反馈入口：附件暂不挂工单，等提交时按入口和
-// Idempotency-Key 认领；24 小时未认领由 CleanupUnreferenced 清除。
-func (m *Manager) UploadToIntake(ctx context.Context, intakeID int64, uploadKey, filename string, content []byte) (AttachmentInfo, string, error) {
-	return m.UploadToIntakeStream(ctx, intakeID, uploadKey, filename, int64(len(content)), bytes.NewReader(content), PutMeta{})
-}
-
-// UploadToIntakeStream 流式上传到反馈入口，语义同 UploadToIntake。
+// UploadToIntakeStream 匿名流式上传到反馈入口：附件暂不挂工单，等提交时
+// 按入口和 Idempotency-Key 认领；24 小时未认领由 CleanupUnreferenced 清除。
 func (m *Manager) UploadToIntakeStream(ctx context.Context, intakeID int64, uploadKey, filename string,
 	size int64, src io.Reader, meta PutMeta) (AttachmentInfo, string, error) {
 	filename = strings.TrimSpace(filename)

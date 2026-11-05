@@ -795,7 +795,7 @@ func (s *Service) discardPendingDrafts(ctx context.Context, tickets []TicketSumm
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	s.atts.RemoveFiles(fileIDs)
+	s.atts.RemoveFiles(ctx, fileIDs)
 	return nil
 }
 
