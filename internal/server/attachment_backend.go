@@ -12,8 +12,10 @@ import (
 )
 
 type attachmentBackendStartup struct {
-	storage      attachments.Storage
-	commitMarker func() error
+	backend       string
+	storage       attachments.Storage
+	objectStorage attachments.ObjectStorage
+	commitMarker  func() error
 }
 
 func prepareAttachmentBackend(ctx context.Context, cfg config.Attachments, dataDir string,
@@ -78,8 +80,15 @@ func prepareAttachmentBackend(ctx context.Context, cfg config.Attachments, dataD
 		}
 		storage = local
 	}
+	var objectStorage attachments.ObjectStorage
+	if backend == config.AttachmentBackendOSS {
+		objectStorage = attachments.ObjectStorageOf(storage)
+		if objectStorage == nil {
+			return attachmentBackendStartup{}, fmt.Errorf("OSS 附件后端不支持归档包与备份对象接口")
+		}
+	}
 	return attachmentBackendStartup{
-		storage: storage,
+		backend: backend, storage: storage, objectStorage: objectStorage,
 		commitMarker: func() error {
 			if st.New || marker != want {
 				return attachments.WriteBackendMarker(ctx, st.DB, want)

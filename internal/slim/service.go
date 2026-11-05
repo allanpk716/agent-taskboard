@@ -97,14 +97,15 @@ type Service struct {
 	backupDir  string
 	mirror     *attachments.BackupMirror
 	atts       *attachments.Manager
+	objects    attachments.ObjectStorage
 	generateMu sync.Mutex
 }
 
 // NewService 建瘦身服务。
 func NewService(db *sql.DB, dataDir, backupDir string,
-	atts *attachments.Manager, c clock.Clock) *Service {
+	atts *attachments.Manager, objects attachments.ObjectStorage, c clock.Clock) *Service {
 	return &Service{db: db, clk: c, dataDir: dataDir,
-		backupDir: backupDir, mirror: attachments.NewBackupMirror(backupDir), atts: atts}
+		backupDir: backupDir, mirror: attachments.NewBackupMirror(backupDir), atts: atts, objects: objects}
 }
 
 // Preview 校验管理员选择并汇总仍留在服务器上的附件。

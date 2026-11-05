@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/adminops"
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/packagefile"
@@ -168,20 +169,24 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 		return PackageInfo{}, err
 	}
 	tempName = ""
+	if err := s.putPackageObject(ctx, final, name); err != nil {
+		_ = os.Remove(final)
+		return PackageInfo{}, err
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		_ = os.Remove(final)
+		_ = s.removePackageObject(context.WithoutCancel(ctx), name)
 		return PackageInfo{}, err
 	}
 	if err := adminops.InsertTx(ctx, tx, "slim_generate", operator.Member.ID, now,
 		numbersOf(preview.Tickets), name); err != nil {
 		_ = tx.Rollback()
-		_ = os.Remove(final)
+		_ = s.removePackageObject(context.WithoutCancel(ctx), name)
 		return PackageInfo{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		_ = os.Remove(final)
+		_ = s.removePackageObject(context.WithoutCancel(ctx), name)
 		return PackageInfo{}, err
 	}
 	return PackageInfo{Name: name, TicketNumbers: numbersOf(preview.Tickets),
@@ -263,10 +268,48 @@ func (s *Service) Open(name string) (*os.File, PackageInfo, error) {
 	}
 	if s.clk.Now().After(info.ExpiresAt) {
 		_ = file.Close()
-		_ = os.Remove(path)
+		_ = s.removePackageObject(context.Background(), name)
 		return nil, PackageInfo{}, ErrPackageNotFound
 	}
 	return file, info, nil
+}
+
+// PackageObjectURL 返回 OSS 后端下瘦身包的短时效下载地址；本地后端返回
+// ok=false，调用方继续从本地权威副本提供服务。
+func (s *Service) PackageObjectURL(ctx context.Context, name, disposition string) (string, bool, error) {
+	if s.objects == nil {
+		return "", false, nil
+	}
+	return s.objects.ObjectURL(ctx, attachments.ArchivePackageRelKey(name), 15*time.Minute, disposition)
+}
+
+func (s *Service) putPackageObject(ctx context.Context, path, name string) error {
+	if s.objects == nil {
+		return nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	return s.objects.PutObject(ctx, attachments.ArchivePackageRelKey(name), file, info.Size(),
+		attachments.PutMeta{ContentType: "application/zip"})
+}
+
+func (s *Service) removePackageObject(ctx context.Context, name string) error {
+	if s.objects != nil {
+		if err := s.objects.DeleteObject(ctx, attachments.ArchivePackageRelKey(name)); err != nil {
+			return err
+		}
+	}
+	if err := os.Remove(filepath.Join(s.stageDir(), name)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func (s *Service) CleanupExpired() error {
@@ -307,7 +350,7 @@ func (s *Service) CleanupExpired() error {
 			continue
 		}
 		if err != nil || s.clk.Now().After(info.ExpiresAt) {
-			_ = os.Remove(path)
+			_ = s.removePackageObject(context.Background(), name)
 		}
 	}
 	return nil

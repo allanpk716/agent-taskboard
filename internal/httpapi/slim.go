@@ -179,11 +179,20 @@ func (a *API) downloadSlimPackage(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 	defer file.Close()
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+url.PathEscape(name)+`"`)
-	if _, err := io.Copy(w, file); err != nil {
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": name})
+	signedURL, hasExternalURL, err := a.slim.PackageObjectURL(r.Context(), name, disposition)
+	if err != nil {
 		panic(err)
 	}
+	if hasExternalURL {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Location", signedURL)
+		w.WriteHeader(http.StatusFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", disposition)
+	http.ServeContent(w, r, name, time.Time{}, file)
 }
 
 const slimRestoreMaxBytes = 1 << 30

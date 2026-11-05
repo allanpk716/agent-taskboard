@@ -18,6 +18,11 @@ type ObjectStorage interface {
 	ObjectURL(ctx context.Context, relKey string, ttl time.Duration, disposition string) (url string, ok bool, err error)
 }
 
+// ArchivePackageRelKey 是归档包与瘦身包在系统根前缀下的相对键。
+func ArchivePackageRelKey(name string) string {
+	return "archive-packages/" + name
+}
+
 // ObjectStorageOf 返回当前后端的非附件对象接口。本地后端的归档包只留在
 // 暂存目录，因此不提供这个接口。
 func ObjectStorageOf(storage Storage) ObjectStorage {

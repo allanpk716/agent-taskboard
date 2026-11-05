@@ -98,13 +98,15 @@ type Service struct {
 	backupDir  string
 	mirror     *attachments.BackupMirror
 	atts       *attachments.Manager
+	objects    attachments.ObjectStorage
 	generateMu sync.Mutex
 }
 
 // NewService 建归档服务。
-func NewService(db *sql.DB, dataDir, backupDir string, atts *attachments.Manager, c clock.Clock) *Service {
+func NewService(db *sql.DB, dataDir, backupDir string, atts *attachments.Manager,
+	objects attachments.ObjectStorage, c clock.Clock) *Service {
 	return &Service{db: db, clk: c, dataDir: dataDir,
-		backupDir: backupDir, mirror: attachments.NewBackupMirror(backupDir), atts: atts}
+		backupDir: backupDir, mirror: attachments.NewBackupMirror(backupDir), atts: atts, objects: objects}
 }
 
 func (s *Service) stageDir() string { return filepath.Join(s.dataDir, "archive-packages") }

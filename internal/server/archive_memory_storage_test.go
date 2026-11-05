@@ -4,14 +4,24 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
 )
+
+type slimPackageObjectListBody struct {
+	Count    int               `json:"count"`
+	Packages []slimPackageBody `json:"packages"`
+}
 
 // 假存储下完成归档的生成、移除与导入：附件对象始终经存储接口进出，
 // 包内容和导入后的对象保持一致。
@@ -85,5 +95,124 @@ func Test内存假存储下归档生成移除导入走存储接口(t *testing.T)
 	}
 	if obj.ContentType != "text/plain; charset=utf-8" {
 		t.Fatalf("导入后的 Content-Type = %q, 想按文件名推断", obj.ContentType)
+	}
+}
+
+func startOSSPackageServer(t *testing.T) (*tbtest.Server, *attachments.MemoryStorage, *http.Client, string) {
+	t.Helper()
+	mem := attachments.NewMemoryStorage()
+	mem.DownloadURLPrefix = "https://oss.example.test/signed/"
+	s := tbtest.Start(t,
+		tbtest.WithAttachmentStorage(mem),
+		tbtest.WithAttachmentConfig(config.Attachments{
+			Backend: config.AttachmentBackendOSS,
+			OSS: config.OSS{
+				Region: "cn-hangzhou", Bucket: "files", Prefix: "agent-taskboard/prod/",
+				InternalEndpoint: "oss-cn-hangzhou-internal.aliyuncs.com",
+			},
+		}),
+	)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	setStorageClock(t, s, 2026, time.June, 2)
+	number := mustCreateTicket(t, s, admin, "OSS 包工单")
+	uploaded := mustUploadAttachment(t, s, admin, number, "服务日志.log", []byte("attachment data"))
+	if res := revise(t, s, admin, number, map[string]any{
+		"brief_md":       "见附件。",
+		"attachment_ids": []string{uploaded.ID},
+		"base_revision":  1,
+	}); res.StatusCode != http.StatusOK {
+		t.Fatalf("挂附件状态码 = %d, 想 200", res.StatusCode)
+	}
+	if res := closeTicket(t, s, admin, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d, 想 200", res.StatusCode)
+	}
+	s.Clock().Set(time.Date(2026, time.October, 30, 10, 0, 0, 0, clock.Beijing))
+	return s, mem, s.Login("陈工", "secret-pass"), number
+}
+
+func assertPackageObjectAndRedirect(t *testing.T, mem *attachments.MemoryStorage, localDir, name, downloadURL string,
+	client *http.Client, serverURL string) {
+	t.Helper()
+	relKey := "archive-packages/" + name
+	obj, exists := mem.ObjectByKey(relKey)
+	if !exists {
+		t.Fatalf("OSS 后端生成包 %s 后应有对象 %s", name, relKey)
+	}
+	local, err := os.ReadFile(filepath.Join(localDir, name))
+	if err != nil {
+		t.Fatalf("读取本地权威包失败：%v", err)
+	}
+	if string(obj.Content) != string(local) {
+		t.Fatal("OSS 包对象应与本地权威包一致")
+	}
+	res, err := noRedirect(t, client).Get(serverURL + downloadURL)
+	if err != nil {
+		t.Fatalf("下载包失败：%v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusFound {
+		t.Fatalf("下载包状态码 = %d, 想 302", res.StatusCode)
+	}
+	if res.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("下载包 Cache-Control = %q, 想 no-store", res.Header.Get("Cache-Control"))
+	}
+	location, err := url.Parse(res.Header.Get("Location"))
+	if err != nil {
+		t.Fatalf("解析包跳转地址失败：%v", err)
+	}
+	if location.Path != "/signed/"+relKey ||
+		!strings.HasPrefix(location.Query().Get("disposition"), "attachment") {
+		t.Fatalf("包跳转地址 = %s, 想指向 archive-packages 且带 attachment", location)
+	}
+}
+
+func TestOSS后端归档包生成下载与七天清理(t *testing.T) {
+	s, mem, admin, number := startOSSPackageServer(t)
+
+	var pkg archivePackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/archive/packages",
+		map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, &pkg); res.StatusCode != http.StatusCreated {
+		t.Fatalf("生成归档包状态码 = %d, 想 201", res.StatusCode)
+	}
+	assertPackageObjectAndRedirect(t, mem, filepath.Join(s.DataDir(), "archive-packages"),
+		pkg.Name, pkg.DownloadURL, admin, s.URL())
+
+	s.Clock().Set(time.Date(2026, time.November, 7, 10, 1, 0, 0, clock.Beijing))
+	admin = s.Login("陈工", "secret-pass")
+	var list archivePackageListBody
+	if res := s.Do(t, admin, http.MethodGet, "/api/v1/admin/archive/packages", nil, &list); res.StatusCode != http.StatusOK {
+		t.Fatalf("清理后归档列表状态码 = %d, 想 200", res.StatusCode)
+	}
+	if _, exists := mem.ObjectByKey("archive-packages/" + pkg.Name); exists {
+		t.Fatal("归档包过期后 OSS 副本应删除")
+	}
+	if _, err := os.Stat(filepath.Join(s.DataDir(), "archive-packages", pkg.Name)); !os.IsNotExist(err) {
+		t.Fatalf("归档包过期后本地副本应删除：err=%v", err)
+	}
+}
+
+func TestOSS后端瘦身包生成下载与七天清理(t *testing.T) {
+	s, mem, admin, number := startOSSPackageServer(t)
+
+	var pkg slimPackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/slim/packages",
+		map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, &pkg); res.StatusCode != http.StatusCreated {
+		t.Fatalf("生成瘦身包状态码 = %d, 想 201", res.StatusCode)
+	}
+	assertPackageObjectAndRedirect(t, mem, filepath.Join(s.DataDir(), "slim-packages"),
+		pkg.Name, pkg.DownloadURL, admin, s.URL())
+
+	s.Clock().Set(time.Date(2026, time.November, 7, 10, 1, 0, 0, clock.Beijing))
+	admin = s.Login("陈工", "secret-pass")
+	var list slimPackageObjectListBody
+	if res := s.Do(t, admin, http.MethodGet, "/api/v1/admin/slim/packages", nil, &list); res.StatusCode != http.StatusOK {
+		t.Fatalf("清理后瘦身列表状态码 = %d, 想 200", res.StatusCode)
+	}
+	if _, exists := mem.ObjectByKey("archive-packages/" + pkg.Name); exists {
+		t.Fatal("瘦身包过期后 OSS 副本应删除")
+	}
+	if _, err := os.Stat(filepath.Join(s.DataDir(), "slim-packages", pkg.Name)); !os.IsNotExist(err) {
+		t.Fatalf("瘦身包过期后本地副本应删除：err=%v", err)
 	}
 }
