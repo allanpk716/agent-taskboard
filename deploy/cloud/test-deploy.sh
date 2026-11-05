@@ -283,9 +283,9 @@ build_images
 push_images
 
 capability_output=$(docker run --rm --network none --entrypoint /app/taskboard \
-    "$registry_url:0.2.0" migrate-attachments -to __capability_probe__ 2>&1 || true)
-grep -q 'migrate-attachments 的 -to 只能是 oss 或 local' <<<"$capability_output" || {
-    echo "current image should expose migrate-attachments: $capability_output" >&2
+    "$registry_url:0.2.0" version -features 2>&1 || true)
+grep -qx 'oss-attachments' <<<"$capability_output" || {
+    echo "current image should expose oss-attachments: $capability_output" >&2
     exit 1
 }
 

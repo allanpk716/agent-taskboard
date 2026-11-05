@@ -708,9 +708,17 @@ func cmdRollback(args []string) error {
 func cmdVersion(args []string) error {
 	fs := flag.NewFlagSet("version", flag.ContinueOnError)
 	configPath := fs.String("config", "config.toml", "配置文件路径")
+	features := fs.Bool("features", false, "每行输出一个机器可读的能力名")
 	fs.Usage = func() { usage(os.Stderr) }
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *features {
+		// 不加载配置、不碰网络：部署脚本在无配置的容器里探测镜像能力。
+		for _, feature := range version.Features {
+			fmt.Println(feature)
+		}
+		return nil
 	}
 	cfg, err := config.Load(*configPath)
 	if err != nil {

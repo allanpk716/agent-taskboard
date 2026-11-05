@@ -76,7 +76,7 @@ read_attachment_backend() {
                 sub(/[[:space:]]*#.*$/, "", line)
                 sub(/[[:space:]]+$/, "", line)
                 gsub(/^"|"$/, "", line)
-                gsub(/^'\''|'\''/, "", line)
+                gsub(/^'\''|'\''$/, "", line)
                 print line
                 exit
             }
@@ -90,10 +90,12 @@ read_attachment_backend() {
 
 verify_oss_image_capability() {
     local image=$1 output
+    # 用 version -features 的机器可读输出判断镜像能力，不依赖中文报错文案；
+    # 旧版本二进制没有这个开关（或不输出 oss-attachments）都视为不支持。
     output=$(docker run --rm --network none --entrypoint /app/taskboard "$image" \
-        migrate-attachments -to capability-probe 2>&1 || true)
-    grep -q 'migrate-attachments 的 -to 只能是 oss 或 local' <<<"$output" || {
-        echo "image $image does not support OSS attachments: migrate-attachments is unavailable" >&2
+        version -features 2>&1 || true)
+    grep -qx 'oss-attachments' <<<"$output" || {
+        echo "image $image does not support OSS attachments: no oss-attachments in version -features" >&2
         return 1
     }
 }
