@@ -290,6 +290,7 @@ grep -q 'migrate-attachments 的 -to 只能是 oss 或 local' <<<"$capability_ou
 }
 
 normal_dir=$(make_case normal "$normal_port")
+temp_dirs+=("$normal_dir")
 write_curl_wrapper "$normal_dir" "$normal_port"
 start_case "$normal_dir" "$normal_port"
 [ "$(health_version "$(basename "$normal_dir")" "$normal_dir/docker-compose.yml" "$normal_port")" = 0.1.0 ]
@@ -299,6 +300,7 @@ assert_image_tag "$normal_dir" "$registry_url:0.2.0"
 echo "normal upgrade passed"
 
 rollback_dir=$(make_case rollback "$rollback_port")
+temp_dirs+=("$rollback_dir")
 write_curl_wrapper "$rollback_dir" "$rollback_port"
 start_case "$rollback_dir" "$rollback_port"
 ticket=$(create_preupgrade_ticket "$(basename "$rollback_dir")" "$rollback_dir/docker-compose.yml" "$rollback_port")
@@ -320,6 +322,7 @@ dc "$rollback_file" exec -T taskboard \
 echo "failed deployment rollback passed"
 
 pullfail_dir=$(make_case pullfail "$pullfail_port")
+temp_dirs+=("$pullfail_dir")
 write_curl_wrapper "$pullfail_dir" "$pullfail_port"
 start_case "$pullfail_dir" "$pullfail_port"
 if (cd "$pullfail_dir" && PATH="$PWD/bin:$PATH" ./deploy.sh 99.0.0) >/dev/null; then
@@ -331,6 +334,7 @@ assert_image_tag "$pullfail_dir" "$registry_url:0.1.0"
 echo "pull failure passed"
 
 oss_missing_env_dir=$(make_case oss-missing-env "$oss_missing_env_port" oss)
+temp_dirs+=("$oss_missing_env_dir")
 if deploy_output=$(cd "$oss_missing_env_dir" && ./deploy.sh 0.2.0 2>&1); then
     echo "OSS deployment without oss.env should fail" >&2
     exit 1
@@ -343,6 +347,7 @@ assert_image_tag "$oss_missing_env_dir" "$registry_url:0.1.0"
 echo "missing oss.env guard passed"
 
 oss_old_image_dir=$(make_case oss-old-image "$oss_old_image_port" oss)
+temp_dirs+=("$oss_old_image_dir")
 cat > "$oss_old_image_dir/oss.env" <<'EOF'
 OSS_ACCESS_KEY_ID=test-ak
 OSS_ACCESS_KEY_SECRET=test-sk
