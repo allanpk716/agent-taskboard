@@ -179,6 +179,10 @@ func (a *API) downloadSlimPackage(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		panic(err)
+	}
 	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": name})
 	signedURL, hasExternalURL, err := a.slim.PackageObjectURL(r.Context(), name, disposition)
 	if err != nil {
@@ -192,7 +196,7 @@ func (a *API) downloadSlimPackage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", disposition)
-	http.ServeContent(w, r, name, time.Time{}, file)
+	http.ServeContent(w, r, name, info.ModTime(), file)
 }
 
 const slimRestoreMaxBytes = 1 << 30

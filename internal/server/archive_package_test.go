@@ -380,6 +380,82 @@ func Test生成归档包可下载且校验和与Markdown有效(t *testing.T) {
 	}
 }
 
+func Test本地归档包下载支持断点续传(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	setStorageClock(t, s, 2026, time.June, 2)
+	number := mustCreateTicket(t, s, admin, "本地归档续传")
+	uploaded := mustUploadAttachment(t, s, admin, number, "服务日志.log", []byte("local archive content"))
+	if res := revise(t, s, admin, number, map[string]any{
+		"brief_md":       "见附件。",
+		"attachment_ids": []string{uploaded.ID},
+		"base_revision":  1,
+	}); res.StatusCode != http.StatusOK {
+		t.Fatalf("挂附件状态码 = %d, 想 200", res.StatusCode)
+	}
+	if res := closeTicket(t, s, admin, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d, 想 200", res.StatusCode)
+	}
+	s.Clock().Set(time.Date(2026, time.October, 30, 10, 0, 0, 0, clock.Beijing))
+	admin = s.Login("陈工", "secret-pass")
+
+	var pkg archivePackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/archive/packages",
+		map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, &pkg); res.StatusCode != http.StatusCreated {
+		t.Fatalf("生成归档包状态码 = %d, 想 201", res.StatusCode)
+	}
+	assertPackageDownloadResumable(t, s, admin, pkg.DownloadURL)
+}
+
+func assertPackageDownloadResumable(t *testing.T, s *tbtest.Server, c *http.Client, downloadURL string) []byte {
+	t.Helper()
+	first, err := c.Get(s.URL() + downloadURL)
+	if err != nil {
+		t.Fatalf("首次下载包失败：%v", err)
+	}
+	defer first.Body.Close()
+	full, err := io.ReadAll(first.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modified := first.Header.Get("Last-Modified")
+	if modified == "" {
+		t.Fatal("本地包下载应返回 Last-Modified，让 If-Range 生效")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, s.URL()+downloadURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Range", "bytes=0-0")
+	req.Header.Set("If-Range", modified)
+	ranged, err := c.Do(req)
+	if err != nil {
+		t.Fatalf("Range 下载失败：%v", err)
+	}
+	defer ranged.Body.Close()
+	rangedBody, _ := io.ReadAll(ranged.Body)
+	if ranged.StatusCode != http.StatusPartialContent || len(rangedBody) != 1 ||
+		!strings.HasPrefix(ranged.Header.Get("Content-Range"), "bytes 0-0/") {
+		t.Fatalf("Range 响应 = %d %q %d 字节, 想 206 且首字节", ranged.StatusCode,
+			ranged.Header.Get("Content-Range"), len(rangedBody))
+	}
+
+	req.Header.Set("If-Range", "Thu, 01 Jan 1970 00:00:00 GMT")
+	stale, err := c.Do(req)
+	if err != nil {
+		t.Fatalf("过期 If-Range 下载失败：%v", err)
+	}
+	defer stale.Body.Close()
+	staleBody, _ := io.ReadAll(stale.Body)
+	if stale.StatusCode != http.StatusOK || len(staleBody) != len(full) {
+		t.Fatalf("过期 If-Range 响应 = %d/%d 字节, 想 200 且完整 %d 字节",
+			stale.StatusCode, len(staleBody), len(full))
+	}
+	return full
+}
+
 func Test归档包清洗附件路径并精确替换附件引用(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")
