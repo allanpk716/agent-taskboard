@@ -7,10 +7,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
 	"github.com/allanpk716/agent-taskboard/internal/store"
@@ -145,6 +147,78 @@ func Test拒绝恢复损坏的备份文件(t *testing.T) {
 	}
 	if _, err := ops.Restore(dataDir, 0, junk, time.Now()); err == nil {
 		t.Fatal("校验不通过的文件应拒绝恢复")
+	}
+}
+
+// 恢复后库里的附件后端标记改写为当前配置；当前后端缺的附件先从镜像补，
+// 镜像也缺的进入缺失清单，不让恢复整体失败。
+func Test恢复后改写后端标记并列出缺失附件(t *testing.T) {
+	target := t.TempDir()
+	b, clk, dataDir := newBackups(t, target)
+	st, err := store.Open(dataDir)
+	if err != nil {
+		t.Fatalf("打开库失败：%v", err)
+	}
+	defer st.Close()
+	if _, err := st.DB.Exec(`INSERT INTO tickets (seq, number, kind, title, created_at)
+		VALUES (1, '20261016-001', 'task', '恢复后端工单', ?)`,
+		clk.Now().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	atts := filepath.Join(dataDir, "attachments")
+	if err := os.MkdirAll(atts, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 2; i++ {
+		content := "恢复附件" + strconv.Itoa(i)
+		if _, err := st.DB.Exec(`INSERT INTO attachments
+			(ticket_seq, filename, size, state, attached_to, uploaded_at, claimed_at)
+			VALUES (1, ?, ?, 'attached', '说明', ?, ?)`,
+			strconv.Itoa(i)+".txt", len(content),
+			clk.Now().Format(time.RFC3339Nano), clk.Now().Format(time.RFC3339Nano)); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(atts, strconv.Itoa(i)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record, err := b.BackupNow(context.Background(), ops.KindDaily)
+	if err != nil {
+		t.Fatalf("生成备份失败：%v", err)
+	}
+	st.Close()
+	if err := os.Remove(filepath.Join(target, "attachments", "2")); err != nil {
+		t.Fatal(err)
+	}
+
+	destination := attachments.NewMemoryStorage()
+	wantMarker := attachments.BackendMarker{
+		Backend: attachments.AttachmentBackendOSS, Bucket: "files", Prefix: "agent-taskboard/test/",
+	}
+	result, err := ops.RestoreWithStorageAndMarker(t.TempDir(), 0,
+		filepath.Join(target, record.Filename), clk.Now(), destination, wantMarker)
+	if err != nil {
+		t.Fatalf("恢复到 OSS 配置失败：%v", err)
+	}
+	if result.AttachmentsRestored != 1 || len(result.MissingAttachments) != 1 || result.MissingAttachments[0] != "2" {
+		t.Fatalf("恢复结果 = %+v，想补 1 个附件并列出缺失的 2", result)
+	}
+	obj, exists := destination.Object(1)
+	if !exists || string(obj.Content) != "恢复附件1" {
+		t.Fatalf("恢复后的附件对象 = %+v，想写入镜像里的附件 1", obj)
+	}
+	if _, exists := destination.Object(2); exists {
+		t.Fatal("镜像缺失的附件 2 不应凭空出现在当前后端")
+	}
+
+	restored, err := store.Open(filepath.Dir(result.DBPath))
+	if err != nil {
+		t.Fatalf("打开恢复后的库失败：%v", err)
+	}
+	defer restored.Close()
+	marker, exists, err := attachments.ReadBackendMarker(context.Background(), restored.DB)
+	if err != nil || !exists || marker != wantMarker {
+		t.Fatalf("恢复后的后端标记 = (%+v, %v, %v)，想 %+v", marker, exists, err, wantMarker)
 	}
 }
 

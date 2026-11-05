@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
@@ -45,13 +46,27 @@ type RestoreResult struct {
 // （#244），并从备份文件旁的镜像目录（<备份所在目录>\attachments\，与备份时
 // 写的镜像同源）补齐主存储里缺的附件文件。port 上有服务在监听时拒绝执行。
 func Restore(dataDir string, port int, backupFile string, now time.Time) (RestoreResult, error) {
-	return RestoreWithStorage(dataDir, port, backupFile, now, nil)
+	return RestoreWithStorageAndMarker(dataDir, port, backupFile, now, nil,
+		attachments.BackendMarker{Backend: attachments.AttachmentBackendLocal})
 }
 
 // RestoreWithStorage 用指定附件后端补齐恢复后的附件对象；storage 为 nil 时
 // 懒加载本地后端，独立 restore 命令因此保持旧用法。
 func RestoreWithStorage(dataDir string, port int, backupFile string, now time.Time,
 	storage attachments.Storage) (RestoreResult, error) {
+	return RestoreWithStorageAndMarker(dataDir, port, backupFile, now, storage,
+		attachments.BackendMarker{Backend: attachments.AttachmentBackendLocal})
+}
+
+// RestoreWithStorageAndMarker 用指定后端补齐附件，并在成功换库后把库里的
+// 附件后端标记改写为当前配置。备份可能来自另一个后端，这个改写让恢复后的
+// 库能按当前配置启动。
+func RestoreWithStorageAndMarker(dataDir string, port int, backupFile string, now time.Time,
+	storage attachments.Storage, want attachments.BackendMarker) (RestoreResult, error) {
+	want, err := normalizeBackendMarker(want)
+	if err != nil {
+		return RestoreResult{}, err
+	}
 	res := RestoreResult{BackupFile: backupFile, DBPath: filepath.Join(dataDir, "taskboard.db")}
 
 	// 1. 确认服务已停止。
@@ -61,7 +76,7 @@ func RestoreWithStorage(dataDir string, port int, backupFile string, now time.Ti
 			return res, fmt.Errorf("127.0.0.1:%d 仍有服务在监听：先停止 taskboard 服务（如 nssm stop <服务名>）再恢复", port)
 		}
 	}
-	backupFile, err := filepath.Abs(backupFile)
+	backupFile, err = filepath.Abs(backupFile)
 	if err != nil {
 		return res, err
 	}
@@ -131,6 +146,9 @@ func RestoreWithStorage(dataDir string, port int, backupFile string, now time.Ti
 		return res, fmt.Errorf("打开恢复后的库失败：%w", err)
 	}
 	defer st.Close()
+	if err := attachments.WriteBackendMarker(context.Background(), st.DB, want); err != nil {
+		return res, err
+	}
 	records, err := attachmentRecords(st.DB)
 	if err != nil {
 		return res, err
@@ -165,6 +183,26 @@ func RestoreWithStorage(dataDir string, port int, backupFile string, now time.Ti
 		res.AttachmentsRestored++
 	}
 	return res, nil
+}
+
+func normalizeBackendMarker(marker attachments.BackendMarker) (attachments.BackendMarker, error) {
+	switch marker.Backend {
+	case attachments.AttachmentBackendLocal:
+		return attachments.BackendMarker{Backend: attachments.AttachmentBackendLocal}, nil
+	case attachments.AttachmentBackendOSS:
+		marker.Bucket = strings.TrimSpace(marker.Bucket)
+		prefix, err := attachments.NormalizeOSSPrefix(marker.Prefix)
+		if err != nil {
+			return marker, err
+		}
+		if marker.Bucket == "" {
+			return marker, fmt.Errorf("恢复到 OSS 后端时必须配置 bucket")
+		}
+		marker.Prefix = prefix
+		return marker, nil
+	default:
+		return marker, fmt.Errorf("恢复后的附件后端标记 %q 无效", marker.Backend)
+	}
 }
 
 type attachmentRecord struct {
