@@ -86,9 +86,9 @@ func usage(w io.Writer) {
   taskboard serve [flags]              启动服务（默认，内置每日备份调度）
   taskboard create-admin [flags]       创建管理员账号
   taskboard backup [flags]             手动备份一次（与定时备份同一段代码）
-	  taskboard backup-url <备份名> [flags] 打印 OSS 库备份的 1 小时签名地址
+  taskboard backup-url <备份名> [flags] 打印 OSS 库备份的 1 小时签名地址
   taskboard healthcheck [flags]        按配置端口请求 health（镜像 HEALTHCHECK 用）
-	  taskboard restore <备份文件> [flags] 恢复（先停止服务；也可 -from-oss <备份名|latest>）
+  taskboard restore <备份文件> [flags] 恢复（先停止服务；也可 -from-oss <备份名|latest>）
   taskboard migrate-attachments -to oss|local [flags] 附件离线迁移（-dry-run 只列计划）
     -accept-missing                   源端缺失时按清单切换后端
   taskboard update [flags]             检查并安装更新（-check 只检查不安装）
