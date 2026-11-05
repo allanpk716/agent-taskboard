@@ -51,7 +51,7 @@ done
 
 cleanup() {
     set +e
-    local id volume dir file
+    local id volume dir
     for id in $(docker ps -aq --filter name=deploy-test); do
         docker rm -f "$id" >/dev/null 2>&1
     done
@@ -64,17 +64,17 @@ cleanup() {
     docker rmi "${local_images[@]}" >/dev/null 2>&1
     docker rm -f "$registry_name" >/dev/null 2>&1
     $had_registry || docker rmi registry:2 >/dev/null 2>&1
+    # 整目录删除自己创建的临时目录：不逐个列文件，后来新增的产物（如
+    # docker-compose.yml.bak-*）也能一并带走；中途被信号打断时由下面的
+    # trap 走正常退出路径统一清理，.gitignore 的规则兜底极端情况下的残留。
     for dir in ${temp_dirs[@]+"${temp_dirs[@]}"}; do
-        for file in "$dir/docker-compose.yml" "$dir/config.toml" "$dir/deploy.env" \
-            "$dir/oss.env" "$dir/deploy.sh" "$dir/bin/curl" \
-            "$dir"/docker-compose.yml.bak-*; do
-            [ ! -f "$file" ] || unlink "$file"
-        done
-        rmdir "$dir/bin" "$dir" >/dev/null 2>&1
+        rm -rf "$dir"
     done
     set -e
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 start_registry() {
     local port name
@@ -137,6 +137,9 @@ push_images() {
 make_case() {
     local name=$1 port=$2 backend=${3:-local}
     local dir project env_file_block
+    # 临时目录必须建在仓库内：Docker Desktop 只把设置里共享的路径挂进虚拟机
+    # （仓库在用户目录下，通常已共享；系统临时目录在 Windows 上经常不可用）。
+    # 目录名以 deploy-test 结尾，.gitignore 已按这个模式兜底。
     dir=$(mktemp -d "$repo_root/.$name-$case_name-XXXXXX")
     dir=$(cd "$dir" && pwd -P)
     project=$(basename "$dir")

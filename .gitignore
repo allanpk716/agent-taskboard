@@ -22,3 +22,7 @@ playwright-report/
 # publish-updatehub 的本地产物目录
 /publish-out/
 npm-install.log
+
+# deploy/cloud/test-deploy.sh 的用例目录（脚本用 trap 清理；这里兜底中途
+# 被杀时残留的隐藏目录，见脚本内注释）
+.*-deploy-test-*/
