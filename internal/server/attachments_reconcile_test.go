@@ -70,6 +70,51 @@ func Test附件对账清理超过二十四小时的孤儿对象_本地(t *testin
 	}
 }
 
+func Test附件对账清理超过二十四小时的孤儿对象_内存假存储(t *testing.T) {
+	mem := attachments.NewMemoryStorage()
+	s := tbtest.Start(t, tbtest.WithAttachmentStorage(mem))
+	s.Clock().Set(time.Now().In(clock.Beijing))
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	number := mustCreateTicket(t, s, admin, "附件对账（假存储）")
+
+	claimed := mustUploadAttachment(t, s, admin, number, "已引用.txt", []byte("keep"))
+	pending := mustUploadAttachment(t, s, admin, number, "待用.txt", []byte("pending"))
+	stale := mustUploadAttachment(t, s, admin, number, "上传失败残留.txt", []byte("stale-orphan"))
+	fresh := mustUploadAttachment(t, s, admin, number, "新孤儿.txt", []byte("fresh-orphan"))
+	claimedID := attachmentNumericID(t, claimed.ID)
+	pendingID := attachmentNumericID(t, pending.ID)
+	staleID := attachmentNumericID(t, stale.ID)
+	freshID := attachmentNumericID(t, fresh.ID)
+	for _, id := range []int64{staleID, freshID} {
+		if _, err := s.Store().DB.Exec(`DELETE FROM attachments WHERE id = ?`, id); err != nil {
+			t.Fatalf("构造孤儿附件记录失败：%v", err)
+		}
+	}
+	if !mem.SetModTime(staleID, s.Clock().Now().Add(-25*time.Hour)) {
+		t.Fatal("调整孤儿对象时间失败")
+	}
+	if res := claimByReply(t, s, admin, number, map[string]any{"attachment_ids": []string{claimed.ID}}); res.StatusCode != http.StatusCreated {
+		t.Fatalf("挂附件状态码 = %d，想 201", res.StatusCode)
+	}
+
+	result, err := s.Attachments().ReconcileStorage(context.Background())
+	if err != nil {
+		t.Fatalf("附件对账失败：%v", err)
+	}
+	if result.DeletedObjects != 1 || result.DeletedBytes != int64(len("stale-orphan")) {
+		t.Fatalf("对账结果 = %+v，想删除 1 个、释放 %d 字节", result, len("stale-orphan"))
+	}
+	for name, id := range map[string]int64{"已引用": claimedID, "待用": pendingID, "新孤儿": freshID} {
+		if _, ok := mem.Object(id); !ok {
+			t.Errorf("%s附件对象应保留", name)
+		}
+	}
+	if _, ok := mem.Object(staleID); ok {
+		t.Error("超过 24 小时的孤儿对象应删除")
+	}
+}
+
 func attachmentNumericID(t testing.TB, ref string) int64 {
 	t.Helper()
 	id, err := attachments.ParseRef(ref)

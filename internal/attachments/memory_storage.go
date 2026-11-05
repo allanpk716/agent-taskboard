@@ -89,6 +89,20 @@ func (s *MemoryStorage) Stat(ctx context.Context, id int64) (int64, bool) {
 	return obj.Size, ok
 }
 
+// SetModTime 供测试把对象调整为指定的存在时间（如 24 小时边界），返回对象
+// 是否存在。生产行为不受影响。
+func (s *MemoryStorage) SetModTime(id int64, at time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	obj, ok := s.objects[id]
+	if !ok {
+		return false
+	}
+	obj.ModTime = at
+	s.objects[id] = obj
+	return true
+}
+
 func (s *MemoryStorage) List(ctx context.Context, fn func(id int64, size int64, modTime time.Time) error) error {
 	s.mu.Lock()
 	ids := make([]int64, 0, len(s.objects))
