@@ -22,9 +22,9 @@ func noRedirect(t testing.TB, c *http.Client) *http.Client {
 	return &out
 }
 
-// 外链存储后端下，所有入口只做鉴权和访问记录，然后用 no-store 的 302 跳转；
+// 签名地址存储后端下，所有入口只做鉴权和访问记录，然后用 no-store 的 302 跳转；
 // 被拒绝的访问不会拿到签名地址，但仍留下 denied 记录。
-func Test外链存储下附件下载返回302(t *testing.T) {
+func Test签名地址存储下附件下载返回302(t *testing.T) {
 	mem := attachments.NewMemoryStorage()
 	mem.DownloadURLPrefix = "https://oss.example.test/signed/"
 	s := tbtest.Start(t,
@@ -39,7 +39,7 @@ func Test外链存储下附件下载返回302(t *testing.T) {
 	)
 	s.CreateAdmin("陈工", "secret-pass")
 	web := s.Login("陈工", "secret-pass")
-	mine := mustCreateTicket(t, s, web, "外链附件工单")
+	mine := mustCreateTicket(t, s, web, "签名地址附件工单")
 
 	uploaded := mustUploadAttachment(t, s, web, mine, "现场.png", []byte("png"))
 	if res := claimByReply(t, s, web, mine, map[string]any{"attachment_ids": []string{uploaded.ID}}); res.StatusCode != http.StatusCreated {

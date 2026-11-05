@@ -89,7 +89,7 @@ func WithAttachments(maxFileMB, maxFilesPerPost, maxImagesPerPost, maxTicketMB i
 }
 
 // WithAttachmentConfig 指定完整的附件配置（含存储后端），供启动校验和
-// 外链后端的黑盒测试使用。
+// 签名地址后端的黑盒测试使用。
 func WithAttachmentConfig(attachments config.Attachments) Option {
 	return func(o *options) { o.attachments = attachments }
 }

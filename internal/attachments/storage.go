@@ -16,7 +16,7 @@ type PutMeta struct {
 	ContentType string
 }
 
-// DownloadURLOpts 是生成下载外链时需要的响应头信息。
+// DownloadURLOpts 是生成下载签名地址时需要的响应头信息。
 type DownloadURLOpts struct {
 	// Disposition 是完整的 Content-Disposition 值（含文件名）。
 	Disposition string
@@ -33,7 +33,7 @@ type Storage interface {
 	// 此时 exists 没有意义，调用方必须把错误往上交，不能当成对象缺失。
 	Stat(ctx context.Context, id int64) (size int64, exists bool, err error)
 	List(ctx context.Context, fn func(id int64, size int64, modTime time.Time) error) error
-	// DownloadURL 返回可直达对象的外链。返回 ok=false 表示这个后端不提供
-	// 外链，调用方照旧从 Open 流式返回文件。
+	// DownloadURL 返回可直达对象的签名地址。返回 ok=false 表示这个后端
+	// 不提供签名地址，调用方照旧从 Open 流式返回文件。
 	DownloadURL(ctx context.Context, id int64, opts DownloadURLOpts) (url string, ok bool, err error)
 }

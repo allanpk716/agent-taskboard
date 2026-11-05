@@ -35,7 +35,7 @@ type MemoryStorage struct {
 	// 尚未提交」的时机注入故障。
 	AfterPut func(id int64)
 	// DownloadURLPrefix 非空时 DownloadURL 返回这个前缀下的可识别地址，
-	// 供黑盒测试模拟 OSS 等外链后端。
+	// 供黑盒测试模拟 OSS 等签名地址后端。
 	DownloadURLPrefix string
 }
 
