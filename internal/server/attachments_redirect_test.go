@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
+	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
 )
 
@@ -23,7 +24,16 @@ func noRedirect(t testing.TB, c *http.Client) *http.Client {
 func Test外链存储下附件下载返回302(t *testing.T) {
 	mem := attachments.NewMemoryStorage()
 	mem.DownloadURLPrefix = "https://oss.example.test/signed/"
-	s := tbtest.Start(t, tbtest.WithAttachmentStorage(mem))
+	s := tbtest.Start(t,
+		tbtest.WithAttachmentStorage(mem),
+		tbtest.WithAttachmentConfig(config.Attachments{
+			Backend: config.AttachmentBackendOSS,
+			OSS: config.OSS{
+				Region: "cn-hangzhou", Bucket: "files", Prefix: "agent-taskboard/prod/",
+				InternalEndpoint: "oss-cn-hangzhou-internal.aliyuncs.com",
+			},
+		}),
+	)
 	s.CreateAdmin("陈工", "secret-pass")
 	web := s.Login("陈工", "secret-pass")
 	mine := mustCreateTicket(t, s, web, "外链附件工单")

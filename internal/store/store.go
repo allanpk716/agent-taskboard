@@ -4,6 +4,7 @@ package store
 import (
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -20,6 +21,9 @@ var migrationsFS embed.FS
 // Store 持有打开的数据库。后续工单的仓储都建在它之上。
 type Store struct {
 	DB *sql.DB
+	// New 表示这次 Open 创建的是全新数据库。首次启动可以把初始化状态写成
+	// 当前配置；老库则必须尊重迁移写入的实际状态。
+	New bool
 }
 
 // FileURI 把文件路径转成 SQLite 的 file: URI（不带查询参数）。路径统一写成
@@ -55,12 +59,17 @@ func Open(dataDir string) (*Store, error) {
 	}
 	// modernc.org/sqlite 单写者：限制成一条写连接，避免 database is locked。
 	db.SetMaxOpenConns(1)
-	s := &Store{DB: db}
+	s := &Store{DB: db, New: storeDatabaseIsNew(filepath.Join(dataDir, "taskboard.db"))}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return s, nil
+}
+
+func storeDatabaseIsNew(path string) bool {
+	_, err := os.Stat(path)
+	return errors.Is(err, os.ErrNotExist)
 }
 
 func (s *Store) Close() error { return s.DB.Close() }

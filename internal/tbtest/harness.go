@@ -88,6 +88,12 @@ func WithAttachments(maxFileMB, maxFilesPerPost, maxImagesPerPost, maxTicketMB i
 	}
 }
 
+// WithAttachmentConfig 指定完整的附件配置（含存储后端），供启动校验和
+// 外链后端的黑盒测试使用。
+func WithAttachmentConfig(attachments config.Attachments) Option {
+	return func(o *options) { o.attachments = attachments }
+}
+
 // WithBackup 指定备份配置（#43；默认无目标，即 data_dir\backups\ + local_only）。
 // 测试里用临时目录充当备份目标，或用“文件下的子路径”模拟连不上的目标。
 func WithBackup(b config.Backup) Option { return func(o *options) { o.backup = b } }

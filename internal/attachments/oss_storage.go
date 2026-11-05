@@ -21,7 +21,11 @@ import (
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
 )
 
-const ossAttachmentDirectory = "attachments"
+const (
+	AttachmentBackendLocal = "local"
+	AttachmentBackendOSS   = "oss"
+	ossAttachmentDirectory = "attachments"
+)
 
 // OSSConfig 是服务端访问 OSS 所需的连接参数。凭证刻意不在这里出现。
 type OSSConfig struct {
@@ -55,18 +59,11 @@ type OSSStorage struct {
 
 // NewOSSStorage 创建 OSS 后端。根前缀为空、连接参数缺失或 AK 不完整都会失败。
 func NewOSSStorage(config OSSConfig, options OSSStorageOptions) (*OSSStorage, error) {
-	config.Prefix = strings.TrimSpace(config.Prefix)
-	if config.Prefix == "" {
-		return nil, errors.New("OSS 根前缀不能为空：所有对象都必须放在本系统的前缀下")
+	prefix, err := NormalizeOSSPrefix(config.Prefix)
+	if err != nil {
+		return nil, err
 	}
-	if !strings.HasSuffix(config.Prefix, "/") {
-		config.Prefix += "/"
-	}
-	for _, part := range strings.Split(strings.Trim(config.Prefix, "/"), "/") {
-		if part == "" || part == "." || part == ".." {
-			return nil, fmt.Errorf("OSS 根前缀 %q 不是安全的对象键前缀", config.Prefix)
-		}
-	}
+	config.Prefix = prefix
 	if config.Region == "" || config.Bucket == "" || config.InternalEndpoint == "" {
 		return nil, errors.New("backend = \"oss\" 时必须配置 region、bucket 和 internal_endpoint")
 	}
@@ -96,6 +93,23 @@ func NewOSSStorage(config OSSConfig, options OSSStorageOptions) (*OSSStorage, er
 		config: config, prefix: config.Prefix, client: oss.NewClient(sdkConfig),
 		creds: creds, now: now, persistentHeaders: true,
 	}, nil
+}
+
+// NormalizeOSSPrefix 规范化系统根前缀，并拒绝空值、路径穿越和根路径。
+func NormalizeOSSPrefix(raw string) (string, error) {
+	prefix := strings.TrimSpace(raw)
+	if prefix == "" {
+		return "", errors.New("OSS 根前缀不能为空：所有对象都必须放在本系统的前缀下")
+	}
+	if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	for _, part := range strings.Split(strings.Trim(prefix, "/"), "/") {
+		if part == "" || part == "." || part == ".." {
+			return "", fmt.Errorf("OSS 根前缀 %q 不是安全的对象键前缀", prefix)
+		}
+	}
+	return prefix, nil
 }
 
 func signingHostURL(host, region, bucket string) (*url.URL, error) {

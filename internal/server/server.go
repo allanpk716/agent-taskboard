@@ -97,22 +97,24 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	if o.captchaSource != nil {
 		captchaSrc = o.captchaSource
 	}
+	attachmentBackend, err := prepareAttachmentBackend(context.Background(), cfg.Attachments, cfg.DataDir, st, o.attachmentStorage)
+	if err != nil {
+		return nil, err
+	}
 	ident := identity.NewManager(st.DB, c)
 	labelDict := labels.NewManager(st.DB)
 	if err := labelDict.SeedIfEmpty(context.Background()); err != nil {
 		return nil, fmt.Errorf("导入标签字典种子失败：%w", err)
 	}
 	var atts *attachments.Manager
-	var err error
 	limits := attachments.LimitsOf(
 		cfg.Attachments.MaxFileMB, cfg.Attachments.MaxFilesPerPost,
 		cfg.Attachments.MaxImagesPerPost, cfg.Attachments.MaxTicketMB)
-	if o.attachmentStorage != nil {
-		atts, err = attachments.NewManagerWithStorage(st.DB, cfg.DataDir, o.attachmentStorage, c, limits)
-	} else {
-		atts, err = attachments.NewManager(st.DB, cfg.DataDir, c, limits)
-	}
+	atts, err = attachments.NewManagerWithStorage(st.DB, cfg.DataDir, attachmentBackend.storage, c, limits)
 	if err != nil {
+		return nil, err
+	}
+	if err := attachmentBackend.commitMarker(); err != nil {
 		return nil, err
 	}
 	atts.SetIntakeLimits(int64(cfg.Intake.PendingQuotaMB) << 20)
