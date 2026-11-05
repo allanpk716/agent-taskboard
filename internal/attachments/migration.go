@@ -8,6 +8,8 @@ import (
 	"hash/crc64"
 	"io"
 	"path/filepath"
+	"sort"
+	"time"
 )
 
 // MigrationOptions 控制一次离线附件迁移。
@@ -20,17 +22,22 @@ type MigrationOptions struct {
 	FreeSpace func(path string) (uint64, error)
 	// AcceptMissing 表示源端缺失的附件按缺失清单切换；复制失败仍会阻止切换。
 	AcceptMissing bool
+	// DryRun 只统计迁移计划，不写目标对象，也不改数据库标记。
+	DryRun bool
 }
 
 // MigrationResult 是迁移汇总；清单里的 id 按升序排列。
 type MigrationResult struct {
-	Copied     int
-	Skipped    int
-	Failed     int
-	Missing    int
-	TotalSize  int64
-	MissingIDs []int64
-	FailedIDs  []int64
+	Copied        int
+	Planned       int
+	Skipped       int
+	Failed        int
+	Missing       int
+	TotalSize     int64
+	DryRun        bool
+	MissingIDs    []int64
+	FailedIDs     []int64
+	SourceOnlyIDs []int64
 }
 
 type migrationRecord struct {
@@ -50,8 +57,31 @@ func MigrateAttachments(ctx context.Context, db *sql.DB, source, target Storage,
 	if err != nil {
 		return res, err
 	}
+	res.DryRun = opts.DryRun
 	for _, record := range records {
 		res.TotalSize += record.size
+	}
+	res.SourceOnlyIDs, err = sourceOnlyIDs(ctx, source, records)
+	if err != nil {
+		return res, err
+	}
+	if opts.DryRun {
+		for _, record := range records {
+			needsCopy, err := planAttachment(ctx, record, source, target)
+			switch {
+			case errors.Is(err, ErrObjectNotFound):
+				res.Missing++
+				res.MissingIDs = append(res.MissingIDs, record.id)
+			case err != nil:
+				res.Failed++
+				res.FailedIDs = append(res.FailedIDs, record.id)
+			case needsCopy:
+				res.Planned++
+			default:
+				res.Skipped++
+			}
+		}
+		return res, nil
 	}
 	if opts.Target.Backend == AttachmentBackendLocal {
 		if err := checkLocalFreeSpace(opts, res.TotalSize); err != nil {
@@ -80,6 +110,51 @@ func MigrateAttachments(ctx context.Context, db *sql.DB, source, target Storage,
 		return res, err
 	}
 	return res, nil
+}
+
+func sourceOnlyIDs(ctx context.Context, source Storage, records []migrationRecord) ([]int64, error) {
+	known := make(map[int64]bool, len(records))
+	for _, record := range records {
+		known[record.id] = true
+	}
+	ids := []int64{}
+	err := source.List(ctx, func(id int64, size int64, modTime time.Time) error {
+		if !known[id] {
+			ids = append(ids, id)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("列举源端附件失败：%w", err)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids, nil
+}
+
+func planAttachment(ctx context.Context, record migrationRecord, source, target Storage) (bool, error) {
+	body, size, err := source.Open(ctx, record.id)
+	if err != nil {
+		return false, err
+	}
+	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
+	_, readErr := io.Copy(io.Discard, io.TeeReader(body, hash))
+	closeErr := body.Close()
+	if readErr != nil {
+		return false, readErr
+	}
+	if closeErr != nil {
+		return false, closeErr
+	}
+	if targetSize, exists := target.Stat(ctx, record.id); exists && targetSize == size {
+		targetSum, err := objectChecksum(ctx, target, record.id)
+		if err != nil {
+			return false, err
+		}
+		if targetSum == hash.Sum64() {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func checkLocalFreeSpace(opts MigrationOptions, total int64) error {

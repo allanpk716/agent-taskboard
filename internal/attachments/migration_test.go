@@ -184,3 +184,52 @@ func Test附件迁移接受源端缺失时切换并列出清单(t *testing.T) {
 		t.Fatalf("目标附件 = %q, 想存在", got)
 	}
 }
+
+func Test附件迁移DryRun只列计划不写入(t *testing.T) {
+	ctx := context.Background()
+	st, dataDir := newMigrationDatabase(t)
+	if err := attachments.WriteBackendMarker(ctx, st.DB, attachments.BackendMarker{
+		Backend: attachments.AttachmentBackendLocal,
+	}); err != nil {
+		t.Fatalf("写入源后端标记失败：%v", err)
+	}
+	source, err := attachments.NewLocalStorage(dataDir)
+	if err != nil {
+		t.Fatalf("创建本地存储失败：%v", err)
+	}
+	putMigrationAttachment(t, source, 1, "一致")
+	putMigrationAttachment(t, source, 2, "待复制")
+	putMigrationAttachment(t, source, 99, "源端孤儿")
+	addMigrationRecord(t, st, 1, "一.txt", "一致", "attached")
+	addMigrationRecord(t, st, 2, "二.txt", "待复制", "pending")
+	addMigrationRecord(t, st, 3, "三.txt", "缺失", "attached")
+	target := attachments.NewMemoryStorage()
+	putMigrationAttachment(t, target, 1, "一致")
+
+	res, err := attachments.MigrateAttachments(ctx, st.DB, source, target, attachments.MigrationOptions{
+		Target: attachments.BackendMarker{
+			Backend: attachments.AttachmentBackendOSS, Bucket: "files", Prefix: "agent-taskboard/prod/",
+		},
+		DryRun: true,
+	})
+	if err != nil {
+		t.Fatalf("dry-run 失败：%v", err)
+	}
+	if res.DryRun != true || res.Planned != 1 || res.Skipped != 1 || res.Missing != 1 ||
+		len(res.MissingIDs) != 1 || res.MissingIDs[0] != 3 {
+		t.Fatalf("dry-run 计划 = %+v, 想 1 个待复制、1 个已一致、1 个缺失", res)
+	}
+	if res.TotalSize != int64(len("一致")+len("待复制")+len("缺失")) {
+		t.Fatalf("dry-run 总大小 = %d", res.TotalSize)
+	}
+	if len(res.SourceOnlyIDs) != 1 || res.SourceOnlyIDs[0] != 99 {
+		t.Fatalf("源端孤儿 = %v, 想 [99]", res.SourceOnlyIDs)
+	}
+	if _, ok := target.Stat(ctx, 2); ok {
+		t.Fatal("dry-run 不应写目标对象")
+	}
+	marker, exists, err := attachments.ReadBackendMarker(ctx, st.DB)
+	if err != nil || !exists || marker.Backend != attachments.AttachmentBackendLocal {
+		t.Fatalf("dry-run 后标记 = (%+v, %v, %v), 想保持 local", marker, exists, err)
+	}
+}
