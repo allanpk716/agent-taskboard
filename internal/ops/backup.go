@@ -253,7 +253,9 @@ func (b *Backups) BackupNow(ctx context.Context, kind Kind) (Record, error) {
 	rec.FilesAdded = added
 	rec.IntegrityOK = true
 	if err := b.uploadBackupObjects(ctx, filepath.Join(b.opts.Target, name), name); err != nil {
-		return b.fail(ctx, rec, err)
+		// OSS 上传失败不算备份失败：本机副本已经校验通过，照常记成功并写
+		// 日志，下一轮备份时由 syncRemoteBackups 补传。
+		log.Printf("上传备份 %s 到 OSS 失败，本机副本已保留，下一轮补传：%v", name, err)
 	}
 
 	episodeStart, hadFailure := b.failureEpisodeStart(ctx)
@@ -336,7 +338,7 @@ func (b *Backups) backupLocalOnly(ctx context.Context, now time.Time, kind Kind)
 	}
 	rec.IntegrityOK = true
 	if err := b.uploadBackupObjects(ctx, path, rec.Filename); err != nil {
-		return b.fail(ctx, rec, err)
+		log.Printf("上传备份 %s 到 OSS 失败，本机副本已保留，下一轮补传：%v", rec.Filename, err)
 	}
 	if err := b.insertRecord(ctx, rec); err != nil {
 		return rec, err
@@ -645,7 +647,7 @@ func (b *Backups) sweepAndRotate(dir, skip string) {
 			}
 		}
 	}
-	b.reconcileRemoteBackups(localNames)
+	b.syncRemoteBackups(context.Background())
 }
 
 func (b *Backups) deleteRemoteBackup(name string) {
@@ -657,38 +659,76 @@ func (b *Backups) deleteRemoteBackup(name string) {
 	}
 }
 
-// reconcileRemoteBackups 补做上一轮失败的 OSS 删除：本地已经轮换掉、库记录
-// 里仍存在的成功副本，如果 OSS 上还有同名对象，一并清掉。
-func (b *Backups) reconcileRemoteBackups(localNames map[string]bool) {
+// syncRemoteBackups 对账 OSS 备份对象：库记录成功且本地文件仍在的副本，
+// OSS 上缺了就补传（含访客链接密钥，降级到本机的副本同样适用）；本地已经
+// 轮换掉的副本，OSS 上还留着的补删，不区分当初记录在哪个位置。任一方向
+// 失败都只写日志，下一轮备份再试。
+func (b *Backups) syncRemoteBackups(ctx context.Context) {
 	if b.objectStorage == nil {
 		return
 	}
-	rows, err := b.db.Query(`
-		SELECT filename FROM backup_records
-		WHERE error IS NULL AND integrity_ok = 1 AND location = 'target'`)
+	objects, err := b.objectStorage.ListObjects(ctx, attachments.BackupRelKey(""))
 	if err != nil {
-		log.Printf("查询待同步删除的 OSS 备份失败：%v", err)
+		log.Printf("列举 OSS 备份失败，跳过本轮异地对账：%v", err)
 		return
 	}
-	defer rows.Close()
-	var names []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			log.Printf("读取待同步删除的 OSS 备份失败：%v", err)
-			return
-		}
-		if !localNames[name] {
-			names = append(names, name)
+	remoteNames := make(map[string]bool, len(objects))
+	for _, object := range objects {
+		name := strings.TrimPrefix(object.RelKey, "backups/")
+		if backupNameRe.MatchString(name) {
+			remoteNames[name] = true
 		}
 	}
-	if err := rows.Err(); err != nil {
-		log.Printf("读取待同步删除的 OSS 备份失败：%v", err)
-		return
+
+	uploaded := make(map[string]bool)
+	rows, err := b.db.QueryContext(ctx, `
+		SELECT DISTINCT filename FROM backup_records WHERE integrity_ok = 1 AND filename != ''`)
+	if err != nil {
+		log.Printf("查询待补传的 OSS 备份失败：%v", err)
+	} else {
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				log.Printf("读取待补传的 OSS 备份失败：%v", err)
+				break
+			}
+			uploaded[name] = true
+		}
+		if err := rows.Err(); err != nil {
+			log.Printf("读取待补传的 OSS 备份失败：%v", err)
+		}
+		rows.Close()
 	}
-	for _, name := range names {
+	for name := range uploaded {
+		if remoteNames[name] {
+			continue
+		}
+		path, exists := b.localBackupPath(name)
+		if !exists {
+			continue // 本地已轮换删除的旧备份不复活。
+		}
+		if err := b.uploadBackupObjects(ctx, path, name); err != nil {
+			log.Printf("补传 OSS 备份 %s 失败，下一轮再试：%v", name, err)
+		}
+	}
+	for name := range remoteNames {
+		if _, exists := b.localBackupPath(name); exists {
+			continue
+		}
 		b.deleteRemoteBackup(name)
 	}
+}
+
+// localBackupPath 返回一个备份名当前还在本机的副本路径；目标目录和本机
+// 兜底目录都算，找不到表示它已被轮换删除。
+func (b *Backups) localBackupPath(name string) (string, bool) {
+	for _, dir := range []string{b.TargetDir(), filepath.Join(b.dataDir, "backups")} {
+		path := filepath.Join(dir, name)
+		if fileExists(path) {
+			return path, true
+		}
+	}
+	return "", false
 }
 
 // verifyCopy 对一个数据库副本执行 PRAGMA integrity_check；返回是否通过。

@@ -23,6 +23,8 @@ type MemoryStorage struct {
 
 	// PutErr 非空时 Put 直接返回它（测试注入存储故障）。
 	PutErr error
+	// PutObjectErr 非空时 PutObject 直接返回它（测试注入非附件对象故障）。
+	PutObjectErr error
 	// DeleteErr 非空时 Delete / DeleteObject 直接返回它（测试注入清理故障）。
 	DeleteErr error
 	// AfterPut 在对象写入后、Put 返回前调用，用来在「Put 已成功、事务
@@ -104,6 +106,12 @@ func (s *MemoryStorage) Delete(ctx context.Context, id int64) error {
 func (s *MemoryStorage) PutObject(ctx context.Context, relKey string, src io.Reader, size int64, meta PutMeta) error {
 	if err := ValidateObjectRelKey(relKey); err != nil {
 		return err
+	}
+	s.mu.Lock()
+	fault := s.PutObjectErr
+	s.mu.Unlock()
+	if fault != nil {
+		return fault
 	}
 	content, err := io.ReadAll(src)
 	if err != nil {
