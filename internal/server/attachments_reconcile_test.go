@@ -1,11 +1,14 @@
 package server_test
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +20,11 @@ import (
 // 附件对账只删库里没有且已存在超过 24 小时的对象。待用附件虽然未被正文
 // 引用，但仍有库记录，不能被这一步误删；删除必须经 Storage.Delete 走后端。
 func Test附件对账清理超过二十四小时的孤儿对象_本地(t *testing.T) {
+	var logs bytes.Buffer
+	oldLogWriter := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(oldLogWriter)
+
 	s := tbtest.Start(t)
 	s.Clock().Set(time.Now().In(clock.Beijing))
 	s.CreateAdmin("陈工", "secret-pass")
@@ -53,6 +61,10 @@ func Test附件对账清理超过二十四小时的孤儿对象_本地(t *testin
 	}
 	if result.DeletedBytes != int64(len("stale-orphan")) {
 		t.Fatalf("删除孤儿占用 = %d 字节，想 %d", result.DeletedBytes, len("stale-orphan"))
+	}
+	wantLog := "附件对账完成：删除孤儿对象 1 个，释放 12 字节"
+	if !strings.Contains(logs.String(), wantLog) {
+		t.Fatalf("对账日志 = %q，想包含 %q", logs.String(), wantLog)
 	}
 
 	storage := s.AttachmentStorage()

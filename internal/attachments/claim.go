@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -302,7 +303,14 @@ func (m *Manager) ReconcileStorage(ctx context.Context) (ReconcileResult, error)
 		result.DeletedObjects++
 		result.DeletedBytes += orphan.size
 	}
-	return result, errors.Join(failures...)
+	if err := errors.Join(failures...); err != nil {
+		log.Printf("附件对账部分失败：删除孤儿对象 %d 个，释放 %d 字节，失败 %d 个：%v",
+			result.DeletedObjects, result.DeletedBytes, result.DeleteFailures, err)
+		return result, err
+	}
+	log.Printf("附件对账完成：删除孤儿对象 %d 个，释放 %d 字节",
+		result.DeletedObjects, result.DeletedBytes)
+	return result, nil
 }
 
 // CleanupUnreferenced 清除上传超过 24 小时仍未引用的待用附件（行 + 文件），
