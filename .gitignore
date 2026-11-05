@@ -10,8 +10,8 @@
 /data/
 /config.toml
 
-# 前端
-node_modules/
+# 前端（node_modules 不带斜杠：连指向目录的符号链接也忽略）
+node_modules
 
 # Playwright
 test-results/
