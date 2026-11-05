@@ -79,7 +79,7 @@ func (a *API) handleTicketAttachments(w http.ResponseWriter, r *http.Request, re
 	src := io.LimitReader(file, header.Size)
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
 		info, markdown, err := a.atts.UploadStream(r.Context(), full.Seq, filename, header.Size, src,
-			attachments.PutMeta{ContentType: contentTypeOf(filename)}, attachments.PrincipalOf(viewer))
+			attachments.PutMeta{ContentType: attachments.ContentTypeOf(filename)}, attachments.PrincipalOf(viewer))
 		if err != nil {
 			a.writeAttachmentError(w, err, full.Number, filename, viewer.Kind == identity.ViewerGuest)
 			return

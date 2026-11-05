@@ -6,8 +6,8 @@ package httpapi
 
 import (
 	"errors"
-	"log"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"net/url"
@@ -142,7 +142,7 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 			panic(err)
 		}
 	}
-	w.Header().Set("Content-Type", contentTypeOf(att.Filename))
+	w.Header().Set("Content-Type", attachments.ContentTypeOf(att.Filename))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Disposition",
 		mime.FormatMediaType(disposition, map[string]string{"filename": att.Filename}))
@@ -166,25 +166,4 @@ func requestHasCredential(r *http.Request) bool {
 	}
 	cookie, err := r.Cookie(GuestDeviceCookieName)
 	return err == nil && cookie.Value != ""
-}
-
-// contentTypeOf 按扩展名给 Content-Type；文本类补 charset，未知的用
-// application/octet-stream（配合 nosniff，浏览器不会自作聪明地嗅探）。
-func contentTypeOf(filename string) string {
-	ext := ""
-	if i := strings.LastIndexByte(filename, '.'); i >= 0 {
-		ext = strings.ToLower(filename[i:])
-	}
-	switch ext {
-	case ".html", ".htm":
-		return "text/html; charset=utf-8"
-	case ".svg":
-		return "image/svg+xml"
-	case ".txt", ".log":
-		return "text/plain; charset=utf-8"
-	}
-	if t := mime.TypeByExtension(ext); t != "" {
-		return t
-	}
-	return "application/octet-stream"
 }

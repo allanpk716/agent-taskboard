@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachmentlink"
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 )
 
@@ -59,7 +60,7 @@ func (a *API) handleAttachmentLink(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, attachmentLinkView{
 		URL:       a.requestBaseURL(r) + path + "?" + query.Encode(),
 		ExpiresAt: expiresAt.Format(time.RFC3339),
-		Mime:      contentTypeOf(att.Filename),
+		Mime:      attachments.ContentTypeOf(att.Filename),
 		Size:      att.Size,
 		Filename:  att.Filename,
 	})

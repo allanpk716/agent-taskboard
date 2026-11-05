@@ -100,7 +100,7 @@ func (a *API) handleIntakeAttachments(w http.ResponseWriter, r *http.Request, sl
 		return
 	}
 	info, markdown, err := a.atts.UploadToIntakeStream(r.Context(), in.ID, uploadKey, filename,
-		header.Size, io.LimitReader(file, header.Size), attachments.PutMeta{ContentType: contentTypeOf(filename)})
+		header.Size, io.LimitReader(file, header.Size), attachments.PutMeta{ContentType: attachments.ContentTypeOf(filename)})
 	if err != nil {
 		a.writeIntakeAttachmentError(w, err, filename)
 		return
