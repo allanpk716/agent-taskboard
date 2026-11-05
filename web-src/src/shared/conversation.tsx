@@ -206,7 +206,7 @@ export function BriefBubble({
         ) : (
           <Markdown body={ticket.brief.markdown} attachments={atts} onImageClick={onImageClick} />
         )}
-        <AttachmentChips attachments={briefAtts} />
+        <AttachmentChips attachments={briefAtts} onImageClick={onImageClick} />
         {draftEvent && onToggleBriefDrafting && fetchBriefDrafting && (
           <button
             type="button"
@@ -286,7 +286,7 @@ export function ReplyBubble({
           {event.signature && <span className="draft-confirm">{event.signature}</span>}
         </div>
         <Markdown body={event.body_md ?? ''} attachments={atts} onImageClick={onImageClick} />
-        <AttachmentChips attachments={chips} />
+        <AttachmentChips attachments={chips} onImageClick={onImageClick} />
         {event.signature && !!event.drafting_count && onToggleDrafting && fetchDrafting && (
           <button
             type="button"

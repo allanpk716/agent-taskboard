@@ -64,7 +64,7 @@ function UncBlock({ path }: { path: string }) {
   )
 }
 
-function AuthorizedImage({
+function InlineImage({
   url,
   alt,
   onClick,
@@ -73,33 +73,20 @@ function AuthorizedImage({
   alt: string
   onClick?: (url: string) => void
 }) {
-  const [objectUrl, setObjectUrl] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
 
   useEffect(() => {
-    let blobUrl: string | null = null
-    let revoked = false
-    // 图片与页面同源：成员会话或访客设备 cookie 由浏览器自动带上。
-    void fetch(url)
-      .then((res) => (res.ok ? res.blob() : null))
-      .then((blob) => {
-        if (!blob || revoked) return
-        blobUrl = URL.createObjectURL(blob)
-        setObjectUrl(blobUrl)
-      })
-      .catch(() => {})
-    return () => {
-      revoked = true
-      if (blobUrl) URL.revokeObjectURL(blobUrl)
-    }
+    setFailed(false)
   }, [url])
 
-  if (!objectUrl) return <span className="att-missing">🖼 {alt}</span>
+  if (failed) return <span className="att-missing">🖼 {alt}</span>
   return (
     <img
       className="inline-img"
-      src={objectUrl}
+      src={url}
       alt={alt}
-      onClick={() => onClick?.(objectUrl)}
+      onError={() => setFailed(true)}
+      onClick={() => onClick?.(url)}
     />
   )
 }
@@ -210,7 +197,7 @@ export function Markdown(props: MarkdownProps) {
         const att = props.attachments.get(attId)
         if (att) {
           return (
-            <AuthorizedImage
+            <InlineImage
               url={att.url}
               alt={alt || att.filename}
               onClick={props.onImageClick}

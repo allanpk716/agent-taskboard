@@ -33,7 +33,13 @@ export function SlimBanner({ slim }: { slim: TicketSlim | null | undefined }) {
 }
 
 /** 附件条：列在气泡底部；点击打开（图片/PDF/txt/log 在线预览，其余由服务端按下载返回）。 */
-export function AttachmentChips({ attachments }: { attachments: Attachment[] }) {
+export function AttachmentChips({
+  attachments,
+  onImageClick,
+}: {
+  attachments: Attachment[]
+  onImageClick?: (url: string) => void
+}) {
   if (attachments.length === 0) return null
   return (
     <div className="atts">
@@ -51,6 +57,10 @@ export function AttachmentChips({ attachments }: { attachments: Attachment[] }) 
               下载
             </button>
           </span>
+        ) : isImageAttachment(a) && onImageClick ? (
+          <button type="button" key={a.id} className="att" onClick={() => onImageClick(a.url)}>
+            📎 {a.filename} · {fmtSize(a.size)}
+          </button>
         ) : (
           <a key={a.id} className="att" href={a.url} target="_blank" rel="noreferrer">
             📎 {a.filename} · {fmtSize(a.size)}
@@ -59,6 +69,10 @@ export function AttachmentChips({ attachments }: { attachments: Attachment[] }) 
       ))}
     </div>
   )
+}
+
+function isImageAttachment(attachment: Attachment) {
+  return /\.(?:png|jpe?g|gif|webp)$/i.test(attachment.filename)
 }
 
 /** 点击插图查看大图。 */

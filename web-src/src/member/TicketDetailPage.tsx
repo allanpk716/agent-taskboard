@@ -1819,7 +1819,7 @@ function DraftCard({
           ) : (
             <textarea aria-label="草稿内容" value={brief ? draft.request.brief_md ?? body : body} onChange={(e) => setBody(e.target.value)} />
           )}
-          <AttachmentChips attachments={draft.attachments} />
+            <AttachmentChips attachments={draft.attachments} onImageClick={onImageClick} />
           <div className="draft-actions">
             <button type="button" className="btn ghost" disabled={busy} onClick={() => setEditing(false)}>
               取消
@@ -1852,6 +1852,7 @@ function DraftCard({
                 attachments={draft.attachments.filter(
                   (attachment) => !inlineReplyImages?.has(attachment.id),
                 )}
+                onImageClick={onImageClick}
               />
             </>
           )}

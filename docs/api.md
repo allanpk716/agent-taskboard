@@ -1072,6 +1072,15 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   token。Agent 被撤销或失去该工单读取权限后，链接立即失效。
 - 签名下载每次仍会重新核对签名、有效期、Agent 状态和工单权限，成功下载按该成员
   Agent 写访问记录，响应头沿用上面的 inline/attachment 规则。
+- 下载示例：
+
+  ```sh
+  ATTACHMENT_URL=<attachment-links 响应里的 url>
+  curl -L "$ATTACHMENT_URL" -o "<filename>"
+  ```
+
+  下载会跳转，必须带 `-L`；签名地址几分钟后失效，不能存下来复用。
+  `curl -L` 跨主机跳转时不会带上 Authorization。
 
 - 仅成员的接口（建单、标签全套、关闭、重开、访客链接管理，以及 #35 起的反馈入口
   管理）对访客统一 403 `members_only`（决议 4）。
