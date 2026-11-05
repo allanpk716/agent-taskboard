@@ -124,6 +124,39 @@ func TestOSS存储Stat后端故障返回错误(t *testing.T) {
 	}
 }
 
+// 备份和归档包的签名地址不按 10 分钟取整：从现在算起的剩余有效期就是
+// 请求的 ttl，保证 backup-url 的一小时地址真的有一小时可用。附件下载地址
+// 仍按规格取整（见上面的协议测试）。
+func Test备份签名地址不取整且剩余满一小时(t *testing.T) {
+	fake := newFakeOSS(t)
+	now := time.Date(2026, 11, 5, 10, 12, 34, 0, time.FixedZone("CST", 8*3600))
+	store, err := attachments.NewOSSStorage(attachments.OSSConfig{
+		Region: "cn-hangzhou", Bucket: "files", Prefix: "agent-taskboard/prod/",
+		InternalEndpoint: fake.server.URL, SigningHost: "files.example.test",
+	}, attachments.OSSStorageOptions{
+		AccessKeyID: "test-ak", AccessKeySecret: "test-sk", Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("创建 OSS 存储失败：%v", err)
+	}
+	name := "taskboard-20261105-121234-daily.db"
+	target, ok, err := store.ObjectURL(context.Background(),
+		attachments.BackupRelKey(name), time.Hour, `attachment; filename="`+name+`"`)
+	if err != nil || !ok {
+		t.Fatalf("ObjectURL = (%q, %v, %v)", target, ok, err)
+	}
+	parsed, err := url.Parse(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Query().Get("x-oss-date"); got != "20261105T021234Z" {
+		t.Fatalf("签名时间 = %q，想用当前精确时间 20261105T021234Z", got)
+	}
+	if got := parsed.Query().Get("x-oss-expires"); got != "3600" {
+		t.Fatalf("有效期 = %q，想 3600 秒", got)
+	}
+}
+
 // listObjectsXML 按前缀返回 ListObjectsV2 的 XML；调用方持有 mu。
 func (f *fakeOSS) listObjectsXML(prefix string) string {
 	keys := make([]string, 0, len(f.objects))

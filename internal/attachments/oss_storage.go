@@ -433,7 +433,9 @@ func (s *OSSStorage) DownloadURL(ctx context.Context, id int64, opts DownloadURL
 	if err != nil {
 		return "", false, err
 	}
-	return s.signedObjectURL(ctx, key, 15*time.Minute, opts.Disposition)
+	// 附件下载地址按规格做 10 分钟取整 + 15 分钟有效期：同一时间桶内
+	// 地址稳定，便于前端复用；剩余有效期最短 5 分钟。
+	return s.signedObjectURL(ctx, key, 15*time.Minute, opts.Disposition, 10*time.Minute)
 }
 
 func (s *OSSStorage) ObjectURL(ctx context.Context, relKey string, ttl time.Duration,
@@ -442,7 +444,9 @@ func (s *OSSStorage) ObjectURL(ctx context.Context, relKey string, ttl time.Dura
 	if err != nil {
 		return "", false, err
 	}
-	return s.signedObjectURL(ctx, key, ttl, disposition)
+	// 备份和归档包地址不取整：剩余有效期必须不少于请求的 ttl（backup-url
+	// 承诺一小时就是完整一小时），也不需要同桶稳定。
+	return s.signedObjectURL(ctx, key, ttl, disposition, 0)
 }
 
 // ListObjects 按相对前缀列举对象，自动翻页；返回的 RelKey 剥掉根前缀，
@@ -486,12 +490,17 @@ func (s *OSSStorage) ListObjects(ctx context.Context, relPrefix string) ([]Objec
 	}
 }
 
+// signedObjectURL 生成 V4 签名地址。roundTo 是签名时间的取整粒度：0 表示
+// 用精确当前时间签名，保证剩余有效期等于 ttl。
 func (s *OSSStorage) signedObjectURL(ctx context.Context, key string, ttl time.Duration,
-	disposition string) (string, bool, error) {
+	disposition string, roundTo time.Duration) (string, bool, error) {
 	if ttl <= 0 {
 		return "", false, errors.New("对象签名地址有效期必须大于 0")
 	}
-	now := s.now().UTC().Truncate(10 * time.Minute)
+	now := s.now().UTC()
+	if roundTo > 0 {
+		now = now.Truncate(roundTo)
+	}
 	host, err := signingHostURL(s.config.SigningHost, s.config.Region, s.config.Bucket)
 	if err != nil {
 		return "", false, err
