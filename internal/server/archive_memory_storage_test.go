@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -98,7 +99,7 @@ func Test内存假存储下归档生成移除导入走存储接口(t *testing.T)
 	}
 }
 
-func startOSSPackageServer(t *testing.T) (*tbtest.Server, *attachments.MemoryStorage, *http.Client, string) {
+func startOSSPackageServer(t *testing.T) (*tbtest.Server, *attachments.MemoryStorage, *http.Client, string, string) {
 	t.Helper()
 	mem := attachments.NewMemoryStorage()
 	mem.DownloadURLPrefix = "https://oss.example.test/signed/"
@@ -128,7 +129,7 @@ func startOSSPackageServer(t *testing.T) (*tbtest.Server, *attachments.MemorySto
 		t.Fatalf("关闭工单状态码 = %d, 想 200", res.StatusCode)
 	}
 	s.Clock().Set(time.Date(2026, time.October, 30, 10, 0, 0, 0, clock.Beijing))
-	return s, mem, s.Login("陈工", "secret-pass"), number
+	return s, mem, s.Login("陈工", "secret-pass"), number, uploaded.ID
 }
 
 func assertPackageObjectAndRedirect(t *testing.T, mem *attachments.MemoryStorage, localDir, name, downloadURL string,
@@ -168,7 +169,7 @@ func assertPackageObjectAndRedirect(t *testing.T, mem *attachments.MemoryStorage
 }
 
 func TestOSS后端归档包生成下载与七天清理(t *testing.T) {
-	s, mem, admin, number := startOSSPackageServer(t)
+	s, mem, admin, number, _ := startOSSPackageServer(t)
 
 	var pkg archivePackageBody
 	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/archive/packages",
@@ -193,7 +194,7 @@ func TestOSS后端归档包生成下载与七天清理(t *testing.T) {
 }
 
 func TestOSS后端瘦身包生成下载与七天清理(t *testing.T) {
-	s, mem, admin, number := startOSSPackageServer(t)
+	s, mem, admin, number, _ := startOSSPackageServer(t)
 
 	var pkg slimPackageBody
 	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/slim/packages",
@@ -214,5 +215,134 @@ func TestOSS后端瘦身包生成下载与七天清理(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(s.DataDir(), "slim-packages", pkg.Name)); !os.IsNotExist(err) {
 		t.Fatalf("瘦身包过期后本地副本应删除：err=%v", err)
+	}
+}
+
+func TestOSS后端归档移除删除失败仍完成(t *testing.T) {
+	s, mem, admin, number, ref := startOSSPackageServer(t)
+
+	var pkg archivePackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/archive/packages",
+		map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, &pkg); res.StatusCode != http.StatusCreated {
+		t.Fatalf("生成归档包状态码 = %d, 想 201", res.StatusCode)
+	}
+	id, err := attachments.ParseRef(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mem.DeleteErr = errors.New("injected delete failure")
+
+	var removed archiveRemoveBody
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/admin/archive/packages/"+pkg.Name+"/remove", map[string]any{"saved": true}, &removed); res.StatusCode != http.StatusOK {
+		t.Fatalf("归档移除状态码 = %d, 想 200", res.StatusCode)
+	}
+	if removed.CleanupFailures != 1 {
+		t.Fatalf("清理失败数 = %d, 想 1", removed.CleanupFailures)
+	}
+	if _, exists := mem.Object(id); !exists {
+		t.Fatal("注入删除失败后对象应留给每日对账清理")
+	}
+	var detail errorBody
+	if res := s.Do(t, admin, http.MethodGet, "/api/v1/tickets/"+number, nil, &detail); res.StatusCode != http.StatusGone ||
+		detail.Error.Code != "ticket_archived" {
+		t.Fatalf("删除失败不影响归档完成，工单响应 = %d/%s", res.StatusCode, detail.Error.Code)
+	}
+}
+
+func TestOSS后端瘦身移出删除失败仍完成(t *testing.T) {
+	s, mem, admin, number, ref := startOSSPackageServer(t)
+
+	var pkg slimPackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/slim/packages",
+		map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, &pkg); res.StatusCode != http.StatusCreated {
+		t.Fatalf("生成瘦身包状态码 = %d, 想 201", res.StatusCode)
+	}
+	id, err := attachments.ParseRef(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mem.DeleteErr = errors.New("injected delete failure")
+
+	var removed slimRemoveBody
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/admin/slim/packages/"+pkg.Name+"/remove", map[string]any{"saved": true}, &removed); res.StatusCode != http.StatusOK {
+		t.Fatalf("瘦身移出状态码 = %d, 想 200", res.StatusCode)
+	}
+	if removed.CleanupFailures != 1 {
+		t.Fatalf("清理失败数 = %d, 想 1", removed.CleanupFailures)
+	}
+	if _, exists := mem.Object(id); !exists {
+		t.Fatal("注入删除失败后对象应留给每日对账清理")
+	}
+	var slimmedAt *string
+	if err := s.Store().DB.QueryRow(`SELECT slim_removed_at FROM attachments WHERE id = ?`, id).Scan(&slimmedAt); err != nil || slimmedAt == nil {
+		t.Fatalf("删除失败不影响瘦身状态：row=%v err=%v", slimmedAt, err)
+	}
+}
+
+func TestOSS后端归档导入与瘦身恢复写回当前后端(t *testing.T) {
+	s, mem, admin, number, ref := startOSSPackageServer(t)
+	id, err := attachments.ParseRef(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var archivePkg archivePackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/archive/packages",
+		map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, &archivePkg); res.StatusCode != http.StatusCreated {
+		t.Fatalf("生成归档包状态码 = %d, 想 201", res.StatusCode)
+	}
+	archiveBody, err := os.ReadFile(filepath.Join(s.DataDir(), "archive-packages", archivePkg.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/admin/archive/packages/"+archivePkg.Name+"/remove", map[string]any{"saved": true}, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("归档移除状态码 = %d, 想 200", res.StatusCode)
+	}
+	if _, exists := mem.Object(id); exists {
+		t.Fatal("归档移除后附件对象应删除")
+	}
+	res, imported := importArchive(t, s, admin, archiveBody, number)
+	if res.StatusCode != http.StatusOK || len(imported.Imported) != 1 {
+		t.Fatalf("导入归档 = %d/%+v, 想 200 且导入一张", res.StatusCode, imported)
+	}
+	if _, exists := mem.Object(id); !exists {
+		t.Fatal("导入归档后附件应写回 OSS 假后端")
+	}
+	attachmentPath := "/api/v1/attachments/" + ref + "/" + url.PathEscape("服务日志.log")
+	attRes, err := noRedirect(t, admin).Get(s.URL() + attachmentPath)
+	if err != nil || attRes.StatusCode != http.StatusFound {
+		t.Fatalf("导入归档后附件下载状态码 = %d, 想 302", attRes.StatusCode)
+	}
+
+	var slimPkg slimPackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/slim/packages",
+		map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, &slimPkg); res.StatusCode != http.StatusCreated {
+		t.Fatalf("生成瘦身包状态码 = %d, 想 201", res.StatusCode)
+	}
+	slimBody, err := os.ReadFile(filepath.Join(s.DataDir(), "slim-packages", slimPkg.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/admin/slim/packages/"+slimPkg.Name+"/remove", map[string]any{"saved": true}, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("瘦身移出状态码 = %d, 想 200", res.StatusCode)
+	}
+	if _, exists := mem.Object(id); exists {
+		t.Fatal("瘦身移出后附件对象应删除")
+	}
+	res, restored := restoreSlim(t, s, admin, slimBody, number)
+	if res.StatusCode != http.StatusOK || len(restored.Restored) != 1 {
+		t.Fatalf("恢复瘦身 = %d/%+v, 想 200 且恢复一张", res.StatusCode, restored)
+	}
+	obj, exists := mem.Object(id)
+	if !exists || string(obj.Content) != "attachment data" {
+		t.Fatalf("恢复瘦身后附件对象不存在或内容不符：exists=%v obj=%+v", exists, obj)
+	}
+	attRes, err = noRedirect(t, admin).Get(s.URL() + attachmentPath)
+	if err != nil || attRes.StatusCode != http.StatusFound {
+		t.Fatalf("恢复瘦身后附件下载状态码 = %d, 想 302", attRes.StatusCode)
 	}
 }
