@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -26,6 +28,8 @@ type MigrationOptions struct {
 	AcceptMissing bool
 	// DryRun 只统计迁移计划，不写目标对象，也不改数据库标记。
 	DryRun bool
+	// Progress 在实际迁移时每处理 50 个附件调用一次。
+	Progress func(done, total int)
 }
 
 // MigrationResult 是迁移汇总；清单里的 id 按升序排列。
@@ -104,21 +108,51 @@ func MigrateAttachments(ctx context.Context, db *sql.DB, source, target Storage,
 			return res, err
 		}
 	}
+	type migrationOutcome struct {
+		record migrationRecord
+		copied bool
+		err    error
+	}
+	jobs := make(chan migrationRecord)
+	outcomes := make(chan migrationOutcome, len(records))
+	var workers sync.WaitGroup
+	var processed int64
+	for i := 0; i < 4; i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for record := range jobs {
+				copied, err := migrateAttachment(ctx, record, source, target)
+				outcomes <- migrationOutcome{record: record, copied: copied, err: err}
+				done := int(atomic.AddInt64(&processed, 1))
+				if done%50 == 0 && opts.Progress != nil {
+					opts.Progress(done, len(records))
+				}
+			}
+		}()
+	}
 	for _, record := range records {
-		copied, err := migrateAttachment(ctx, record, source, target)
+		jobs <- record
+	}
+	close(jobs)
+	workers.Wait()
+	close(outcomes)
+	for outcome := range outcomes {
 		switch {
-		case err == nil && copied:
+		case outcome.err == nil && outcome.copied:
 			res.Copied++
-		case err == nil:
+		case outcome.err == nil:
 			res.Skipped++
-		case errors.Is(err, ErrObjectNotFound):
+		case errors.Is(outcome.err, ErrObjectNotFound):
 			res.Missing++
-			res.MissingIDs = append(res.MissingIDs, record.id)
+			res.MissingIDs = append(res.MissingIDs, outcome.record.id)
 		default:
 			res.Failed++
-			res.FailedIDs = append(res.FailedIDs, record.id)
+			res.FailedIDs = append(res.FailedIDs, outcome.record.id)
 		}
 	}
+	sort.Slice(res.MissingIDs, func(i, j int) bool { return res.MissingIDs[i] < res.MissingIDs[j] })
+	sort.Slice(res.FailedIDs, func(i, j int) bool { return res.FailedIDs[i] < res.FailedIDs[j] })
 	if res.Failed != 0 || (res.Missing != 0 && !opts.AcceptMissing) {
 		return res, fmt.Errorf("附件迁移未完成：失败 %d 个、源端缺失 %d 个", res.Failed, res.Missing)
 	}

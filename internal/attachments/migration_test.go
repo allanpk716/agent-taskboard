@@ -2,10 +2,12 @@ package attachments_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
@@ -249,5 +251,47 @@ func Test附件迁移前检查服务是否仍在运行(t *testing.T) {
 	}
 	if err := attachments.EnsureServiceStopped(0); err != nil {
 		t.Fatalf("未检查端口时 err = %v, 想 nil", err)
+	}
+}
+
+func Test附件迁移按五十个文件汇报进度(t *testing.T) {
+	ctx := context.Background()
+	st, _ := newMigrationDatabase(t)
+	if err := attachments.WriteBackendMarker(ctx, st.DB, attachments.BackendMarker{
+		Backend: attachments.AttachmentBackendLocal,
+	}); err != nil {
+		t.Fatalf("写入源后端标记失败：%v", err)
+	}
+	source := attachments.NewMemoryStorage()
+	for id := 1; id <= 101; id++ {
+		content := fmt.Sprintf("附件%d", id)
+		putMigrationAttachment(t, source, int64(id), content)
+		addMigrationRecord(t, st, int64(id), "附件.txt", content, "attached")
+	}
+
+	var progressMu sync.Mutex
+	progress := []int{}
+	res, err := attachments.MigrateAttachments(ctx, st.DB, source, attachments.NewMemoryStorage(),
+		attachments.MigrationOptions{
+			Target: attachments.BackendMarker{
+				Backend: attachments.AttachmentBackendOSS, Bucket: "files", Prefix: "agent-taskboard/prod/",
+			},
+			Progress: func(done, total int) {
+				progressMu.Lock()
+				defer progressMu.Unlock()
+				progress = append(progress, done)
+			},
+		})
+	if err != nil {
+		t.Fatalf("迁移失败：%v", err)
+	}
+	if res.Copied != 101 {
+		t.Fatalf("复制数 = %d, 想 101", res.Copied)
+	}
+	progressMu.Lock()
+	gotProgress := append([]int(nil), progress...)
+	progressMu.Unlock()
+	if len(gotProgress) != 2 || gotProgress[0] != 50 || gotProgress[1] != 100 {
+		t.Fatalf("进度 = %v, 想每 50 个一次", gotProgress)
 	}
 }
