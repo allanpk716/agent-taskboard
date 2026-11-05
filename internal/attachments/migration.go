@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"hash/crc64"
 	"io"
+	"net"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"time"
 )
 
@@ -44,6 +46,20 @@ type migrationRecord struct {
 	id       int64
 	filename string
 	size     int64
+}
+
+// EnsureServiceStopped 按配置端口确认 taskboard 服务不在运行；离线命令
+// 操作数据库和附件对象前先调用它。
+func EnsureServiceStopped(port int) error {
+	if port <= 0 {
+		return nil
+	}
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 300*time.Millisecond)
+	if err != nil {
+		return nil
+	}
+	_ = conn.Close()
+	return fmt.Errorf("127.0.0.1:%d 仍有服务在监听：先停止 taskboard 服务（如 nssm stop <服务名>）再迁移附件", port)
 }
 
 // MigrateAttachments 把附件对象从 source 复制到 target，全部校验通过后

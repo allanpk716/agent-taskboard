@@ -3,6 +3,7 @@ package attachments_test
 import (
 	"context"
 	"io"
+	"net"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -231,5 +232,22 @@ func Test附件迁移DryRun只列计划不写入(t *testing.T) {
 	marker, exists, err := attachments.ReadBackendMarker(ctx, st.DB)
 	if err != nil || !exists || marker.Backend != attachments.AttachmentBackendLocal {
 		t.Fatalf("dry-run 后标记 = (%+v, %v, %v), 想保持 local", marker, exists, err)
+	}
+}
+
+func Test附件迁移前检查服务是否仍在运行(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("监听临时端口失败：%v", err)
+	}
+	defer listener.Close()
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	err = attachments.EnsureServiceStopped(port)
+	if err == nil || !strings.Contains(err.Error(), "仍有服务在监听") {
+		t.Fatalf("服务运行时 err = %v, 想拒绝迁移", err)
+	}
+	if err := attachments.EnsureServiceStopped(0); err != nil {
+		t.Fatalf("未检查端口时 err = %v, 想 nil", err)
 	}
 }
