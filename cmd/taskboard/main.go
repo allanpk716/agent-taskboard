@@ -6,6 +6,7 @@
 //	taskboard create-admin 创建首位管理员账号
 //	taskboard backup       手动备份（定时备份在 serve 内置）
 //	taskboard restore <备份文件> 恢复（需先停止服务）
+//	taskboard migrate-attachments 附件在本地与 OSS 间离线迁移
 //	taskboard healthcheck  容器健康检查（按配置端口请求 health）
 //	taskboard update       检查并安装更新（前后端；-check 只检查）
 //	taskboard rollback     换回上一版 exe 和更新前的备份
@@ -25,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
@@ -59,6 +61,8 @@ func run(args []string) error {
 		return cmdHealthcheck(args)
 	case "restore":
 		return cmdRestore(args)
+	case "migrate-attachments":
+		return cmdMigrateAttachments(args)
 	case "update":
 		return cmdUpdate(args)
 	case "rollback":
@@ -74,13 +78,15 @@ func run(args []string) error {
 	}
 }
 
-func usage(w *os.File) {
+func usage(w io.Writer) {
 	fmt.Fprintln(w, `用法：
   taskboard serve [flags]              启动服务（默认，内置每日备份调度）
   taskboard create-admin [flags]       创建管理员账号
   taskboard backup [flags]             手动备份一次（与定时备份同一段代码）
   taskboard healthcheck [flags]        按配置端口请求 health（镜像 HEALTHCHECK 用）
   taskboard restore <备份文件> [flags] 恢复（先停止服务，见 docs/deploy-and-release.md）
+  taskboard migrate-attachments -to oss|local [flags] 附件离线迁移（-dry-run 只列计划）
+    -accept-missing                   源端缺失时按清单切换后端
   taskboard update [flags]             检查并安装更新（-check 只检查不安装）
   taskboard rollback [flags]           换回上一版 exe 和更新前的备份（先停止服务）
   taskboard version [flags]            显示当前前后端版本
@@ -277,6 +283,135 @@ func cmdRestore(args []string) error {
 	}
 	fmt.Println("恢复完成：请启动服务（NSSM 下执行 nssm start <服务名>，或直接 taskboard serve）")
 	return nil
+}
+
+// cmdMigrateAttachments 在停服状态下把附件在本地上传和 OSS 之间双向迁移。
+func cmdMigrateAttachments(args []string) error {
+	fs := flag.NewFlagSet("migrate-attachments", flag.ContinueOnError)
+	configPath := fs.String("config", "config.toml", "配置文件路径")
+	targetBackend := fs.String("to", "", "目标附件后端（oss 或 local）")
+	dryRun := fs.Bool("dry-run", false, "只列迁移计划，不写任何对象或标记")
+	acceptMissing := fs.Bool("accept-missing", false, "源端缺失时按缺失清单切换后端")
+	fs.Usage = func() { usage(os.Stderr) }
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("migrate-attachments 不接受位置参数：%q", fs.Arg(0))
+	}
+	target := strings.TrimSpace(*targetBackend)
+	if target != config.AttachmentBackendLocal && target != config.AttachmentBackendOSS {
+		return fmt.Errorf("migrate-attachments 的 -to 只能是 oss 或 local")
+	}
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	// 先确认停服，再打开数据库，避免对运行中的库做离线操作。
+	if err := attachments.EnsureServiceStopped(cfg.Port); err != nil {
+		return err
+	}
+	st, err := store.Open(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	ctx := context.Background()
+	marker, exists, err := attachments.ReadBackendMarker(ctx, st.DB)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("数据库缺少 attachments_backend 标记：先用当前版本完成数据库迁移，或恢复完整备份")
+	}
+	if marker.Backend != config.AttachmentBackendLocal && marker.Backend != config.AttachmentBackendOSS {
+		return fmt.Errorf("数据库记录的附件后端 %q 无效", marker.Backend)
+	}
+	if marker.Backend == target {
+		return fmt.Errorf("附件已在 %s 后端：无需迁移；请检查 [attachments] backend 配置", marker.Backend)
+	}
+
+	var source attachments.Storage
+	switch marker.Backend {
+	case config.AttachmentBackendLocal:
+		source, err = attachments.NewLocalStorage(cfg.DataDir)
+	case config.AttachmentBackendOSS:
+		source, err = attachments.NewOSSStorage(attachments.OSSConfig{
+			Region: cfg.Attachments.OSS.Region, Bucket: marker.Bucket, Prefix: marker.Prefix,
+			InternalEndpoint: cfg.Attachments.OSS.InternalEndpoint,
+			SigningHost:      cfg.Attachments.OSS.SigningHost,
+		}, attachments.OSSStorageOptions{
+			AccessKeyID:     os.Getenv("OSS_ACCESS_KEY_ID"),
+			AccessKeySecret: os.Getenv("OSS_ACCESS_KEY_SECRET"),
+		})
+	}
+	if err != nil {
+		return err
+	}
+
+	want := attachments.BackendMarker{Backend: target}
+	var destination attachments.Storage
+	if target == config.AttachmentBackendOSS {
+		want.Bucket = strings.TrimSpace(cfg.Attachments.OSS.Bucket)
+		want.Prefix, err = attachments.NormalizeOSSPrefix(cfg.Attachments.OSS.Prefix)
+		if err != nil {
+			return err
+		}
+		destination, err = attachments.NewOSSStorage(attachments.OSSConfig{
+			Region: cfg.Attachments.OSS.Region, Bucket: want.Bucket, Prefix: want.Prefix,
+			InternalEndpoint: cfg.Attachments.OSS.InternalEndpoint,
+			SigningHost:      cfg.Attachments.OSS.SigningHost,
+		}, attachments.OSSStorageOptions{
+			AccessKeyID:     os.Getenv("OSS_ACCESS_KEY_ID"),
+			AccessKeySecret: os.Getenv("OSS_ACCESS_KEY_SECRET"),
+		})
+	} else {
+		destination, err = attachments.NewLocalStorage(cfg.DataDir)
+	}
+	if err != nil {
+		return err
+	}
+
+	res, migrateErr := attachments.MigrateAttachments(ctx, st.DB, source, destination, attachments.MigrationOptions{
+		Target: want, DataDir: cfg.DataDir, DryRun: *dryRun,
+		AcceptMissing: *acceptMissing,
+		Progress: func(done, total int) {
+			fmt.Printf("附件迁移进度：%d/%d\n", done, total)
+		},
+	})
+	printMigrationResult(res)
+	if migrateErr != nil {
+		return migrateErr
+	}
+	if !*dryRun {
+		fmt.Printf("迁移完成：请把 [attachments] backend 改成 %s 再启动\n", target)
+	}
+	return nil
+}
+
+func printMigrationResult(res attachments.MigrationResult) {
+	if res.DryRun {
+		fmt.Printf("附件迁移计划：附件 %d 个、共 %d 字节；需复制 %d 个、已一致 %d 个、源端缺失 %d 个\n",
+			res.Planned+res.Skipped+res.Missing, res.TotalSize, res.Planned, res.Skipped, res.Missing)
+	} else {
+		fmt.Printf("附件迁移汇总：复制 %d 个、跳过 %d 个、失败 %d 个、源端缺失 %d 个\n",
+			res.Copied, res.Skipped, res.Failed, res.Missing)
+	}
+	printIDList("源端缺失附件", res.MissingIDs)
+	printIDList("复制失败附件", res.FailedIDs)
+	printIDList("源端有对象但数据库无记录", res.SourceOnlyIDs)
+}
+
+func printIDList(title string, ids []int64) {
+	if len(ids) == 0 {
+		return
+	}
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = fmt.Sprintf("%d", id)
+	}
+	fmt.Printf("%s：%s\n", title, strings.Join(parts, "、"))
 }
 
 // updateOptions 从配置构造更新选项（三个更新入口共用 internal/updater）。
