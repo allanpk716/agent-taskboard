@@ -9,6 +9,24 @@ async function upload(request: APIRequestContext, number: string, name: string, 
   return (await res.json()) as { id: string }
 }
 
+async function uploadImage(
+  request: APIRequestContext,
+  number: string,
+  name: string,
+  bytes: Uint8Array,
+) {
+  const res = await request.post(`/api/v1/tickets/${number}/attachments`, {
+    multipart: { file: { name, mimeType: 'image/png', buffer: Buffer.from(bytes) } },
+  })
+  expect(res.status(), `上传 ${name} 失败：${await res.text()}`).toBe(201)
+  return (await res.json()) as { id: string }
+}
+
+const onePixelPng = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAsMB4H0bBwAAAABJRU5ErkJggg==',
+  'base64',
+)
+
 test('建单暂存的附件进入整单附件条，不写进说明', async ({ page }) => {
   await login(page, ADMIN)
   await page.locator('.b-tabs').getByRole('link', { name: '建单' }).click()
@@ -36,6 +54,23 @@ test('建单暂存的附件进入整单附件条，不写进说明', async ({ pa
   await expect(brief.locator('.atts .att')).toContainText('建单日志.log')
   await expect(brief).not.toContainText('att:')
   await expect(brief).not.toContainText('[建单日志.log]')
+})
+
+test('插图直接使用附件地址加载', async ({ page, request }) => {
+  const number = await createTicket(request, { title: '插图直连附件地址' })
+  const image = await uploadImage(request, number, '现场照片.png', onePixelPng)
+  const res = await request.patch(`/api/v1/tickets/${number}`, {
+    data: { brief_md: `![现场照片](att:${image.id})`, base_revision: 1 },
+  })
+  expect(res.status(), `挂插图失败：${await res.text()}`).toBe(200)
+  const view = await (await request.get(`/api/v1/tickets/${number}`)).json()
+  const url = view.attachments.find((a: any) => a.id === image.id).url as string
+
+  await login(page, ADMIN)
+  await page.goto(`/t/${number}`)
+  const img = page.locator('[data-bubble="brief"] img.inline-img')
+  await expect(img).toBeVisible()
+  await expect(img).toHaveAttribute('src', url)
 })
 
 test('建单时字段内附件留在字段下，不进整张工单的附件', async ({ page }) => {
