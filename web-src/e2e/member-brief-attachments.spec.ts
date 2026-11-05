@@ -132,7 +132,7 @@ test('建单时字段内附件留在字段下，不进整张工单的附件', as
   await page.locator('input[type="file"]').last().setInputFiles({
     name: '现场截图.png',
     mimeType: 'image/png',
-    buffer: Buffer.from('fake image\n'),
+    buffer: onePixelPng,
   })
   await expect(field.locator('.staged-file')).toContainText('现场截图.png')
 
