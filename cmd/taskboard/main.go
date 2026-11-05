@@ -411,7 +411,7 @@ func cmdMigrateAttachments(args []string) error {
 		return fmt.Errorf("migrate-attachments 不接受位置参数：%q", fs.Arg(0))
 	}
 	target := strings.TrimSpace(*targetBackend)
-	if target != config.AttachmentBackendLocal && target != config.AttachmentBackendOSS {
+	if target != attachments.AttachmentBackendLocal && target != attachments.AttachmentBackendOSS {
 		return fmt.Errorf("migrate-attachments 的 -to 只能是 oss 或 local")
 	}
 	cfg, err := config.Load(*configPath)
@@ -449,50 +449,30 @@ func cmdMigrateAttachments(args []string) error {
 	if !exists {
 		return fmt.Errorf("数据库缺少 attachments_backend 标记：先用当前版本完成数据库迁移，或恢复完整备份")
 	}
-	if marker.Backend != config.AttachmentBackendLocal && marker.Backend != config.AttachmentBackendOSS {
+	if marker.Backend != attachments.AttachmentBackendLocal && marker.Backend != attachments.AttachmentBackendOSS {
 		return fmt.Errorf("数据库记录的附件后端 %q 无效", marker.Backend)
 	}
 	if marker.Backend == target {
 		return fmt.Errorf("附件已在 %s 后端：无需迁移；请检查 [attachments] backend 配置", marker.Backend)
 	}
 
+	// 源端用数据库里记录的 bucket/prefix（迁移前配置可能已改指向目标端）；
+	// AccessKey 读取和 NewOSSStorage 的装配统一走 NewOSSStorageFromEnv。
 	var source attachments.Storage
 	switch marker.Backend {
-	case config.AttachmentBackendLocal:
+	case attachments.AttachmentBackendLocal:
 		source, err = attachments.NewLocalStorage(cfg.DataDir)
-	case config.AttachmentBackendOSS:
-		source, err = attachments.NewOSSStorage(attachments.OSSConfig{
-			Region: cfg.Attachments.OSS.Region, Bucket: marker.Bucket, Prefix: marker.Prefix,
-			InternalEndpoint: cfg.Attachments.OSS.InternalEndpoint,
-			SigningHost:      cfg.Attachments.OSS.SigningHost,
-		}, attachments.OSSStorageOptions{
-			AccessKeyID:     os.Getenv("OSS_ACCESS_KEY_ID"),
-			AccessKeySecret: os.Getenv("OSS_ACCESS_KEY_SECRET"),
-		})
+	case attachments.AttachmentBackendOSS:
+		source, err = attachments.NewOSSStorageFromEnv(ossConfigOf(cfg, marker.Bucket, marker.Prefix))
 	}
 	if err != nil {
 		return err
 	}
 
-	want := attachments.BackendMarker{Backend: target}
-	var destination attachments.Storage
-	if target == config.AttachmentBackendOSS {
-		want.Bucket = strings.TrimSpace(cfg.Attachments.OSS.Bucket)
-		want.Prefix, err = attachments.NormalizeOSSPrefix(cfg.Attachments.OSS.Prefix)
-		if err != nil {
-			return err
-		}
-		destination, err = attachments.NewOSSStorage(attachments.OSSConfig{
-			Region: cfg.Attachments.OSS.Region, Bucket: want.Bucket, Prefix: want.Prefix,
-			InternalEndpoint: cfg.Attachments.OSS.InternalEndpoint,
-			SigningHost:      cfg.Attachments.OSS.SigningHost,
-		}, attachments.OSSStorageOptions{
-			AccessKeyID:     os.Getenv("OSS_ACCESS_KEY_ID"),
-			AccessKeySecret: os.Getenv("OSS_ACCESS_KEY_SECRET"),
-		})
-	} else {
-		destination, err = attachments.NewLocalStorage(cfg.DataDir)
-	}
+	// 目标端按当前配置装配；OpenStorageFromConfig 顺带给出迁移后要写库的
+	// 后端标记（bucket/prefix 已归一化）。
+	destination, _, want, err := attachments.OpenStorageFromConfig(
+		attachments.StorageConfig{Backend: target, DataDir: cfg.DataDir, OSS: ossConfigOf(cfg, "", "")})
 	if err != nil {
 		return err
 	}
@@ -539,53 +519,31 @@ func printIDList(title string, ids []int64) {
 	fmt.Printf("%s：%s\n", title, strings.Join(parts, "、"))
 }
 
-// configuredAttachmentBackends 按配置构造离线命令要用的附件后端。这里不探测
-// 桶：第一条备份/恢复请求会暴露连接问题，也让 backup-url 可以只做本地签名。
+// configuredAttachmentBackends 按配置构造离线命令要用的附件后端。装配和
+// 校验统一在 attachments.OpenStorageFromConfig；这里不探测桶：第一条备份/
+// 恢复请求会暴露连接问题，也让 backup-url 可以只做本地签名。
 func configuredAttachmentBackends(cfg config.Config) (attachments.Storage,
 	attachments.ObjectStorage, attachments.BackendMarker, error) {
-	none := attachments.BackendMarker{}
-	switch cfg.Attachments.Backend {
-	case "", config.AttachmentBackendLocal:
-		storage, err := attachments.NewLocalStorage(cfg.DataDir)
-		if err != nil {
-			return nil, nil, none, err
-		}
-		return storage, nil, attachments.BackendMarker{
-			Backend: attachments.AttachmentBackendLocal,
-		}, nil
-	case config.AttachmentBackendOSS:
-		marker := attachments.BackendMarker{
-			Backend: attachments.AttachmentBackendOSS,
-			Bucket:  strings.TrimSpace(cfg.Attachments.OSS.Bucket),
-		}
-		var err error
-		marker.Prefix, err = attachments.NormalizeOSSPrefix(cfg.Attachments.OSS.Prefix)
-		if err != nil {
-			return nil, nil, none, err
-		}
-		if marker.Bucket == "" {
-			return nil, nil, none, fmt.Errorf("backend = \"oss\" 时必须配置 bucket")
-		}
-		storage, err := attachments.NewOSSStorage(attachments.OSSConfig{
-			Region: cfg.Attachments.OSS.Region, Bucket: marker.Bucket, Prefix: marker.Prefix,
-			InternalEndpoint: cfg.Attachments.OSS.InternalEndpoint,
-			SigningHost:      cfg.Attachments.OSS.SigningHost,
-		}, attachments.OSSStorageOptions{
-			AccessKeyID:     os.Getenv("OSS_ACCESS_KEY_ID"),
-			AccessKeySecret: os.Getenv("OSS_ACCESS_KEY_SECRET"),
-		})
-		if err != nil {
-			return nil, nil, none, err
-		}
-		objects := attachments.ObjectStorageOf(storage)
-		if objects == nil {
-			return nil, nil, none, fmt.Errorf("OSS 附件后端不支持备份对象接口")
-		}
-		return storage, objects, marker, nil
-	default:
-		return nil, nil, none, fmt.Errorf("[attachments] backend = %q 无效（只能是 local 或 oss）",
-			cfg.Attachments.Backend)
+	return attachments.OpenStorageFromConfig(cfg.Attachments.StorageConfig(cfg.DataDir))
+}
+
+// ossConfigOf 取配置里的 OSS 连接参数；bucket/prefix 非空时覆盖（迁移源端
+// 用数据库标记里的值）。
+func ossConfigOf(cfg config.Config, bucket, prefix string) attachments.OSSConfig {
+	ossCfg := attachments.OSSConfig{
+		Region:           cfg.Attachments.OSS.Region,
+		Bucket:           cfg.Attachments.OSS.Bucket,
+		Prefix:           cfg.Attachments.OSS.Prefix,
+		InternalEndpoint: cfg.Attachments.OSS.InternalEndpoint,
+		SigningHost:      cfg.Attachments.OSS.SigningHost,
 	}
+	if bucket != "" {
+		ossCfg.Bucket = bucket
+	}
+	if prefix != "" {
+		ossCfg.Prefix = prefix
+	}
+	return ossCfg
 }
 
 // updateOptions 从配置构造更新选项（三个更新入口共用 internal/updater）。

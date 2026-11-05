@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/config"
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
 )
@@ -73,7 +74,7 @@ func newStartupFakeOSS(t *testing.T) *startupFakeOSS {
 
 func ossAttachments(endpoint, prefix string) config.Attachments {
 	return config.Attachments{
-		Backend: config.AttachmentBackendOSS,
+		Backend: attachments.AttachmentBackendOSS,
 		OSS: config.OSS{
 			Region: "cn-hangzhou", Bucket: "files", Prefix: prefix,
 			InternalEndpoint: endpoint,

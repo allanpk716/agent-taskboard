@@ -41,7 +41,7 @@ func TestOSS后端存储统计用数据库累加并带后端标识(t *testing.T)
 	s := tbtest.Start(t,
 		tbtest.WithAttachmentStorage(mem),
 		tbtest.WithAttachmentConfig(config.Attachments{
-			Backend: config.AttachmentBackendOSS,
+			Backend: attachments.AttachmentBackendOSS,
 			OSS: config.OSS{
 				Region: "cn-hangzhou", Bucket: "files", Prefix: "agent-taskboard/prod/",
 				InternalEndpoint: "oss-cn-hangzhou-internal.aliyuncs.com",

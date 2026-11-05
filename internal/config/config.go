@@ -8,6 +8,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
 )
 
@@ -49,12 +50,6 @@ type Server struct {
 const (
 	DeployInPlace   = ""
 	DeployContainer = "container"
-)
-
-// 附件存储后端。local 是默认值；oss 是可选对象存储后端。
-const (
-	AttachmentBackendLocal = "local"
-	AttachmentBackendOSS   = "oss"
 )
 
 // Attachments 是 [attachments] 小节：服务端只检查上限，不压缩图片
@@ -166,9 +161,9 @@ func Load(path string) (Config, error) {
 		return cfg, fmt.Errorf(`解析 %s 失败：[backup] target = %q 只有一个反斜杠开头；UNC 路径要以 \\ 开头，如 '\\nas01\taskboard-backup'`, path, t)
 	}
 	if cfg.Attachments.Backend == "" {
-		cfg.Attachments.Backend = AttachmentBackendLocal
+		cfg.Attachments.Backend = attachments.AttachmentBackendLocal
 	}
-	if cfg.Attachments.Backend != AttachmentBackendLocal && cfg.Attachments.Backend != AttachmentBackendOSS {
+	if cfg.Attachments.Backend != attachments.AttachmentBackendLocal && cfg.Attachments.Backend != attachments.AttachmentBackendOSS {
 		return cfg, fmt.Errorf("解析 %s 失败：[attachments] backend = %q 无效（只能是 local 或 oss）",
 			path, cfg.Attachments.Backend)
 	}
@@ -198,7 +193,7 @@ func ApplyDefaults(cfg *Config) {
 		cfg.WebDir = "web"
 	}
 	if cfg.Attachments.Backend == "" {
-		cfg.Attachments.Backend = AttachmentBackendLocal
+		cfg.Attachments.Backend = attachments.AttachmentBackendLocal
 	}
 	if cfg.Attachments.MaxFileMB == 0 {
 		cfg.Attachments.MaxFileMB = 5
@@ -235,5 +230,16 @@ func ApplyDefaults(cfg *Config) {
 	}
 	if cfg.Intake.DailyLimit == 0 {
 		cfg.Intake.DailyLimit = 200
+	}
+}
+
+// StorageConfig 把 [attachments] 小节转成附件后端的装配参数（#314）。
+func (a Attachments) StorageConfig(dataDir string) attachments.StorageConfig {
+	return attachments.StorageConfig{
+		Backend: a.Backend, DataDir: dataDir,
+		OSS: attachments.OSSConfig{
+			Region: a.OSS.Region, Bucket: a.OSS.Bucket, Prefix: a.OSS.Prefix,
+			InternalEndpoint: a.OSS.InternalEndpoint, SigningHost: a.OSS.SigningHost,
+		},
 	}
 }

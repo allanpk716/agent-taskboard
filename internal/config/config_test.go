@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/config"
 )
 
@@ -52,7 +53,7 @@ func Test附件存储后端默认为本地并可配置OSS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("空配置应能加载：%v", err)
 	}
-	if cfg.Attachments.Backend != config.AttachmentBackendLocal {
+	if cfg.Attachments.Backend != attachments.AttachmentBackendLocal {
 		t.Fatalf("默认后端 = %q, 想 local", cfg.Attachments.Backend)
 	}
 
@@ -70,7 +71,7 @@ signing_host = 'files.example.test'
 	if err != nil {
 		t.Fatalf("OSS 配置应能加载：%v", err)
 	}
-	if cfg.Attachments.Backend != config.AttachmentBackendOSS ||
+	if cfg.Attachments.Backend != attachments.AttachmentBackendOSS ||
 		cfg.Attachments.OSS.Region != "cn-hangzhou" ||
 		cfg.Attachments.OSS.Bucket != "urithub-files" ||
 		cfg.Attachments.OSS.Prefix != "agent-taskboard/prod/" ||

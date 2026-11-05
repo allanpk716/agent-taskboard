@@ -21,7 +21,7 @@ import (
 // 备份目标的 attachments/ 目录；本地后端即使注入实现 ObjectStorage 的假存储
 // 也不上传任何对象。
 func TestOSS后端备份上传库副本和密钥但不上传附件镜像(t *testing.T) {
-	for _, backend := range []string{config.AttachmentBackendOSS, config.AttachmentBackendLocal} {
+	for _, backend := range []string{attachments.AttachmentBackendOSS, attachments.AttachmentBackendLocal} {
 		t.Run(backend, func(t *testing.T) {
 			mem := attachments.NewMemoryStorage()
 			s := tbtest.Start(t,
@@ -54,7 +54,7 @@ func TestOSS后端备份上传库副本和密钥但不上传附件镜像(t *test
 			keyKey := attachments.BackupRelKey(guestlinkkey.FileName)
 			dbObject, dbExists := mem.ObjectByKey(dbKey)
 			_, keyExists := mem.ObjectByKey(keyKey)
-			if backend != config.AttachmentBackendOSS {
+			if backend != attachments.AttachmentBackendOSS {
 				if dbExists || keyExists {
 					t.Fatalf("本地后端不应上传备份对象：%q/%q", dbKey, keyKey)
 				}
@@ -163,7 +163,7 @@ func Test备份轮换同步删除OSS对象且删除失败只记录日志(t *test
 }
 
 func ossTestAttachmentConfig() config.Attachments {
-	return config.Attachments{Backend: config.AttachmentBackendOSS, OSS: config.OSS{
+	return config.Attachments{Backend: attachments.AttachmentBackendOSS, OSS: config.OSS{
 		Bucket: "files", Prefix: "agent-taskboard/test/",
 	}}
 }

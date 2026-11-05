@@ -62,7 +62,7 @@ func TestRealOSSSmoke(t *testing.T) {
 	s := tbtest.Start(t,
 		tbtest.WithAttachmentStorage(store),
 		tbtest.WithAttachmentConfig(config.Attachments{
-			Backend: config.AttachmentBackendOSS, OSS: ossConfig,
+			Backend: attachments.AttachmentBackendOSS, OSS: ossConfig,
 		}),
 	)
 	s.CreateAdmin("陈工", "secret-pass")

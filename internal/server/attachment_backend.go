@@ -3,8 +3,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"os"
-	"strings"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/config"
@@ -20,25 +18,17 @@ type attachmentBackendStartup struct {
 
 func prepareAttachmentBackend(ctx context.Context, cfg config.Attachments, dataDir string,
 	st *store.Store, injected attachments.Storage) (attachmentBackendStartup, error) {
-	backend := strings.TrimSpace(cfg.Backend)
-	if backend == "" {
-		backend = config.AttachmentBackendLocal
+	// 后端校验和 OSS 参数归一化统一走 MarkerFromConfig；注入假存储的测试
+	// 不构造真实后端，也不需要 AccessKey。
+	want, err := attachments.MarkerFromConfig(cfg.StorageConfig(dataDir))
+	if err != nil {
+		return attachmentBackendStartup{}, err
 	}
-	if backend != config.AttachmentBackendLocal && backend != config.AttachmentBackendOSS {
-		return attachmentBackendStartup{}, fmt.Errorf("[attachments] backend = %q 无效（只能是 local 或 oss）", backend)
-	}
+	backend := want.Backend
 
 	marker, exists, err := attachments.ReadBackendMarker(ctx, st.DB)
 	if err != nil {
 		return attachmentBackendStartup{}, err
-	}
-	want := attachments.BackendMarker{Backend: backend}
-	if backend == config.AttachmentBackendOSS {
-		want.Bucket = strings.TrimSpace(cfg.OSS.Bucket)
-		want.Prefix, err = attachments.NormalizeOSSPrefix(cfg.OSS.Prefix)
-		if err != nil {
-			return attachmentBackendStartup{}, err
-		}
 	}
 	if !exists {
 		if !st.New {
@@ -59,29 +49,22 @@ func prepareAttachmentBackend(ctx context.Context, cfg config.Attachments, dataD
 	var storage attachments.Storage
 	if injected != nil {
 		storage = injected
-	} else if backend == config.AttachmentBackendOSS {
-		accessKeyID := os.Getenv("OSS_ACCESS_KEY_ID")
-		accessKeySecret := os.Getenv("OSS_ACCESS_KEY_SECRET")
-		ossStorage, err := attachments.NewOSSStorage(attachments.OSSConfig{
-			Region: cfg.OSS.Region, Bucket: cfg.OSS.Bucket, Prefix: want.Prefix,
-			InternalEndpoint: cfg.OSS.InternalEndpoint, SigningHost: cfg.OSS.SigningHost,
-		}, attachments.OSSStorageOptions{AccessKeyID: accessKeyID, AccessKeySecret: accessKeySecret})
-		if err != nil {
-			return attachmentBackendStartup{}, err
-		}
-		if err := ossStorage.Probe(ctx); err != nil {
-			return attachmentBackendStartup{}, err
-		}
-		storage = ossStorage
 	} else {
-		local, err := attachments.NewLocalStorage(dataDir)
+		constructed, _, _, err := attachments.OpenStorageFromConfig(cfg.StorageConfig(dataDir))
 		if err != nil {
 			return attachmentBackendStartup{}, err
 		}
-		storage = local
+		storage = constructed
+		if backend == attachments.AttachmentBackendOSS {
+			if err := constructed.(*attachments.OSSStorage).Probe(ctx); err != nil {
+				return attachmentBackendStartup{}, err
+			}
+		}
 	}
+	// 只有 OSS 后端提供归档包与备份对象接口；本地后端即使注入了实现
+	// ObjectStorage 的假存储也不启用。
 	var objectStorage attachments.ObjectStorage
-	if backend == config.AttachmentBackendOSS {
+	if backend == attachments.AttachmentBackendOSS {
 		objectStorage = attachments.ObjectStorageOf(storage)
 		if objectStorage == nil {
 			return attachmentBackendStartup{}, fmt.Errorf("OSS 附件后端不支持归档包与备份对象接口")

@@ -296,7 +296,7 @@ internal_endpoint = '%s'
 	s := tbtest.Start(t,
 		tbtest.WithDataDir(dataDir),
 		tbtest.WithAttachmentConfig(config.Attachments{
-			Backend: config.AttachmentBackendOSS,
+			Backend: attachments.AttachmentBackendOSS,
 			OSS: config.OSS{
 				Region: "cn-hangzhou", Bucket: "files", Prefix: "agent-taskboard/prod/",
 				InternalEndpoint: fake.URL, SigningHost: fake.URL,

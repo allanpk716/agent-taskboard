@@ -109,7 +109,7 @@ func startOSSPackageServer(t *testing.T) (*tbtest.Server, *attachments.MemorySto
 	s := tbtest.Start(t,
 		tbtest.WithAttachmentStorage(mem),
 		tbtest.WithAttachmentConfig(config.Attachments{
-			Backend: config.AttachmentBackendOSS,
+			Backend: attachments.AttachmentBackendOSS,
 			OSS: config.OSS{
 				Region: "cn-hangzhou", Bucket: "files", Prefix: "agent-taskboard/prod/",
 				InternalEndpoint: "oss-cn-hangzhou-internal.aliyuncs.com",

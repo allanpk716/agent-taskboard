@@ -30,7 +30,7 @@ func Test签名地址存储下附件下载返回302(t *testing.T) {
 	s := tbtest.Start(t,
 		tbtest.WithAttachmentStorage(mem),
 		tbtest.WithAttachmentConfig(config.Attachments{
-			Backend: config.AttachmentBackendOSS,
+			Backend: attachments.AttachmentBackendOSS,
 			OSS: config.OSS{
 				Region: "cn-hangzhou", Bucket: "files", Prefix: "agent-taskboard/prod/",
 				InternalEndpoint: "oss-cn-hangzhou-internal.aliyuncs.com",
@@ -123,7 +123,7 @@ func Test签名地址后端Stat故障时下载返回500(t *testing.T) {
 	s := tbtest.Start(t,
 		tbtest.WithAttachmentStorage(mem),
 		tbtest.WithAttachmentConfig(config.Attachments{
-			Backend: config.AttachmentBackendOSS,
+			Backend: attachments.AttachmentBackendOSS,
 			OSS: config.OSS{
 				Region: "cn-hangzhou", Bucket: "files", Prefix: "agent-taskboard/prod/",
 				InternalEndpoint: "oss-cn-hangzhou-internal.aliyuncs.com",
