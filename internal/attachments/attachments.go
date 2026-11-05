@@ -1,7 +1,7 @@
 // Package attachments 是「附件存储」模块（spec「建议的模块划分」）：两步上传、
 // 配额检查、按凭证鉴权下载（Content-Disposition 与 nosniff 在 HTTP 层）、
-// 未被引用的附件 24 小时后清除。文件本体放 data_dir/attachments/<id>，
-// 数据库里只有元数据；服务端只检查上限，不压缩图片。
+// 未被引用的附件 24 小时后清除。文件本体经 Storage 接口写入当前后端（默认
+// data_dir/attachments/<id>），数据库里只有元数据；服务端只检查上限，不压缩图片。
 package attachments
 
 import (
