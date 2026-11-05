@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
@@ -34,6 +35,17 @@ func TestOSS备份地址有效期一小时(t *testing.T) {
 func Test从OSS下载latest备份并恢复可用数据库(t *testing.T) {
 	ctx := context.Background()
 	mem := attachments.NewMemoryStorage()
+	older := "taskboard-20261015-120000-daily.db"
+	if err := mem.PutObject(ctx, attachments.BackupRelKey(older),
+		strings.NewReader("older backup"), int64(len("older backup")),
+		attachments.PutMeta{ContentType: "application/octet-stream"}); err != nil {
+		t.Fatalf("造旧备份对象失败：%v", err)
+	}
+	if err := mem.PutObject(ctx, attachments.BackupRelKey(guestlinkkey.FileName),
+		strings.NewReader("old guest key"), int64(len("old guest key")),
+		attachments.PutMeta{ContentType: "application/octet-stream"}); err != nil {
+		t.Fatalf("造密钥对象失败：%v", err)
+	}
 	target := t.TempDir()
 	b, _, dataDir := newBackups(t, target)
 	b.SetObjectStorage(mem)
@@ -48,14 +60,14 @@ func Test从OSS下载latest备份并恢复可用数据库(t *testing.T) {
 	if err != nil {
 		t.Fatalf("生成并上传备份失败：%v", err)
 	}
-	latest, err := ops.LatestBackupFileName(ctx, st.DB)
+	st.Close()
+	latest, err := ops.LatestBackupFromStorage(ctx, mem)
 	if err != nil {
 		t.Fatalf("解析 latest 失败：%v", err)
 	}
 	if latest != record.Filename {
 		t.Fatalf("latest = %q，想 %q", latest, record.Filename)
 	}
-	st.Close()
 
 	localBackupDir := filepath.Join(t.TempDir(), "backups")
 	backupFile, err := ops.DownloadBackupFromOSS(ctx, mem, localBackupDir, latest)

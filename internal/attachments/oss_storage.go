@@ -442,6 +442,47 @@ func (s *OSSStorage) ObjectURL(ctx context.Context, relKey string, ttl time.Dura
 	return s.signedObjectURL(ctx, key, ttl, disposition)
 }
 
+// ListObjects 按相对前缀列举对象，自动翻页；返回的 RelKey 剥掉根前缀，
+// 目录占位对象（键以 / 结尾）不计入。
+func (s *OSSStorage) ListObjects(ctx context.Context, relPrefix string) ([]ObjectInfo, error) {
+	if err := ValidateObjectRelPrefix(relPrefix); err != nil {
+		return nil, err
+	}
+	prefix := s.prefix + relPrefix
+	var objects []ObjectInfo
+	var token *string
+	for {
+		request := &oss.ListObjectsV2Request{
+			Bucket: oss.Ptr(s.config.Bucket), Prefix: oss.Ptr(prefix), MaxKeys: 1000,
+		}
+		if token != nil {
+			request.ContinuationToken = token
+		}
+		result, err := s.client.ListObjectsV2(ctx, request)
+		if err != nil {
+			return nil, fmt.Errorf("列举 OSS 对象 %s 失败：%w", prefix, err)
+		}
+		for _, object := range result.Contents {
+			if object.Key == nil {
+				continue
+			}
+			relKey := strings.TrimPrefix(*object.Key, s.prefix)
+			if relKey == "" || strings.HasSuffix(relKey, "/") {
+				continue
+			}
+			var modTime time.Time
+			if object.LastModified != nil {
+				modTime = *object.LastModified
+			}
+			objects = append(objects, ObjectInfo{RelKey: relKey, Size: object.Size, ModTime: modTime})
+		}
+		if !result.IsTruncated || result.NextContinuationToken == nil {
+			return objects, nil
+		}
+		token = result.NextContinuationToken
+	}
+}
+
 func (s *OSSStorage) signedObjectURL(ctx context.Context, key string, ttl time.Duration,
 	disposition string) (string, bool, error) {
 	if ttl <= 0 {

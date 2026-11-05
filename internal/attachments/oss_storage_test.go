@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,6 +51,9 @@ func newFakeOSS(t *testing.T) *fakeOSS {
 		case r.Method == http.MethodGet && r.URL.Query().Has("bucketInfo"):
 			w.Header().Set("Content-Type", "application/xml")
 			_, _ = w.Write([]byte(`<Bucket><Name>files</Name></Bucket>`))
+		case r.Method == http.MethodGet && r.URL.Query().Get("list-type") == "2":
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = w.Write([]byte(f.listObjectsXML(r.URL.Query().Get("prefix"))))
 		case r.Method == http.MethodPut && r.URL.Path != "/files/":
 			if f.rejectPersistentHeader && r.Header.Get("X-Oss-Persistent-Headers") != "" {
 				w.WriteHeader(http.StatusBadRequest)
@@ -85,6 +89,30 @@ func newFakeOSS(t *testing.T) *fakeOSS {
 	}))
 	t.Cleanup(f.server.Close)
 	return f
+}
+
+// listObjectsXML 按前缀返回 ListObjectsV2 的 XML；调用方持有 mu。
+func (f *fakeOSS) listObjectsXML(prefix string) string {
+	keys := make([]string, 0, len(f.objects))
+	for path := range f.objects {
+		key := strings.TrimPrefix(path, "/files/")
+		if strings.HasPrefix(key, prefix) && key != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?><ListBucketResult>`)
+	b.WriteString(`<Name>files</Name><Prefix>` + prefix + `</Prefix><MaxKeys>1000</MaxKeys>`)
+	b.WriteString(`<IsTruncated>false</IsTruncated>`)
+	for _, key := range keys {
+		body := f.objects["/files/"+key]
+		b.WriteString(`<Contents><Key>` + key + `</Key>`)
+		b.WriteString(`<LastModified>2026-11-05T12:00:00.000Z</LastModified>`)
+		b.WriteString(`<Size>` + strconv.Itoa(len(body)) + `</Size></Contents>`)
+	}
+	b.WriteString(`</ListBucketResult>`)
+	return b.String()
 }
 
 // OSS 不接受持久 nosniff 头时，启动探测会降级；后续上传仍成功，只是不带该头。
@@ -155,6 +183,43 @@ func TestOSS存储读取对象自带CRC64(t *testing.T) {
 	}
 }
 
+// ListObjects 走 ListObjectsV2、按相对前缀请求，返回的键剥掉根前缀，
+// 目录占位对象不计入。
+func TestOSS存储按相对前缀列对象(t *testing.T) {
+	fake := newFakeOSS(t)
+	store, err := attachments.NewOSSStorage(attachments.OSSConfig{
+		Region: "cn-hangzhou", Bucket: "files", Prefix: "agent-taskboard/prod/",
+		InternalEndpoint: fake.server.URL,
+	}, attachments.OSSStorageOptions{AccessKeyID: "ak", AccessKeySecret: "sk"})
+	if err != nil {
+		t.Fatalf("创建 OSS 存储失败：%v", err)
+	}
+	fake.mu.Lock()
+	fake.objects["/files/agent-taskboard/prod/backups/taskboard-20261105-120000-daily.db"] = "db"
+	fake.objects["/files/agent-taskboard/prod/backups/guest-link-key.bin"] = "key"
+	fake.objects["/files/agent-taskboard/prod/backups/"] = ""
+	fake.objects["/files/agent-taskboard/prod/archive-packages/a.zip"] = "zip"
+	fake.objects["/files/other-system/backups/taskboard.db"] = "别动"
+	fake.mu.Unlock()
+
+	objects, err := store.ListObjects(context.Background(), "backups/")
+	if err != nil {
+		t.Fatalf("ListObjects 失败：%v", err)
+	}
+	if len(objects) != 2 || objects[0].RelKey != "backups/guest-link-key.bin" ||
+		objects[0].Size != int64(len("key")) ||
+		objects[1].RelKey != "backups/taskboard-20261105-120000-daily.db" ||
+		objects[1].Size != int64(len("db")) {
+		t.Fatalf("列出的对象 = %+v，想按相对键列出 backups/ 下两个对象", objects)
+	}
+	list := fake.requestByMethodPath(http.MethodGet, "/files/")
+	if list.Method != http.MethodGet || list.Query.Get("list-type") != "2" ||
+		list.Query.Get("prefix") != "agent-taskboard/prod/backups/" {
+		t.Fatalf("列举请求 = %s %s?%s，想 ListObjectsV2 按根前缀+backups/ 请求",
+			list.Method, list.Path, list.Query.Encode())
+	}
+}
+
 func (f *fakeOSS) request(i int) fakeOSSRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -172,6 +237,17 @@ func (f *fakeOSS) requestByPathSuffix(suffix string) fakeOSSRequest {
 	defer f.mu.Unlock()
 	for _, request := range f.requests {
 		if strings.HasSuffix(request.Path, suffix) {
+			return request
+		}
+	}
+	return fakeOSSRequest{}
+}
+
+func (f *fakeOSS) requestByMethodPath(method, path string) fakeOSSRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, request := range f.requests {
+		if request.Method == method && request.Path == path {
 			return request
 		}
 	}

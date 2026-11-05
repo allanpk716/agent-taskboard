@@ -2,11 +2,11 @@ package ops
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
@@ -32,21 +32,27 @@ func BackupObjectURL(ctx context.Context, objects attachments.ObjectStorage, nam
 	return target, nil
 }
 
-// LatestBackupFileName 按备份记录找出最近一份成功写到目标的库副本，供
-// restore -from-oss latest 使用。
-func LatestBackupFileName(ctx context.Context, db *sql.DB) (string, error) {
-	var name string
-	err := db.QueryRowContext(ctx, `
-		SELECT filename FROM backup_records
-		WHERE error IS NULL AND integrity_ok = 1 AND location = 'target'
-		ORDER BY at DESC, id DESC LIMIT 1`).Scan(&name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("库里没有成功备份记录，无法解析 latest；请用 restore -from-oss <备份名>")
-	}
+// LatestBackupFromStorage 列出 OSS backups/ 下的对象，按文件名里的时间戳
+// 选出最新的完整库副本。解析不依赖本地数据库：本机库丢失或损坏时也能恢复。
+func LatestBackupFromStorage(ctx context.Context, objects attachments.ObjectStorage) (string, error) {
+	objectsList, err := objects.ListObjects(ctx, "backups/")
 	if err != nil {
-		return "", fmt.Errorf("读取最近备份记录失败：%w", err)
+		return "", fmt.Errorf("列举 OSS 备份失败：%w", err)
 	}
-	return name, nil
+	latest := ""
+	for _, object := range objectsList {
+		name := strings.TrimPrefix(object.RelKey, "backups/")
+		// 文件名形如 taskboard-YYYYMMDD-HHMMSS-<kind>.db，字典序即时间序；
+		// OSS 的 PUT 是原子写，列得出来的对象就是完整的库副本。
+		if !backupNameRe.MatchString(name) || name <= latest {
+			continue
+		}
+		latest = name
+	}
+	if latest == "" {
+		return "", fmt.Errorf("OSS backups/ 下没有库副本，无法解析 latest；请先完成一次备份，或用 restore -from-oss <备份名>")
+	}
+	return latest, nil
 }
 
 // DownloadBackupFromOSS 把库副本和访客链接密钥下载到本地备份目录，返回库

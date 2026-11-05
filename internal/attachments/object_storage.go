@@ -16,6 +16,14 @@ type ObjectStorage interface {
 	OpenObject(ctx context.Context, relKey string) (io.ReadCloser, int64, error)
 	DeleteObject(ctx context.Context, relKey string) error
 	ObjectURL(ctx context.Context, relKey string, ttl time.Duration, disposition string) (url string, ok bool, err error)
+	ListObjects(ctx context.Context, relPrefix string) ([]ObjectInfo, error)
+}
+
+// ObjectInfo 是列举出来的一个非附件对象；RelKey 已剥掉根前缀。
+type ObjectInfo struct {
+	RelKey  string
+	Size    int64
+	ModTime time.Time
 }
 
 // ArchivePackageRelKey 是归档包与瘦身包在系统根前缀下的相对键。
@@ -49,6 +57,18 @@ func ValidateObjectRelKey(relKey string) error {
 		if part == "" || part == "." || part == ".." {
 			return fmt.Errorf("对象相对键 %q 不是安全路径", relKey)
 		}
+	}
+	return nil
+}
+
+// ValidateObjectRelPrefix 校验相对对象前缀（如 backups/），拒绝空前缀、
+// 路径穿越和空目录段。
+func ValidateObjectRelPrefix(relPrefix string) error {
+	if strings.TrimSpace(relPrefix) == "" {
+		return errors.New("对象相对前缀不能为空")
+	}
+	if err := ValidateObjectRelKey(strings.TrimSuffix(relPrefix, "/")); err != nil {
+		return fmt.Errorf("对象相对前缀 %q 不安全：%w", relPrefix, err)
 	}
 	return nil
 }

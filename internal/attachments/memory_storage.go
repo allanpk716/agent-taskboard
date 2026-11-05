@@ -165,6 +165,27 @@ func (s *MemoryStorage) ObjectURL(ctx context.Context, relKey string, ttl time.D
 	return prefix + relKey + "?" + values.Encode(), true, nil
 }
 
+func (s *MemoryStorage) ListObjects(ctx context.Context, relPrefix string) ([]ObjectInfo, error) {
+	if err := ValidateObjectRelPrefix(relPrefix); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	keys := make([]string, 0, len(s.named))
+	for key := range s.named {
+		if strings.HasPrefix(key, relPrefix) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	objects := make([]ObjectInfo, 0, len(keys))
+	for _, key := range keys {
+		obj := s.named[key]
+		objects = append(objects, ObjectInfo{RelKey: key, Size: obj.Size, ModTime: obj.ModTime})
+	}
+	return objects, nil
+}
+
 func (s *MemoryStorage) Stat(ctx context.Context, id int64) (int64, bool) {
 	s.mu.Lock()
 	obj, ok := s.objects[id]

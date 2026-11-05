@@ -353,12 +353,9 @@ func restoreFromOSS(configPath, selector string) error {
 	}
 	name := selector
 	if name == "latest" {
-		st, err := store.Open(cfg.DataDir)
-		if err != nil {
-			return fmt.Errorf("解析 latest 前打开当前库失败：%w（本机库也不可用时请用具体备份名）", err)
-		}
-		name, err = ops.LatestBackupFileName(context.Background(), st.DB)
-		_ = st.Close()
+		// latest 直接从 OSS 解析：本机库可能已经丢失，这里绝不能打开
+		// （更不能新建）本地库。
+		name, err = ops.LatestBackupFromStorage(context.Background(), objects)
 		if err != nil {
 			return err
 		}

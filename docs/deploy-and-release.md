@@ -403,8 +403,8 @@ taskboard backup-url <备份名> -config /app/config/config.toml
 # 先把库副本和密钥下载到 data_dir/backups/，再走同一个恢复流程
 taskboard restore -from-oss <备份名> -config /app/config/config.toml
 
-# 本机库还能打开时，latest 表示备份记录里最近一份成功写到目标的副本；
-# 本机库也已经损坏时，请用具体备份名（可从备份告警或控制台对象列表取得）。
+# latest 直接列出 OSS backups/ 下的库副本、取文件名时间戳最新的一份，
+# 不读取本地数据库：本机和 NAS 都损坏时也能恢复。
 taskboard restore -from-oss latest -config /app/config/config.toml
 ```
 
