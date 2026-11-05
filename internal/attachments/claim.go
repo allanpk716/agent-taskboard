@@ -5,6 +5,7 @@ package attachments
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -241,6 +242,67 @@ func (m *Manager) ValidateBriefIDsTx(ctx context.Context, tx *sql.Tx, ticketSeq 
 
 func notUsable(id string) error {
 	return fmt.Errorf("%w（%s）", ErrNotUsable, id)
+}
+
+// ReconcileResult 是一次附件对账清掉的孤儿对象统计。
+type ReconcileResult struct {
+	DeletedObjects int
+	DeletedBytes   int64
+	DeleteFailures int
+}
+
+// ReconcileStorage 把当前后端里的附件对象和 DB 记录比对，删除没有库记录
+// 且已存在超过 24 小时的孤儿。对象删除一律走 Storage.Delete，由后端实现
+// 保证只碰附件前缀（OSS 的前缀护栏见存储实现）。
+func (m *Manager) ReconcileStorage(ctx context.Context) (ReconcileResult, error) {
+	known := make(map[int64]struct{})
+	rows, err := m.db.QueryContext(ctx, `SELECT id FROM attachments`)
+	if err != nil {
+		return ReconcileResult{}, err
+	}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return ReconcileResult{}, err
+		}
+		known[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return ReconcileResult{}, err
+	}
+	rows.Close()
+
+	cutoff := m.clk.Now().Add(-24 * time.Hour)
+	type orphanObject struct {
+		id   int64
+		size int64
+	}
+	var orphans []orphanObject
+	err = m.store.List(ctx, func(id int64, size int64, modTime time.Time) error {
+		if _, ok := known[id]; ok || !modTime.Before(cutoff) {
+			return nil
+		}
+		orphans = append(orphans, orphanObject{id: id, size: size})
+		return nil
+	})
+	if err != nil {
+		return ReconcileResult{}, err
+	}
+
+	var result ReconcileResult
+	var failures []error
+	for _, orphan := range orphans {
+		if err := m.store.Delete(ctx, orphan.id); err != nil {
+			result.DeleteFailures++
+			failures = append(failures, fmt.Errorf("删除附件对象 att_%d 失败：%w", orphan.id, err))
+			continue
+		}
+		result.DeletedObjects++
+		result.DeletedBytes += orphan.size
+	}
+	return result, errors.Join(failures...)
 }
 
 // CleanupUnreferenced 清除上传超过 24 小时仍未引用的待用附件（行 + 文件），
