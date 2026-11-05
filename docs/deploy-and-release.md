@@ -23,6 +23,7 @@
 ├── docker-compose.yml        # 由 deploy/cloud/docker-compose.yml 复制，image 写死版本号
 ├── config.toml               # 只在服务器上维护，属主 root:65532，权限 640
 ├── deploy.env                # 部署脚本读取的镜像仓库地址等，只在服务器上维护
+├── oss.env                   # 仅 OSS 后端需要；root:root，权限 600
 └── deploy.sh                 # 每次部署前从对应 tag 上传
 ```
 
@@ -96,6 +97,94 @@ taskboard migrate-attachments -to local -config <配置文件>        # OSS 迁�
 - `-dry-run` 只输出数量、总大小和缺失清单，不写对象、不改标记；源端有对象但数据库没有记录的附件也会在报告里列出。
 - 源端缺失或复制失败时不切换标记并以非零退出；确认缺失数据已无法找回后，可加 `-accept-missing` 按缺失清单切换。
 - 迁回本地前会按附件总大小加 10% 余量检查数据目录所在分区的剩余空间，不足时在复制前拒绝。
+
+### OSS 部署配置
+
+生产配置：
+
+```toml
+[attachments]
+backend = 'local'                 # 先保持 local；迁移完成后再改成 'oss'
+
+[attachments.oss]
+region            = 'cn-hangzhou'
+bucket            = 'urithub-files'
+prefix            = 'agent-taskboard/prod/' # 系统根前缀，不能为空
+internal_endpoint = 'oss-cn-hangzhou-internal.aliyuncs.com'
+signing_host      = ''                       # 空 = 桶默认外网域名
+```
+
+服务端 API 一律走 `internal_endpoint`，同地域内网不占 ECS 公网出口；浏览器拿到的签名地址使用桶默认外网域名，只有以后开自定义域名或传输加速时才改 `signing_host`。所有对象都在根前缀下：`<prefix>attachments/`、`<prefix>archive-packages/`、`<prefix>backups/`。
+
+`/opt/taskboard/oss.env` 只放两行凭证，属主 `root:root`，权限 `600`；`deploy/cloud/docker-compose.yml` 里的 `env_file` 会在启动时把它注入 taskboard 容器。凭证不进 `config.toml`、数据库和备份：
+
+```dotenv
+OSS_ACCESS_KEY_ID=<为 taskboard 单独生成的 AK ID>
+OSS_ACCESS_KEY_SECRET=<为 taskboard 单独生成的 AK Secret>
+```
+
+桶 `urithub-files` 的配置要求：
+
+- 杭州、标准存储、LRS、私有，开启「阻止公共访问」和 SSE-OSS。
+- 不开版本控制，不配 CORS，不配 Referer 防盗链。
+- 生命周期只配两条，且只作用于本系统根前缀：未完成的分片上传 1 天后删除；`<prefix>archive-packages/` 下的对象 8 天后删除。
+- 前缀桶策略：允许 taskboard 的 AK `HeadBucket` 和操作 `<prefix>*`，拒绝它访问根前缀外的对象。生产和演练用不同前缀，生产是 `agent-taskboard/prod/`，演练是 `agent-taskboard/rehearsal/`。这条策略是账号内的第二道护栏；程序自身也会拒绝空前缀和前缀外删除。
+
+**已知 AK 风险**：当前无法创建专用 RAM 用户，只能用现有账号级权限的 RAM 用户为 taskboard 单独生成一把 AK。AK 一旦泄露，影响面可能覆盖整个账号的 OSS；桶策略只能约束这把 AK 从 OSS 授权层访问的路径。以后能建专用 RAM 用户时，换 AK 即可，程序和桶前缀不用改。
+
+### 出口流量清单
+
+| 流量 | 切换 OSS 后走哪条路 | 是否占用 ECS 出口 | 依据 |
+|---|---|---|---|
+| 附件、插图下载 | 302 → OSS 签名地址 | 否（仅几百字节 302） | #297 |
+| 附件上传 | 经服务器入方向 → 内网写 OSS | 否（入方向） | #298 |
+| 归档包、瘦身包 | OSS 后端 302；本地后端可续传 | OSS 后端否 | #300、#301 |
+| 前端资源 | 服务器直出，Caddy zstd/gzip，hash 资源长缓存 | 是（发版后约 209KB/人） | #301 |
+| `/api.md`、SSE | 服务器直出 | 是（量小） | #295 |
+| 备份 | 写 NAS 与内网 OSS | 否 | #300 |
+| 客户端安装包与更新 | GitHub Releases | 否 | #301 |
+
+桌面客户端的 `TASKBOARD_CLIENT_UPDATE_BASE` 只能指向 GitHub Releases 或同样承担下载流量的镜像源，**不能配置成 taskboard 本站**。不设置时客户端默认使用 GitHub；如果企业内网必须镜像，镜像地址也必须直接提供 Release 文件，不能让本站代理 exe 下载。
+
+### 分两次上线、演练与维护窗口
+
+1. **先发代码，不改后端**：发布带 OSS 支持的镜像，`backend = 'local'` 至少平稳运行 3 天，并确认经过一次每日对账。这个阶段验证新版本本身，附件行为不变。
+2. **切换前一两天演练**：在生产机上用最新备份另起独立实例。实例使用独立 Docker volume、只监听本机，并把 OSS 前缀改成 `agent-taskboard/rehearsal/`；先执行 `-to oss`，再执行 `-to local`，核对双向迁移输出。演练完成后停止实例，用 `ossutil rm -r oss://urithub-files/agent-taskboard/rehearsal/` 删除演练前缀，并清掉演练 volume。
+3. **维护窗口**（下班后，约 15 分钟）：执行 `deploy/cloud/oss-cutover-checklist.sh`。脚本逐项确认后执行手动备份 → 停服 → `migrate-attachments -to oss -dry-run` → 正式迁移 → 提示把配置改成 `backend = 'oss'` → 启动。正式迁移必须满足失败数 0、缺失数 0，脚本不自动改 `config.toml`。
+
+```bash
+sudo /opt/taskboard/oss-cutover-checklist.sh \
+  --base-url https://taskboard.example.com \
+  --header 'Cookie: <管理员会话 Cookie>'
+```
+
+脚本会自动检查 health、附件 302 的 `Cache-Control: no-store`、HTML 附件强制下载、归档包签名地址、OSS 备份对象、Caddy zstd、桶默认域名 200、根前缀外签名地址 403。上传、插图、Lightbox、访客、统计和 `curl -L` 需要按提示人工确认。第二天再看每日对账结果，孤儿数应为 0。
+
+**回滚**：
+
+- dry-run 或正式迁移失败时数据库标记仍是 local：把配置保持 `backend = 'local'`，直接启动旧服务。
+- 改成 OSS 后启动失败，优先检查 `oss.env`、桶策略和内网 endpoint；修不好就停服执行 `migrate-attachments -to local`，成功后把配置改回 local 再启动。
+- 已经稳定运行几天后要回退，同样执行停服 → `-to local`（命令会先检查磁盘空间）→ 改配置 → 启动，并按清单重新验证。
+
+### 非当前后端残留与清理
+
+- 迁移到 OSS 成功后，本地 `/app/data/attachments/` 原样保留 30 天。删除前确认最近备份完整、OSS 侧抽样下载一致，再执行：
+
+```bash
+docker compose run --rm --no-deps --entrypoint /bin/sh taskboard \
+  -c 'find /app/data/attachments -mindepth 1 -maxdepth 1 -type f -regextype posix-extended -regex ".*/[0-9]+" -delete'
+```
+
+- 迁回本地后，OSS 侧对象同样先保留 30 天。确认数据库、本地附件和备份可用后，先用 `ossutil ls -r oss://urithub-files/agent-taskboard/prod/` 核对清单，再删除整个系统根前缀。不要在桶上按空前缀清理，避免影响其他系统。
+- 归档和瘦身包在 OSS 后端下的本地权威副本仍由程序按现有规则清理；不需要手工删除。
+
+### 传输加速、计费与监控
+
+- 传输加速是纯运维开关，本次不开。需要国际访问附件时，在 OSS 控制台开启传输加速，把 `signing_host` 改成加速域名（或把自定义域名 CNAME 到加速域名），重启 taskboard；`internal_endpoint` 继续使用杭州内网域名。费用按境外加速流量约 1.25 元/GB 计算，外网流出另计。切换后用真实附件从目标地区实测，并重新核对账单。
+- ECS 公网带宽保持固定带宽，设计仍按 1M 出口预算。按流量计费只作为备选：它能避免固定峰值限制，但费用随附件和页面流量放大，切换前必须同时在费用中心设置预算和流量告警，并评估对同机其他服务的影响。
+- 运维与费用监控是本 spec 的已知缺口：代码不做 OSS 费用告警。上线前只在阿里云控制台配置 OSS 费用、外网流出流量和账户余额告警；对象存储异常如何接入系统通知留作后续工单。
+
+真实 OSS 冒烟任务在 `.github/workflows/oss-smoke.yml`，只有 `workflow_dispatch` 手动触发。所需 secret 任一缺失时任务输出警告并成功跳过；全部配置后才运行带 `oss_smoke` build tag 的 Go 测试，覆盖桶探测、上传、签名下载、删除、前缀外 403 和前缀外删除被拒。默认 `go test ./...` 不编译该测试。
 
 ## 前端：访客输入不丢失
 
@@ -197,7 +286,9 @@ curl -fsS http://127.0.0.1:8080/api/v1/health
 
 ### 宿主机 Caddy
 
-整站反代到后端。转发头必须**覆盖**客户端自带的值，不能追加，否则请求方可以伪造来源 IP，影响登录限流和失败锁定的判定：
+整站反代到后端。仓库示例是 `deploy/cloud/Caddyfile.example`，按生产域名复制到宿主机 Caddy 后先执行 `caddy validate`。`encode zstd gzip` 是**必配项**：OSS 只卸载附件和归档包流量，前端静态资源仍从这台服务器直出，不压缩会重新挤占 1M 出口预算。
+
+转发头必须**覆盖**客户端自带的值，不能追加，否则请求方可以伪造来源 IP，影响登录限流和失败锁定的判定：
 
 ```caddyfile
 taskboard.example.com {
@@ -226,11 +317,12 @@ sudo /opt/taskboard/deploy.sh X.Y.Z
 `deploy.sh` 依次执行：
 
 1. 读出 compose 里当前的版本号，作为回滚目标；
-2. 在运行中的容器里执行 `taskboard backup -preupdate`，得到这次升级前备份的文件名；备份失败就停止，不动线上；
-3. 拉取新版本镜像；拉取失败就停止，不动线上；
-4. 把 compose 的 `image` 改成新版本，`docker compose up -d --wait`；
-5. 经 `config.toml` 里的 `public_url` 核对：health 的 `server_version`、`web_version` 都等于新版本，首页返回 200 且是 HTML；
-6. 第 4、5 步任何一步失败，就**自动回滚**：停掉容器，compose 切回旧版本，用旧镜像执行 `taskboard restore` 恢复第 2 步的备份，再启动并按旧版本核对一遍。回滚后以非零退出码结束，并打印失败原因。
+2. 读出 `[attachments] backend`；如果已是 `oss`，先确认 `oss.env` 存在；
+3. 拉取新版本镜像；拉取失败就停止，不动线上。OSS 后端还会用新镜像执行一次 `migrate-attachments -to capability-probe` 能力探测：只有新 CLI 给出预期的 `-to` 参数错误才继续，避免写死版本号后漏掉 cherry-pick 或私有构建；
+4. 在运行中的容器里执行 `taskboard backup -preupdate`，得到这次升级前备份的文件名；备份失败就停止，不动线上；
+5. 把 compose 的 `image` 改成新版本，`docker compose up -d --wait`；
+6. 经 `config.toml` 里的 `public_url` 核对：health 的 `server_version`、`web_version` 都等于新版本，首页返回 200 且是 HTML；
+7. 第 5、6 步任何一步失败，就**自动回滚**：停掉容器，compose 切回旧版本，用旧镜像执行 `taskboard restore` 恢复第 4 步的备份，再启动并按旧版本核对一遍。回滚后以非零退出码结束，并打印失败原因。
 
 脚本只改 compose 的 `image` 一行，不改 `config.toml` 和数据卷里的其他内容。自动回滚会丢掉升级开始以后新写入的数据，这段时间通常只有几分钟。
 
