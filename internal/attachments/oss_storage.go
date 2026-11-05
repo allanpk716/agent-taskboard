@@ -163,6 +163,13 @@ func (s *OSSStorage) attachmentKey(id int64) string {
 	return s.prefix + ossAttachmentDirectory + "/" + strconv.FormatInt(id, 10)
 }
 
+func (s *OSSStorage) objectKey(relKey string) (string, error) {
+	if err := ValidateObjectRelKey(relKey); err != nil {
+		return "", err
+	}
+	return s.prefix + relKey, nil
+}
+
 // Probe 启动时探测桶：确认桶可访问，然后在根前缀下写入并删除一个探测对象。
 func (s *OSSStorage) Probe(ctx context.Context) error {
 	if err := s.headBucket(ctx); err != nil {
@@ -328,6 +335,44 @@ func (s *OSSStorage) Delete(ctx context.Context, id int64) error {
 	return s.DeleteKey(ctx, s.attachmentKey(id))
 }
 
+func (s *OSSStorage) PutObject(ctx context.Context, relKey string, src io.Reader, size int64,
+	meta PutMeta) error {
+	key, err := s.objectKey(relKey)
+	if err != nil {
+		return err
+	}
+	return s.putKey(ctx, key, src, size, meta.ContentType, s.persistentHeaders)
+}
+
+func (s *OSSStorage) OpenObject(ctx context.Context, relKey string) (io.ReadCloser, int64, error) {
+	key, err := s.objectKey(relKey)
+	if err != nil {
+		return nil, 0, err
+	}
+	result, err := s.client.GetObject(ctx, &oss.GetObjectRequest{
+		Bucket: oss.Ptr(s.config.Bucket), Key: oss.Ptr(key),
+	})
+	if objectNotFound(err) {
+		return nil, 0, ErrObjectNotFound
+	}
+	if err != nil {
+		return nil, 0, fmt.Errorf("读取 OSS 对象 %s 失败：%w", key, err)
+	}
+	size := result.ContentLength
+	if size < 0 {
+		size = 0
+	}
+	return result.Body, size, nil
+}
+
+func (s *OSSStorage) DeleteObject(ctx context.Context, relKey string) error {
+	key, err := s.objectKey(relKey)
+	if err != nil {
+		return err
+	}
+	return s.DeleteKey(ctx, key)
+}
+
 func (s *OSSStorage) Stat(ctx context.Context, id int64) (int64, bool) {
 	result, err := s.client.HeadObject(ctx, &oss.HeadObjectRequest{
 		Bucket: oss.Ptr(s.config.Bucket), Key: oss.Ptr(s.attachmentKey(id)),
@@ -381,8 +426,28 @@ func (s *OSSStorage) List(ctx context.Context, fn func(id int64, size int64, mod
 }
 
 func (s *OSSStorage) DownloadURL(ctx context.Context, id int64, opts DownloadURLOpts) (string, bool, error) {
+	key, err := s.objectKey(ossAttachmentDirectory + "/" + strconv.FormatInt(id, 10))
+	if err != nil {
+		return "", false, err
+	}
+	return s.signedObjectURL(ctx, key, 15*time.Minute, opts.Disposition)
+}
+
+func (s *OSSStorage) ObjectURL(ctx context.Context, relKey string, ttl time.Duration,
+	disposition string) (string, bool, error) {
+	key, err := s.objectKey(relKey)
+	if err != nil {
+		return "", false, err
+	}
+	return s.signedObjectURL(ctx, key, ttl, disposition)
+}
+
+func (s *OSSStorage) signedObjectURL(ctx context.Context, key string, ttl time.Duration,
+	disposition string) (string, bool, error) {
+	if ttl <= 0 {
+		return "", false, errors.New("对象签名地址有效期必须大于 0")
+	}
 	now := s.now().UTC().Truncate(10 * time.Minute)
-	key := s.attachmentKey(id)
 	host, err := signingHostURL(s.config.SigningHost, s.config.Region, s.config.Bucket)
 	if err != nil {
 		return "", false, err
@@ -393,10 +458,10 @@ func (s *OSSStorage) DownloadURL(ctx context.Context, id int64, opts DownloadURL
 	query := url.Values{
 		"x-oss-signature-version":      []string{"OSS4-HMAC-SHA256"},
 		"x-oss-date":                   []string{datetime},
-		"x-oss-expires":                []string{"900"},
+		"x-oss-expires":                []string{strconv.FormatInt(int64(ttl/time.Second), 10)},
 		"x-oss-credential":             []string{s.creds.AccessKeyID + "/" + scope},
 		"response-cache-control":       []string{"private, max-age=600"},
-		"response-content-disposition": []string{opts.Disposition},
+		"response-content-disposition": []string{disposition},
 	}
 	canonicalQuery := canonicalValues(query)
 	canonicalURI := escapeObjectKey("/" + s.config.Bucket + "/" + key)

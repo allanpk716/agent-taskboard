@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/url"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -16,9 +18,12 @@ import (
 type MemoryStorage struct {
 	mu      sync.Mutex
 	objects map[int64]MemoryObject
+	named   map[string]MemoryObject
 
 	// PutErr 非空时 Put 直接返回它（测试注入存储故障）。
 	PutErr error
+	// DeleteErr 非空时 Delete / DeleteObject 直接返回它（测试注入清理故障）。
+	DeleteErr error
 	// AfterPut 在对象写入后、Put 返回前调用，用来在「Put 已成功、事务
 	// 尚未提交」的时机注入故障。
 	AfterPut func(id int64)
@@ -37,7 +42,10 @@ type MemoryObject struct {
 
 // NewMemoryStorage 返回空的内存存储。
 func NewMemoryStorage() *MemoryStorage {
-	return &MemoryStorage{objects: map[int64]MemoryObject{}}
+	return &MemoryStorage{
+		objects: map[int64]MemoryObject{},
+		named:   map[string]MemoryObject{},
+	}
 }
 
 func (s *MemoryStorage) Put(ctx context.Context, id int64, src io.Reader, size int64, meta PutMeta) error {
@@ -81,9 +89,79 @@ func (s *MemoryStorage) Open(ctx context.Context, id int64) (io.ReadCloser, int6
 
 func (s *MemoryStorage) Delete(ctx context.Context, id int64) error {
 	s.mu.Lock()
+	fault := s.DeleteErr
+	s.mu.Unlock()
+	if fault != nil {
+		return fault
+	}
+	s.mu.Lock()
 	delete(s.objects, id)
 	s.mu.Unlock()
 	return nil
+}
+
+func (s *MemoryStorage) PutObject(ctx context.Context, relKey string, src io.Reader, size int64, meta PutMeta) error {
+	if err := ValidateObjectRelKey(relKey); err != nil {
+		return err
+	}
+	content, err := io.ReadAll(src)
+	if err != nil {
+		return err
+	}
+	if int64(len(content)) != size {
+		return fmt.Errorf("对象大小不符：应为 %d 字节，实际读到 %d", size, len(content))
+	}
+	s.mu.Lock()
+	s.named[relKey] = MemoryObject{
+		Size: size, ContentType: meta.ContentType, Content: content, ModTime: time.Now(),
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *MemoryStorage) OpenObject(ctx context.Context, relKey string) (io.ReadCloser, int64, error) {
+	if err := ValidateObjectRelKey(relKey); err != nil {
+		return nil, 0, err
+	}
+	s.mu.Lock()
+	obj, ok := s.named[relKey]
+	s.mu.Unlock()
+	if !ok {
+		return nil, 0, ErrObjectNotFound
+	}
+	return io.NopCloser(bytes.NewReader(obj.Content)), obj.Size, nil
+}
+
+func (s *MemoryStorage) DeleteObject(ctx context.Context, relKey string) error {
+	if err := ValidateObjectRelKey(relKey); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	fault := s.DeleteErr
+	s.mu.Unlock()
+	if fault != nil {
+		return fault
+	}
+	s.mu.Lock()
+	delete(s.named, relKey)
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *MemoryStorage) ObjectURL(ctx context.Context, relKey string, ttl time.Duration,
+	disposition string) (string, bool, error) {
+	if err := ValidateObjectRelKey(relKey); err != nil {
+		return "", false, err
+	}
+	if s.DownloadURLPrefix == "" {
+		return "", false, nil
+	}
+	values := url.Values{
+		"disposition": []string{disposition},
+		"ttl":         []string{strconv.FormatInt(int64(ttl/time.Second), 10)},
+	}
+	prefix := strings.TrimSuffix(s.DownloadURLPrefix, "/") + "/"
+	return prefix + relKey + "?" + values.Encode(), true, nil
 }
 
 func (s *MemoryStorage) Stat(ctx context.Context, id int64) (int64, bool) {
@@ -139,6 +217,14 @@ func (s *MemoryStorage) Object(id int64) (MemoryObject, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	obj, ok := s.objects[id]
+	return obj, ok
+}
+
+// ObjectByKey 返回一个非附件对象的副本，供测试查看归档包等对象。
+func (s *MemoryStorage) ObjectByKey(relKey string) (MemoryObject, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	obj, ok := s.named[relKey]
 	return obj, ok
 }
 
