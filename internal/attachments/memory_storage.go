@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"hash/crc64"
 	"io"
 	"net/url"
 	"sort"
@@ -210,6 +211,21 @@ func (s *MemoryStorage) DownloadURL(ctx context.Context, id int64, opts Download
 	}
 	values := url.Values{"disposition": []string{opts.Disposition}}
 	return fmt.Sprintf("%sattachments/%d?%s", s.DownloadURLPrefix, id, values.Encode()), true, nil
+}
+
+// ObjectChecksum 返回对象的 OSS CRC64（ECMA-182），供迁移测试模拟 OSS 元数据。
+func (s *MemoryStorage) ObjectChecksum(ctx context.Context, id int64) (uint64, bool, error) {
+	s.mu.Lock()
+	obj, ok := s.objects[id]
+	s.mu.Unlock()
+	if !ok {
+		return 0, false, nil
+	}
+	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
+	if _, err := hash.Write(obj.Content); err != nil {
+		return 0, true, err
+	}
+	return hash.Sum64(), true, nil
 }
 
 // Object 返回一个对象的副本，供测试查看对象及其元数据。

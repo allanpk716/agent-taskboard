@@ -30,6 +30,7 @@ type fakeOSS struct {
 	requests               []fakeOSSRequest
 	objects                map[string]string
 	rejectPersistentHeader bool
+	headChecksum           string
 }
 
 func newFakeOSS(t *testing.T) *fakeOSS {
@@ -63,6 +64,9 @@ func newFakeOSS(t *testing.T) *fakeOSS {
 				return
 			}
 			w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+			if f.headChecksum != "" {
+				w.Header().Set("x-oss-hash-crc64ecma", f.headChecksum)
+			}
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Path != "/files/":
 			body, ok := f.objects[r.URL.Path]
@@ -126,6 +130,28 @@ func TestOSS签名地址默认使用桶外网域名(t *testing.T) {
 	}
 	if parsed.Host != "files.oss-cn-hangzhou.aliyuncs.com" {
 		t.Fatalf("默认签名域名 = %q, 想桶默认外网域名", parsed.Host)
+	}
+}
+
+func TestOSS存储读取对象自带CRC64(t *testing.T) {
+	fake := newFakeOSS(t)
+	content := "校验内容"
+	fake.objects["/files/agent-taskboard/prod/attachments/7"] = content
+	// 这个值来自 OSS 对 `校验内容` 返回的 x-oss-hash-crc64ecma 十进制表示。
+	fake.headChecksum = "8349912128173140676"
+	store, err := attachments.NewOSSStorage(attachments.OSSConfig{
+		Region: "cn-hangzhou", Bucket: "files", Prefix: "agent-taskboard/prod/",
+		InternalEndpoint: fake.server.URL,
+	}, attachments.OSSStorageOptions{AccessKeyID: "ak", AccessKeySecret: "sk"})
+	if err != nil {
+		t.Fatalf("创建 OSS 存储失败：%v", err)
+	}
+	sum, exists, err := store.ObjectChecksum(context.Background(), 7)
+	if err != nil || !exists {
+		t.Fatalf("ObjectChecksum = (%d, %v, %v)", sum, exists, err)
+	}
+	if sum != 8349912128173140676 {
+		t.Fatalf("CRC64 = %d, 想对象响应自带的值", sum)
 	}
 }
 
