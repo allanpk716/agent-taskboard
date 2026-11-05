@@ -18,8 +18,8 @@ func (h handoffText) instruction(number, title string) string {
 2. 不熟悉平台先读说明书：%s/agent.md
 3. 读工单：curl -H "Authorization: Bearer $TASKBOARD_TOKEN" "%s/api/v1/tickets/%s?format=markdown"
 4. 照工单末尾「下一步」做；之后的待办看 %s/api/v1/inbox。
-5. 你写的建单、回复、交付或说明修订，可能会先存成草稿（响应是 202，带 draft 和 preview_url），我确认后才发出；不要当作已经发出。
-6. 写完把 preview_url 发给我，用一两句话说明写了什么。之后要改，就在这份草稿上改（PUT /api/v1/drafts/<id>，带 base_version），不要另起一份。`,
+5. 你写的建单、回复、交付或说明修订，要先给我审核再提交，具体按说明书「先给主人审核再提交」一节：可直接发时，把预览 md 的绝对路径告诉我，我说提交再提交；必须走草稿时，响应是 202，把 preview_url 发给我，不要当作已经发出。
+6. 之后要改，本地预览就改那份文件；平台草稿就在原草稿上改（PUT /api/v1/drafts/<id>，带 base_version），不要另起一份。`,
 		number, title, h.baseURL, h.baseURL, number, h.baseURL)
 }
 

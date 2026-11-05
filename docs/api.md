@@ -73,7 +73,8 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 ```
 
 网页会话没有 `viewer.client`；客户端凭证必带。成员 Agent 的 `viewer.agent` 另有
-`draft_mode: "required"|"direct"`。网页会话另有 `notices`（如 `drafts_intro`）。
+`draft_mode: "required"|"direct"`（缺省 `direct`）。网页会话另有 `notices`
+（如 `drafts_direct_intro`：上线把名下 Agent 改为可直接发的一次性提示）。
 `min_client_version` 已随服务端代管客户端机制移除；0.1.4 客户端把缺失字段解析为空值，不会因此停止工作。
 
 ## 通知（#74）
@@ -154,14 +155,14 @@ spec 用户故事 84），没有 `inbox`：
 | `PATCH /api/v1/me/agent-tokens/{id}` | 改草稿模式：`{"draft_mode":"required"|"direct"}`。**只接受网页会话**。 |
 | `DELETE /api/v1/me/agent-tokens/{id}` | 撤销（立即生效，幂等 204）。**只接受网页会话**。 |
 
-- 签发请求体 `{"name":"笔记本","draft_mode?":"required"|"direct"}`；缺省 `required`。成功 `201`：
+- 签发请求体 `{"name":"笔记本","draft_mode?":"required"|"direct"}`；缺省 `direct`。成功 `201`：
 
   ```json
-  {"id": 3, "name": "笔记本", "draft_mode": "required", "token": "tbag_…", "created_at": "2026-10-16T09:00:00+08:00"}
+  {"id": 3, "name": "笔记本", "draft_mode": "direct", "token": "tbag_…", "created_at": "2026-10-16T09:00:00+08:00"}
   ```
 
   明文 `token` 只在签发响应里出现一次，之后任何接口都不回显（库中只存 SHA-256 哈希）。
-- 列表响应 `{tokens: [{id, name, draft_mode, draft_mode_switched_by_launch, created_at, revoked_at?}], skill_install_text}`（新→旧）；
+- 列表响应 `{tokens: [{id, name, draft_mode, draft_mode_switched_by_launch, draft_mode_switched_to_direct, created_at, revoked_at?}], skill_install_text}`（新→旧）；
   `skill_install_text` 是后端生成、不含凭证的技能安装文字，供「我的 → Agent」常驻复制；撤销的 Agent 保留在列表里，
   页面标注「已停用」（历史署名不受影响）。
 - 撤销 Agent 后它的历史署名保留并标注「已停用」（时间线渲染见后续工单）；未撤销的同名不能重复，撤销后名字可复用。
@@ -360,8 +361,12 @@ spec 用户故事 84），没有 `inbox`：
 
 ### 回复（#30）
 
-- 请求体 `{"body_md": "…", "attachment_ids?": ["att_N", …], "author_name?": "…", "via_agent?": false}`；
+- 请求体 `{"body_md": "…", "attachment_ids?": ["att_N", …], "author_name?": "…", "via_agent?": false, "confirm_through_seq?": N}`；
   空白正文且无附件引用返回 `422 empty_reply`（有附件即可通过）。
+- `confirm_through_seq`（ADR 0017，可选）：带上后做乐观序号检查——工单时间线在
+  该序号之后还有事件时返回 `409 ticket_changed`（附 `new_events`、`through_seq`，
+  与发出草稿时同一体）。不带时行为不变。事件口径与发出草稿时一致：按成员读取
+  工单得到的完整时间线计数。建单没有序号，不支持该参数。
 - `attachment_ids` 与正文里的 `att:` 引用（`![插图](att:att_N)` 或 `[文件](att:att_N)`）
   合并去重后在同一事务里认领（两步上传的第二步）：每个必须存在、待用（pending）、
   且是**本次凭证上传**的——同一成员（本人或其任意 Agent）算同一方，访客按链接算——
@@ -386,12 +391,15 @@ spec 用户故事 84），没有 `inbox`：
 
 ### 修订标题/说明（#30；#34 起支持按字段修订）
 
-- 请求体 `{"title?": "…", "brief_md?": "…", "fields?": {…}, "attachment_ids?": ["att_N", …], "base_revision": N}`，
+- 请求体 `{"title?": "…", "brief_md?": "…", "fields?": {…}, "attachment_ids?": ["att_N", …], "base_revision": N, "confirm_through_seq?": S}`，
   只需传改动的部分。`brief_md` 只用于非模板工单；模板工单用 `fields` 传**改动的字段**
   （键是小节标题（问句）原文，未传的字段保持不变），两类修订按工单类型互斥：
   用错时分别返回 `422 fields_without_template` / `422 brief_md_with_template`。
 - `base_revision` 必填（`422 base_revision_required`），不等于当前版本时返回
   `409 revision_conflict`（附 `current_revision`，重读合并后再提交）。
+  `confirm_through_seq`（ADR 0017，可选）与回复接口同一语义：工单在该序号之后
+  还有事件时返回 `409 ticket_changed`（附 `new_events`、`through_seq`）；不带时
+  行为不变。
   只有 title 或什么都没改的修订同样推进版本号。
   `attachment_ids` 不传就沿用上一版；传了就整体替换，`[]` 表示清空；只改这个数组
   也推进版本号。数组里的每个附件必须是本次凭证上传的待用附件，或已经挂在这张工单
@@ -499,12 +507,14 @@ spec 用户故事 84），没有 `inbox`：
   `ticket_changed`。草稿写成后工单有新事件且 `confirm_through_seq` 小于当前最后
   事件 seq 时返回 `409 ticket_changed`（附 `new_events`、`through_seq`）；带足够新的
   `confirm_through_seq` 重发即可。建单草稿此时才分配编号、创建访客链接。
+  直接回复与修订说明接口上的 `confirm_through_seq` 采用同一语义（见上）。
 - 发出成功返回 `{result, signature, drafting}`；`result` 与原建单/回复/修订响应同形。
   Agent 之后 GET 已发出的草稿，`result` 只给摘要：回复为 `{reply_no, timeline_seq, deliver}`，
   说明修订为 `{revision, timeline_seq}`，建单为 `{number}`。访客链接地址只在发出那一次
   返回给网页会话，不会再给 Agent 读到。署名为「经某成员确认」；任意一版由成员本人修改过则为
   「经某成员修改并确认」。
-- Agent 调用 send/delete/改 `draft_mode`/标记 `drafts_intro` 已读返回
+- Agent 调用 send/delete/改 `draft_mode`/标记 `drafts_direct_intro`（及旧键
+  `drafts_intro`）已读返回
   `403 web_session_required`。草稿不存在或已丢弃返回 `404 draft_not_found`。
 - 说明版本接口返回 `{versions:[{revision,title,markdown,fields?,attachment_ids,author,at}]}`
   或单个版本；缺失的旧版本按上线前未存档返回 404 `ticket_not_found`。说明时间线事件的

@@ -373,7 +373,7 @@ export function MePage({
       {switchingToDirect && (
         <Confirm
           title="改为可直接发？"
-          body={<>它写的内容将立刻对外可见，署名里不注明「经你确认」。</>}
+          body={<>它写的内容会先在你电脑上生成预览，你确认后才提交；署名里不注明「经你确认」。</>}
           yesLabel="改为可直接发"
           danger
           onYes={() => void switchToDirect()}
@@ -506,7 +506,7 @@ function IssueTokenDialog({
   onIssued: (tok: IssuedToken) => void
 }) {
   const [name, setName] = useState('')
-  const [draftMode, setDraftMode] = useState<'required' | 'direct'>('required')
+  const [draftMode, setDraftMode] = useState<'required' | 'direct'>('direct')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -546,8 +546,8 @@ function IssueTokenDialog({
             checked={draftMode === 'required'}
             onChange={() => setDraftMode('required')}
           />
-          <span className="draft-mode-title">必须走草稿（推荐）</span>
-          <span>它写的建单、回复和说明修订先存为草稿，由你确认后发出。</span>
+          <span className="draft-mode-title">必须走草稿</span>
+          <span>它写的建单、回复和说明修订先存为平台草稿，由你在网页上确认后发出；适合无人值守。</span>
         </label>
         <label className={`draft-mode-card${draftMode === 'direct' ? ' selected' : ''}`}>
           <input
@@ -557,8 +557,8 @@ function IssueTokenDialog({
             checked={draftMode === 'direct'}
             onChange={() => setDraftMode('direct')}
           />
-          <span className="draft-mode-title">可直接发</span>
-          <span>它写的内容立刻对外可见，署名里不注明「经你确认」。</span>
+          <span className="draft-mode-title">可直接发（推荐）</span>
+          <span>它写好内容后先在你电脑上生成预览 md，你确认后再提交；署名里不注明「经你确认」。</span>
         </label>
       </div>
       <div className="hint">两种模式下，打标签、指派、加协作者、关闭或重开都直接生效，不走草稿。</div>

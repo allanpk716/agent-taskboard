@@ -65,6 +65,14 @@ func (e *RevisionConflictError) Error() string {
 	return fmt.Sprintf("说明已被改到第 %d 版，你基于的是第 %d 版", e.CurrentRevision, e.BaseRevision)
 }
 
+// TicketChangedError 表示带 confirm_through_seq 提交时，工单时间线在该序号
+// 之后又出现了新事件（语义与发出草稿时一致）。HTTP 层映射为 409 ticket_changed。
+type TicketChangedError struct{ NewEvents, ThroughSeq int64 }
+
+func (e *TicketChangedError) Error() string {
+	return fmt.Sprintf("confirm_through_seq 之后工单有 %d 条新变化", e.NewEvents)
+}
+
 // ReplyInput 是回复的输入。附件引用（attachment_ids 与正文里的 att:）在 #33：
 // 两步上传的第二步，在写回复的同一事务里认领；AuthorName / ViaAgent 是访客的
 // 自报信息（#32，仅访客凭证采纳）；Deliver 是交付标记，仅指派人一方可用（#36）。
@@ -75,6 +83,8 @@ type ReplyInput struct {
 	AuthorName    string   // 访客自报的署名
 	ViaAgent      bool     // 访客自报「由其 Agent 写成」
 	Actor         *Author  // 发出回复草稿时使用原执笔 Agent 的正式署名
+	// ConfirmThroughSeq 非 nil 时做乐观序号检查（ADR 0017）；nil 表示行为不变。
+	ConfirmThroughSeq *int64
 }
 
 // ReplyResult 是回复成功后的投影。
@@ -136,6 +146,9 @@ func (m *Manager) replyTx(ctx context.Context, tx *sql.Tx, full Full, viewer ide
 	now := m.clk.Now()
 	var notified []int64
 	var err error
+	if err := confirmTimelineTx(ctx, tx, full.Seq, in.ConfirmThroughSeq); err != nil {
+		return ReplyResult{}, nil, err
+	}
 
 	var replies int
 	if err := tx.QueryRowContext(ctx,
@@ -216,6 +229,8 @@ type ReviseInput struct {
 	AuthorName    string  // 访客自报的署名（仅访客凭证采纳）
 	ViaAgent      bool    // 访客自报「由其 Agent 写成」
 	Actor         *Author // 发出草稿时用草稿最后执笔的 Agent 署名
+	// ConfirmThroughSeq 非 nil 时做乐观序号检查（ADR 0017）；nil 表示行为不变。
+	ConfirmThroughSeq *int64
 }
 
 // Revise 以 viewer 的身份修订标题/说明：校验 base_revision 乐观锁、推进版本号、
@@ -309,6 +324,9 @@ func (m *Manager) Revise(ctx context.Context, viewer identity.Viewer, ref string
 	}
 	defer tx.Rollback()
 	var notified []int64
+	if err := confirmTimelineTx(ctx, tx, full.Seq, in.ConfirmThroughSeq); err != nil {
+		return Ticket{}, err
+	}
 
 	revision := full.BriefRevision + 1
 	var fieldsJSON any
@@ -624,6 +642,25 @@ func (m *Manager) appendEvent(ctx context.Context, tx *sql.Tx, ticketSeq int64, 
 func touchLastChange(ctx context.Context, tx *sql.Tx, ticketSeq, change int64) error {
 	_, err := tx.ExecContext(ctx, `UPDATE tickets SET last_change = ? WHERE seq = ?`, change, ticketSeq)
 	return err
+}
+
+// confirmTimelineTx 在写事务里核对 confirm_through_seq：工单在该序号之后
+// 还有事件时返回 TicketChangedError。事件口径与发出草稿时一致——按成员
+// 读取工单得到的完整时间线计数，不按访客可见性过滤。
+func confirmTimelineTx(ctx context.Context, tx *sql.Tx, ticketSeq int64, through *int64) error {
+	if through == nil {
+		return nil
+	}
+	var last, newer int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(seq), 0), COALESCE(SUM(seq > ?), 0)
+		FROM timeline_events WHERE ticket_seq = ?`, *through, ticketSeq).Scan(&last, &newer); err != nil {
+		return err
+	}
+	if newer > 0 {
+		return &TicketChangedError{NewEvents: newer, ThroughSeq: last}
+	}
+	return nil
 }
 
 // authorOf 把 Viewer 转成事件的作者结构 {member, agent}。

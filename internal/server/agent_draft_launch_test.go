@@ -8,7 +8,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
 )
 
-func Test不带draft_mode签发AgentToken默认必须走草稿(t *testing.T) {
+func Test不带draft_mode签发AgentToken默认可直接发(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("chen", "secret-pass")
 	web := s.Login("chen", "secret-pass")
@@ -21,12 +21,12 @@ func Test不带draft_mode签发AgentToken默认必须走草稿(t *testing.T) {
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("签发状态码 = %d, 想 201", res.StatusCode)
 	}
-	if issued.DraftMode != "required" {
-		t.Fatalf("默认 draft_mode = %q, 想 required", issued.DraftMode)
+	if issued.DraftMode != "direct" {
+		t.Fatalf("默认 draft_mode = %q, 想 direct", issued.DraftMode)
 	}
 }
 
-func Test草稿上线提示只给有名下Agent的网页成员一次(t *testing.T) {
+func Test改可直接发上线提示只给有名下Agent的网页成员一次(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("chen", "secret-pass")
 	s.CreateMember("li", "secret-pass")
@@ -35,7 +35,7 @@ func Test草稿上线提示只给有名下Agent的网页成员一次(t *testing.
 	webLi := s.Login("li", "secret-pass")
 	webZhao := s.Login("zhao", "secret-pass")
 	s.IssueAgentToken(t, webChen, "笔记本")
-	if _, err := s.Store().DB.Exec(`UPDATE agent_tokens SET draft_mode_switched_by_launch = 1 WHERE name = '笔记本'`); err != nil {
+	if _, err := s.Store().DB.Exec(`UPDATE agent_tokens SET draft_mode_switched_to_direct = 1 WHERE name = '笔记本'`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -43,8 +43,8 @@ func Test草稿上线提示只给有名下Agent的网页成员一次(t *testing.
 		Notices []string `json:"notices"`
 	}
 	s.Do(t, webChen, http.MethodGet, "/api/v1/session", nil, &withAgent)
-	if len(withAgent.Notices) != 1 || withAgent.Notices[0] != "drafts_intro" {
-		t.Fatalf("有名下 Agent 的 session notices = %#v, 想 [drafts_intro]", withAgent.Notices)
+	if len(withAgent.Notices) != 1 || withAgent.Notices[0] != "drafts_direct_intro" {
+		t.Fatalf("有名下 Agent 的 session notices = %#v, 想 [drafts_direct_intro]", withAgent.Notices)
 	}
 
 	var withoutAgent struct {
@@ -55,10 +55,10 @@ func Test草稿上线提示只给有名下Agent的网页成员一次(t *testing.
 		t.Fatalf("没有名下 Agent 的 session notices = %#v, 想为空", withoutAgent.Notices)
 	}
 
-	if res := s.Do(t, webChen, http.MethodPost, "/api/v1/me/notices/drafts_intro/seen", nil, nil); res.StatusCode != http.StatusNoContent {
+	if res := s.Do(t, webChen, http.MethodPost, "/api/v1/me/notices/drafts_direct_intro/seen", nil, nil); res.StatusCode != http.StatusNoContent {
 		t.Fatalf("标记提示已读状态码 = %d, 想 204", res.StatusCode)
 	}
-	if res := s.Do(t, webChen, http.MethodPost, "/api/v1/me/notices/drafts_intro/seen", nil, nil); res.StatusCode != http.StatusNoContent {
+	if res := s.Do(t, webChen, http.MethodPost, "/api/v1/me/notices/drafts_direct_intro/seen", nil, nil); res.StatusCode != http.StatusNoContent {
 		t.Fatalf("重复标记提示已读状态码 = %d, 想 204", res.StatusCode)
 	}
 	var afterSeen struct {
@@ -84,14 +84,26 @@ func Test草稿上线提示只给有名下Agent的网页成员一次(t *testing.
 	if len(zhao.Notices) != 0 {
 		t.Fatalf("新签发 Agent 后 session notices = %#v, 想为空", zhao.Notices)
 	}
+
+	// 旧上线标记（#217 必须走草稿）不再驱动提示。
+	if _, err := s.Store().DB.Exec(`UPDATE agent_tokens SET draft_mode_switched_by_launch = 1 WHERE name = '工位'`); err != nil {
+		t.Fatal(err)
+	}
+	var stale struct {
+		Notices []string `json:"notices"`
+	}
+	s.Do(t, webZhao, http.MethodGet, "/api/v1/session", nil, &stale)
+	if len(stale.Notices) != 0 {
+		t.Fatalf("旧上线标记不应再触发提示，session notices = %#v", stale.Notices)
+	}
 }
 
-func Test已撤销的上线切换Agent不触发草稿提示(t *testing.T) {
+func Test已撤销的改可直接发Agent不触发提示(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("chen", "secret-pass")
 	web := s.Login("chen", "secret-pass")
 	id, _ := s.IssueAgentToken(t, web, "旧工位")
-	if _, err := s.Store().DB.Exec(`UPDATE agent_tokens SET draft_mode_switched_by_launch = 1 WHERE id = ?`, id); err != nil {
+	if _, err := s.Store().DB.Exec(`UPDATE agent_tokens SET draft_mode_switched_to_direct = 1 WHERE id = ?`, id); err != nil {
 		t.Fatal(err)
 	}
 	if res := s.Do(t, web, http.MethodDelete, "/api/v1/me/agent-tokens/"+strconv.FormatInt(id, 10), nil, nil); res.StatusCode != http.StatusNoContent {

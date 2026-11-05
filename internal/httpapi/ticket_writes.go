@@ -15,11 +15,12 @@ import (
 // 同一事务里认领（#33）；author_name / via_agent 是访客的自报信息（#32）：只有
 // 访客凭证会采纳，成员的署名由凭证决定，不能自报（ADR 0003）。
 type replyRequest struct {
-	BodyMD        string   `json:"body_md"`
-	AttachmentIDs []string `json:"attachment_ids"`
-	Deliver       bool     `json:"deliver"`
-	AuthorName    string   `json:"author_name"`
-	ViaAgent      bool     `json:"via_agent"`
+	BodyMD            string   `json:"body_md"`
+	AttachmentIDs     []string `json:"attachment_ids"`
+	Deliver           bool     `json:"deliver"`
+	AuthorName        string   `json:"author_name"`
+	ViaAgent          bool     `json:"via_agent"`
+	ConfirmThroughSeq *int64   `json:"confirm_through_seq"`
 }
 
 // replyTicketView 是回复成功（201）的响应。
@@ -74,11 +75,12 @@ func (a *API) replyTicket(w http.ResponseWriter, r *http.Request, ref string) {
 			return
 		}
 		result, err := a.tickets.Reply(r.Context(), viewer, ref, tickets.ReplyInput{
-			BodyMD:        req.BodyMD,
-			AttachmentIDs: req.AttachmentIDs,
-			Deliver:       req.Deliver,
-			AuthorName:    req.AuthorName,
-			ViaAgent:      req.ViaAgent,
+			BodyMD:            req.BodyMD,
+			AttachmentIDs:     req.AttachmentIDs,
+			Deliver:           req.Deliver,
+			AuthorName:        req.AuthorName,
+			ViaAgent:          req.ViaAgent,
+			ConfirmThroughSeq: req.ConfirmThroughSeq,
 		})
 		if err != nil {
 			a.writeTicketError(w, r, ref, err)
@@ -113,13 +115,14 @@ func (a *API) writeDraftPending(w http.ResponseWriter, viewer identity.Viewer, p
 // 只传改动的字段）；base_revision 必带（乐观锁）；author_name / via_agent
 // 是访客的自报署名（#32，仅访客凭证采纳）。
 type reviseTicketRequest struct {
-	Title         *string           `json:"title"`
-	BriefMD       *string           `json:"brief_md"`
-	Fields        map[string]string `json:"fields"`
-	AttachmentIDs *[]string         `json:"attachment_ids"`
-	BaseRevision  int64             `json:"base_revision"`
-	AuthorName    string            `json:"author_name"`
-	ViaAgent      bool              `json:"via_agent"`
+	Title             *string           `json:"title"`
+	BriefMD           *string           `json:"brief_md"`
+	Fields            map[string]string `json:"fields"`
+	AttachmentIDs     *[]string         `json:"attachment_ids"`
+	BaseRevision      int64             `json:"base_revision"`
+	AuthorName        string            `json:"author_name"`
+	ViaAgent          bool              `json:"via_agent"`
+	ConfirmThroughSeq *int64            `json:"confirm_through_seq"`
 }
 
 func (a *API) reviseTicket(w http.ResponseWriter, r *http.Request, ref string) {
@@ -170,13 +173,14 @@ func (a *API) reviseTicket(w http.ResponseWriter, r *http.Request, ref string) {
 			return
 		}
 		t, err := a.tickets.Revise(r.Context(), viewer, ref, tickets.ReviseInput{
-			Title:         req.Title,
-			BriefMD:       req.BriefMD,
-			Fields:        req.Fields,
-			AttachmentIDs: attachmentIDs,
-			BaseRevision:  req.BaseRevision,
-			AuthorName:    req.AuthorName,
-			ViaAgent:      req.ViaAgent,
+			Title:             req.Title,
+			BriefMD:           req.BriefMD,
+			Fields:            req.Fields,
+			AttachmentIDs:     attachmentIDs,
+			BaseRevision:      req.BaseRevision,
+			AuthorName:        req.AuthorName,
+			ViaAgent:          req.ViaAgent,
+			ConfirmThroughSeq: req.ConfirmThroughSeq,
 		})
 		if err != nil {
 			a.writeTicketError(w, r, ref, err)

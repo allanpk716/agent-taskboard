@@ -139,6 +139,10 @@ export async function markDraftsIntroSeen(): Promise<void> {
   await api('/api/v1/me/notices/drafts_intro/seen', { method: 'POST' })
 }
 
+export async function markDraftsDirectIntroSeen(): Promise<void> {
+  await api('/api/v1/me/notices/drafts_direct_intro/seen', { method: 'POST' })
+}
+
 export async function fetchInbox(): Promise<InboxResponse> {
   return api('/api/v1/inbox')
 }
@@ -389,6 +393,7 @@ export interface AgentTokenRow {
   created_at: string
   revoked_at?: string | null
   draft_mode_switched_by_launch?: boolean
+  draft_mode_switched_to_direct?: boolean
 }
 
 export interface IssuedToken {
