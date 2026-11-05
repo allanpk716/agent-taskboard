@@ -44,6 +44,8 @@ func newFakeOSS(t *testing.T) *fakeOSS {
 			Header: r.Header.Clone(), Body: string(body),
 		})
 		switch {
+		case r.Method == http.MethodHead && r.URL.Path == "/files/":
+			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Query().Has("bucketInfo"):
 			w.Header().Set("Content-Type", "application/xml")
 			_, _ = w.Write([]byte(`<Bucket><Name>files</Name></Bucket>`))
@@ -165,6 +167,9 @@ func TestOSS存储协议与签名地址(t *testing.T) {
 	ctx := context.Background()
 	if err := store.Probe(ctx); err != nil {
 		t.Fatalf("启动探测失败：%v", err)
+	}
+	if first := fake.request(0); first.Method != http.MethodHead || first.Path != "/files/" {
+		t.Fatalf("桶探测请求 = %s %s, 想 HEAD /files/", first.Method, first.Path)
 	}
 
 	content := "附件内容"

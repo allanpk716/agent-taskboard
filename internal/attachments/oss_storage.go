@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -19,6 +20,7 @@ import (
 
 	oss "github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
+	osssigner "github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/signer"
 )
 
 const (
@@ -48,11 +50,13 @@ type OSSStorageOptions struct {
 // OSSStorage 是阿里云 OSS 附件后端。服务端 API 走 internal_endpoint，
 // 签名地址按桶默认外网域名或 signing_host 生成。
 type OSSStorage struct {
-	config OSSConfig
-	prefix string
-	client *oss.Client
-	creds  credentials.Credentials
-	now    func() time.Time
+	config     OSSConfig
+	prefix     string
+	client     *oss.Client
+	creds      credentials.Credentials
+	now        func() time.Time
+	endpoint   *url.URL
+	httpClient *http.Client
 
 	persistentHeaders bool
 }
@@ -73,6 +77,14 @@ func NewOSSStorage(config OSSConfig, options OSSStorageOptions) (*OSSStorage, er
 	if _, err := signingHostURL(config.SigningHost, config.Region, config.Bucket); err != nil {
 		return nil, err
 	}
+	endpoint, err := endpointURL(config.InternalEndpoint)
+	if err != nil {
+		return nil, err
+	}
+	httpClient := options.HTTPClient
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
 
 	creds := credentials.Credentials{
 		AccessKeyID: options.AccessKeyID, AccessKeySecret: options.AccessKeySecret,
@@ -91,8 +103,21 @@ func NewOSSStorage(config OSSConfig, options OSSStorageOptions) (*OSSStorage, er
 	}
 	return &OSSStorage{
 		config: config, prefix: config.Prefix, client: oss.NewClient(sdkConfig),
-		creds: creds, now: now, persistentHeaders: true,
+		creds: creds, now: now, endpoint: endpoint, httpClient: httpClient,
+		persistentHeaders: true,
 	}, nil
+}
+
+func endpointURL(raw string) (*url.URL, error) {
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" || (parsed.Path != "" && parsed.Path != "/") {
+		return nil, fmt.Errorf("internal_endpoint %q 必须是 OSS 域名", raw)
+	}
+	parsed.Path = ""
+	return parsed, nil
 }
 
 // NormalizeOSSPrefix 规范化系统根前缀，并拒绝空值、路径穿越和根路径。
@@ -140,7 +165,7 @@ func (s *OSSStorage) attachmentKey(id int64) string {
 
 // Probe 启动时探测桶：确认桶可访问，然后在根前缀下写入并删除一个探测对象。
 func (s *OSSStorage) Probe(ctx context.Context) error {
-	if _, err := s.client.GetBucketInfo(ctx, &oss.GetBucketInfoRequest{Bucket: oss.Ptr(s.config.Bucket)}); err != nil {
+	if err := s.headBucket(ctx); err != nil {
 		return fmt.Errorf("探测 OSS 桶 %s 失败：%w", s.config.Bucket, err)
 	}
 	key := s.prefix + ".taskboard-startup-probe"
@@ -159,6 +184,39 @@ func (s *OSSStorage) Probe(ctx context.Context) error {
 	}
 	if err := s.DeleteKey(ctx, key); err != nil {
 		return fmt.Errorf("探测 OSS 根前缀 %s 删除失败：%w", s.prefix, err)
+	}
+	return nil
+}
+
+func (s *OSSStorage) headBucket(ctx context.Context) error {
+	target := *s.endpoint
+	if net.ParseIP(target.Hostname()) == nil {
+		target.Host = s.config.Bucket + "." + target.Host
+		target.Path = "/"
+	} else {
+		target.Path = "/" + s.config.Bucket + "/"
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodHead, target.String(), nil)
+	if err != nil {
+		return err
+	}
+	product, region, bucket := "oss", s.config.Region, s.config.Bucket
+	credentialsValue := s.creds
+	signingContext := &osssigner.SigningContext{
+		Product: &product, Region: &region, Bucket: &bucket,
+		Request: request, Credentials: &credentialsValue,
+	}
+	signer := osssigner.SignerV4{}
+	if err := signer.Sign(ctx, signingContext); err != nil {
+		return err
+	}
+	response, err := s.httpClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("HeadBucket 返回 HTTP %d", response.StatusCode)
 	}
 	return nil
 }

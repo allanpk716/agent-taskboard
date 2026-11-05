@@ -39,6 +39,8 @@ func newStartupFakeOSS(t *testing.T) *startupFakeOSS {
 			return
 		}
 		switch {
+		case r.Method == http.MethodHead && r.URL.Path == "/files/":
+			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Query().Has("bucketInfo"):
 			_, _ = w.Write([]byte(`<Bucket><Name>files</Name></Bucket>`))
 		case r.Method == http.MethodPut:
