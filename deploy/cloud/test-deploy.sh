@@ -4,6 +4,7 @@ export MSYS_NO_PATHCONV=1
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
+oss_checklist=$script_dir/oss-cutover-checklist.sh
 docker_path() {
     if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* ]]; then
         cygpath -w "$1"
@@ -35,6 +36,18 @@ rollback_port=$((base_port + 1))
 pullfail_port=$((base_port + 2))
 oss_missing_env_port=$((base_port + 3))
 oss_old_image_port=$((base_port + 4))
+
+checklist_help=$("$oss_checklist" --help 2>&1)
+for checklist_term in \
+    '手动备份' '停服' '迁移 dry-run' '失败数.*缺失数.*0' \
+    '改配置启动' 'health' '上传' '302' 'no-store' 'HTML' \
+    '插图' 'Lightbox' '访客' 'curl -L' '归档包' '统计' \
+    '备份对象' 'zstd' '默认域名.*200' '前缀外.*403'; do
+    grep -Eq "$checklist_term" <<<"$checklist_help" || {
+        echo "cutover checklist help must cover: $checklist_term" >&2
+        exit 1
+    }
+done
 
 cleanup() {
     set +e
