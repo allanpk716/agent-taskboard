@@ -33,12 +33,13 @@ type TicketStat struct {
 
 // Stats 是 GET /api/v1/admin/storage 需要的全部统计结果。
 type Stats struct {
-	DatabaseBytes    int64
-	AttachmentsBytes int64
-	BackupsBytes     int64
-	ClosedMonths     int
-	Cutoff           time.Time
-	Archivable       []MonthStat
+	DatabaseBytes      int64
+	AttachmentsBytes   int64
+	AttachmentsBackend string
+	BackupsBytes       int64
+	ClosedMonths       int
+	Cutoff             time.Time
+	Archivable         []MonthStat
 }
 
 // Service 汇总存储统计。附件对象来自当前存储后端；备份目录来自备份模块的
@@ -49,13 +50,15 @@ type Service struct {
 	clk               clock.Clock
 	dataDir           string
 	attachmentStorage attachments.Storage
+	attachmentBackend string
 	backupsDir        string
 }
 
 // NewService 建存储统计服务。
-func NewService(db *sql.DB, dataDir, backupsDir string, attachmentStorage attachments.Storage, c clock.Clock) *Service {
+func NewService(db *sql.DB, dataDir, backupsDir string, attachmentStorage attachments.Storage,
+	attachmentBackend string, c clock.Clock) *Service {
 	return &Service{db: db, clk: c, dataDir: dataDir,
-		attachmentStorage: attachmentStorage, backupsDir: backupsDir}
+		attachmentStorage: attachmentStorage, attachmentBackend: attachmentBackend, backupsDir: backupsDir}
 }
 
 // Stats 返回三类占用与可归档工单汇总。closedMonths 是「已关闭满 N 个月」的 N
@@ -71,16 +74,26 @@ func (s *Service) Stats(ctx context.Context, closedMonths int) (Stats, error) {
 		return Stats{}, err
 	}
 	return Stats{
-		DatabaseBytes:    DatabaseBytes(s.dataDir),
-		AttachmentsBytes: attachmentsBytes,
-		BackupsBytes:     DirBytes(s.backupsDir),
-		ClosedMonths:     closedMonths,
-		Cutoff:           cutoff,
-		Archivable:       archivable,
+		DatabaseBytes:      DatabaseBytes(s.dataDir),
+		AttachmentsBytes:   attachmentsBytes,
+		AttachmentsBackend: s.attachmentBackend,
+		BackupsBytes:       DirBytes(s.backupsDir),
+		ClosedMonths:       closedMonths,
+		Cutoff:             cutoff,
+		Archivable:         archivable,
 	}, nil
 }
 
 func (s *Service) attachmentsBytes(ctx context.Context) (int64, error) {
+	if s.attachmentBackend == attachments.AttachmentBackendOSS {
+		var total int64
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT COALESCE(SUM(size), 0) FROM attachments WHERE slim_removed_at IS NULL`).
+			Scan(&total); err != nil {
+			return 0, err
+		}
+		return total, nil
+	}
 	var total int64
 	err := s.attachmentStorage.List(ctx, func(_ int64, size int64, _ time.Time) error {
 		total += size

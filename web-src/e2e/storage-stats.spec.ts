@@ -6,6 +6,7 @@ import { ADMIN, login, wang } from './helpers'
 
 type StorageStats = {
   closed_months: number
+  attachments_backend?: string
   slimmable_ticket_count: number
   slimmable_attachment_bytes: number
   archivable: { month: string; ticket_count: number; attachment_bytes: number }[]
@@ -88,6 +89,7 @@ test('存储面板按月汇总并随 N 重新请求', async ({ page }) => {
       json: {
         database_bytes: 123456,
         attachments_bytes: 456789,
+        attachments_backend: 'oss',
         backups_bytes: 789012,
         slimmable_ticket_count: n === '1' ? 1 : 2,
         slimmable_attachment_bytes: n === '1' ? 1024 : 4096,
@@ -100,6 +102,7 @@ test('存储面板按月汇总并随 N 重新请求', async ({ page }) => {
   await login(page, ADMIN)
   await page.goto('/admin')
 
+  await expect(page.getByTestId('storage-card').getByText('附件（OSS）')).toBeVisible()
   await expect(page.getByTestId('storage-slimmable')).toHaveText('2 张工单，附件共 4 KB')
   await expect(page.getByTestId('storage-months-table')).toContainText('2026-08')
   await expect(page.getByTestId('storage-months-table')).toContainText('2026-05')

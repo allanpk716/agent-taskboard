@@ -32,6 +32,7 @@ type storageTicketBody struct {
 type storageStatsBody struct {
 	DatabaseBytes            int64              `json:"database_bytes"`
 	AttachmentsBytes         int64              `json:"attachments_bytes"`
+	AttachmentsBackend       string             `json:"attachments_backend"`
 	BackupsBytes             int64              `json:"backups_bytes"`
 	SlimmableTicketCount     int                `json:"slimmable_ticket_count"`
 	SlimmableAttachmentBytes int64              `json:"slimmable_attachment_bytes"`

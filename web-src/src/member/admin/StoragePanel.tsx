@@ -224,7 +224,7 @@ export function StoragePanel() {
         <b data-testid="storage-database">{stats ? fmtBytes(stats.database_bytes) : '…'}</b>
       </div>
       <div className="kv">
-        <span>附件目录</span>
+        <span>{stats?.attachments_backend === 'oss' ? '附件（OSS）' : '附件目录'}</span>
         <b data-testid="storage-attachments">{stats ? fmtBytes(stats.attachments_bytes) : '…'}</b>
       </div>
       <div className="kv">
