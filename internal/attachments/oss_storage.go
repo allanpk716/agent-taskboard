@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -180,6 +179,8 @@ func (s *OSSStorage) Probe(ctx context.Context) error {
 	if err != nil {
 		var serviceErr *oss.ServiceError
 		if errors.As(err, &serviceErr) && serviceErr.StatusCode == http.StatusBadRequest {
+			// persistentHeaders 只在 Probe（服务启动、单线程）里按探测结果
+			// 改写；运行期间不再变，上传路径因此无需加锁。
 			err = s.putKey(ctx, key, strings.NewReader("probe"), int64(len("probe")), "text/plain", false)
 			if err == nil {
 				s.persistentHeaders = false
@@ -285,20 +286,30 @@ func objectNotFound(err error) bool {
 }
 
 func (s *OSSStorage) Open(ctx context.Context, id int64) (io.ReadCloser, int64, error) {
+	return s.getObject(ctx, s.attachmentKey(id))
+}
+
+// getObject 打开一个对象键：确认不存在返回 ErrObjectNotFound，其余错误
+// 包装后上抛；OSS 偶发返回负 ContentLength 时按 0 处理。
+func (s *OSSStorage) getObject(ctx context.Context, key string) (io.ReadCloser, int64, error) {
 	result, err := s.client.GetObject(ctx, &oss.GetObjectRequest{
-		Bucket: oss.Ptr(s.config.Bucket), Key: oss.Ptr(s.attachmentKey(id)),
+		Bucket: oss.Ptr(s.config.Bucket), Key: oss.Ptr(key),
 	})
 	if objectNotFound(err) {
 		return nil, 0, ErrObjectNotFound
 	}
 	if err != nil {
-		return nil, 0, fmt.Errorf("读取 OSS 附件失败：%w", err)
+		return nil, 0, fmt.Errorf("读取 OSS 对象 %s 失败：%w", key, err)
 	}
-	size := result.ContentLength
+	return result.Body, objectSize(result.ContentLength), nil
+}
+
+// objectSize 归一化对象大小：OSS 偶发返回负值时按 0 处理。
+func objectSize(size int64) int64 {
 	if size < 0 {
-		size = 0
+		return 0
 	}
-	return result.Body, size, nil
+	return size
 }
 
 func (s *OSSStorage) keyInsidePrefix(key string) bool {
@@ -316,7 +327,6 @@ func (s *OSSStorage) keyInsidePrefix(key string) bool {
 // DeleteKey 删除任意系统对象键。所有非附件删除都经过这里的根前缀护栏。
 func (s *OSSStorage) DeleteKey(ctx context.Context, key string) error {
 	if !s.keyInsidePrefix(key) {
-		log.Printf("拒绝删除 OSS 根前缀 %q 外的对象 %q", s.prefix, key)
 		return fmt.Errorf("拒绝删除 OSS 根前缀 %q 外的对象 %q", s.prefix, key)
 	}
 	_, err := s.client.DeleteObject(ctx, &oss.DeleteObjectRequest{
@@ -349,20 +359,7 @@ func (s *OSSStorage) OpenObject(ctx context.Context, relKey string) (io.ReadClos
 	if err != nil {
 		return nil, 0, err
 	}
-	result, err := s.client.GetObject(ctx, &oss.GetObjectRequest{
-		Bucket: oss.Ptr(s.config.Bucket), Key: oss.Ptr(key),
-	})
-	if objectNotFound(err) {
-		return nil, 0, ErrObjectNotFound
-	}
-	if err != nil {
-		return nil, 0, fmt.Errorf("读取 OSS 对象 %s 失败：%w", key, err)
-	}
-	size := result.ContentLength
-	if size < 0 {
-		size = 0
-	}
-	return result.Body, size, nil
+	return s.getObject(ctx, key)
 }
 
 func (s *OSSStorage) DeleteObject(ctx context.Context, relKey string) error {
@@ -374,20 +371,22 @@ func (s *OSSStorage) DeleteObject(ctx context.Context, relKey string) error {
 }
 
 func (s *OSSStorage) Stat(ctx context.Context, id int64) (int64, bool, error) {
+	return s.statKey(ctx, s.attachmentKey(id))
+}
+
+// statKey 用 HeadObject 查一个对象键的大小；确认不存在返回 exists=false，
+// 其余错误包装后上抛。
+func (s *OSSStorage) statKey(ctx context.Context, key string) (int64, bool, error) {
 	result, err := s.client.HeadObject(ctx, &oss.HeadObjectRequest{
-		Bucket: oss.Ptr(s.config.Bucket), Key: oss.Ptr(s.attachmentKey(id)),
+		Bucket: oss.Ptr(s.config.Bucket), Key: oss.Ptr(key),
 	})
 	if objectNotFound(err) {
 		return 0, false, nil
 	}
 	if err != nil {
-		return 0, false, fmt.Errorf("读取 OSS 附件 att_%d 信息失败：%w", id, err)
+		return 0, false, fmt.Errorf("读取 OSS 对象 %s 信息失败：%w", key, err)
 	}
-	size := result.ContentLength
-	if size < 0 {
-		size = 0
-	}
-	return size, true, nil
+	return objectSize(result.ContentLength), true, nil
 }
 
 func (s *OSSStorage) List(ctx context.Context, fn func(id int64, size int64, modTime time.Time) error) error {
@@ -429,10 +428,7 @@ func (s *OSSStorage) List(ctx context.Context, fn func(id int64, size int64, mod
 }
 
 func (s *OSSStorage) DownloadURL(ctx context.Context, id int64, opts DownloadURLOpts) (string, bool, error) {
-	key, err := s.objectKey(ossAttachmentDirectory + "/" + strconv.FormatInt(id, 10))
-	if err != nil {
-		return "", false, err
-	}
+	key := s.attachmentKey(id)
 	// 附件下载地址按规格做 10 分钟取整 + 15 分钟有效期：同一时间桶内
 	// 地址稳定，便于前端复用；剩余有效期最短 5 分钟。
 	return s.signedObjectURL(ctx, key, 15*time.Minute, opts.Disposition, 10*time.Minute)
