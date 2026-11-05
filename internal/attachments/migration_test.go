@@ -2,6 +2,7 @@ package attachments_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -293,5 +294,135 @@ func Test附件迁移按五十个文件汇报进度(t *testing.T) {
 	progressMu.Unlock()
 	if len(gotProgress) != 2 || gotProgress[0] != 50 || gotProgress[1] != 100 {
 		t.Fatalf("进度 = %v, 想每 50 个一次", gotProgress)
+	}
+}
+
+func Test附件迁移OSS到本地全量后标记与内容正确(t *testing.T) {
+	ctx := context.Background()
+	st, dataDir := newMigrationDatabase(t)
+	if err := attachments.WriteBackendMarker(ctx, st.DB, attachments.BackendMarker{
+		Backend: attachments.AttachmentBackendOSS, Bucket: "files", Prefix: "agent-taskboard/prod/",
+	}); err != nil {
+		t.Fatalf("写入源后端标记失败：%v", err)
+	}
+	source := attachments.NewMemoryStorage()
+	putMigrationAttachment(t, source, 1, "回迁附件")
+	putMigrationAttachment(t, source, 2, "回迁待用")
+	addMigrationRecord(t, st, 1, "一.txt", "回迁附件", "attached")
+	addMigrationRecord(t, st, 2, "二.txt", "回迁待用", "pending")
+	target, err := attachments.NewLocalStorage(dataDir)
+	if err != nil {
+		t.Fatalf("创建本地存储失败：%v", err)
+	}
+
+	res, err := attachments.MigrateAttachments(ctx, st.DB, source, target, attachments.MigrationOptions{
+		Target:    attachments.BackendMarker{Backend: attachments.AttachmentBackendLocal},
+		DataDir:   dataDir,
+		FreeSpace: func(string) (uint64, error) { return 1 << 40, nil },
+	})
+	if err != nil {
+		t.Fatalf("回迁失败：%v", err)
+	}
+	if res.Copied != 2 || res.Skipped != 0 {
+		t.Fatalf("回迁结果 = %+v, 想 2 个复制", res)
+	}
+	marker, exists, err := attachments.ReadBackendMarker(ctx, st.DB)
+	if err != nil || !exists || marker != (attachments.BackendMarker{Backend: attachments.AttachmentBackendLocal}) {
+		t.Fatalf("回迁后标记 = (%+v, %v, %v), 想 local", marker, exists, err)
+	}
+	if got := readAttachment(t, target, 1); got != "回迁附件" {
+		t.Fatalf("本地附件 = %q", got)
+	}
+	if got := readAttachment(t, source, 2); got != "回迁待用" {
+		t.Fatalf("OSS 源附件被改动：%q", got)
+	}
+}
+
+func Test附件迁移重跑跳过已一致文件并纠正同大小坏对象(t *testing.T) {
+	ctx := context.Background()
+	st, dataDir := newMigrationDatabase(t)
+	if err := attachments.WriteBackendMarker(ctx, st.DB, attachments.BackendMarker{
+		Backend: attachments.AttachmentBackendLocal,
+	}); err != nil {
+		t.Fatalf("写入源后端标记失败：%v", err)
+	}
+	source, err := attachments.NewLocalStorage(dataDir)
+	if err != nil {
+		t.Fatalf("创建本地存储失败：%v", err)
+	}
+	target := attachments.NewMemoryStorage()
+	putMigrationAttachment(t, source, 1, "一致")
+	putMigrationAttachment(t, source, 2, "源内容")
+	putMigrationAttachment(t, target, 1, "一致")
+	putMigrationAttachment(t, target, 2, "坏内容") // 与源内容同为 UTF-8 9 字节。
+	addMigrationRecord(t, st, 1, "一.txt", "一致", "attached")
+	addMigrationRecord(t, st, 2, "二.txt", "源内容", "pending")
+
+	res, err := attachments.MigrateAttachments(ctx, st.DB, source, target, attachments.MigrationOptions{
+		Target: attachments.BackendMarker{
+			Backend: attachments.AttachmentBackendOSS, Bucket: "files", Prefix: "agent-taskboard/prod/",
+		},
+	})
+	if err != nil {
+		t.Fatalf("续跑失败：%v（%+v）", err, res)
+	}
+	if res.Skipped != 1 || res.Copied != 1 {
+		t.Fatalf("续跑结果 = %+v, 想 1 个跳过、1 个重写", res)
+	}
+	if got := readAttachment(t, target, 2); got != "源内容" {
+		t.Fatalf("纠正后的对象 = %q, 想源内容", got)
+	}
+}
+
+func Test附件迁移源端缺失或复制失败时不切换(t *testing.T) {
+	ctx := context.Background()
+	st, dataDir := newMigrationDatabase(t)
+	if err := attachments.WriteBackendMarker(ctx, st.DB, attachments.BackendMarker{
+		Backend: attachments.AttachmentBackendLocal,
+	}); err != nil {
+		t.Fatalf("写入源后端标记失败：%v", err)
+	}
+	source, err := attachments.NewLocalStorage(dataDir)
+	if err != nil {
+		t.Fatalf("创建本地存储失败：%v", err)
+	}
+	putMigrationAttachment(t, source, 1, "存在")
+	addMigrationRecord(t, st, 1, "一.txt", "存在", "attached")
+	addMigrationRecord(t, st, 2, "二.txt", "缺失", "pending")
+	target := attachments.NewMemoryStorage()
+
+	res, err := attachments.MigrateAttachments(ctx, st.DB, source, target, attachments.MigrationOptions{
+		Target: attachments.BackendMarker{
+			Backend: attachments.AttachmentBackendOSS, Bucket: "files", Prefix: "agent-taskboard/prod/",
+		},
+	})
+	if err == nil {
+		t.Fatal("源端缺失时应返回错误")
+	}
+	if res.Missing != 1 || len(res.MissingIDs) != 1 || res.MissingIDs[0] != 2 {
+		t.Fatalf("缺失结果 = %+v, 想列出 2", res)
+	}
+	marker, exists, err := attachments.ReadBackendMarker(ctx, st.DB)
+	if err != nil || !exists || marker.Backend != attachments.AttachmentBackendLocal {
+		t.Fatalf("缺失后标记 = (%+v, %v, %v), 想保持 local", marker, exists, err)
+	}
+
+	target = attachments.NewMemoryStorage()
+	target.PutErr = errors.New("模拟目标端故障")
+	res, err = attachments.MigrateAttachments(ctx, st.DB, source, target, attachments.MigrationOptions{
+		Target: attachments.BackendMarker{
+			Backend: attachments.AttachmentBackendOSS, Bucket: "files", Prefix: "agent-taskboard/prod/",
+		},
+		AcceptMissing: true,
+	})
+	if err == nil {
+		t.Fatal("复制失败时即使接受缺失也应返回错误")
+	}
+	if res.Failed != 1 || len(res.FailedIDs) != 1 || res.FailedIDs[0] != 1 {
+		t.Fatalf("失败结果 = %+v, 想列出 1", res)
+	}
+	marker, exists, err = attachments.ReadBackendMarker(ctx, st.DB)
+	if err != nil || !exists || marker.Backend != attachments.AttachmentBackendLocal {
+		t.Fatalf("失败后标记 = (%+v, %v, %v), 想保持 local", marker, exists, err)
 	}
 }

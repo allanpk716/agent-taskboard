@@ -262,15 +262,16 @@ func copyIfNeeded(ctx context.Context, record migrationRecord, source, target St
 		return 0, false, err
 	}
 	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
-	if targetSize, exists := target.Stat(ctx, record.id); exists && targetSize == size {
-		_, copyErr := io.Copy(io.Discard, io.TeeReader(body, hash))
-		closeErr := body.Close()
-		if copyErr != nil {
-			return 0, false, copyErr
-		}
-		if closeErr != nil {
-			return 0, false, closeErr
-		}
+	targetSize, targetExists := target.Stat(ctx, record.id)
+	_, copyErr := io.Copy(io.Discard, io.TeeReader(body, hash))
+	closeErr := body.Close()
+	if copyErr != nil {
+		return 0, false, copyErr
+	}
+	if closeErr != nil {
+		return 0, false, closeErr
+	}
+	if targetExists && targetSize == size {
 		targetSum, err := objectChecksum(ctx, target, record.id)
 		if err != nil {
 			return 0, false, err
@@ -278,9 +279,6 @@ func copyIfNeeded(ctx context.Context, record migrationRecord, source, target St
 		if targetSum == hash.Sum64() {
 			return targetSum, false, nil
 		}
-	}
-	if err := body.Close(); err != nil {
-		return 0, false, err
 	}
 	return putVerified(ctx, record, source, target)
 }
