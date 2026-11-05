@@ -28,7 +28,8 @@ type MigrationOptions struct {
 	AcceptMissing bool
 	// DryRun 只统计迁移计划，不写目标对象，也不改数据库标记。
 	DryRun bool
-	// Progress 在实际迁移时每处理 50 个附件调用一次。
+	// Progress 在实际迁移时每处理 50 个附件调用一次。多个迁移 worker 会
+	// 并发调用它，实现必须自己保证线程安全。
 	Progress func(done, total int)
 }
 
@@ -45,6 +46,12 @@ type MigrationResult struct {
 	FailedIDs     []int64
 	SourceOnlyIDs []int64
 }
+
+// migrationWorkerCount 是实际迁移时的并发 worker 数。
+const migrationWorkerCount = 4
+
+// crc64Table 是附件迁移校验用的 CRC64（ECMA-182）表。
+var crc64Table = crc64.MakeTable(crc64.ECMA)
 
 type migrationRecord struct {
 	id       int64
@@ -87,7 +94,7 @@ func MigrateAttachments(ctx context.Context, db *sql.DB, source, target Storage,
 	}
 	if opts.DryRun {
 		for _, record := range records {
-			needsCopy, err := planAttachment(ctx, record, source, target)
+			needsCopy, err := targetAlreadyMatches(ctx, source, target, record)
 			switch {
 			case errors.Is(err, ErrObjectNotFound):
 				res.Missing++
@@ -120,7 +127,7 @@ func MigrateAttachments(ctx context.Context, db *sql.DB, source, target Storage,
 	outcomes := make(chan migrationOutcome, len(records))
 	var workers sync.WaitGroup
 	var processed int64
-	for i := 0; i < 4; i++ {
+	for i := 0; i < migrationWorkerCount; i++ {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
@@ -184,12 +191,15 @@ func sourceOnlyIDs(ctx context.Context, source Storage, records []migrationRecor
 	return ids, nil
 }
 
-func planAttachment(ctx context.Context, record migrationRecord, source, target Storage) (bool, error) {
+// targetAlreadyMatches 读出源端对象并计算 CRC64；目标端已有同大小且校验
+// 一致的对象时返回 true。dry-run 用它判断是否需要复制，实际迁移先判断、
+// 不一致再走 putVerified，两处共用同一条“是否已一致”的口径。
+func targetAlreadyMatches(ctx context.Context, source, target Storage, record migrationRecord) (bool, error) {
 	body, size, err := source.Open(ctx, record.id)
 	if err != nil {
 		return false, err
 	}
-	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
+	hash := crc64.New(crc64Table)
 	_, readErr := io.Copy(io.Discard, io.TeeReader(body, hash))
 	closeErr := body.Close()
 	if readErr != nil {
@@ -202,16 +212,14 @@ func planAttachment(ctx context.Context, record migrationRecord, source, target 
 	if statErr != nil {
 		return false, statErr
 	}
-	if exists && targetSize == size {
-		targetSum, err := objectChecksum(ctx, target, record.id)
-		if err != nil {
-			return false, err
-		}
-		if targetSum == hash.Sum64() {
-			return false, nil
-		}
+	if !exists || targetSize != size {
+		return false, nil
 	}
-	return true, nil
+	targetSum, err := objectChecksum(ctx, target, record.id)
+	if err != nil {
+		return false, err
+	}
+	return targetSum == hash.Sum64(), nil
 }
 
 func checkLocalFreeSpace(opts MigrationOptions, total int64) error {
@@ -259,73 +267,50 @@ func migrationRecords(ctx context.Context, db *sql.DB) ([]migrationRecord, error
 }
 
 func migrateAttachment(ctx context.Context, record migrationRecord, source, target Storage) (bool, error) {
-	_, copied, err := copyIfNeeded(ctx, record, source, target)
+	matches, err := targetAlreadyMatches(ctx, source, target, record)
 	if err != nil {
 		return false, fmt.Errorf("附件 %d 迁移失败：%w", record.id, err)
 	}
-	return copied, err
+	if matches {
+		return false, nil
+	}
+	if err := putVerified(ctx, record, source, target); err != nil {
+		return false, fmt.Errorf("附件 %d 迁移失败：%w", record.id, err)
+	}
+	return true, nil
 }
 
-func copyIfNeeded(ctx context.Context, record migrationRecord, source, target Storage) (uint64, bool, error) {
+// putVerified 把源端对象复制到目标端，并用 CRC64 与大小双重校验。
+func putVerified(ctx context.Context, record migrationRecord, source, target Storage) error {
 	body, size, err := source.Open(ctx, record.id)
 	if err != nil {
-		return 0, false, err
+		return err
 	}
-	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
-	targetSize, targetExists, statErr := target.Stat(ctx, record.id)
-	if statErr != nil {
-		return 0, false, statErr
-	}
-	_, copyErr := io.Copy(io.Discard, io.TeeReader(body, hash))
-	closeErr := body.Close()
-	if copyErr != nil {
-		return 0, false, copyErr
-	}
-	if closeErr != nil {
-		return 0, false, closeErr
-	}
-	if targetExists && targetSize == size {
-		targetSum, err := objectChecksum(ctx, target, record.id)
-		if err != nil {
-			return 0, false, err
-		}
-		if targetSum == hash.Sum64() {
-			return targetSum, false, nil
-		}
-	}
-	return putVerified(ctx, record, source, target)
-}
-
-func putVerified(ctx context.Context, record migrationRecord, source, target Storage) (uint64, bool, error) {
-	body, size, err := source.Open(ctx, record.id)
-	if err != nil {
-		return 0, false, err
-	}
-	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
+	hash := crc64.New(crc64Table)
 	putErr := target.Put(ctx, record.id, io.TeeReader(body, hash), size,
 		PutMeta{ContentType: ContentTypeOf(record.filename)})
 	closeErr := body.Close()
 	if putErr != nil {
-		return 0, false, putErr
+		return putErr
 	}
 	if closeErr != nil {
-		return 0, false, closeErr
+		return closeErr
 	}
 	targetSum, err := objectChecksum(ctx, target, record.id)
 	if err != nil {
-		return 0, false, err
+		return err
 	}
 	if targetSum != hash.Sum64() {
-		return 0, false, fmt.Errorf("CRC64 校验不符：源端 %d，目标端 %d", hash.Sum64(), targetSum)
+		return fmt.Errorf("CRC64 校验不符：源端 %d，目标端 %d", hash.Sum64(), targetSum)
 	}
 	targetSize, exists, statErr := target.Stat(ctx, record.id)
 	if statErr != nil {
-		return 0, false, statErr
+		return statErr
 	}
 	if !exists || targetSize != size {
-		return 0, false, fmt.Errorf("目标对象大小不符：应为 %d 字节，实际 %d", size, targetSize)
+		return fmt.Errorf("目标对象大小不符：应为 %d 字节，实际 %d", size, targetSize)
 	}
-	return targetSum, true, nil
+	return nil
 }
 
 func objectChecksum(ctx context.Context, storage Storage, id int64) (uint64, error) {
@@ -346,7 +331,7 @@ func objectChecksum(ctx context.Context, storage Storage, id int64) (uint64, err
 		return 0, err
 	}
 	defer body.Close()
-	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
+	hash := crc64.New(crc64Table)
 	if _, err := io.Copy(hash, body); err != nil {
 		return 0, err
 	}

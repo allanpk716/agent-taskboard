@@ -259,7 +259,7 @@ func (s *MemoryStorage) ObjectChecksum(ctx context.Context, id int64) (uint64, b
 	if !ok {
 		return 0, false, nil
 	}
-	hash := crc64.New(crc64.MakeTable(crc64.ECMA))
+	hash := crc64.New(crc64Table)
 	if _, err := hash.Write(obj.Content); err != nil {
 		return 0, true, err
 	}
