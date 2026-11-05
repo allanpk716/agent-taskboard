@@ -135,7 +135,7 @@ func RestoreWithStorage(dataDir string, port int, backupFile string, now time.Ti
 	if err != nil {
 		return res, err
 	}
-	mirror := filepath.Join(filepath.Dir(backupFile), "attachments")
+	mirror := attachments.NewBackupMirror(filepath.Dir(backupFile))
 	if storage == nil {
 		local, err := attachments.NewLocalStorage(dataDir)
 		if err != nil {
@@ -148,18 +148,13 @@ func RestoreWithStorage(dataDir string, port int, backupFile string, now time.Ti
 		if _, exists := storage.Stat(ctx, record.id); exists {
 			continue // 主存储里已有
 		}
-		from := filepath.Join(mirror, strconv.FormatInt(record.id, 10))
-		info, err := os.Stat(from)
+		file, size, err := mirror.Open(record.id)
 		if err != nil {
 			res.MissingAttachments = append(res.MissingAttachments, strconv.FormatInt(record.id, 10))
 			continue
 		}
-		file, err := os.Open(from)
-		if err != nil {
-			return res, err
-		}
 		meta := attachments.PutMeta{ContentType: attachments.ContentTypeOf(record.filename)}
-		putErr := storage.Put(ctx, record.id, file, info.Size(), meta)
+		putErr := storage.Put(ctx, record.id, file, size, meta)
 		closeErr := file.Close()
 		if putErr != nil {
 			return res, putErr

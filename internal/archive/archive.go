@@ -96,6 +96,7 @@ type Service struct {
 	clk        clock.Clock
 	dataDir    string
 	backupDir  string
+	mirror     *attachments.BackupMirror
 	atts       *attachments.Manager
 	generateMu sync.Mutex
 }
@@ -103,7 +104,7 @@ type Service struct {
 // NewService 建归档服务。
 func NewService(db *sql.DB, dataDir, backupDir string, atts *attachments.Manager, c clock.Clock) *Service {
 	return &Service{db: db, clk: c, dataDir: dataDir,
-		backupDir: backupDir, atts: atts}
+		backupDir: backupDir, mirror: attachments.NewBackupMirror(backupDir), atts: atts}
 }
 
 func (s *Service) stageDir() string { return filepath.Join(s.dataDir, "archive-packages") }

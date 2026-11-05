@@ -489,15 +489,14 @@ func (b *Backups) syncMirror(ctx context.Context) (int, error) {
 		}
 		b.attachmentStorage = local
 	}
-	dst := filepath.Join(b.TargetDir(), "attachments")
-	if err := os.MkdirAll(dst, 0o755); err != nil {
-		return 0, fmt.Errorf("连不上备份目标 %s：%w", dst, err)
+	mirror := attachments.NewBackupMirror(b.TargetDir())
+	if err := mirror.Ensure(); err != nil {
+		return 0, err
 	}
 	added := 0
 	copyErr := error(nil)
 	err := b.attachmentStorage.List(ctx, func(id int64, size int64, _ time.Time) error {
-		to := filepath.Join(dst, strconv.FormatInt(id, 10))
-		if info, err := os.Stat(to); err == nil && info.Size() == size {
+		if mirrorSize, exists := mirror.Stat(id); exists && mirrorSize == size {
 			// 已镜像过。同步不删除；归档移除会在事务提交后单独删除对应镜像。
 			return nil
 		}
@@ -511,7 +510,7 @@ func (b *Backups) syncMirror(ctx context.Context) (int, error) {
 			copyErr = fmt.Errorf("附件 att_%d 对象大小在列举和读取之间变化：%d/%d", id, size, actualSize)
 			return copyErr
 		}
-		if err := copyReaderTo(src, to); err != nil {
+		if err := mirror.Write(id, src, size); err != nil {
 			copyErr = err
 			return err
 		}

@@ -95,6 +95,7 @@ type Service struct {
 	clk        clock.Clock
 	dataDir    string
 	backupDir  string
+	mirror     *attachments.BackupMirror
 	atts       *attachments.Manager
 	generateMu sync.Mutex
 }
@@ -103,7 +104,7 @@ type Service struct {
 func NewService(db *sql.DB, dataDir, backupDir string,
 	atts *attachments.Manager, c clock.Clock) *Service {
 	return &Service{db: db, clk: c, dataDir: dataDir,
-		backupDir: backupDir, atts: atts}
+		backupDir: backupDir, mirror: attachments.NewBackupMirror(backupDir), atts: atts}
 }
 
 // Preview 校验管理员选择并汇总仍留在服务器上的附件。
