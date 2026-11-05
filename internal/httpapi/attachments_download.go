@@ -96,6 +96,29 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	disposition := "inline"
+	if !attachments.IsInline(att.Filename) {
+		disposition = "attachment"
+	}
+	signedURL, hasExternalURL, err := a.atts.Storage().DownloadURL(r.Context(), att.ID,
+		attachments.DownloadURLOpts{Disposition: mime.FormatMediaType(disposition, map[string]string{"filename": att.Filename})})
+	if err != nil {
+		panic(err)
+	}
+	if hasExternalURL {
+		if _, exists := a.atts.Storage().Stat(r.Context(), att.ID); !exists {
+			WriteError(w, http.StatusNotFound, CodeAttachmentNotFound, "附件文件缺失", "")
+			return
+		}
+		if err := a.accessRecords.RecordDownload(r.Context(), att, viewer); err != nil {
+			panic(err)
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Location", signedURL)
+		w.WriteHeader(http.StatusFound)
+		return
+	}
+
 	body, size, err := a.atts.Storage().Open(r.Context(), att.ID)
 	if err != nil {
 		if errors.Is(err, attachments.ErrObjectNotFound) {
@@ -109,11 +132,6 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 		if err := a.accessRecords.RecordDownload(r.Context(), att, viewer); err != nil {
 			panic(err)
 		}
-	}
-
-	disposition := "inline"
-	if !attachments.IsInline(att.Filename) {
-		disposition = "attachment"
 	}
 	w.Header().Set("Content-Type", contentTypeOf(att.Filename))
 	w.Header().Set("X-Content-Type-Options", "nosniff")

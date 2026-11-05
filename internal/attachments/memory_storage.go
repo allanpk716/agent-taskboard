@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"sort"
 	"sync"
 	"time"
@@ -21,6 +22,9 @@ type MemoryStorage struct {
 	// AfterPut 在对象写入后、Put 返回前调用，用来在「Put 已成功、事务
 	// 尚未提交」的时机注入故障。
 	AfterPut func(id int64)
+	// DownloadURLPrefix 非空时 DownloadURL 返回这个前缀下的可识别地址，
+	// 供黑盒测试模拟 OSS 等外链后端。
+	DownloadURLPrefix string
 }
 
 // MemoryObject 是内存存储里一个对象的元数据和内容。
@@ -109,7 +113,11 @@ func (s *MemoryStorage) List(ctx context.Context, fn func(id int64, size int64, 
 }
 
 func (s *MemoryStorage) DownloadURL(ctx context.Context, id int64, opts DownloadURLOpts) (string, bool, error) {
-	return "", false, nil
+	if s.DownloadURLPrefix == "" {
+		return "", false, nil
+	}
+	values := url.Values{"disposition": []string{opts.Disposition}}
+	return fmt.Sprintf("%sattachments/%d?%s", s.DownloadURLPrefix, id, values.Encode()), true, nil
 }
 
 // Object 返回一个对象的副本，供测试查看对象及其元数据。
