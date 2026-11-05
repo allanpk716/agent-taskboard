@@ -13,6 +13,7 @@ deploy_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 compose_file=$deploy_dir/docker-compose.yml
 config_file=$deploy_dir/config.toml
 env_file=$deploy_dir/deploy.env
+oss_env_file=${OSS_ENV_FILE:-$deploy_dir/oss.env}
 
 [ -f "$compose_file" ] || { echo "missing docker-compose.yml in $deploy_dir" >&2; exit 1; }
 [ -f "$config_file" ] || { echo "missing config.toml in $deploy_dir" >&2; exit 1; }
@@ -57,6 +58,46 @@ read_public_url() {
     return 1
 }
 
+read_attachment_backend() {
+    local backend
+    backend=$(awk '
+        {
+            line = $0
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+            if (line == "[attachments]") {
+                in_attachments = 1
+                next
+            }
+            if (line ~ /^\[/) {
+                in_attachments = 0
+            }
+            if (in_attachments && line ~ /^backend[[:space:]]*=/) {
+                sub(/^backend[[:space:]]*=[[:space:]]*/, "", line)
+                sub(/[[:space:]]*#.*$/, "", line)
+                sub(/[[:space:]]+$/, "", line)
+                gsub(/^"|"$/, "", line)
+                gsub(/^'\''|'\''/, "", line)
+                print line
+                exit
+            }
+        }
+    ' "$config_file") || return 1
+    case "$backend" in
+        local|oss|"") printf '%s\n' "${backend:-local}" ;;
+        *) echo "config.toml has invalid [attachments] backend: $backend" >&2; return 1 ;;
+    esac
+}
+
+verify_oss_image_capability() {
+    local image=$1 output
+    output=$(docker run --rm --network none --entrypoint /app/taskboard "$image" \
+        migrate-attachments -to capability-probe 2>&1 || true)
+    grep -q 'migrate-attachments 的 -to 只能是 oss 或 local' <<<"$output" || {
+        echo "image $image does not support OSS attachments: migrate-attachments is unavailable" >&2
+        return 1
+    }
+}
+
 current_image=$(awk '
     $1 == "image:" {
         sub(/^[[:space:]]*image:[[:space:]]*/, "")
@@ -77,6 +118,20 @@ if [ "$current_version" = "$new_version" ]; then
     exit 0
 fi
 public_url=$(read_public_url)
+attachment_backend=$(read_attachment_backend)
+if [ "$attachment_backend" = oss ]; then
+    [ -f "$oss_env_file" ] || {
+        echo "missing oss.env in $deploy_dir (required when [attachments] backend = \"oss\")" >&2
+        exit 1
+    }
+fi
+
+new_image=$IMAGE_REPO:$new_version
+echo "Pulling $new_image"
+docker pull "$new_image"
+if [ "$attachment_backend" = oss ]; then
+    verify_oss_image_capability "$new_image"
+fi
 
 echo "Backing up $current_image before upgrade to $new_version"
 backup_output=$(compose exec -T "$service" /app/taskboard backup -preupdate \
@@ -87,10 +142,6 @@ case "$backup_file" in
     *) echo "cannot parse preupdate backup filename from: $backup_output" >&2; exit 1 ;;
 esac
 echo "Preupdate backup: $backup_file"
-
-new_image=$IMAGE_REPO:$new_version
-echo "Pulling $new_image"
-docker pull "$new_image"
 
 set_image() {
     local image=$1 tmp=$compose_file.new

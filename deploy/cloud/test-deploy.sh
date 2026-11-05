@@ -27,11 +27,14 @@ local_images=(
     taskboard:deploy-test-a
     taskboard:deploy-test-b
     taskboard:deploy-test-bad
+    taskboard:deploy-test-old
 )
 base_port=$((19000 + $$ % 500))
 normal_port=$base_port
 rollback_port=$((base_port + 1))
 pullfail_port=$((base_port + 2))
+oss_missing_env_port=$((base_port + 3))
+oss_old_image_port=$((base_port + 4))
 
 cleanup() {
     set +e
@@ -43,12 +46,13 @@ cleanup() {
         docker volume rm "$volume" >/dev/null 2>&1
     done
     [ -n "$registry_url" ] && docker rmi \
-        "$registry_url:0.1.0" "$registry_url:0.2.0" "$registry_url:0.3.0" >/dev/null 2>&1
+        "$registry_url:0.1.0" "$registry_url:0.2.0" "$registry_url:0.3.0" \
+        "$registry_url:0.4.0" >/dev/null 2>&1
     docker rmi "${local_images[@]}" >/dev/null 2>&1
     docker rm -f "$registry_name" >/dev/null 2>&1
     $had_registry || docker rmi registry:2 >/dev/null 2>&1
-    for dir in "${temp_dirs[@]}"; do
-        rm -f "$dir/docker-compose.yml" "$dir/config.toml" "$dir/deploy.env" \
+    for dir in ${temp_dirs[@]+"${temp_dirs[@]}"}; do
+        rm -f "$dir/docker-compose.yml" "$dir/config.toml" "$dir/deploy.env" "$dir/oss.env" \
             "$dir/deploy.sh" "$dir/bin/curl"
         rmdir "$dir/bin" "$dir" >/dev/null 2>&1
     done
@@ -77,7 +81,7 @@ start_registry() {
 }
 
 build_images() {
-    local client_version build_root
+    local client_version build_root old_dockerfile
     client_version=${CLIENT_VERSION:-$(curl -fsSL \
         https://github.com/allanpk716/agent-taskboard/releases/download/channel-stable/latest.json \
         | awk '/"client"[[:space:]]*:/ {in_client=1; next}
@@ -91,26 +95,46 @@ build_images() {
         --build-arg BUILD_TAGS=e2e_fixed_captcha -t taskboard:deploy-test-b "$build_root" >/dev/null
     docker build --build-arg APP_VERSION=9.9.9 --build-arg CLIENT_VERSION="$client_version" \
         --build-arg BUILD_TAGS=e2e_fixed_captcha -t taskboard:deploy-test-bad "$build_root" >/dev/null
+    old_dockerfile=$(mktemp -t taskboard-old-image-XXXXXX.Dockerfile)
+    cat > "$old_dockerfile" <<'EOF'
+FROM taskboard:deploy-test-b
+USER root
+RUN printf '#!/bin/sh\necho "taskboard: unknown command" >&2\nexit 2\n' \
+    > /app/taskboard && chmod +x /app/taskboard
+USER taskboard
+EOF
+    docker build -t taskboard:deploy-test-old - < "$old_dockerfile" >/dev/null
+    rm -f "$old_dockerfile"
 }
 
 push_images() {
     docker tag taskboard:deploy-test-a "$registry_url:0.1.0"
     docker tag taskboard:deploy-test-b "$registry_url:0.2.0"
     docker tag taskboard:deploy-test-bad "$registry_url:0.3.0"
+    docker tag taskboard:deploy-test-old "$registry_url:0.4.0"
     docker push "$registry_url:0.1.0" >/dev/null
     docker push "$registry_url:0.2.0" >/dev/null
     docker push "$registry_url:0.3.0" >/dev/null
+    docker push "$registry_url:0.4.0" >/dev/null
 }
 
 make_case() {
-    local name=$1 port=$2
-    local dir project
-    dir=$(mktemp -d -t "$name-$case_name-XXXXXX")
+    local name=$1 port=$2 backend=${3:-local}
+    local dir project env_file_block
+    dir=$(mktemp -d "$repo_root/.$name-$case_name-XXXXXX")
+    dir=$(cd "$dir" && pwd -P)
     project=$(basename "$dir")
-    project=${project,,}
+    project=${project#.}
+    project=$(printf '%s' "$project" | tr '[:upper:]' '[:lower:]')
     mkdir -p "$dir/bin"
     temp_dirs+=("$dir")
     projects+=("$project")
+
+    if [ "$backend" = oss ]; then
+        env_file_block='    env_file:
+      - path: ./oss.env
+        required: false'
+    fi
 
     cat > "$dir/docker-compose.yml" <<EOF
 services:
@@ -121,6 +145,7 @@ services:
     volumes:
       - taskboard-data:/app/data
       - ./config.toml:/app/config/config.toml:ro
+${env_file_block:-}
 volumes:
   taskboard-data:
 EOF
@@ -140,6 +165,20 @@ target = '/app/data/backups'
 [update]
 sources = []
 EOF
+    if [ "$backend" = oss ]; then
+        cat >> "$dir/config.toml" <<'EOF'
+
+[attachments]
+backend = 'oss'
+
+[attachments.oss]
+region = 'cn-hangzhou'
+bucket = 'urithub-files'
+prefix = 'agent-taskboard/test/'
+internal_endpoint = 'oss-cn-hangzhou-internal.aliyuncs.com'
+signing_host = ''
+EOF
+    fi
     cat > "$dir/deploy.env" <<EOF
 IMAGE_REPO=$registry_url
 VERIFY_TIMEOUT=10
@@ -153,7 +192,8 @@ EOF
 write_curl_wrapper() {
     local dir=$1 port=$2 project file real_curl
     project=$(basename "$dir")
-    project=${project,,}
+    project=${project#.}
+    project=$(printf '%s' "$project" | tr '[:upper:]' '[:lower:]')
     file=$(docker_path "$dir/docker-compose.yml")
     real_curl=$(command -v curl)
     cat > "$dir/bin/curl" <<EOF
@@ -207,7 +247,10 @@ start_case() {
     local dir=$1 port=$2 project file
     project=$(basename "$dir")
     file=$dir/docker-compose.yml
-    dc "$file" up -d --wait >/dev/null
+    if ! dc "$file" up -d --wait; then
+        dc "$file" logs --no-color
+        exit 1
+    fi
     dc "$file" exec -T taskboard /app/taskboard create-admin \
         -config /app/config/config.toml -username admin -password secret-pass-123 >/dev/null
 }
@@ -223,9 +266,17 @@ start_registry
 build_images
 push_images
 
+capability_output=$(docker run --rm --network none --entrypoint /app/taskboard \
+    "$registry_url:0.2.0" migrate-attachments -to __capability_probe__ 2>&1 || true)
+grep -q 'migrate-attachments 的 -to 只能是 oss 或 local' <<<"$capability_output" || {
+    echo "current image should expose migrate-attachments: $capability_output" >&2
+    exit 1
+}
+
 normal_dir=$(make_case normal "$normal_port")
 write_curl_wrapper "$normal_dir" "$normal_port"
 start_case "$normal_dir" "$normal_port"
+[ "$(health_version "$(basename "$normal_dir")" "$normal_dir/docker-compose.yml" "$normal_port")" = 0.1.0 ]
 (cd "$normal_dir" && PATH="$PWD/bin:$PATH" ./deploy.sh 0.2.0) >/dev/null
 [ "$(health_version "$(basename "$normal_dir")" "$normal_dir/docker-compose.yml" "$normal_port")" = 0.2.0 ]
 assert_image_tag "$normal_dir" "$registry_url:0.2.0"
@@ -262,5 +313,33 @@ fi
 [ "$(health_version "$(basename "$pullfail_dir")" "$pullfail_dir/docker-compose.yml" "$pullfail_port")" = 0.1.0 ]
 assert_image_tag "$pullfail_dir" "$registry_url:0.1.0"
 echo "pull failure passed"
+
+oss_missing_env_dir=$(make_case oss-missing-env "$oss_missing_env_port" oss)
+if deploy_output=$(cd "$oss_missing_env_dir" && ./deploy.sh 0.2.0 2>&1); then
+    echo "OSS deployment without oss.env should fail" >&2
+    exit 1
+fi
+grep -q 'missing oss.env in' <<<"$deploy_output" || {
+    echo "unexpected missing oss.env error: $deploy_output" >&2
+    exit 1
+}
+assert_image_tag "$oss_missing_env_dir" "$registry_url:0.1.0"
+echo "missing oss.env guard passed"
+
+oss_old_image_dir=$(make_case oss-old-image "$oss_old_image_port" oss)
+cat > "$oss_old_image_dir/oss.env" <<'EOF'
+OSS_ACCESS_KEY_ID=test-ak
+OSS_ACCESS_KEY_SECRET=test-sk
+EOF
+if deploy_output=$(cd "$oss_old_image_dir" && ./deploy.sh 0.4.0 2>&1); then
+    echo "OSS deployment to an image without OSS support should fail" >&2
+    exit 1
+fi
+grep -q 'does not support OSS attachments' <<<"$deploy_output" || {
+    echo "unexpected old-image capability error: $deploy_output" >&2
+    exit 1
+}
+assert_image_tag "$oss_old_image_dir" "$registry_url:0.1.0"
+echo "old image guard passed"
 
 echo "deploy script tests passed"
