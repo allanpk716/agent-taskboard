@@ -113,8 +113,8 @@ func TestRealOSSSmoke(t *testing.T) {
 	if response.StatusCode != http.StatusOK || string(downloaded) != content {
 		t.Fatalf("签名下载 status=%d body=%q, want 200 %q", response.StatusCode, downloaded, content)
 	}
-	if got := response.Header.Get("Content-Type"); got != "text/plain" {
-		t.Fatalf("签名下载 Content-Type = %q, want text/plain", got)
+	if got := response.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+		t.Fatalf("签名下载 Content-Type = %q, want text/plain*", got)
 	}
 
 	if err := store.Delete(ctx, attachmentID); err != nil {
