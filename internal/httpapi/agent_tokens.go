@@ -33,6 +33,7 @@ type agentTokenRow struct {
 	RevokedAt      *string `json:"revoked_at"`
 	DraftMode      string  `json:"draft_mode"`
 	LaunchSwitched bool    `json:"draft_mode_switched_by_launch"`
+	DirectSwitched bool    `json:"draft_mode_switched_to_direct"`
 }
 
 func (a *API) listAgentTokens(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +48,8 @@ func (a *API) listAgentTokens(w http.ResponseWriter, r *http.Request) {
 	rows := make([]agentTokenRow, 0, len(list))
 	for _, tk := range list {
 		row := agentTokenRow{ID: tk.ID, Name: tk.Name, DraftMode: tk.DraftMode,
-			CreatedAt: tk.CreatedAt.Format("2006-01-02T15:04:05Z07:00"), LaunchSwitched: tk.DraftModeLaunchSwitched}
+			CreatedAt:      tk.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			LaunchSwitched: tk.DraftModeLaunchSwitched, DirectSwitched: tk.DraftModeDirectSwitched}
 		if tk.Revoked {
 			at := tk.RevokedAt.Format("2006-01-02T15:04:05Z07:00")
 			row.RevokedAt = &at
@@ -108,7 +110,7 @@ func (a *API) issueAgentToken(w http.ResponseWriter, r *http.Request) {
 	}
 	draftMode := req.DraftMode
 	if draftMode == "" {
-		draftMode = "required"
+		draftMode = "direct"
 	}
 	if draftMode != "required" && draftMode != "direct" {
 		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidDraftMode, "draft_mode 只能是 required 或 direct", "")

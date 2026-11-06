@@ -182,13 +182,16 @@ type AgentTokenInfo struct {
 	Revoked   bool
 	// DraftModeLaunchSwitched 表示这个 token 是 #217 上线迁移改为必须走草稿的。
 	DraftModeLaunchSwitched bool
+	// DraftModeDirectSwitched 表示这个 token 是 ADR 0017 上线迁移改为可直接发的。
+	DraftModeDirectSwitched bool
 }
 
 // ListAgentTokens 列出成员名下的全部 Agent（含已撤销，新→旧），供个人设置页
 // 展示与撤销；不返回明文 token（只在签发时出现一次）。
 func (m *Manager) ListAgentTokens(ctx context.Context, member Member) ([]AgentTokenInfo, error) {
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT id, name, draft_mode, created_at, revoked_at, draft_mode_switched_by_launch
+		SELECT id, name, draft_mode, created_at, revoked_at,
+		       draft_mode_switched_by_launch, draft_mode_switched_to_direct
 		FROM agent_tokens
 		WHERE member_id = ? ORDER BY id DESC`, member.ID)
 	if err != nil {
@@ -202,11 +205,14 @@ func (m *Manager) ListAgentTokens(ctx context.Context, member Member) ([]AgentTo
 			createdAt      string
 			revokedAt      sql.NullString
 			launchSwitched int
+			directSwitched int
 		)
-		if err := rows.Scan(&info.ID, &info.Name, &info.DraftMode, &createdAt, &revokedAt, &launchSwitched); err != nil {
+		if err := rows.Scan(&info.ID, &info.Name, &info.DraftMode, &createdAt, &revokedAt,
+			&launchSwitched, &directSwitched); err != nil {
 			return nil, err
 		}
 		info.DraftModeLaunchSwitched = launchSwitched == 1
+		info.DraftModeDirectSwitched = directSwitched == 1
 		if info.CreatedAt, err = time.ParseInLocation(time.RFC3339Nano, createdAt, time.Local); err != nil {
 			return nil, err
 		}

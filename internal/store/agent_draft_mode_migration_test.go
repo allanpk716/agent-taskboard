@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func Test迁移把已有AgentToken改为必须走草稿且重启不改回手动设置(t *testing.T) {
+func Test老库连过两次上线迁移后AgentToken可直接发且重启不改回手动设置(t *testing.T) {
 	dir := t.TempDir()
 	db, err := sql.Open("sqlite", store.FileURI(filepath.Join(dir, "taskboard.db")))
 	if err != nil {
@@ -28,7 +28,7 @@ func Test迁移把已有AgentToken改为必须走草稿且重启不改回手动�
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if strings.HasPrefix(name, "0037_") {
+		if strings.HasPrefix(name, "0037_") || strings.HasPrefix(name, "0046_") {
 			continue
 		}
 		body, err := os.ReadFile(filepath.Join("migrations", name))
@@ -66,9 +66,11 @@ func Test迁移把已有AgentToken改为必须走草稿且重启不改回手动�
 		t.Fatal(err)
 	}
 	var mode string
+	var directFlag int
 	if err := s.DB.QueryRowContext(context.Background(),
-		`SELECT draft_mode FROM agent_tokens WHERE id=1`).Scan(&mode); err != nil || mode != "required" {
-		t.Fatalf("迁移后 draft_mode = %q (err=%v), 想 required", mode, err)
+		`SELECT draft_mode, draft_mode_switched_to_direct FROM agent_tokens WHERE id=1`).Scan(&mode, &directFlag); err != nil ||
+		mode != "direct" || directFlag != 1 {
+		t.Fatalf("迁移后 draft_mode/标记 = %q/%d (err=%v), 想 direct/1", mode, directFlag, err)
 	}
 
 	if _, err := s.DB.Exec(`UPDATE agent_tokens SET draft_mode='direct' WHERE id=1`); err != nil {

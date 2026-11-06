@@ -9,7 +9,7 @@ import {
   fetchDrafts,
   fetchInbox,
   fetchSession,
-  markDraftsIntroSeen,
+  markDraftsDirectIntroSeen,
   type Me,
 } from './memberApi'
 import { InboxPage } from './InboxPage'
@@ -59,7 +59,7 @@ function pageTitle(route: Route, newTicketTitle: string): string {
   }
 }
 
-function DraftsIntroDialog({ onDone }: { onDone: () => void }) {
+function DraftsDirectIntroDialog({ onDone }: { onDone: () => void }) {
   const [agents, setAgents] = useState<string[] | null>(null)
 
   useEffect(() => {
@@ -67,7 +67,7 @@ function DraftsIntroDialog({ onDone }: { onDone: () => void }) {
       .then(({ tokens }) =>
         setAgents(
           tokens
-            .filter((token) => !token.revoked_at && token.draft_mode_switched_by_launch)
+            .filter((token) => !token.revoked_at && token.draft_mode_switched_to_direct)
             .map((token) => token.name),
         ),
       )
@@ -76,7 +76,7 @@ function DraftsIntroDialog({ onDone }: { onDone: () => void }) {
 
   async function close(goSettings: boolean) {
     try {
-      await markDraftsIntroSeen()
+      await markDraftsDirectIntroSeen()
     } finally {
       onDone()
       if (goSettings) nav('/me')
@@ -86,7 +86,8 @@ function DraftsIntroDialog({ onDone }: { onDone: () => void }) {
   return (
     <Modal title="工单板已更新" onClose={() => void close(false)}>
       <div className="hint">
-        你的下列 Agent 已改为必须走草稿，它们写的建单、回复和说明修订会先存成草稿，等你确认后发出。
+        你的下列 Agent 已改为可直接发：它们写好建单、回复和说明修订后，会先在你电脑上生成一份预览
+        md 文件并把路径告诉你，你确认后才提交。
       </div>
       <div className="draft-agent-list">
         {(agents ?? []).map((name) => (
@@ -96,7 +97,7 @@ function DraftsIntroDialog({ onDone }: { onDone: () => void }) {
         ))}
         {agents !== null && agents.length === 0 && <span className="hint">没有启用的 Agent</span>}
       </div>
-      <div className="hint">要改回可直接发，去「我的 → Agent」的草稿开关。</div>
+      <div className="hint">想继续用平台草稿，去「我的 → Agent」改回「必须走草稿」。</div>
       <div className="mrow">
         <button className="btn ghost" onClick={() => void close(true)}>
           去看 Agent 设置
@@ -128,7 +129,7 @@ export function MemberApp() {
     fetchSession()
       .then((s) => {
         setMe(s.viewer.member)
-        setDraftIntro(s.notices?.includes('drafts_intro') ?? false)
+        setDraftIntro(s.notices?.includes('drafts_direct_intro') ?? false)
       })
       .catch((err) => {
         if (err instanceof ApiError && err.status === 401) {
@@ -190,7 +191,7 @@ export function MemberApp() {
     : `/tickets${detailQuery ? '?' + detailQuery : ''}`
   const bell = <NotificationBell tier={tier} onNavigate={() => window.dispatchEvent(new Event('tb:invalidate'))} />
   const intro = draftIntro && (
-    <DraftsIntroDialog
+    <DraftsDirectIntroDialog
       onDone={() => {
         setDraftIntro(false)
         window.dispatchEvent(new Event('tb:invalidate'))

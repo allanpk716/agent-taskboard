@@ -16,11 +16,13 @@ func TestAgent说明书包含草稿定稿文案(t *testing.T) {
 	}
 	guide := string(readAll(t, res))
 	for _, want := range []string{
-		"## 草稿",
-		"新签发的 token 和上线前已有的 token，都是必须走草稿",
+		"## 先给主人审核再提交",
+		"新签发的 token 默认可直接发",
+		"### 本地预览（可直接发）",
+		"`confirm_through_seq`",
 		"`409 draft_pending`",
 		"草稿的每一版都会随正式内容存档",
-		"访客 Agent 不受草稿限制",
+		"访客 Agent 不受这些限制",
 	} {
 		if !strings.Contains(guide, want) {
 			t.Errorf("Agent 说明书缺少 %q", want)

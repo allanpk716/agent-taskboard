@@ -527,6 +527,7 @@ func (a *API) readTicket(w http.ResponseWriter, r *http.Request, ref string) {
 // （错误 hint 里给 NAS 路径示例时用）。
 func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, ref string, err error) {
 	var conflict *tickets.RevisionConflictError
+	var changed *tickets.TicketChangedError
 	var invisible *tickets.TicketInvisibleError
 	var crossTicket *tickets.GuestLinkScopeError
 	switch {
@@ -625,6 +626,10 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, ref strin
 		WriteErrorExtra(w, http.StatusConflict, CodeRevisionConflict,
 			conflict.Error(), "重新读取工单，合并修改后再提交",
 			map[string]any{"current_revision": conflict.CurrentRevision})
+	case errors.As(err, &changed):
+		WriteErrorExtra(w, http.StatusConflict, CodeTicketChanged,
+			changed.Error(), "确认工单新变化后带 confirm_through_seq 重发",
+			map[string]any{"new_events": changed.NewEvents, "through_seq": changed.ThroughSeq})
 	case errors.Is(err, tickets.ErrEmptyReply):
 		WriteError(w, http.StatusUnprocessableEntity, CodeEmptyReply, err.Error(), "写正文，或在 attachment_ids / 正文里引用至少一个附件")
 	case errors.Is(err, tickets.ErrNotBriefOwner):

@@ -43,14 +43,14 @@ test('Agent 表格显示草稿模式，切到可直接发前需要确认', async
   expect(((await session.json()) as { viewer: { agent: { draft_mode: string } } }).viewer.agent.draft_mode).toBe('direct')
 })
 
-test('签发 Agent 时默认必须走草稿', async ({ page, request }) => {
+test('签发 Agent 时默认可直接发', async ({ page, request }) => {
   const run = Date.now()
   await login(page, ADMIN)
   await page.goto('/me')
   await page.getByRole('button', { name: '＋ 生成新 token' }).click()
-  await page.locator('#tk-name').fill(`必须草稿${run}`)
-  await expect(page.getByRole('radio', { name: /必须走草稿（推荐）/ })).toBeChecked()
-  await expect(page.getByRole('radio', { name: '可直接发' })).not.toBeChecked()
+  await page.locator('#tk-name').fill(`直接发${run}`)
+  await expect(page.getByRole('radio', { name: /可直接发（推荐）/ })).toBeChecked()
+  await expect(page.getByRole('radio', { name: '必须走草稿' })).not.toBeChecked()
   await page.getByRole('button', { name: '生成', exact: true }).click()
   const onboarding = page.locator('[data-onboarding-preview]')
   await expect(onboarding).toContainText('setx TASKBOARD_TOKEN')
@@ -58,7 +58,7 @@ test('签发 Agent 时默认必须走草稿', async ({ page, request }) => {
   const session = await request.get('/api/v1/session', {
     headers: { Authorization: `Bearer ${token}` },
   })
-  expect(((await session.json()) as { viewer: { agent: { draft_mode: string } } }).viewer.agent.draft_mode).toBe('required')
+  expect(((await session.json()) as { viewer: { agent: { draft_mode: string } } }).viewer.agent.draft_mode).toBe('direct')
 })
 
 test('新签发的Agent不触发草稿上线提示', async ({ page, request }) => {

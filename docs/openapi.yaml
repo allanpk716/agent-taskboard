@@ -177,6 +177,7 @@ paths:
       description: |
         只传改动字段；base_revision 必填。非模板工单改 brief_md，模板工单改 fields。
         draft_mode=required 的成员 Agent 返回 202 草稿。
+        confirm_through_seq 可选：语义与回复接口一致，不带时行为不变。
       parameters:
         - { name: id, in: path, required: true, schema: { type: string }, description: 工单编号或全局序号 }
         - { name: Idempotency-Key, in: header, schema: { type: string } }
@@ -193,6 +194,7 @@ paths:
                 fields: { type: object, additionalProperties: { type: string } }
                 attachment_ids: { type: array, items: { type: string } }
                 base_revision: { type: integer, minimum: 1 }
+                confirm_through_seq: { type: integer, minimum: 0, description: 可选乐观序号；工单在该序号之后有新事件时 409 ticket_changed }
       responses:
         "200":
           description: "{revision}"
@@ -222,6 +224,8 @@ paths:
       description: |
         正文与附件至少一项：body_md 可为空，但正文里的 att: 引用或 attachment_ids 必须有内容。
         deliver 仅指派人一方可用。draft_mode=required 的成员 Agent 返回 202 草稿。
+        confirm_through_seq 可选：工单时间线在该序号之后还有事件时返回 409 ticket_changed
+        （附 new_events 与 through_seq，与发出草稿时一致）；不带时行为不变。
       parameters:
         - { name: id, in: path, required: true, schema: { type: string }, description: 工单编号或全局序号 }
         - { name: Idempotency-Key, in: header, schema: { type: string } }
@@ -236,6 +240,7 @@ paths:
                 attachment_ids: { type: array, items: { type: string }, description: att_N 数组 }
                 deliver: { type: boolean, default: false }
                 author_name: { type: string, description: 仅访客凭证采纳；成员署名由凭证决定 }
+                confirm_through_seq: { type: integer, minimum: 0, description: 可选乐观序号；工单在该序号之后有新事件时 409 ticket_changed }
       responses:
         "201":
           description: "{reply_no, timeline_seq, deliver, author, waiting_on}"
@@ -629,7 +634,7 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     Conflict:
-      description: 状态冲突、乐观锁冲突或幂等请求仍在处理
+      description: 状态冲突、乐观锁冲突、ticket_changed 或幂等请求仍在处理
       content:
         application/json:
           schema:
