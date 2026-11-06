@@ -233,10 +233,14 @@ func (s *Server) Serve(ln net.Listener) error {
 	return err
 }
 
-// attachmentJanitorInterval 是附件清除与对账任务的运行间隔（真实时钟；
-// 24 小时的判定用注入时钟，测试里直接调 CleanupUnreferenced /
-// ReconcileStorage，不睡真实时间）。
+// attachmentJanitorInterval 是待用附件清除任务的运行间隔（真实时钟；
+// 24 小时的判定用注入时钟，测试里直接调 CleanupUnreferenced，不睡真实时间）。
 const attachmentJanitorInterval = 10 * time.Minute
+
+// attachmentReconcileInterval 是后端孤儿对象对账的最短间隔：启动后第一轮
+// 清除时对账一次，之后每日一次，避免 OSS 后端每 10 分钟列举一遍整个前缀。
+// 测试里直接调 ReconcileStorage。
+const attachmentReconcileInterval = 24 * time.Hour
 
 // archiveJanitorInterval 是归档/瘦身暂存包清除任务的运行间隔（真实时钟；
 // 7 天判定用注入时钟，测试里直接调 CleanupExpired，不睡真实时间）。
@@ -257,17 +261,22 @@ func (s *Server) runArchiveJanitor(done <-chan struct{}) {
 	}
 }
 
-// runAttachmentJanitor 周期清除未引用的待用附件，再对账清理后端孤儿对象。
+// runAttachmentJanitor 周期清除未引用的待用附件，并每日对账清理后端孤儿对象。
 // 任一步失败只影响本轮（下一轮再试），不影响服务。
 func (s *Server) runAttachmentJanitor(done <-chan struct{}) {
 	ticker := time.NewTicker(attachmentJanitorInterval)
 	defer ticker.Stop()
+	var lastReconcile time.Time // 零值：启动后第一轮就对账，部署频繁也不会一直轮不到
 	for {
 		select {
 		case <-done:
 			return
 		case <-ticker.C:
 			_, _ = s.Atts.CleanupUnreferenced(context.Background())
+			if time.Since(lastReconcile) < attachmentReconcileInterval {
+				continue
+			}
+			lastReconcile = time.Now()
 			if _, err := s.Atts.ReconcileStorage(context.Background()); err != nil {
 				log.Printf("附件对账失败：%v", err)
 			}
