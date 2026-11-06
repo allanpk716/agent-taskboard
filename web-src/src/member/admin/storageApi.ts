@@ -19,6 +19,7 @@ export interface StorageTicketStat {
 export interface StorageStats {
   database_bytes: number
   attachments_bytes: number
+  attachments_backend?: string
   backups_bytes: number
   /** 按当前 N 可瘦身的工单数（口径与瘦身预览一致）。 */
   slimmable_ticket_count: number

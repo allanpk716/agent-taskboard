@@ -429,6 +429,12 @@
   color: #2a5db0;
   text-decoration: none;
 }
+button.att {
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
 .att-link {
   color: #2a5db0;
 }

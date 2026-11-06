@@ -92,19 +92,21 @@ func distinctSortedSlimPackages(tickets []TicketSummary) []string {
 
 // Service 提供归档预览、生成、下载与暂存清除。
 type Service struct {
-	db             *sql.DB
-	clk            clock.Clock
-	dataDir        string
-	attachmentsDir string
-	backupDir      string
-	atts           *attachments.Manager
-	generateMu     sync.Mutex
+	db         *sql.DB
+	clk        clock.Clock
+	dataDir    string
+	backupDir  string
+	mirror     *attachments.BackupMirror
+	atts       *attachments.Manager
+	objects    attachments.ObjectStorage
+	generateMu sync.Mutex
 }
 
 // NewService 建归档服务。
-func NewService(db *sql.DB, dataDir, attachmentsDir, backupDir string, atts *attachments.Manager, c clock.Clock) *Service {
-	return &Service{db: db, clk: c, dataDir: dataDir, attachmentsDir: attachmentsDir,
-		backupDir: backupDir, atts: atts}
+func NewService(db *sql.DB, dataDir, backupDir string, atts *attachments.Manager,
+	objects attachments.ObjectStorage, c clock.Clock) *Service {
+	return &Service{db: db, clk: c, dataDir: dataDir,
+		backupDir: backupDir, mirror: attachments.NewBackupMirror(backupDir), atts: atts, objects: objects}
 }
 
 func (s *Service) stageDir() string { return filepath.Join(s.dataDir, "archive-packages") }

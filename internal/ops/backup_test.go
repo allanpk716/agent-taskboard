@@ -135,6 +135,16 @@ func Test每月一日的那份备份是monthly(t *testing.T) {
 func Test附件镜像同步不删除并统计新增文件数(t *testing.T) {
 	target := t.TempDir()
 	b, clk, dataDir := newBackups(t, target)
+	st, err := store.Open(dataDir)
+	if err != nil {
+		t.Fatalf("打开库失败：%v", err)
+	}
+	defer st.Close()
+	if _, err := st.DB.Exec(`INSERT INTO tickets (seq, number, kind, title, created_at)
+		VALUES (1, '20261016-001', 'task', '镜像工单', ?)`,
+		clk.Now().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
 	atts := filepath.Join(dataDir, "attachments")
 	writeFile := func(name, content string) {
 		t.Helper()
@@ -148,6 +158,13 @@ func Test附件镜像同步不删除并统计新增文件数(t *testing.T) {
 
 	writeFile("1", "one")
 	writeFile("2", "two")
+	if _, err := st.DB.Exec(`INSERT INTO attachments
+		(ticket_seq, filename, size, state, attached_to, uploaded_at, claimed_at)
+		VALUES (1, ?, 3, 'attached', '说明', ?, ?), (1, ?, 3, 'attached', '说明', ?, ?)`,
+		"one.txt", clk.Now().Format(time.RFC3339Nano), clk.Now().Format(time.RFC3339Nano),
+		"two.txt", clk.Now().Format(time.RFC3339Nano), clk.Now().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
 	rec, err := b.BackupNow(context.Background(), ops.KindDaily)
 	if err != nil {
 		t.Fatal(err)
@@ -162,6 +179,12 @@ func Test附件镜像同步不删除并统计新增文件数(t *testing.T) {
 
 	// 第二次只同步新文件。
 	writeFile("3", "three")
+	if _, err := st.DB.Exec(`INSERT INTO attachments
+		(ticket_seq, filename, size, state, attached_to, uploaded_at, claimed_at)
+		VALUES (1, 'three.txt', 5, 'attached', '说明', ?, ?)`,
+		clk.Now().Format(time.RFC3339Nano), clk.Now().Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
 	clk.Advance(time.Hour)
 	rec, err = b.BackupNow(context.Background(), ops.KindDaily)
 	if err != nil {
@@ -173,6 +196,9 @@ func Test附件镜像同步不删除并统计新增文件数(t *testing.T) {
 
 	// 主存储删除后同步不删镜像；归档移除才会删除对应镜像。
 	if err := os.Remove(filepath.Join(atts, "1")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB.Exec(`DELETE FROM attachments WHERE id = 1`); err != nil {
 		t.Fatal(err)
 	}
 	clk.Advance(time.Hour)

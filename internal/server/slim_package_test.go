@@ -259,6 +259,34 @@ func Test瘦身预览同样列出未发出的草稿(t *testing.T) {
 	}
 }
 
+func Test本地瘦身包下载支持断点续传(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	setStorageClock(t, s, 2026, time.June, 2)
+	number := mustCreateTicket(t, s, admin, "本地瘦身续传")
+	uploaded := mustUploadAttachment(t, s, admin, number, "服务日志.log", []byte("local slim content"))
+	if res := revise(t, s, admin, number, map[string]any{
+		"brief_md":       "见附件。",
+		"attachment_ids": []string{uploaded.ID},
+		"base_revision":  1,
+	}); res.StatusCode != http.StatusOK {
+		t.Fatalf("挂附件状态码 = %d, 想 200", res.StatusCode)
+	}
+	if res := closeTicket(t, s, admin, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d, 想 200", res.StatusCode)
+	}
+	s.Clock().Set(time.Date(2026, time.October, 30, 10, 0, 0, 0, clock.Beijing))
+	admin = s.Login("陈工", "secret-pass")
+
+	var pkg slimPackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/slim/packages",
+		map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, &pkg); res.StatusCode != http.StatusCreated {
+		t.Fatalf("生成瘦身包状态码 = %d, 想 201", res.StatusCode)
+	}
+	assertPackageDownloadResumable(t, s, admin, pkg.DownloadURL)
+}
+
 func Test生成瘦身包包含清单与校验和并写管理操作(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")

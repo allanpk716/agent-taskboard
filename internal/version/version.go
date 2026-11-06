@@ -18,6 +18,13 @@ var Server = "0.0.0"
 // 服务端本机当前代管版本记录在 data_dir/client/client.json。
 var Client = "0.0.0"
 
+// Features 是这个二进制支持的能力名，每行一个，供部署脚本等机器读取
+// （taskboard version -features）。只增不减：老脚本靠它判断新二进制是否
+// 支持某项功能。
+var Features = []string{
+	"oss-attachments",
+}
+
 // parse 把 X.Y.Z 解析成三元组；非法段按 0 处理。
 func parse(v string) [3]int {
 	var out [3]int

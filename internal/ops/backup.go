@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/guestlinkkey"
 	"github.com/allanpk716/agent-taskboard/internal/store"
@@ -138,6 +139,12 @@ type Backups struct {
 	started  bool
 	nextDue  time.Time
 	notifier BackupNotifier
+
+	// attachmentStorage 是附件主存储；生产装配注入当前后端，独立调用
+	// Backups 时懒加载本地实现以保持旧用法可用。
+	attachmentStorage attachments.Storage
+	// objectStorage 是当前后端的非附件对象接口；只有 OSS 后端非空。
+	objectStorage attachments.ObjectStorage
 }
 
 // BackupNotifier 是备份模块向系统通知模块发出的告警接口；测试可注入假实现。
@@ -150,6 +157,16 @@ type BackupNotifier interface {
 
 // SetNotifier 注入系统通知实现；不注入时备份照常运行，只写记录和日志。
 func (b *Backups) SetNotifier(n BackupNotifier) { b.notifier = n }
+
+// SetAttachmentStorage 注入附件对象后端。备份镜像从这里列出并读出对象。
+func (b *Backups) SetAttachmentStorage(storage attachments.Storage) {
+	b.attachmentStorage = storage
+}
+
+// SetObjectStorage 注入库备份等非附件对象后端。本地后端不传。
+func (b *Backups) SetObjectStorage(objects attachments.ObjectStorage) {
+	b.objectStorage = objects
+}
 
 // NewBackups 建备份管理器。daily_at 写错（不是 HH:MM）会返回错误。
 func NewBackups(db *sql.DB, dataDir string, opts BackupOptions, c clock.Clock) (*Backups, error) {
@@ -182,9 +199,6 @@ func (b *Backups) TargetDir() string {
 	}
 	return filepath.Join(b.dataDir, "backups")
 }
-
-// attachmentsDir 返回附件主存储目录（data_dir\attachments）。
-func (b *Backups) attachmentsDir() string { return filepath.Join(b.dataDir, "attachments") }
 
 // Now 立刻做一次备份（taskboard backup、定时任务和更新前备份共用）：
 // 导出（VACUUM INTO）→ 附件增量镜像（同步不删除）→ 对副本 PRAGMA integrity_check
@@ -227,7 +241,7 @@ func (b *Backups) BackupNow(ctx context.Context, kind Kind) (Record, error) {
 		return b.fallbackLocal(ctx, rec, staging, localDir, name, err)
 	}
 
-	added, err := b.syncMirror()
+	added, err := b.syncMirror(ctx)
 	if err != nil {
 		_ = os.Remove(filepath.Join(b.opts.Target, name))
 		return b.fallbackLocal(ctx, rec, staging, localDir, name, err)
@@ -238,6 +252,11 @@ func (b *Backups) BackupNow(ctx context.Context, kind Kind) (Record, error) {
 	}
 	rec.FilesAdded = added
 	rec.IntegrityOK = true
+	if err := b.uploadBackupObjects(ctx, filepath.Join(b.opts.Target, name), name); err != nil {
+		// OSS 上传失败不算备份失败：本机副本已经校验通过，照常记成功并写
+		// 日志，下一轮备份时由 syncRemoteBackups 补传。
+		log.Printf("上传备份 %s 到 OSS 失败，本机副本已保留，下一轮补传：%v", name, err)
+	}
 
 	episodeStart, hadFailure := b.failureEpisodeStart(ctx)
 	if err := b.insertRecord(ctx, rec); err != nil {
@@ -298,7 +317,7 @@ func (b *Backups) backupLocalOnly(ctx context.Context, now time.Time, kind Kind)
 		rec.Size = info.Size()
 	}
 
-	added, err := b.syncMirror()
+	added, err := b.syncMirror(ctx)
 	if err != nil {
 		return b.fail(ctx, rec, err)
 	}
@@ -318,7 +337,9 @@ func (b *Backups) backupLocalOnly(ctx context.Context, now time.Time, kind Kind)
 		return b.fail(ctx, rec, fmt.Errorf("副本 %s 完整性校验未通过", rec.Filename))
 	}
 	rec.IntegrityOK = true
-
+	if err := b.uploadBackupObjects(ctx, path, rec.Filename); err != nil {
+		log.Printf("上传备份 %s 到 OSS 失败，本机副本已保留，下一轮补传：%v", rec.Filename, err)
+	}
 	if err := b.insertRecord(ctx, rec); err != nil {
 		return rec, err
 	}
@@ -347,6 +368,53 @@ func (b *Backups) writeTarget(ctx context.Context, staging, name string) error {
 			return err
 		}
 		return fmt.Errorf("目标副本 %s 完整性校验未通过", name)
+	}
+	return nil
+}
+
+// uploadBackupObjects 在完整性检查通过后，把库副本和访客链接密钥上传到
+// OSS 的 backups/ 目录。附件镜像永远留在本地备份目标，不上传。
+func (b *Backups) uploadBackupObjects(ctx context.Context, dbPath, name string) error {
+	if b.objectStorage == nil {
+		return nil
+	}
+	file, err := os.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("读要上传的库副本 %s 失败：%w", dbPath, err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return fmt.Errorf("读要上传的库副本 %s 大小失败：%w", dbPath, err)
+	}
+	dbErr := b.objectStorage.PutObject(ctx, attachments.BackupRelKey(name), file, info.Size(),
+		attachments.PutMeta{ContentType: "application/octet-stream"})
+	closeErr := file.Close()
+	if dbErr != nil {
+		return fmt.Errorf("上传库副本 %s 到 OSS 失败：%w", name, dbErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("关闭库副本 %s 失败：%w", dbPath, closeErr)
+	}
+
+	keyPath := filepath.Join(filepath.Dir(dbPath), guestlinkkey.FileName)
+	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("读访客链接加密密钥 %s 失败：%w", keyPath, err)
+	}
+	key, err := os.Open(keyPath)
+	if err != nil {
+		return fmt.Errorf("读访客链接加密密钥 %s 失败：%w", keyPath, err)
+	}
+	defer key.Close()
+	keyInfo, err := key.Stat()
+	if err != nil {
+		return fmt.Errorf("读访客链接加密密钥 %s 大小失败：%w", keyPath, err)
+	}
+	if err := b.objectStorage.PutObject(ctx, attachments.BackupRelKey(guestlinkkey.FileName),
+		key, keyInfo.Size(), attachments.PutMeta{ContentType: "application/octet-stream"}); err != nil {
+		return fmt.Errorf("上传访客链接加密密钥到 OSS 失败：%w", err)
 	}
 	return nil
 }
@@ -474,38 +542,52 @@ func fileExists(path string) bool {
 // syncMirror 把附件主存储增量镜像到目标下的 attachments\，同步不删除：
 // 已存在且同大小的文件跳过（附件写入后不再修改；大小不一致说明上次拷贝
 // 没写完整，重拷一份）。返回本次新增的文件数。
-func (b *Backups) syncMirror() (int, error) {
-	src := b.attachmentsDir()
-	dst := filepath.Join(b.TargetDir(), "attachments")
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, nil // 还没有任何附件
+func (b *Backups) syncMirror(ctx context.Context) (int, error) {
+	if b.attachmentStorage == nil {
+		local, err := attachments.NewLocalStorage(b.dataDir)
+		if err != nil {
+			return 0, err
 		}
-		return 0, fmt.Errorf("读附件目录 %s 失败：%w", src, err)
+		b.attachmentStorage = local
 	}
-	if err := os.MkdirAll(dst, 0o755); err != nil {
-		return 0, fmt.Errorf("连不上备份目标 %s：%w", dst, err)
+	mirror := attachments.NewBackupMirror(b.TargetDir())
+	if err := mirror.Ensure(); err != nil {
+		return 0, err
+	}
+	records, err := attachmentRecords(b.db)
+	if err != nil {
+		return 0, err
 	}
 	added := 0
-	for _, e := range entries {
-		if e.IsDir() {
+	for _, record := range records {
+		// 先看镜像：镜像写入是原子的（.part 改名），存在即完整，不必再问
+		// 后端要大小。同步不删除；归档移除会在事务提交后单独删除对应镜像。
+		if _, mirrored := mirror.Stat(record.id); mirrored {
 			continue
 		}
-		from := filepath.Join(src, e.Name())
-		to := filepath.Join(dst, e.Name())
-		if info, err := os.Stat(to); err == nil {
-			if srcInfo, serr := e.Info(); serr == nil && info.Size() == srcInfo.Size() {
-				// 已镜像过。同步不删除；归档移除会在事务提交后单独删除对应镜像。
-				continue
-			}
-		}
-		if err := copyFile(from, to); err != nil {
+		if err := b.copyAttachmentToMirror(ctx, mirror, record.id); err != nil {
 			return added, err
 		}
 		added++
 	}
 	return added, nil
+}
+
+// copyAttachmentToMirror 从当前后端读一个附件并写入镜像。独立成小函数让
+// defer 在每个附件复制完成后立即释放后端句柄，而不是拖到整轮同步结束。
+func (b *Backups) copyAttachmentToMirror(ctx context.Context, mirror *attachments.BackupMirror, id int64) error {
+	src, size, err := b.attachmentStorage.Open(ctx, id)
+	if err != nil {
+		return fmt.Errorf("从当前后端读附件 att_%d 失败：%w", id, err)
+	}
+	defer src.Close()
+	if size < 0 {
+		return fmt.Errorf("附件 att_%d 对象大小无效：%d", id, size)
+	}
+	if err := mirror.Write(id, src, size); err != nil {
+		return err
+	}
+	return nil
 }
 
 // syncGuestLinkKey 把数据目录里的访客链接加密密钥文件复制到备份目录（原子替换），
@@ -553,15 +635,105 @@ func (b *Backups) sweepAndRotate(dir, skip string) {
 		byKind[Kind(m[3])] = append(byKind[Kind(m[3])], name)
 	}
 	keep := map[Kind]int{KindDaily: b.opts.KeepDaily, KindMonthly: b.opts.KeepMonthly, KindPreupdate: b.opts.KeepPreupdate}
+	localNames := map[string]bool{}
 	for kind, names := range byKind {
 		// 文件名里的时间戳保证字典序就是时间序。
 		sort.Sort(sort.Reverse(sort.StringSlice(names)))
+		for _, name := range names {
+			localNames[name] = true
+		}
 		if len(names) > keep[kind] {
 			for _, name := range names[keep[kind]:] {
-				_ = os.Remove(filepath.Join(dir, name))
+				if err := os.Remove(filepath.Join(dir, name)); err != nil {
+					log.Printf("轮换删除本地备份 %s 失败：%v", name, err)
+					continue
+				}
+				b.deleteRemoteBackup(name)
 			}
 		}
 	}
+	b.syncRemoteBackups(context.Background())
+}
+
+func (b *Backups) deleteRemoteBackup(name string) {
+	if b.objectStorage == nil {
+		return
+	}
+	if err := b.objectStorage.DeleteObject(context.Background(), attachments.BackupRelKey(name)); err != nil {
+		log.Printf("轮换删除 OSS 备份 %s 失败，下一轮重试：%v", name, err)
+	}
+}
+
+// syncRemoteBackups 对账 OSS 备份对象：库记录成功且本地文件仍在的副本，
+// OSS 上缺了就补传（含访客链接密钥，降级到本机的副本同样适用）；本地已经
+// 轮换掉的副本，OSS 上还留着的补删，不区分当初记录在哪个位置。任一方向
+// 失败都只写日志，下一轮备份再试。
+func (b *Backups) syncRemoteBackups(ctx context.Context) {
+	if b.objectStorage == nil {
+		return
+	}
+	objects, err := b.objectStorage.ListObjects(ctx, attachments.BackupRelKey(""))
+	if err != nil {
+		log.Printf("列举 OSS 备份失败，跳过本轮异地对账：%v", err)
+		return
+	}
+	remoteNames := make(map[string]bool, len(objects))
+	for _, object := range objects {
+		name := strings.TrimPrefix(object.RelKey, "backups/")
+		if backupNameRe.MatchString(name) {
+			remoteNames[name] = true
+		}
+	}
+
+	uploaded := make(map[string]bool)
+	rows, err := b.db.QueryContext(ctx, `
+		SELECT DISTINCT filename FROM backup_records WHERE integrity_ok = 1 AND filename != ''`)
+	if err != nil {
+		log.Printf("查询待补传的 OSS 备份失败：%v", err)
+	} else {
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				log.Printf("读取待补传的 OSS 备份失败：%v", err)
+				break
+			}
+			uploaded[name] = true
+		}
+		if err := rows.Err(); err != nil {
+			log.Printf("读取待补传的 OSS 备份失败：%v", err)
+		}
+		rows.Close()
+	}
+	for name := range uploaded {
+		if remoteNames[name] {
+			continue
+		}
+		path, exists := b.localBackupPath(name)
+		if !exists {
+			continue // 本地已轮换删除的旧备份不复活。
+		}
+		if err := b.uploadBackupObjects(ctx, path, name); err != nil {
+			log.Printf("补传 OSS 备份 %s 失败，下一轮再试：%v", name, err)
+		}
+	}
+	for name := range remoteNames {
+		if _, exists := b.localBackupPath(name); exists {
+			continue
+		}
+		b.deleteRemoteBackup(name)
+	}
+}
+
+// localBackupPath 返回一个备份名当前还在本机的副本路径；目标目录和本机
+// 兜底目录都算，找不到表示它已被轮换删除。
+func (b *Backups) localBackupPath(name string) (string, bool) {
+	for _, dir := range []string{b.TargetDir(), filepath.Join(b.dataDir, "backups")} {
+		path := filepath.Join(dir, name)
+		if fileExists(path) {
+			return path, true
+		}
+	}
+	return "", false
 }
 
 // verifyCopy 对一个数据库副本执行 PRAGMA integrity_check；返回是否通过。
@@ -586,15 +758,19 @@ func copyFile(from, to string) error {
 		return fmt.Errorf("读 %s 失败：%w", from, err)
 	}
 	defer in.Close()
+	return copyReaderTo(in, to)
+}
+
+func copyReaderTo(src io.Reader, to string) error {
 	tmp := to + ".part"
 	out, err := os.Create(tmp)
 	if err != nil {
 		return fmt.Errorf("写 %s 失败：%w", to, err)
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	if _, err := io.Copy(out, src); err != nil {
 		out.Close()
 		_ = os.Remove(tmp)
-		return fmt.Errorf("拷贝 %s → %s 失败：%w", from, to, err)
+		return fmt.Errorf("写 %s 失败：%w", to, err)
 	}
 	if err := out.Close(); err != nil {
 		_ = os.Remove(tmp)

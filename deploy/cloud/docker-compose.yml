@@ -8,6 +8,10 @@ services:
     volumes:
       - taskboard-data:/app/data
       - ./config.toml:/app/config/config.toml:ro
+    # local 后端可以没有 oss.env；required:false 让两种后端共用这份 compose。
+    env_file:
+      - path: ./oss.env
+        required: false
 
 volumes:
   taskboard-data:

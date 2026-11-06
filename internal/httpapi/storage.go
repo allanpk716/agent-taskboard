@@ -61,6 +61,7 @@ func (a *API) handleAdminStorage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, storageStatsView{
 		DatabaseBytes:            stats.DatabaseBytes,
 		AttachmentsBytes:         stats.AttachmentsBytes,
+		AttachmentsBackend:       stats.AttachmentsBackend,
 		BackupsBytes:             stats.BackupsBytes,
 		SlimmableTicketCount:     slimmableTickets,
 		SlimmableAttachmentBytes: slimmableBytes,
@@ -75,6 +76,7 @@ func (a *API) handleAdminStorage(w http.ResponseWriter, r *http.Request) {
 type storageStatsView struct {
 	DatabaseBytes            int64              `json:"database_bytes"`
 	AttachmentsBytes         int64              `json:"attachments_bytes"`
+	AttachmentsBackend       string             `json:"attachments_backend"`
 	BackupsBytes             int64              `json:"backups_bytes"`
 	SlimmableTicketCount     int                `json:"slimmable_ticket_count"`
 	SlimmableAttachmentBytes int64              `json:"slimmable_attachment_bytes"`

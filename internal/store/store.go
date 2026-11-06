@@ -4,6 +4,7 @@ package store
 import (
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -20,6 +21,9 @@ var migrationsFS embed.FS
 // Store 持有打开的数据库。后续工单的仓储都建在它之上。
 type Store struct {
 	DB *sql.DB
+	// New 表示这次 Open 创建的是全新数据库。首次启动可以把初始化状态写成
+	// 当前配置；老库则必须尊重迁移写入的实际状态。
+	New bool
 }
 
 // FileURI 把文件路径转成 SQLite 的 file: URI（不带查询参数）。路径统一写成
@@ -55,12 +59,65 @@ func Open(dataDir string) (*Store, error) {
 	}
 	// modernc.org/sqlite 单写者：限制成一条写连接，避免 database is locked。
 	db.SetMaxOpenConns(1)
-	s := &Store{DB: db}
+	s := &Store{DB: db, New: storeDatabaseIsNew(filepath.Join(dataDir, "taskboard.db"))}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
 	}
+	if err := s.recordInitialDatabase(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return s, nil
+}
+
+// OpenReadOnly 以只读方式打开现有库：不执行迁移、不切 WAL、库不存在时报错，
+// 供 migrate-attachments -dry-run 这类绝不能写任何文件的命令使用。immutable
+// 让 SQLite 完全不创建 -wal/-shm；代价是崩溃残留的未检查点 WAL 内容不可见
+// （dry-run 只是预览，正式迁移仍用 Open 正常恢复）。
+func OpenReadOnly(dataDir string) (*sql.DB, error) {
+	path := filepath.Join(dataDir, "taskboard.db")
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("数据库 %s 不存在：dry-run 只检查现有库，请先完成启动或用具体备份恢复", path)
+		}
+		return nil, fmt.Errorf("读取数据库 %s 信息失败：%w", path, err)
+	}
+	dsn := FileURI(path) + "?immutable=1&_pragma=busy_timeout(10000)"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("打开数据库失败：%w", err)
+	}
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("只读打开数据库 %s 失败：%w", path, err)
+	}
+	return db, nil
+}
+
+// recordInitialDatabase 给新库留下未完成初始化的标记。首次启动可能在 OSS
+// 探测阶段失败；修复配置后应能重试，而不是把迁移默认值 local 当成老库状态。
+func (s *Store) recordInitialDatabase() error {
+	if s.New {
+		_, err := s.DB.Exec(`INSERT INTO settings(key,value,updated_at)
+			VALUES ('attachments_backend_initializing', '1', datetime('now'))
+			ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
+		return err
+	}
+	var initializing string
+	if err := s.DB.QueryRow(`SELECT value FROM settings WHERE key='attachments_backend_initializing'`).Scan(&initializing); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	s.New = initializing == "1"
+	return nil
+}
+
+func storeDatabaseIsNew(path string) bool {
+	_, err := os.Stat(path)
+	return errors.Is(err, os.ErrNotExist)
 }
 
 func (s *Store) Close() error { return s.DB.Close() }

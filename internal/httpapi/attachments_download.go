@@ -6,10 +6,11 @@ package httpapi
 
 import (
 	"errors"
+	"io"
+	"log"
 	"mime"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 
@@ -96,35 +97,64 @@ func (a *API) handleAttachmentDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, err := os.ReadFile(a.atts.Path(att.ID))
+	disposition := "inline"
+	if !attachments.IsInline(att.Filename) {
+		disposition = "attachment"
+	}
+	signedURL, hasExternalURL, err := a.atts.Storage().DownloadURL(r.Context(), att.ID,
+		attachments.DownloadURLOpts{Disposition: mime.FormatMediaType(disposition, map[string]string{"filename": att.Filename})})
 	if err != nil {
-		if os.IsNotExist(err) {
+		panic(err)
+	}
+	if hasExternalURL {
+		_, exists, statErr := a.atts.Storage().Stat(r.Context(), att.ID)
+		if statErr != nil {
+			log.Printf("检查附件 %s 所在对象失败：%v", att.Ref(), statErr)
+			WriteError(w, http.StatusInternalServerError, CodeInternal, "读取附件存储失败", "")
+			return
+		}
+		if !exists {
+			WriteError(w, http.StatusNotFound, CodeAttachmentNotFound, "附件文件缺失", "")
+			return
+		}
+		if r.Method == http.MethodGet {
+			if err := a.accessRecords.RecordDownload(r.Context(), att, viewer); err != nil {
+				panic(err)
+			}
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Location", signedURL)
+		w.WriteHeader(http.StatusFound)
+		return
+	}
+
+	body, size, err := a.atts.Storage().Open(r.Context(), att.ID)
+	if err != nil {
+		if errors.Is(err, attachments.ErrObjectNotFound) {
 			WriteError(w, http.StatusNotFound, CodeAttachmentNotFound, "附件文件缺失", "")
 			return
 		}
 		panic(err)
 	}
+	defer body.Close()
 	if r.Method == http.MethodGet {
 		if err := a.accessRecords.RecordDownload(r.Context(), att, viewer); err != nil {
 			panic(err)
 		}
 	}
-
-	disposition := "inline"
-	if !attachments.IsInline(att.Filename) {
-		disposition = "attachment"
-	}
-	w.Header().Set("Content-Type", contentTypeOf(att.Filename))
+	w.Header().Set("Content-Type", attachments.ContentTypeOf(att.Filename))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Disposition",
 		mime.FormatMediaType(disposition, map[string]string{"filename": att.Filename}))
-	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	if r.Method == http.MethodHead {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(content)
+	if _, err := io.Copy(w, body); err != nil {
+		panic(err)
+	}
 }
 
 func requestHasCredential(r *http.Request) bool {
@@ -136,25 +166,4 @@ func requestHasCredential(r *http.Request) bool {
 	}
 	cookie, err := r.Cookie(GuestDeviceCookieName)
 	return err == nil && cookie.Value != ""
-}
-
-// contentTypeOf 按扩展名给 Content-Type；文本类补 charset，未知的用
-// application/octet-stream（配合 nosniff，浏览器不会自作聪明地嗅探）。
-func contentTypeOf(filename string) string {
-	ext := ""
-	if i := strings.LastIndexByte(filename, '.'); i >= 0 {
-		ext = strings.ToLower(filename[i:])
-	}
-	switch ext {
-	case ".html", ".htm":
-		return "text/html; charset=utf-8"
-	case ".svg":
-		return "image/svg+xml"
-	case ".txt", ".log":
-		return "text/plain; charset=utf-8"
-	}
-	if t := mime.TypeByExtension(ext); t != "" {
-		return t
-	}
-	return "application/octet-stream"
 }

@@ -10,15 +10,14 @@ import (
 	"errors"
 	"fmt"
 	"github.com/allanpk716/agent-taskboard/internal/store"
+	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
-	"github.com/allanpk716/agent-taskboard/internal/packagefile"
 )
 
 // ErrAlreadyRemoved 表示归档包对应的工单已经移除。
@@ -209,20 +208,31 @@ func (s *Service) Remove(ctx context.Context, packageName string, operator ident
 		return Removal{}, err
 	}
 
-	freedBytes, cleanupFailures := s.cleanupRemovedFiles(state.AttachmentIDs)
+	freedBytes, cleanupFailures := s.cleanupRemovedFiles(ctx, state.AttachmentIDs)
 	return Removal{PackageName: pkg.Name, Tombstones: tombstones,
 		AttachmentBytes: freedBytes, RemovedAt: now, CleanupFailures: cleanupFailures}, nil
 }
 
-func (s *Service) cleanupRemovedFiles(ids []int64) (int64, int) {
+func (s *Service) cleanupRemovedFiles(ctx context.Context, ids []int64) (int64, int) {
 	var freed int64
 	failures := 0
 	for _, id := range ids {
-		text := strconv.FormatInt(id, 10)
-		bytes, failed := packagefile.RemoveForCleanup(s.atts.Path(id))
-		freed += bytes
-		failures += failed
-		bytes, failed = packagefile.RemoveForCleanup(filepath.Join(s.backupDir, "attachments", text))
+		objects := s.atts.Storage()
+		size, exists, err := objects.Stat(ctx, id)
+		if err != nil {
+			log.Printf("归档移除后检查附件对象 att_%d 失败：%v", id, err)
+			failures++
+			continue
+		}
+		if exists {
+			if err := objects.Delete(ctx, id); err != nil {
+				log.Printf("归档移除后删除附件对象 att_%d 失败：%v", id, err)
+				failures++
+			} else {
+				freed += size
+			}
+		}
+		bytes, failed := s.mirror.RemoveForCleanup(id)
 		freed += bytes
 		failures += failed
 	}

@@ -1,0 +1,12 @@
+# taskboard 的宿主机 Caddy 站点示例。zstd/gzip 是必配项：
+# 前端静态资源仍由这台服务器直出，压缩后每次发版约 209KB/人。
+taskboard.example.com {
+	encode zstd gzip
+
+	reverse_proxy 127.0.0.1:8080 {
+		# 必须覆盖客户端带来的转发头，避免伪造来源 IP 影响限流和登录锁定。
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Real-IP {remote_host}
+	}
+}

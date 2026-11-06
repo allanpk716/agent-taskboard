@@ -4,7 +4,7 @@ package httpapi
 import (
 	"database/sql"
 	"errors"
-	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
@@ -179,10 +179,24 @@ func (a *API) downloadArchivePackage(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		panic(err)
+	}
+	disposition := mime.FormatMediaType("attachment", map[string]string{"filename": name})
+	signedURL, hasExternalURL, err := a.archive.PackageObjectURL(r.Context(), name, disposition)
+	if err != nil {
+		panic(err)
+	}
+	if hasExternalURL {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Location", signedURL)
+		w.WriteHeader(http.StatusFound)
+		return
+	}
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(name))
-	w.WriteHeader(http.StatusOK)
-	_, _ = io.Copy(w, file)
+	w.Header().Set("Content-Disposition", disposition)
+	http.ServeContent(w, r, name, info.ModTime(), file)
 }
 
 func writeNotArchivableError(w http.ResponseWriter, err error) bool {

@@ -21,6 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/packagefile"
@@ -162,7 +163,7 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 	}
 	for _, summary := range preview.Tickets {
 		export := exps[summary.Seq]
-		atts, slimmed, err := s.packageAttachments(zw, &files, summary, export)
+		atts, slimmed, err := s.packageAttachments(ctx, zw, &files, summary, export)
 		if err != nil {
 			_ = zw.Close()
 			return PackageInfo{}, err
@@ -211,12 +212,16 @@ func (s *Service) Generate(ctx context.Context, ticketNumbers []string, closedMo
 		return PackageInfo{}, err
 	}
 	tempName = ""
+	if err := s.putPackageObject(ctx, final, name); err != nil {
+		_ = os.Remove(final)
+		return PackageInfo{}, err
+	}
 
 	if err := s.discardPendingDrafts(ctx, preview.Tickets, preview.Drafts, closedMonths,
 		operator, name, now); err != nil {
 		// 包已完整写出，但「生成」这个操作还没有成功：移除暂存包，让管理员
 		// 故障恢复后从原数据重试，避免列表里出现未完成丢弃动作的包。
-		_ = os.Remove(final)
+		_ = s.removePackageObject(context.WithoutCancel(ctx), name)
 		return PackageInfo{}, err
 	}
 	return PackageInfo{Name: name, TicketNumbers: numbersOf(preview.Tickets), TicketCount: len(preview.Tickets),
@@ -300,10 +305,48 @@ func (s *Service) Open(name string) (*os.File, PackageInfo, error) {
 	}
 	if s.clk.Now().After(info.ExpiresAt) {
 		file.Close()
-		_ = os.Remove(path)
+		_ = s.removePackageObject(context.Background(), name)
 		return nil, PackageInfo{}, ErrPackageNotFound
 	}
 	return file, info, nil
+}
+
+// PackageObjectURL 返回 OSS 后端下暂存包的短时效下载地址；本地后端返回
+// ok=false，调用方继续从本地权威副本提供服务。
+func (s *Service) PackageObjectURL(ctx context.Context, name, disposition string) (string, bool, error) {
+	if s.objects == nil {
+		return "", false, nil
+	}
+	return s.objects.ObjectURL(ctx, attachments.ArchivePackageRelKey(name), 15*time.Minute, disposition)
+}
+
+func (s *Service) putPackageObject(ctx context.Context, path, name string) error {
+	if s.objects == nil {
+		return nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	return s.objects.PutObject(ctx, attachments.ArchivePackageRelKey(name), file, info.Size(),
+		attachments.PutMeta{ContentType: "application/zip"})
+}
+
+func (s *Service) removePackageObject(ctx context.Context, name string) error {
+	if s.objects != nil {
+		if err := s.objects.DeleteObject(ctx, attachments.ArchivePackageRelKey(name)); err != nil {
+			return err
+		}
+	}
+	if err := os.Remove(filepath.Join(s.stageDir(), name)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // CleanupExpired 清除暂存超过 7 天的包与生成中断留下的临时文件。
@@ -338,7 +381,7 @@ func (s *Service) CleanupExpired() error {
 			continue
 		}
 		if err != nil || s.clk.Now().After(info.ExpiresAt) {
-			_ = os.Remove(path)
+			_ = s.removePackageObject(context.Background(), name)
 		}
 	}
 	return nil
@@ -615,7 +658,7 @@ type slimmedAttachment struct {
 	PackageName string
 }
 
-func (s *Service) packageAttachments(zw *zip.Writer, files *[]manifestFile, summary TicketSummary,
+func (s *Service) packageAttachments(ctx context.Context, zw *zip.Writer, files *[]manifestFile, summary TicketSummary,
 	export ticketExport) ([]packagedAttachment, []slimmedAttachment, error) {
 	out := make([]packagedAttachment, 0, len(export.Attachments))
 	slimmedOut := make([]slimmedAttachment, 0)
@@ -630,11 +673,15 @@ func (s *Service) packageAttachments(zw *zip.Writer, files *[]manifestFile, summ
 		}
 		relative := "attachments/" + ref + "/" + filename
 		path := archiveAttachmentPath(summary.Number, id, filename)
-		src, err := os.Open(filepath.Join(s.attachmentsDir, strconv.FormatInt(id, 10)))
+		src, actualSize, err := s.atts.Storage().Open(ctx, id)
 		if err != nil {
 			return nil, nil, fmt.Errorf("读取附件 %s 失败：%w", ref, err)
 		}
 		size, _ := row["size"].(int64)
+		if actualSize != size {
+			_ = src.Close()
+			return nil, nil, fmt.Errorf("附件 %s 大小不符：数据库 %d 字节，存储 %d 字节", ref, size, actualSize)
+		}
 		if err := packagefile.AddStream(zw, files, path, src, size); err != nil {
 			_ = src.Close()
 			return nil, nil, err
@@ -795,7 +842,7 @@ func (s *Service) discardPendingDrafts(ctx context.Context, tickets []TicketSumm
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	s.atts.RemoveFiles(fileIDs)
+	s.atts.RemoveFiles(ctx, fileIDs)
 	return nil
 }
 

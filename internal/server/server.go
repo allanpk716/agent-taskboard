@@ -63,6 +63,7 @@ type Option func(*options)
 type options struct {
 	captchaSource              captcha.Source
 	guestLinkCipherUnavailable bool
+	attachmentStorage          attachments.Storage
 }
 
 // WithCaptchaSource 指定登录验证码来源。
@@ -74,6 +75,12 @@ func WithCaptchaSource(source captcha.Source) Option {
 // 生产装配仍然总是尝试读取或生成密钥。
 func WithGuestLinkCipherUnavailable() Option {
 	return func(o *options) { o.guestLinkCipherUnavailable = true }
+}
+
+// WithAttachmentStorage 指定附件对象后端（默认本地）。黑盒测试用它注入
+// 内存假存储；生产装配不传。
+func WithAttachmentStorage(store attachments.Storage) Option {
+	return func(o *options) { o.attachmentStorage = store }
 }
 
 // New 打开数据库、装配 API 与静态站点。webDir 不存在会报错。
@@ -90,15 +97,24 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	if o.captchaSource != nil {
 		captchaSrc = o.captchaSource
 	}
+	attachmentBackend, err := prepareAttachmentBackend(context.Background(), cfg.Attachments, cfg.DataDir, st, o.attachmentStorage)
+	if err != nil {
+		return nil, err
+	}
 	ident := identity.NewManager(st.DB, c)
 	labelDict := labels.NewManager(st.DB)
 	if err := labelDict.SeedIfEmpty(context.Background()); err != nil {
 		return nil, fmt.Errorf("导入标签字典种子失败：%w", err)
 	}
-	atts, err := attachments.NewManager(st.DB, cfg.DataDir, c, attachments.LimitsOf(
+	var atts *attachments.Manager
+	limits := attachments.LimitsOf(
 		cfg.Attachments.MaxFileMB, cfg.Attachments.MaxFilesPerPost,
-		cfg.Attachments.MaxImagesPerPost, cfg.Attachments.MaxTicketMB))
+		cfg.Attachments.MaxImagesPerPost, cfg.Attachments.MaxTicketMB)
+	atts, err = attachments.NewManagerWithStorage(st.DB, attachmentBackend.storage, c, limits)
 	if err != nil {
+		return nil, err
+	}
+	if err := attachmentBackend.commitMarker(); err != nil {
 		return nil, err
 	}
 	atts.SetIntakeLimits(int64(cfg.Intake.PendingQuotaMB) << 20)
@@ -123,6 +139,8 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	if err != nil {
 		return nil, err
 	}
+	backups.SetAttachmentStorage(atts.Storage())
+	backups.SetObjectStorage(attachmentBackend.objectStorage)
 	idem := idempotency.NewManager(st.DB, c)
 	notificationStore := notifications.NewManager(st.DB, c)
 	backups.SetNotifier(notificationStore)
@@ -141,9 +159,12 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	ticketStore.SetNotifier(notificationStore)
 	ticketStore.SetSystemNotifier(notificationStore)
 	draftStore := drafts.NewManager(st.DB, c, ticketStore, atts)
-	storageStats := storage.NewService(st.DB, cfg.DataDir, atts.Dir(), backups.TargetDir(), c)
-	archives := archive.NewService(st.DB, cfg.DataDir, atts.Dir(), backups.TargetDir(), atts, c)
-	slims := slim.NewService(st.DB, cfg.DataDir, atts.Dir(), backups.TargetDir(), atts, c)
+	storageStats := storage.NewService(st.DB, cfg.DataDir, backups.TargetDir(), atts.Storage(),
+		attachmentBackend.backend, c)
+	archives := archive.NewService(st.DB, cfg.DataDir, backups.TargetDir(), atts,
+		attachmentBackend.objectStorage, c)
+	slims := slim.NewService(st.DB, cfg.DataDir, backups.TargetDir(), atts,
+		attachmentBackend.objectStorage, c)
 	draftStore.SetNotifier(notificationStore.DraftNotifier())
 	attachmentLinks, err := attachmentlink.LoadOrCreate(cfg.DataDir)
 	if err != nil {
@@ -186,7 +207,8 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 func (s *Server) Handler() http.Handler { return s.handler }
 
 // Serve 在 ln 上对外服务，直到 Shutdown 或关闭连接。服务期间周期运行附件
-// 清除任务（未引用满 24 小时的待用附件；时钟可注入，见 internal/attachments）、
+// 清除任务（未引用满 24 小时的待用附件，以及后端对象的附件对账；时钟可注入，
+// 见 internal/attachments）、
 // 归档暂存包清除任务（满 7 天；时钟同样可注入，见 internal/archive）
 // 和备份调度（每天 daily_at；备份时刻同样由注入时钟决定，见 internal/ops）。
 func (s *Server) Serve(ln net.Listener) error {
@@ -211,8 +233,9 @@ func (s *Server) Serve(ln net.Listener) error {
 	return err
 }
 
-// attachmentJanitorInterval 是附件清除任务的运行间隔（真实时钟；24 小时的
-// 判定用注入时钟，测试里直接调 CleanupUnreferenced，不睡真实时间）。
+// attachmentJanitorInterval 是附件清除与对账任务的运行间隔（真实时钟；
+// 24 小时的判定用注入时钟，测试里直接调 CleanupUnreferenced /
+// ReconcileStorage，不睡真实时间）。
 const attachmentJanitorInterval = 10 * time.Minute
 
 // archiveJanitorInterval 是归档/瘦身暂存包清除任务的运行间隔（真实时钟；
@@ -234,8 +257,8 @@ func (s *Server) runArchiveJanitor(done <-chan struct{}) {
 	}
 }
 
-// runAttachmentJanitor 周期清除未引用的待用附件。清除失败只影响本轮
-// （下一轮再试），不影响服务。
+// runAttachmentJanitor 周期清除未引用的待用附件，再对账清理后端孤儿对象。
+// 任一步失败只影响本轮（下一轮再试），不影响服务。
 func (s *Server) runAttachmentJanitor(done <-chan struct{}) {
 	ticker := time.NewTicker(attachmentJanitorInterval)
 	defer ticker.Stop()
@@ -245,6 +268,9 @@ func (s *Server) runAttachmentJanitor(done <-chan struct{}) {
 			return
 		case <-ticker.C:
 			_, _ = s.Atts.CleanupUnreferenced(context.Background())
+			if _, err := s.Atts.ReconcileStorage(context.Background()); err != nil {
+				log.Printf("附件对账失败：%v", err)
+			}
 		}
 	}
 }

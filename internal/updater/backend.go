@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
@@ -107,11 +108,17 @@ func Rollback(opt Options) (*RollbackResult, error) {
 
 	// 先恢复库（ops.Restore 内部会校验备份、另存当前库、执行迁移、补齐附件），
 	// 再换 exe：两步都完成后才启动服务。
-	restore, err := ops.Restore(opt.DataDir, opt.Port, backup.Path, opt.now())
+	restore := opt.RestoreBackup
+	if restore == nil {
+		restore = func(dataDir string, port int, backupFile string, now time.Time) (ops.RestoreResult, error) {
+			return ops.Restore(dataDir, port, backupFile, now)
+		}
+	}
+	result, err := restore(opt.DataDir, opt.Port, backup.Path, opt.now())
 	if err != nil {
 		return nil, fmt.Errorf("恢复更新前备份 %s 失败：%w", backup.Name, err)
 	}
-	res.Restore = &restore
+	res.Restore = &result
 
 	if err := os.Remove(exePath); err != nil {
 		return nil, fmt.Errorf("移除当前 exe 失败（库已恢复到更新前）：%w", err)

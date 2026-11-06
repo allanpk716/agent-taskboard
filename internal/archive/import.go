@@ -11,14 +11,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/attachments"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 )
@@ -140,7 +139,7 @@ func (s *Service) Import(ctx context.Context, readerAt io.ReaderAt, size int64,
 	}
 	result := ImportResult{PackageName: parsed.Manifest.PackageName, ImportedAt: now,
 		Imported: []ImportTicket{}, Rejected: []ImportTicket{}}
-	written := []string{}
+	written := []int64{}
 	importedNumbers := []string{}
 	for _, meta := range parsed.Manifest.Tickets {
 		candidate := importCandidate(meta, parsed.Tickets[meta.Number])
@@ -149,7 +148,7 @@ func (s *Service) Import(ctx context.Context, readerAt io.ReaderAt, size int64,
 		}
 		reason, err := s.canImportTicketTx(ctx, tx, parsed, meta, parsed.Tickets[meta.Number])
 		if err != nil {
-			removeImportFiles(written)
+			s.removeImportFiles(ctx, written)
 			return ImportResult{}, err
 		}
 		if reason != "" {
@@ -157,18 +156,18 @@ func (s *Service) Import(ctx context.Context, readerAt io.ReaderAt, size int64,
 			result.Rejected = append(result.Rejected, candidate)
 			continue
 		}
-		files, err := writeImportAttachments(s.attachmentsDir, parsed, meta, parsed.Tickets[meta.Number])
-		written = append(written, files...)
+		ids, err := s.writeImportAttachments(ctx, parsed, meta, parsed.Tickets[meta.Number])
+		written = append(written, ids...)
 		if err != nil {
-			removeImportFiles(written)
+			s.removeImportFiles(ctx, written)
 			return ImportResult{}, err
 		}
 		if err := insertImportTicketTx(ctx, tx, parsed.Tickets[meta.Number]); err != nil {
-			removeImportFiles(written)
+			s.removeImportFiles(ctx, written)
 			return ImportResult{}, fmt.Errorf("恢复工单 %s 失败：%w", meta.Number, err)
 		}
 		if err := deleteTombstoneTx(ctx, tx, importInt(parsed.Tickets[meta.Number].Ticket, "seq")); err != nil {
-			removeImportFiles(written)
+			s.removeImportFiles(ctx, written)
 			return ImportResult{}, err
 		}
 		candidate.Importable = true
@@ -184,12 +183,12 @@ func (s *Service) Import(ctx context.Context, readerAt io.ReaderAt, size int64,
 	if len(result.Imported) > 0 {
 		if err := insertArchiveOperation(ctx, tx, "archive_import", operator.Member.ID, now,
 			importedNumbers, parsed.Manifest.PackageName); err != nil {
-			removeImportFiles(written)
+			s.removeImportFiles(ctx, written)
 			return ImportResult{}, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		removeImportFiles(written)
+		s.removeImportFiles(ctx, written)
 		return ImportResult{}, err
 	}
 	return result, nil
@@ -973,17 +972,15 @@ func insertRowsTx(ctx context.Context, tx *sql.Tx, table string, columns []strin
 	return nil
 }
 
-func writeImportAttachments(dir string, pkg *parsedImportPackage, meta manifestTicket,
-	export ticketExport) ([]string, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
-	}
-	written := []string{}
+func (s *Service) writeImportAttachments(ctx context.Context, pkg *parsedImportPackage, meta manifestTicket,
+	export ticketExport) ([]int64, error) {
+	written := []int64{}
 	for _, row := range export.Attachments {
 		if importAttachmentSlimmed(row) {
 			continue
 		}
 		id := importInt(row, "id")
+		filename, _ := row["filename"].(string)
 		prefix := archiveAttachmentPathPrefix(meta.Number, id)
 		var packagePath string
 		for _, file := range pkg.Manifest.Files {
@@ -995,42 +992,33 @@ func writeImportAttachments(dir string, pkg *parsedImportPackage, meta manifestT
 		if packagePath == "" {
 			return written, fmt.Errorf("归档包里缺少附件 %d", id)
 		}
-		target := filepath.Join(dir, strconv.FormatInt(id, 10))
-		if err := streamImportAttachment(pkg.Files[packagePath], target); err != nil {
+		size := importInt(row, "size")
+		if err := s.streamImportAttachment(ctx, pkg.Files[packagePath], id, filename, size); err != nil {
 			return written, err
 		}
-		written = append(written, target)
+		written = append(written, id)
 	}
 	return written, nil
 }
 
-func streamImportAttachment(entry *zip.File, target string) error {
+func (s *Service) streamImportAttachment(ctx context.Context, entry *zip.File, id int64, filename string, size int64) error {
 	rc, err := entry.Open()
 	if err != nil {
 		return err
 	}
 	defer rc.Close()
-	dst, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	written, copyErr := io.Copy(dst, rc)
-	closeErr := dst.Close()
-	if copyErr != nil {
-		return copyErr
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	if entry.FileInfo().Size() != 0 && written != entry.FileInfo().Size() {
-		return fmt.Errorf("附件 %s 写回大小不符：%d/%d", entry.Name, written, entry.FileInfo().Size())
+	meta := attachments.PutMeta{ContentType: attachments.ContentTypeOf(filename)}
+	if err := s.atts.Storage().Put(ctx, id, rc, size, meta); err != nil {
+		return fmt.Errorf("附件 %s 写回失败：%w", entry.Name, err)
 	}
 	return nil
 }
 
-func removeImportFiles(files []string) {
-	for _, path := range files {
-		_ = os.Remove(path)
+func (s *Service) removeImportFiles(ctx context.Context, ids []int64) {
+	objects := s.atts.Storage()
+	ctx = context.WithoutCancel(ctx)
+	for _, id := range ids {
+		_ = objects.Delete(ctx, id)
 	}
 }
 

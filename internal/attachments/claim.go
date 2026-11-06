@@ -5,8 +5,9 @@ package attachments
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
-	"os"
+	"log"
 	"time"
 )
 
@@ -244,6 +245,74 @@ func notUsable(id string) error {
 	return fmt.Errorf("%w（%s）", ErrNotUsable, id)
 }
 
+// ReconcileResult 是一次附件对账清掉的孤儿对象统计。
+type ReconcileResult struct {
+	DeletedObjects int
+	DeletedBytes   int64
+	DeleteFailures int
+}
+
+// ReconcileStorage 把当前后端里的附件对象和 DB 记录比对，删除没有库记录
+// 且已存在超过 24 小时的孤儿。对象删除一律走 Storage.Delete，由后端实现
+// 保证只碰附件前缀（OSS 的前缀护栏见存储实现）。
+func (m *Manager) ReconcileStorage(ctx context.Context) (ReconcileResult, error) {
+	known := make(map[int64]struct{})
+	rows, err := m.db.QueryContext(ctx, `SELECT id FROM attachments`)
+	if err != nil {
+		return ReconcileResult{}, err
+	}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return ReconcileResult{}, err
+		}
+		known[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return ReconcileResult{}, err
+	}
+	rows.Close()
+
+	cutoff := m.clk.Now().Add(-24 * time.Hour)
+	type orphanObject struct {
+		id   int64
+		size int64
+	}
+	var orphans []orphanObject
+	err = m.store.List(ctx, func(id int64, size int64, modTime time.Time) error {
+		if _, ok := known[id]; ok || !modTime.Before(cutoff) {
+			return nil
+		}
+		orphans = append(orphans, orphanObject{id: id, size: size})
+		return nil
+	})
+	if err != nil {
+		return ReconcileResult{}, err
+	}
+
+	var result ReconcileResult
+	var failures []error
+	for _, orphan := range orphans {
+		if err := m.store.Delete(ctx, orphan.id); err != nil {
+			result.DeleteFailures++
+			failures = append(failures, fmt.Errorf("删除附件对象 att_%d 失败：%w", orphan.id, err))
+			continue
+		}
+		result.DeletedObjects++
+		result.DeletedBytes += orphan.size
+	}
+	if err := errors.Join(failures...); err != nil {
+		log.Printf("附件对账部分失败：删除孤儿对象 %d 个，释放 %d 字节，失败 %d 个：%v",
+			result.DeletedObjects, result.DeletedBytes, result.DeleteFailures, err)
+		return result, err
+	}
+	log.Printf("附件对账完成：删除孤儿对象 %d 个，释放 %d 字节",
+		result.DeletedObjects, result.DeletedBytes)
+	return result, nil
+}
+
 // CleanupUnreferenced 清除上传超过 24 小时仍未引用的待用附件（行 + 文件），
 // 返回清除的个数。备份同步不删除，镜像里可能残留这类文件，可以接受。
 // 服务定时调用（时钟可注入，测试不睡真实时间）。
@@ -297,8 +366,8 @@ func (m *Manager) CleanupUnreferenced(ctx context.Context) (int, error) {
 		if n == 0 {
 			continue
 		}
-		// 行删掉之后再删文件；删失败只留下孤儿文件，不影响配额（下次清除会再试）。
-		if err := os.Remove(m.Path(p.id)); err != nil && !os.IsNotExist(err) {
+		// 行删掉之后再删对象；删失败只留下孤儿对象，不影响配额（下次清除会再试）。
+		if err := m.store.Delete(ctx, p.id); err != nil {
 			return 0, err
 		}
 	}

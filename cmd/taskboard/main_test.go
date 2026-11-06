@@ -106,6 +106,20 @@ func Test命令行创建管理员后可以启动服务并登录(t *testing.T) {
 	}
 }
 
+// version -features 输出机器可读的能力名，每行一个：不依赖配置文件，
+// 供部署脚本在无配置的容器里探测镜像能力。
+func Test版本命令输出机器可读能力(t *testing.T) {
+	if testing.Short() {
+		t.Skip("短模式跳过：需要编译真实二进制")
+	}
+	bin := buildBinary(t)
+	out := runTaskboard(t, bin, "version", "-features")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 1 || lines[0] != "oss-attachments" {
+		t.Fatalf("version -features 输出 = %q，想每行一个能力名且包含 oss-attachments", out)
+	}
+}
+
 func postLogin(base, username, password string) (*http.Response, error) {
 	captchaRes, err := http.Get(base + "/api/v1/login-captcha")
 	if err != nil {

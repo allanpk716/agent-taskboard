@@ -7,8 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -16,7 +16,6 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/adminops"
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
-	"github.com/allanpk716/agent-taskboard/internal/packagefile"
 )
 
 var (
@@ -89,7 +88,7 @@ func (s *Service) Remove(ctx context.Context, packageName string, operator ident
 		return Removal{}, err
 	}
 
-	freed, failures := s.cleanupFiles(atts)
+	freed, failures := s.cleanupFiles(ctx, atts)
 	return Removal{PackageName: pkg.Name, TicketNumbers: pkg.TicketNumbers,
 		AttachmentCount: len(atts), AttachmentBytes: freed, RemovedAt: now,
 		CleanupFailures: failures}, nil
@@ -150,7 +149,11 @@ func (s *Service) removalState(ctx context.Context, q removalQueryer, m *manifes
 		if err != nil || at.After(generatedAt) {
 			return nil, fmt.Errorf("%w：%s", ErrPackageStale, file.TicketNumber)
 		}
-		if info, err := os.Stat(filepath.Join(s.attachmentsDir, strconv.FormatInt(att.ID, 10))); err != nil || info.Size() != att.Size {
+		size, exists, statErr := s.atts.Storage().Stat(ctx, att.ID)
+		if statErr != nil {
+			return nil, statErr
+		}
+		if !exists || size != att.Size {
 			return nil, fmt.Errorf("%w：%s 的服务器文件已不在", ErrPackageStale, attachmentID(att.ID))
 		}
 		att.Ref = file.AttachmentID
@@ -159,14 +162,24 @@ func (s *Service) removalState(ctx context.Context, q removalQueryer, m *manifes
 	return out, nil
 }
 
-func (s *Service) cleanupFiles(atts []removalAttachment) (int64, int) {
+func (s *Service) cleanupFiles(ctx context.Context, atts []removalAttachment) (int64, int) {
 	var freed int64
 	failures := 0
 	for _, att := range atts {
-		text := strconv.FormatInt(att.ID, 10)
-		_, failed := packagefile.RemoveForCleanup(filepath.Join(s.attachmentsDir, text))
-		failures += failed
-		_, failed = packagefile.RemoveForCleanup(filepath.Join(s.backupDir, "attachments", text))
+		objects := s.atts.Storage()
+		_, exists, statErr := objects.Stat(ctx, att.ID)
+		if statErr != nil {
+			log.Printf("瘦身移出后检查附件对象 att_%d 失败：%v", att.ID, statErr)
+			failures++
+			continue
+		}
+		if exists {
+			if err := objects.Delete(ctx, att.ID); err != nil {
+				log.Printf("瘦身移出后删除附件对象 att_%d 失败：%v", att.ID, err)
+				failures++
+			}
+		}
+		_, failed := s.mirror.RemoveForCleanup(att.ID)
 		failures += failed
 		// 释放字节数与预览口径一致：只按附件本身大小计，不把备份镜像
 		// 重复计入（镜像删除失败只进 failures）。

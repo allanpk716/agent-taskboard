@@ -12,10 +12,14 @@ import (
 	"mime/multipart"
 	_ "modernc.org/sqlite"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -349,4 +353,226 @@ func globBackupFiles(t *testing.T, dir, kind string) []string {
 func globScheduledBackups(t *testing.T, dir string) []string {
 	t.Helper()
 	return append(globBackupFiles(t, dir, "daily"), globBackupFiles(t, dir, "monthly")...)
+}
+
+type fakeOSSServer struct {
+	server  *httptest.Server
+	mu      sync.Mutex
+	objects map[string][]byte
+}
+
+func (f *fakeOSSServer) listObjectsXML(prefix string) string {
+	keys := make([]string, 0, len(f.objects))
+	for path := range f.objects {
+		key := strings.TrimPrefix(path, "/files/")
+		if strings.HasPrefix(key, prefix) && key != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?><ListBucketResult>`)
+	b.WriteString(`<Name>files</Name><Prefix>` + prefix + `</Prefix><MaxKeys>1000</MaxKeys>`)
+	b.WriteString(`<IsTruncated>false</IsTruncated>`)
+	for _, key := range keys {
+		body := string(f.objects["/files/"+key])
+		b.WriteString(`<Contents><Key>` + key + `</Key>`)
+		b.WriteString(`<LastModified>2026-11-05T12:00:00.000Z</LastModified>`)
+		b.WriteString(`<Size>` + strconv.Itoa(len(body)) + `</Size></Contents>`)
+	}
+	b.WriteString(`</ListBucketResult>`)
+	return b.String()
+}
+
+func newFakeOSSServer(t *testing.T) *fakeOSSServer {
+	t.Helper()
+	fake := &fakeOSSServer{objects: map[string][]byte{}}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fake.mu.Lock()
+		defer fake.mu.Unlock()
+		switch r.Method {
+		case http.MethodPut:
+			body, _ := io.ReadAll(r.Body)
+			fake.objects[r.URL.Path] = body
+			w.WriteHeader(http.StatusOK)
+		case http.MethodGet:
+			if r.URL.Query().Get("list-type") == "2" {
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = w.Write([]byte(fake.listObjectsXML(r.URL.Query().Get("prefix"))))
+				return
+			}
+			body, exists := fake.objects[r.URL.Path]
+			if !exists {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+			w.Write(body)
+		case http.MethodDelete:
+			delete(fake.objects, r.URL.Path)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	})
+	fake.server = httptest.NewServer(mux)
+	t.Cleanup(fake.server.Close)
+	return fake
+}
+
+func runTaskboardWithOSS(t *testing.T, bin string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(bin, args...)
+	cmd.Env = append(os.Environ(),
+		"OSS_ACCESS_KEY_ID=test-ak", "OSS_ACCESS_KEY_SECRET=test-sk")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("taskboard %s 失败：%v\n%s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
+}
+
+func TestCLI从假OSS备份签出地址并按latest恢复(t *testing.T) {
+	if testing.Short() {
+		t.Skip("短模式跳过：需要编译真实二进制")
+	}
+	bin := buildBinary(t)
+	fake := newFakeOSSServer(t)
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	target := filepath.Join(dir, "nas-backup")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "config.toml")
+	configToml := fmt.Sprintf(`data_dir = '%s'
+port = 0
+web_dir = '%s'
+[backup]
+target = '%s'
+[attachments]
+backend = 'oss'
+[attachments.oss]
+region = 'cn-hangzhou'
+bucket = 'files'
+prefix = 'agent-taskboard/test/'
+internal_endpoint = '%s'
+`, filepath.ToSlash(dataDir), filepath.ToSlash(filepath.Join(dir, "web")),
+		filepath.ToSlash(target), fake.server.URL)
+	if err := os.WriteFile(configPath, []byte(configToml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "guest-link-key.bin"), []byte("cli-key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runTaskboardWithOSS(t, bin, "create-admin", "-config", configPath,
+		"-username", "admin", "-password", "secret-pass")
+	runTaskboardWithOSS(t, bin, "backup", "-config", configPath)
+	names := globScheduledBackups(t, target)
+	if len(names) != 1 {
+		t.Fatalf("OSS 备份后本地目标应有库副本：%v", names)
+	}
+	fake.mu.Lock()
+	if _, exists := fake.objects["/files/agent-taskboard/test/backups/"+names[0]]; !exists {
+		fake.mu.Unlock()
+		t.Fatalf("假 OSS 里没有库副本 %s", names[0])
+	}
+	fake.mu.Unlock()
+
+	urlOutput := runTaskboardWithOSS(t, bin, "backup-url", names[0], "-config", configPath)
+	if !strings.Contains(urlOutput, "/agent-taskboard/test/backups/"+names[0]) ||
+		!strings.Contains(urlOutput, "x-oss-expires=3600") {
+		t.Fatalf("backup-url 输出应是一小时签名地址：%s", urlOutput)
+	}
+
+	if err := os.Remove(filepath.Join(target, names[0])); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(target, "guest-link-key.bin")); err != nil {
+		t.Fatal(err)
+	}
+	restoreOutput := runTaskboardWithOSS(t, bin, "restore", "-from-oss", "latest", "-config", configPath)
+	if !strings.Contains(restoreOutput, names[0]) || !strings.Contains(restoreOutput, "恢复完成") {
+		t.Fatalf("restore -from-oss latest 输出 = %s，想下载最新备份并完成恢复", restoreOutput)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(dataDir, "taskboard.db"))+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var backend string
+	if err := db.QueryRow(`SELECT value FROM settings WHERE key='attachments_backend'`).Scan(&backend); err != nil || backend != "oss" {
+		t.Fatalf("恢复后的附件后端标记 = (%q, %v)，想 oss", backend, err)
+	}
+}
+
+// 本机和 NAS 都坏了时，数据目录里连库文件都没有：restore -from-oss latest
+// 必须直接从 OSS 列出最新备份并恢复，不能依赖（更不能新建）本地库。
+func TestCLI本机库丢失时从OSS按latest恢复(t *testing.T) {
+	if testing.Short() {
+		t.Skip("短模式跳过：需要编译真实二进制")
+	}
+	bin := buildBinary(t)
+	fake := newFakeOSSServer(t)
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	target := filepath.Join(dir, "nas-backup")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "config.toml")
+	configToml := fmt.Sprintf(`data_dir = '%s'
+port = 0
+web_dir = '%s'
+[backup]
+target = '%s'
+[attachments]
+backend = 'oss'
+[attachments.oss]
+region = 'cn-hangzhou'
+bucket = 'files'
+prefix = 'agent-taskboard/test/'
+internal_endpoint = '%s'
+`, filepath.ToSlash(dataDir), filepath.ToSlash(filepath.Join(dir, "web")),
+		filepath.ToSlash(target), fake.server.URL)
+	if err := os.WriteFile(configPath, []byte(configToml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runTaskboardWithOSS(t, bin, "create-admin", "-config", configPath,
+		"-username", "admin", "-password", "secret-pass")
+	runTaskboardWithOSS(t, bin, "backup", "-config", configPath)
+	names := globScheduledBackups(t, target)
+	if len(names) != 1 {
+		t.Fatalf("OSS 备份后本地目标应有库副本：%v", names)
+	}
+
+	// 模拟本机与 NAS 全坏：数据目录只剩配置里声明的空壳，本地备份全部消失。
+	for _, name := range []string{"taskboard.db", "taskboard.db-wal", "taskboard.db-shm"} {
+		if err := os.Remove(filepath.Join(dataDir, name)); err != nil && !os.IsNotExist(err) {
+			t.Fatalf("删除 %s 失败：%v", name, err)
+		}
+	}
+	for _, name := range names {
+		if err := os.Remove(filepath.Join(target, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	restoreOutput := runTaskboardWithOSS(t, bin, "restore", "-from-oss", "latest", "-config", configPath)
+	if !strings.Contains(restoreOutput, names[0]) || !strings.Contains(restoreOutput, "恢复完成") {
+		t.Fatalf("restore -from-oss latest 输出 = %s，想从 OSS 列出最新备份并恢复", restoreOutput)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(filepath.Join(dataDir, "taskboard.db"))+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var backend string
+	if err := db.QueryRow(`SELECT value FROM settings WHERE key='attachments_backend'`).Scan(&backend); err != nil || backend != "oss" {
+		t.Fatalf("恢复后的附件后端标记 = (%q, %v)，想 oss", backend, err)
+	}
 }
