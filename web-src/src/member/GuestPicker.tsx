@@ -42,7 +42,9 @@ export function GuestPicker({
 
   const selected = value?.kind === 'existing' ? value : null
   const newName = value?.kind === 'new' ? value.name : ''
-  const candidates = (guests ?? []).filter((g) => (selected && g.id === selected.id ? true : g.name.includes(query)))
+  const candidates = (guests ?? []).filter(
+    (g) => !g.disabled_at && (selected && g.id === selected.id ? true : g.name.includes(query)),
+  )
 
   return (
     <div className="fld">

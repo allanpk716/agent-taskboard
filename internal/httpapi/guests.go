@@ -222,6 +222,9 @@ func (a *API) setGuestDisabled(w http.ResponseWriter, r *http.Request, id int64,
 	switch {
 	case errors.Is(err, tickets.ErrGuestNotFound):
 		WriteError(w, http.StatusNotFound, CodeGuestNotFound, "没有这位访客", "")
+	case errors.Is(err, tickets.ErrGuestAlreadyMerged):
+		WriteError(w, http.StatusConflict, CodeGuestAlreadyMerged, err.Error(),
+			"已并入的访客保留为历史身份，不能停用或恢复")
 	case errors.Is(err, tickets.ErrGuestAlreadyDisabled):
 		WriteError(w, http.StatusConflict, CodeGuestAlreadyDisabled, err.Error(), "访客已停用，无需重复停用")
 	case errors.Is(err, tickets.ErrGuestNotDisabled):
@@ -249,7 +252,7 @@ func (a *API) copyGuestHomeText(w http.ResponseWriter, r *http.Request, id int64
 	share, err := a.tickets.GuestHomeShareForViewer(r.Context(), viewer, id)
 	switch {
 	case errors.Is(err, tickets.ErrGuestNotFound), errors.Is(err, tickets.ErrGuestDisabled):
-		WriteError(w, http.StatusNotFound, CodeGuestNotFound, "没有这位访客或她已停用", "")
+		WriteError(w, http.StatusNotFound, CodeGuestNotFound, "没有这位访客，或这位访客已停用", "")
 	case errors.Is(err, tickets.ErrGuestAlreadyMerged):
 		WriteError(w, http.StatusNotFound, CodeGuestAlreadyMerged, err.Error(), "")
 	case errors.Is(err, tickets.ErrGuestManagementNotAllowed):
@@ -400,9 +403,9 @@ func (a *API) writeGuestMergeError(w http.ResponseWriter, err error) bool {
 func (a *API) writeGuestResetError(w http.ResponseWriter, err error, shareHint string) bool {
 	switch {
 	case errors.Is(err, tickets.ErrGuestNotFound), errors.Is(err, tickets.ErrGuestDisabled):
-		WriteError(w, http.StatusNotFound, CodeGuestNotFound, "没有这位访客或她已停用", "")
+		WriteError(w, http.StatusNotFound, CodeGuestNotFound, "没有这位访客，或这位访客已停用", "")
 	case errors.Is(err, tickets.ErrGuestAlreadyMerged):
-		WriteError(w, http.StatusNotFound, CodeGuestAlreadyMerged, err.Error(), "")
+		WriteError(w, http.StatusConflict, CodeGuestAlreadyMerged, err.Error(), "")
 	case errors.Is(err, tickets.ErrGuestManagementNotAllowed):
 		WriteError(w, http.StatusForbidden, CodeGuestManagementNotAllowed, err.Error(),
 			"只有访客建立者、管理员或名下链接的管理人可以重置")

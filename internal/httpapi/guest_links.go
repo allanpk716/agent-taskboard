@@ -451,7 +451,8 @@ func parseGuestLinkSpec(w http.ResponseWriter, req guestLinkRequest) (tickets.Gu
 func isGuestSelectionError(err error) bool {
 	return errors.Is(err, tickets.ErrGuestRequired) ||
 		errors.Is(err, tickets.ErrGuestBothProvided) ||
-		errors.Is(err, tickets.ErrGuestNotFound)
+		errors.Is(err, tickets.ErrGuestNotFound) ||
+		errors.Is(err, tickets.ErrGuestDisabled)
 }
 
 func writeGuestSelectionError(w http.ResponseWriter, err error) {
@@ -461,7 +462,13 @@ func writeGuestSelectionError(w http.ResponseWriter, err error) {
 		code = CodeGuestNotFound
 		hint = "guest_id 必须是 GET /api/v1/guests 返回的访客 id；新建访客改用 new_guest_name"
 	}
-	WriteError(w, http.StatusUnprocessableEntity, code, err.Error(), hint)
+	status := http.StatusUnprocessableEntity
+	switch {
+	case errors.Is(err, tickets.ErrGuestDisabled):
+		code = CodeGuestDisabled
+		hint = "先恢复访客，或另选/新建一位访客"
+	}
+	WriteError(w, status, code, err.Error(), hint)
 }
 
 // linkDisplayName 是创建响应里转发文案对访客的称呼：有主链接用访客名字。

@@ -105,6 +105,7 @@ const (
 	CodeNoteRequired               = "note_required"                 // 创建访客链接缺备注
 	CodeGuestRequired              = "guest_required"                // 创建访客链接没带已有访客或新访客名字（或二者并存）
 	CodeGuestNotFound              = "guest_not_found"               // guest_id 指向的访客不存在
+	CodeGuestDisabled              = "guest_disabled"                // guest_id 指向的访客已停用（422）
 	CodeGuestManagementNotAllowed  = "guest_management_not_allowed"  // 当前成员不能管理这位访客
 	CodeInvalidValidDays           = "invalid_valid_days"            // 有效期不是 7/30/90 或与 expires_at 并存
 	CodeInvalidExpiresAt           = "invalid_expires_at"            // expires_at 不是合法的将来时刻

@@ -75,7 +75,7 @@ func (m *Manager) GuestAccessCodeResetPreviewForViewer(ctx context.Context,
 // 主页地址，因此需要能恢复主页密钥。名下每张工单各记一条时间线事件。
 func (m *Manager) ResetGuestAccessCodeForGuest(ctx context.Context,
 	viewer identity.Viewer, guestID int64) (GuestAccessCodeReset, error) {
-	if viewer.Kind != identity.ViewerMember {
+	if !viewer.IsWebSession() {
 		return GuestAccessCodeReset{}, ErrGuestManagementNotAllowed
 	}
 	if err := m.ensureGuestManageable(ctx, viewer, guestID); err != nil {
@@ -171,7 +171,7 @@ func (m *Manager) ResetGuestAccessCodeForGuest(ctx context.Context,
 // 时间线。服务端加密密钥不可用时返回 503 用的 ErrGuestLinkCipherUnavailable。
 func (m *Manager) ResetGuestHomeKeyForViewer(ctx context.Context,
 	viewer identity.Viewer, guestID int64) (GuestHomeShare, error) {
-	if viewer.Kind != identity.ViewerMember {
+	if !viewer.IsWebSession() {
 		return GuestHomeShare{}, ErrGuestManagementNotAllowed
 	}
 	if err := m.ensureGuestManageable(ctx, viewer, guestID); err != nil {

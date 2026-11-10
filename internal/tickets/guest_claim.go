@@ -16,6 +16,8 @@ var (
 	ErrClaimNameRequired = errors.New("认领需要填写你的称呼")
 	// ErrLinkAlreadyClaimed 表示链接已被另一位访客抢先认领。
 	ErrLinkAlreadyClaimed = errors.New("这条链接已被认领")
+	// ErrHomeAlreadyClaimed 表示主页已被另一位访客抢先认领。
+	ErrHomeAlreadyClaimed = errors.New("这个主页已被认领")
 	// ErrLinkNotClaimed 表示链接还没有访客认领。
 	ErrLinkNotClaimed = errors.New("这条链接尚未认领")
 	// ErrAccessCodeRequired 表示凭访问码进入时没有填访问码。
@@ -110,8 +112,9 @@ func (m *Manager) EnterGuestLink(ctx context.Context, link identity.GuestLink, c
 	return GuestClaimResult{DeviceToken: token, ClaimedAt: now}, nil
 }
 
-// ViewerFromGuestAgentCredential 校验访问码 Bearer 凭证，不签发设备凭证。
-// 每次请求复用浏览器的连续失败计数，并按 access_code 记录进入方式。
+// ViewerFromGuestAgentCredential 校验「链接 + 访问码」Agent 凭证，不签发
+// 设备凭证。即使链接属于长期访客，这张凭证也只作用于这一条链接对应的
+// 工单；失败计数仍由访客级凭证持有者统一累计。
 func (m *Manager) ViewerFromGuestAgentCredential(ctx context.Context, link identity.GuestLink, code string) (identity.Viewer, error) {
 	now := m.clk.Now()
 	tx, err := m.db.BeginTx(ctx, nil)
@@ -127,12 +130,6 @@ func (m *Manager) ViewerFromGuestAgentCredential(ctx context.Context, link ident
 		return identity.Viewer{}, err
 	}
 	link.EntryMethod = "access_code"
-	if link.GuestID != 0 {
-		return identity.Viewer{Kind: identity.ViewerGuest, Guest: &identity.Guest{
-			ID: link.GuestID, Name: link.GuestName, ClaimName: link.ClaimName,
-			EntryMethod: "access_code", CredentialHolderID: link.CredentialHolderID,
-		}, GuestLink: &link}, nil
-	}
 	return identity.Viewer{Kind: identity.ViewerGuest, GuestLink: &link}, nil
 }
 
@@ -143,15 +140,7 @@ func (m *Manager) verifyGuestAccessCodeTx(ctx context.Context, tx *sql.Tx,
 	becameLocked, err := guestcredentials.VerifyAccessCode(ctx, tx,
 		link.CredentialHolderID, code, now)
 	if err != nil {
-		mapped := err
-		switch {
-		case errors.Is(err, guestcredentials.ErrAccessCodeRequired):
-			mapped = ErrAccessCodeRequired
-		case errors.Is(err, guestcredentials.ErrAccessCodeInvalid):
-			mapped = ErrAccessCodeInvalid
-		case errors.Is(err, guestcredentials.ErrAccessCodeLocked):
-			mapped = ErrAccessCodeLocked
-		}
+		mapped := ticketGuestCredentialError(err)
 		if becameLocked {
 			actor := Author{LinkID: link.ID, LinkNote: link.Note, AuthorName: link.ClaimName}
 			if eventErr := m.insertLinkEvent(ctx, tx, link.TicketSeq, actor,
@@ -169,6 +158,20 @@ func (m *Manager) verifyGuestAccessCodeTx(ctx context.Context, tx *sql.Tx,
 		}
 	}
 	return becameLocked, nil
+}
+
+// ticketGuestCredentialError 把凭证模块的访问码错误换成 tickets 层的稳定错误。
+func ticketGuestCredentialError(err error) error {
+	switch {
+	case errors.Is(err, guestcredentials.ErrAccessCodeRequired):
+		return ErrAccessCodeRequired
+	case errors.Is(err, guestcredentials.ErrAccessCodeInvalid):
+		return ErrAccessCodeInvalid
+	case errors.Is(err, guestcredentials.ErrAccessCodeLocked):
+		return ErrAccessCodeLocked
+	default:
+		return err
+	}
 }
 
 // ResetGuestAccessCode 让所有已记住设备失效并签发新的访问码，不重新开放链接
