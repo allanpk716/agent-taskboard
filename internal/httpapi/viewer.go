@@ -51,9 +51,11 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 				errors.Is(err, identity.ErrLinkUnclaimed),
 				errors.Is(err, identity.ErrLinkClaimed):
 				a.writeGuestLinkError(w, r, err)
+			case errors.Is(err, identity.ErrHomeClaimed):
+				a.writeGuestHomeStatusError(w, err)
 			case errors.Is(err, tickets.ErrAccessCodeInvalid):
 				WriteError(w, http.StatusUnauthorized, CodeAccessCodeInvalid, err.Error(),
-					"访客 Agent 凭证是 tbg_<链接密钥>:<访问码>；连续输错 5 次会锁定")
+					"访客 Agent 凭证是 tbg_<链接密钥>:<访问码> 或 tbh_<主页密钥>:<访问码>；连续输错 5 次会锁定")
 			case errors.Is(err, tickets.ErrAccessCodeLocked):
 				WriteError(w, http.StatusForbidden, CodeAccessCodeLocked, err.Error(),
 					"请联系能管理这条链接的成员重置访问码")
@@ -92,6 +94,18 @@ func (a *API) viewerFromRequest(w http.ResponseWriter, r *http.Request) (identit
 }
 
 func (a *API) guestAgentViewer(r *http.Request, credential identity.GuestAgentCredential) (identity.Viewer, error) {
+	if credential.Home {
+		home, err := a.ident.GuestHomeForKey(r.Context(), credential.Key)
+		if err != nil {
+			var status *identity.HomeStatusError
+			if errors.As(err, &status) &&
+				(status.Status == identity.GuestLinkClaimed || status.Status == identity.GuestLinkAccessLocked) {
+				return a.tickets.ViewerFromGuestHomeAgentCredential(r.Context(), status.Home, credential.AccessCode)
+			}
+			return identity.Viewer{}, err
+		}
+		return a.tickets.ViewerFromGuestHomeAgentCredential(r.Context(), home, credential.AccessCode)
+	}
 	link, err := a.ident.GuestLinkForKey(r.Context(), credential.Key)
 	if errors.Is(err, identity.ErrLinkClaimed) {
 		var status *identity.LinkStatusError

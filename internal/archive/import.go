@@ -953,7 +953,7 @@ var importTableColumns = []struct {
 	{"ticket_labels", []string{"ticket_seq", "label"}},
 	{"ticket_collaborators", []string{"ticket_seq", "member_id", "added_at"}},
 	{"guests", []string{"id", "name", "created_by_member_id", "created_by_agent_id",
-		"created_at", "disabled_at"}},
+		"created_at", "disabled_at", "home_key_hash", "home_key_ciphertext"}},
 	{"guest_credential_holders", []string{"id", "owner_type", "owner_id", "claimed_at",
 		"claim_name", "access_code_hash", "access_code_failures", "access_code_locked_at", "created_at"}},
 	{"guest_links", []string{"id", "ticket_seq", "key_hash", "note", "expires_at", "revoked_at",

@@ -59,6 +59,22 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 | `GET /api/v1/session` | 当前凭证的身份（任何有效凭证；匿名 401 `unauthenticated`）。 |
 | `DELETE /api/v1/session` | 登出（幂等 204），清除会话 cookie。 |
 
+长期访客的设备凭证不再回落到最早一条链接；`viewer` 另带 `guest` 与 `home`，
+`home.api` 指向主页列表接口。单条无主老链接仍沿用 `link_*` 与 `ticket` 字段。
+
+```json
+{
+  "viewer": {
+    "kind": "guest",
+    "guest": {"id": 7, "name": "检验科-张三"},
+    "home": {"api": "/api/v1/guest-home"},
+    "link_note": null,
+    "link_expires_at": null,
+    "can_edit_brief": null
+  }
+}
+```
+
 `GET /api/v1/session` 对客户端凭证还会返回 `client`：
 
 ```json
@@ -949,6 +965,10 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 | `GET /api/v1/guest-link` | 用 `tbg_` 密钥读取认领页信息：邀请人、备注、有效期、可见范围提示；未认领时不返回工单内容。 |
 | `POST /api/v1/guest-links/claim` | 用 `tbg_` 密钥认领：`{"author_name"}`；成功返回一次 `device_token` 和 6 位 `access_code`，并写 `guest_link_claimed` 事件。有主链接的认领作用于整个访客。 |
 | `POST /api/v1/guest-links/enter` | 用 `tbg_` 密钥凭访问码进入：`{"access_code"}`；成功返回一次新 `device_token`；有主链接签发的设备对这位访客名下全部链接可信。 |
+| `POST /api/v1/guests/{访客id}/home-share-text` | 复制访客主页文案（访客建立者、管理员或名下链接管理人，含成员 Agent）：成功 `{home_url, share_text}`；`home_url` 是 `/h/tbh_…`，可重复生成，文案不含访问码；无关成员 403 `guest_management_not_allowed`。 |
+| `GET /api/v1/guest-home` | 主页信息与列表：未认领主页密钥只返回 `{state, guest_name, guest_agent_instruction}`；设备凭证或 `tbh_` Agent 凭证返回 `{state:"claimed", guest_name, tickets, guest_agent_instruction}`。 |
+| `POST /api/v1/guest-home/claim` | 用 `tbh_` 主页密钥认领整个访客：`{"author_name"}`；成功一次性返回 `device_token` 与 6 位 `access_code`。 |
+| `POST /api/v1/guest-home/enter` | 用 `tbh_` 主页密钥凭访问码进入：`{"access_code"}`；成功返回一次新 `device_token`。 |
 | 受保护的工单接口 | 访客 Agent 直接带 `Authorization: Bearer tbg_<链接密钥>:<访问码>` 读取、回复和下载附件；单凭链接密钥仍为 401 `link_claimed`。 |
 
 - 创建必须带 `guest_id`（选择已有访客）或 `new_guest_name`（当场新建一位）之一：
@@ -1020,11 +1040,18 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 
 ### 访客视角
 
-- 凭证：认领后 `Authorization: Bearer tbgd_…`。`GET /api/v1/session` 返回链接指向的工单
-  （见上文「会话与身份」的访客形状）。
-- 访客 Agent 不换取设备凭证，直接用 `Authorization: Bearer tbg_<链接密钥>:<访问码>`。
+- 凭证：认领后 `Authorization: Bearer tbgd_…`。长期访客的
+  `GET /api/v1/session` 返回 `guest` 与 `home`；无主老链接仍返回链接指向的工单。
+- 访客 Agent 不换取设备凭证，直接用
+  `Authorization: Bearer tbg_<链接密钥>:<访问码>` 或
+  `Authorization: Bearer tbh_<主页密钥>:<访问码>`。
   访问码错误与浏览器输码共用 `access_code_failures`，访问记录的 `entry_method` 为
   `access_code`。
+- 主页列表只包含名下仍有效（未撤销、未过期）链接对应的工单；轮到访客的排在前面并带
+  `waiting_on_you=true` 与 `reason`，已关闭工单 `read_only=true` 且排后，撤销/过期的不列。
+  每项带 `number/title/status/api/reason/read_only/expires_at/can_edit_brief`。
+  `guest_agent_instruction` 是主页版指令，附主页地址并覆盖全部工单，但不包含访问码。
+  只读取主页不写访问记录；逐张按 `api` 读取工单才写访问记录。
 - 未认领时除认领接口外一律 401 `link_unclaimed` 并记录被拒访问；已认领后单凭
   `tbg_` 链接密钥 401 `link_claimed`。
 - 可见：标题、说明、全部回复、附件（下载需设备凭证，见「附件（#33）」）、

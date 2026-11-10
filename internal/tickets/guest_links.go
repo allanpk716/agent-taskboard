@@ -26,6 +26,10 @@ var (
 	ErrGuestBothProvided = errors.New("已有访客与新访客名字只能二选一")
 	// ErrGuestNotFound 表示 guest_id 指向的访客不存在。
 	ErrGuestNotFound = errors.New("没有这位访客")
+	// ErrGuestDisabled 表示访客已停用，主页与名下链接都不可用。
+	ErrGuestDisabled = errors.New("这位访客已停用")
+	// ErrGuestManagementNotAllowed 表示当前成员不能管理这位访客。
+	ErrGuestManagementNotAllowed = errors.New("你不能管理这位访客")
 	// ErrGuestLinkAlreadyAssigned 表示链接已经归属一位访客；改归须走访客合并。
 	ErrGuestLinkAlreadyAssigned = errors.New("这条链接已归属访客，不能再手动归属")
 	// ErrInvalidValidDays 表示 valid_days 不是 7/30/90 之一（或与 expires_at 并存）。
@@ -116,9 +120,11 @@ func (spec GuestLinkSpec) validate(now time.Time) (time.Time, error) {
 type GuestLinkCreated struct {
 	ID           int64
 	Key          string
+	HomeKey      string
 	Note         string
 	GuestID      int64
 	GuestName    string
+	Claimed      bool
 	ExpiresAt    time.Time
 	CanEditBrief bool
 }
@@ -157,9 +163,13 @@ func (m *Manager) createGuestLinkTx(ctx context.Context, tx *sql.Tx, ticketSeq i
 	if err != nil {
 		return nil, err
 	}
-	guestID, guestName, holderID, err := m.guestForNewLinkTx(ctx, tx, actor, spec, now)
+	guestID, guestName, holderID, claimed, err := m.guestForNewLinkTx(ctx, tx, actor, spec, now)
 	if err != nil {
 		return nil, err
+	}
+	home, homeErr := m.ensureGuestHomeKeyTx(ctx, tx, guestID)
+	if homeErr != nil {
+		return nil, homeErr
 	}
 	key, err := identity.NewGuestKey()
 	if err != nil {
@@ -192,7 +202,8 @@ func (m *Manager) createGuestLinkTx(ctx context.Context, tx *sql.Tx, ticketSeq i
 	}
 	return &GuestLinkCreated{
 		ID: id, Key: key, Note: spec.Note, GuestID: guestID, GuestName: guestName,
-		ExpiresAt: expiresAt, CanEditBrief: spec.CanEditBrief,
+		Claimed: claimed, ExpiresAt: expiresAt, CanEditBrief: spec.CanEditBrief,
+		HomeKey: home.Key,
 	}, nil
 }
 
@@ -227,8 +238,11 @@ func (m *Manager) AssignGuestLink(ctx context.Context, viewer identity.Viewer, r
 		return GuestLinkInfo{}, ErrGuestLinkAlreadyAssigned
 	}
 	actor := authorOf(viewer)
-	guestID, guestName, guestHolderID, err := m.guestForNewLinkTx(ctx, tx, actor, spec, now)
+	guestID, guestName, guestHolderID, _, err := m.guestForNewLinkTx(ctx, tx, actor, spec, now)
 	if err != nil {
+		return GuestLinkInfo{}, err
+	}
+	if _, err := m.ensureGuestHomeKeyTx(ctx, tx, guestID); err != nil {
 		return GuestLinkInfo{}, err
 	}
 	if _, err := tx.ExecContext(ctx,
@@ -320,15 +334,20 @@ func (m *Manager) insertAssignmentEvent(ctx context.Context, tx *sql.Tx, ticketS
 // 并返回该访客的凭证持有者。新访客与持有者在调用方事务里一起写入，
 // 保证链接、访客与凭证要么全部成功、要么全部回滚。
 func (m *Manager) guestForNewLinkTx(ctx context.Context, tx *sql.Tx, actor Author,
-	spec GuestLinkSpec, now time.Time) (guestID int64, guestName string, holderID int64, err error) {
+	spec GuestLinkSpec, now time.Time) (guestID int64, guestName string, holderID int64, claimed bool, err error) {
 	if spec.GuestID != 0 {
-		if err := tx.QueryRowContext(ctx, `SELECT id, name FROM guests WHERE id = ?`, spec.GuestID).
-			Scan(&guestID, &guestName); err != nil {
+		var claimedAt sql.NullString
+		if err := tx.QueryRowContext(ctx, `
+			SELECT gu.id, gu.name, h.claimed_at
+			FROM guests gu
+			JOIN guest_credential_holders h ON h.owner_type = 'guest' AND h.owner_id = gu.id
+			WHERE gu.id = ?`, spec.GuestID).Scan(&guestID, &guestName, &claimedAt); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				return 0, "", 0, ErrGuestNotFound
+				return 0, "", 0, false, ErrGuestNotFound
 			}
-			return 0, "", 0, err
+			return 0, "", 0, false, err
 		}
+		claimed = claimedAt.Valid
 	} else {
 		var agentID any
 		if actor.AgentID != 0 {
@@ -339,7 +358,7 @@ func (m *Manager) guestForNewLinkTx(ctx context.Context, tx *sql.Tx, actor Autho
 			VALUES (?, ?, ?, ?) RETURNING id`,
 			spec.NewGuestName, actor.MemberID, agentID, now.Format(time.RFC3339Nano)).
 			Scan(&guestID); err != nil {
-			return 0, "", 0, fmt.Errorf("写入访客失败：%w", err)
+			return 0, "", 0, false, fmt.Errorf("写入访客失败：%w", err)
 		}
 		guestName = spec.NewGuestName
 	}
@@ -347,15 +366,15 @@ func (m *Manager) guestForNewLinkTx(ctx context.Context, tx *sql.Tx, actor Autho
 		`SELECT id FROM guest_credential_holders WHERE owner_type = 'guest' AND owner_id = ?`, guestID).
 		Scan(&holderID); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			return 0, "", 0, err
+			return 0, "", 0, false, err
 		}
 		holder, err := guestcredentials.CreateGuestHolder(ctx, tx, guestID, now)
 		if err != nil {
-			return 0, "", 0, err
+			return 0, "", 0, false, err
 		}
 		holderID = holder.ID
 	}
-	return guestID, guestName, holderID, nil
+	return guestID, guestName, holderID, claimed, nil
 }
 
 // GuestLinkInfo 是访客链接的列表项：不含明文密钥。keyCiphertext 只在服务端

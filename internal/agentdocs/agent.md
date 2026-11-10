@@ -14,8 +14,11 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
   链接密钥会被拒绝。换设备时在名下任一链接输入一次访问码，这台设备对这位访客名下
   全部有效链接都可信；之后成员新加的链接也直接可信。浏览器和访客 Agent 共用同一个
   连续输错计数，连续 5 次即锁定这位访客的全部链接，只能请成员重置。
-  访客 Agent 后续访问用 `Authorization: Bearer tbg_<链接密钥>:<访问码>`，可读取、回复和
-  下载附件；若链接尚未认领，先用 `POST /api/v1/guest-links/claim` 带主人的称呼认领。
+  访客 Agent 后续访问有两种凭证：单工单用
+  `Authorization: Bearer tbg_<链接密钥>:<访问码>`；批量处理用
+  `Authorization: Bearer tbh_<主页密钥>:<访问码>`。两者都可读取、回复和下载附件；
+  若访客尚未认领，先用 `POST /api/v1/guest-links/claim` 或
+  `POST /api/v1/guest-home/claim` 带主人的称呼认领。
   访客能访问的工单集合是“名下未撤销、未过期的链接”指向的工单；访问名下没有链接的
   工单会得到 404。认领拿到的链接和访问码必须原样转交主人，不要写进工单、回复、日志或其他系统。
   通过反馈入口代主人提交时，成功响应里的 `guest_link.url`、`device_token` 和 6 位
@@ -58,6 +61,24 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
   `GET {{BASE}}/api/v1/tickets/<工单编号>/guest-links`，找到备注对应的链接并确认
   `share_text_available` 为 true；再 `POST {{BASE}}/api/v1/tickets/<工单编号>/guest-links/<链接id>/share-text`。
 - 响应只有 `{share_text}`，里面是**同一条链接**，并按当前标题、有效期和认领状态生成；已认领时会提醒对方换设备要输入当初的访问码。把这段文案原样交给主人或指定的访客，不要改写链接，也不要写入日志、无关工单或其他系统。
+
+## 访客主页与按访客批量处理
+
+- 主人让你把访客主页发给某位访客时，用名单里的 `guest_id` 调
+  `POST {{BASE}}/api/v1/guests/<guest_id>/home-share-text`；响应
+  `{home_url, share_text}` 可重复复制，其中只有主页地址、没有访问码。只有访客建立者、
+  管理员或名下链接管理人会成功；无关成员会得到 403。原样交给主人，不要改写 `home_url`。
+- 拿到访客主页和访问码后，先从 `/h/<主页密钥>` 取出 `tbh_` 后面的密钥，用
+  `Authorization: Bearer tbh_<主页密钥>:<访问码>` 调
+  `GET {{BASE}}/api/v1/guest-home`。响应的 `tickets` 是这位访客名下所有仍有效链接
+  对应的工单；轮到访客的排在前面，`waiting_on_you=true`，`reason` 写原因；
+  `read_only=true` 表示已关闭，只能读不能回复。
+- 批量处理推荐顺序：先保存整份 `tickets` 列表；逐张按 `api` 读取；对每张分别回复或
+  修订说明，正文不要串单；每张的回复都要自报 `author_name` 并如实写「由 Agent 写成」。
+  只打开主页不会写入访问记录，逐张读取才会按访客名字记录。
+- 主页和链接凭证共用同一个访问码错误计数：连续 5 次输错会锁定这位访客的全部工单。
+  收到 401 `access_code_invalid` 时先停下核对；收到 403 `access_code_locked` 时告诉主人
+  需要成员重置，不要继续尝试。
 - `409 share_text_unavailable` 表示这是上线前的老链接，平台没有可恢复的密钥；告诉主人需要换一个新地址，不要伪造旧文案。已撤销或已过期会返回 `409 link_not_extendable`。
 - `rotate-key` 一般只在 `share_text_available` 为 false 时使用（老链接或服务端加密密钥丢失）；链接疑似外泄时也可以用来换地址。无论哪种情况，都要先向主人说明后果并取得确认。
   主人明确确认要换新地址后，再带 `Idempotency-Key` 调用
