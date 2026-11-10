@@ -386,3 +386,60 @@ func Test备份恢复覆盖访客与访客级凭证(t *testing.T) {
 		t.Fatalf("恢复后的访客级设备凭证不可用：viewer=%+v err=%v", viewer, err)
 	}
 }
+
+// 备份恢复保留“已并入哪位访客、何时并入”的永久状态；合并不可撤回，
+// 不能在恢复后把 B 又当成可选访客。
+func Test备份恢复覆盖访客合并状态(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	st, err := store.Open(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := []string{
+		`INSERT INTO members (id, username, name, password_hash, is_admin, created_at)
+		 VALUES (1,'wang','王工','x',1,'2026-11-02T09:00:00+08:00')`,
+		`INSERT INTO guests (id, name, created_by_member_id, created_at)
+		 VALUES (1,'检验科-张三',1,'2026-11-02T09:00:00+08:00')`,
+		`INSERT INTO guests (id, name, created_by_member_id, created_at,
+		                     merged_into_guest_id, merged_at)
+		 VALUES (2,'检验科-张三（重复）',1,'2026-11-02T09:05:00+08:00',1,
+		         '2026-11-02T10:00:00+08:00')`,
+	}
+	for _, query := range seed {
+		if _, err := st.DB.Exec(query); err != nil {
+			t.Fatalf("造备份前数据失败：%v\n%s", err, query)
+		}
+	}
+	b, err := ops.NewBackups(st.DB, dataDir, ops.BackupOptions{
+		DailyAt: "03:00", KeepDaily: 30, KeepMonthly: 12, KeepPreupdate: 5,
+	}, clock.NewFake(beijing(2026, 11, 2, 11, 0, 0)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := b.BackupNow(ctx, ops.KindDaily)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	freshData := t.TempDir()
+	if _, err := ops.Restore(freshData, 0, filepath.Join(dataDir, "backups", record.Filename),
+		beijing(2026, 11, 2, 11, 1, 0)); err != nil {
+		t.Fatalf("恢复备份失败：%v", err)
+	}
+	restored, err := store.Open(freshData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	var mergedInto int64
+	var mergedAt string
+	if err := restored.DB.QueryRow(
+		`SELECT merged_into_guest_id, merged_at FROM guests WHERE id = 2`).
+		Scan(&mergedInto, &mergedAt); err != nil || mergedInto != 1 ||
+		mergedAt != "2026-11-02T10:00:00+08:00" {
+		t.Fatalf("恢复后的合并状态 = %d/%q (err=%v)，想并入访客 1", mergedInto, mergedAt, err)
+	}
+}

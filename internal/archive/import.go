@@ -512,7 +512,7 @@ func safeImportPath(name string) bool {
 func normalizeImportTicket(export *ticketExport) {
 	for _, rows := range []*[]map[string]any{&export.BriefVersions, &export.Replies,
 		&export.Attachments, &export.Timeline, &export.AccessRecords, &export.Labels,
-		&export.Collaborators, &export.GuestLinks, &export.GuestDevices,
+		&export.Collaborators, &export.Guests, &export.GuestLinks, &export.GuestDevices,
 		&export.GuestCredentialHolders, &export.GuestCredentialDevices, &export.TicketReads} {
 		for i, row := range *rows {
 			(*rows)[i] = normalizeImportMap(row).(map[string]any)
@@ -526,6 +526,16 @@ func normalizeImportTicket(export *ticketExport) {
 		export.Drafts[i] = normalized
 	}
 	// 旧格式的归档包没有瘦身列；统一补默认值，恢复时与「仍在服务器上」一致。
+	// 旧格式的访客快照也没有合并状态；未合并时两列为 NULL。
+	for i, row := range export.Guests {
+		if _, ok := row["merged_into_guest_id"]; !ok {
+			row["merged_into_guest_id"] = nil
+		}
+		if _, ok := row["merged_at"]; !ok {
+			row["merged_at"] = nil
+		}
+		export.Guests[i] = row
+	}
 	for i, row := range export.Attachments {
 		if _, ok := row["slim_removed_at"]; !ok {
 			row["slim_removed_at"] = nil
@@ -713,6 +723,9 @@ func (s *Service) checkImportReferencesTx(ctx context.Context, tx *sql.Tx,
 	}
 	for _, row := range export.GuestLinks {
 		guestIDs.add(row["guest_id"])
+	}
+	for _, row := range export.Guests {
+		guestIDs.add(row["merged_into_guest_id"])
 	}
 	for _, row := range export.GuestLinks {
 		memberIDs.addRows(row, "created_by_member_id")
@@ -953,7 +966,8 @@ var importTableColumns = []struct {
 	{"ticket_labels", []string{"ticket_seq", "label"}},
 	{"ticket_collaborators", []string{"ticket_seq", "member_id", "added_at"}},
 	{"guests", []string{"id", "name", "created_by_member_id", "created_by_agent_id",
-		"created_at", "disabled_at", "home_key_hash", "home_key_ciphertext"}},
+		"created_at", "disabled_at", "home_key_hash", "home_key_ciphertext",
+		"merged_into_guest_id", "merged_at"}},
 	{"guest_credential_holders", []string{"id", "owner_type", "owner_id", "claimed_at",
 		"claim_name", "access_code_hash", "access_code_failures", "access_code_locked_at", "created_at"}},
 	{"guest_links", []string{"id", "ticket_seq", "key_hash", "note", "expires_at", "revoked_at",

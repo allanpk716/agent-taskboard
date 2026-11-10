@@ -364,9 +364,10 @@ func Test生成归档包可下载且校验和与Markdown有效(t *testing.T) {
 	if len(structured.Guests) != 1 || structured.Guests[0]["name"] != "检验科-张三" {
 		t.Fatalf("归档包缺少相关访客快照：%+v", structured.Guests)
 	}
-	for _, key := range []string{"home_key_hash", "home_key_ciphertext"} {
-		if structured.Guests[0][key] == nil || structured.Guests[0][key] == "" {
-			t.Errorf("导出的访客快照缺少主页密钥列 %s：%+v", key, structured.Guests[0])
+	for _, key := range []string{"home_key_hash", "home_key_ciphertext",
+		"merged_into_guest_id", "merged_at"} {
+		if _, ok := structured.Guests[0][key]; !ok {
+			t.Errorf("导出的访客快照缺少恢复列 %s：%+v", key, structured.Guests[0])
 		}
 	}
 	if structured.GuestCredentialHolders[0]["owner_type"] != "guest" {
