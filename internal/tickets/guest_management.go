@@ -87,6 +87,8 @@ func (m *Manager) GuestDetail(ctx context.Context, viewer identity.Viewer, guest
 		own := make([]GuestLinkInfo, 0, len(links))
 		for _, l := range links {
 			if l.GuestID == guestID {
+				l.ShareTextAvailable = l.RevokedAt == nil && m.clk.Now().Before(l.ExpiresAt) &&
+					m.guestLinkCipher != nil && m.guestLinkCipher.CanDecrypt(l.keyCiphertext)
 				own = append(own, l)
 			}
 		}

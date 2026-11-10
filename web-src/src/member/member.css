@@ -3061,3 +3061,49 @@ textarea.src {
     order: 3;
   }
 }
+
+/* 访客管理（#332）：名单行、详情操作区与工单/链接列表 */
+.guest-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+}
+.guest-row .guest-row-main {
+  display: flex;
+  flex-direction: column;
+  color: inherit;
+  text-decoration: none;
+  flex: 1;
+  min-width: 0;
+}
+.guest-row .guest-row-main:hover strong {
+  text-decoration: underline;
+}
+.guest-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.guest-ticket {
+  padding: 10px 0;
+  border-bottom: 1px solid #f0f2f6;
+}
+.guest-ticket:last-child {
+  border-bottom: 0;
+}
+.guest-ticket > a {
+  color: inherit;
+  text-decoration: none;
+  font-weight: 700;
+}
+.guest-ticket > a:hover {
+  text-decoration: underline;
+}
+.guest-ticket .guest-links {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}

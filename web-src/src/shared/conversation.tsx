@@ -44,6 +44,10 @@ export function eventText(e: TimelineEvent): string {
       return e.reason === 'merge'
         ? `合并访客后把访客链接「${e.note}」改归到 ${e.to}`
         : `把访客链接「${e.note}」归到 ${e.to}`
+    case 'guest_disabled':
+      return `停用了访客「${e.to}」，名下链接一并失效`
+    case 'guest_enabled':
+      return `恢复了访客「${e.to}」，名下链接按原有效期重新生效`
     case 'brief_revised':
       return `修订了说明（第 ${e.revision} 版）`
     case 'closed':

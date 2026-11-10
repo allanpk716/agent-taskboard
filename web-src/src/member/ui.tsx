@@ -13,6 +13,8 @@ export type Route =
   | { page: 'detail'; ref: string }
   | { page: 'draft'; id: string }
   | { page: 'tools' }
+  | { page: 'guests' }
+  | { page: 'guestDetail'; id: string }
   | { page: 'me' }
   | { page: 'templates' }
   | { page: 'templateEdit'; key: string }
@@ -24,6 +26,9 @@ export function parseRoute(pathname: string): Route {
     return { page: 'draft', id: decodeURIComponent(pathname.slice('/drafts/'.length)) }
   if (pathname.startsWith('/templates/'))
     return { page: 'templateEdit', key: decodeURIComponent(pathname.slice('/templates/'.length)) }
+  if (pathname.startsWith('/guests/'))
+    return { page: 'guestDetail', id: decodeURIComponent(pathname.slice('/guests/'.length)) }
+  if (pathname === '/guests') return { page: 'guests' }
   if (pathname === '/templates') return { page: 'templates' }
   if (pathname === '/tickets') return { page: 'tickets' }
   if (pathname === '/drafts') return { page: 'drafts' }
