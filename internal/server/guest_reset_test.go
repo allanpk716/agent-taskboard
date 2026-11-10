@@ -125,6 +125,10 @@ func Test访客级重置访问码作废全部设备并清除锁定(t *testing.T)
 			t.Fatalf("[%s] 凭码设备状态码 = %d，想 401", number, res.StatusCode)
 		}
 	}
+	if res := s.Do(t, s.AgentClient(claim.DeviceToken), http.MethodGet,
+		"/api/v1/guest-home", nil, nil); res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("主页上旧设备状态码 = %d，想 401", res.StatusCode)
+	}
 	if res := enterGuestHome(t, s, homeKey, claim.AccessCode); res.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("旧访问码状态码 = %d，想 401（且不应再锁定）", res.StatusCode)
 	}
