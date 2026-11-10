@@ -8,12 +8,17 @@ import {
   disableGuest,
   enableGuest,
   fetchGuestDetail,
+  fetchGuests,
+  mergeGuest,
+  previewGuestMerge,
   previewGuestAccessCodeReset,
   renameGuest,
   resetGuestAccessCodeForGuest,
   resetGuestHomeKey,
   type GuestAccessCodeResetPreview,
   type GuestDetail,
+  type GuestMergePreview,
+  type GuestSummary,
 } from './memberApi'
 import { ResetAccessResultDialog } from './ResetAccessDialog'
 import { Confirm, Modal, copyText, nav, toast } from './ui'
@@ -30,6 +35,14 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
   const [confirmEnable, setConfirmEnable] = useState(false)
   const [confirmCodeReset, setConfirmCodeReset] = useState(false)
   const [confirmHomeReset, setConfirmHomeReset] = useState(false)
+  const [mergeOpen, setMergeOpen] = useState(false)
+  const [mergeQuery, setMergeQuery] = useState('')
+  const [mergeTargets, setMergeTargets] = useState<GuestSummary[] | null>(null)
+  const [mergeTargetsError, setMergeTargetsError] = useState<string | null>(null)
+  const [mergeTargetID, setMergeTargetID] = useState(0)
+  const [mergePreview, setMergePreview] = useState<GuestMergePreview | null>(null)
+  const [mergePreviewError, setMergePreviewError] = useState<string | null>(null)
+  const [confirmMerge, setConfirmMerge] = useState(false)
   const [codePreview, setCodePreview] = useState<GuestAccessCodeResetPreview | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [resetResult, setResetResult] = useState<{
@@ -68,6 +81,51 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
     }
   }, [confirmCodeReset, codePreview, previewError, id])
 
+  // 合并入口只列仍可被选择的目标访客；已停用或已并入者不能接收来源访客的链接。
+  useEffect(() => {
+    if (!mergeOpen) return
+    let alive = true
+    fetchGuests(mergeQuery)
+      .then((list) => {
+        if (alive) {
+          setMergeTargets(
+            list.filter((g) => g.id !== id && !g.disabled_at && !g.merged_into_guest_id),
+          )
+        }
+      })
+      .catch(() => {
+        if (alive) {
+          setMergeTargets([])
+          setMergeTargetsError('读取可选访客失败，请稍后重试')
+        }
+      })
+    return () => {
+      alive = false
+    }
+  }, [mergeOpen, mergeQuery, id])
+
+  // 选定目标后先展示影响面；预览成功后才允许进入二次确认。
+  useEffect(() => {
+    if (!mergeOpen || !mergeTargetID) return
+    let alive = true
+    setMergePreview(null)
+    setMergePreviewError(null)
+    previewGuestMerge(id, mergeTargetID)
+      .then((got) => {
+        if (alive) setMergePreview(got)
+      })
+      .catch((e) => {
+        if (alive) {
+          setMergePreviewError(
+            e instanceof ApiError ? `${e.code}：${e.message}` : '合并影响预览加载失败',
+          )
+        }
+      })
+    return () => {
+      alive = false
+    }
+  }, [mergeOpen, mergeTargetID, id])
+
   if (error) {
     return (
       <div className="bpage">
@@ -90,6 +148,7 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
 
   const guest = detail.guest
   const disabled = !!guest.disabled_at
+  const merged = !!guest.merged_at
 
   async function submitRename() {
     const name = newName.trim()
@@ -183,6 +242,25 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
     }
   }
 
+  async function submitMerge() {
+    if (!mergeTargetID) return
+    setBusy(true)
+    try {
+      const result = await mergeGuest(id, mergeTargetID)
+      setMergeOpen(false)
+      toast(
+        `✓ 已把 ${result.link_count} 条链接并入目标访客，` +
+          `${result.device_count} 台来源访客设备已作废；合并不能撤回`,
+      )
+      window.dispatchEvent(new Event('tb:invalidate'))
+      nav(`/guests/${result.target_guest_id}`)
+    } catch (e) {
+      toast(e instanceof ApiError ? `${e.code}：${e.message}` : '合并访客失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (resetResult) {
     return <ResetAccessResultDialog result={resetResult} onClose={() => setResetResult(null)} />
   }
@@ -193,16 +271,20 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
         <div className="sec-t" style={{ marginTop: 0 }}>
           {guest.name}
           {disabled && <span className="badge closed">已停用</span>}
+          {merged && <span className="badge closed">已并入</span>}
         </div>
         <div className="hint">
-          {disabled
-            ? `停用于 ${fmtDateCN(guest.disabled_at!)}；主页与名下全部链接一起失效`
-            : guest.claimed_at
-              ? `已认领${guest.claim_name ? ` · ${guest.claim_name}` : ''} · ${fmtDateCN(guest.claimed_at)}`
-              : '未认领'}
+          {merged
+            ? `已于 ${fmtDateCN(guest.merged_at!)} 并入另一位访客；主页、访问码和设备已失效`
+            : disabled
+              ? `停用于 ${fmtDateCN(guest.disabled_at!)}；主页与名下全部链接一起失效`
+              : guest.claimed_at
+                ? `已认领${guest.claim_name ? ` · ${guest.claim_name}` : ''} · ${fmtDateCN(guest.claimed_at)}`
+                : '未认领'}
           {' · '}
           {guest.link_count} 条链接
         </div>
+        {!merged && (
         <div className="guest-actions">
           <button className="btn ghost" onClick={() => void copyHome()}>
             复制主页文案
@@ -223,6 +305,22 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
           <button
             className="btn ghost"
             onClick={() => {
+              setMergeTargets(null)
+              setMergeTargetsError(null)
+              setMergeTargetID(0)
+              setMergePreview(null)
+              setMergePreviewError(null)
+              setConfirmMerge(false)
+              setMergeQuery('')
+              setMergeOpen(true)
+            }}
+            disabled={busy}
+          >
+            合并到另一位访客
+          </button>
+          <button
+            className="btn ghost"
+            onClick={() => {
               setNewName(guest.name)
               setRenaming(true)
             }}
@@ -239,6 +337,7 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
             </button>
           )}
         </div>
+        )}
         {renaming && (
           <div className="inrow" style={{ marginTop: 10 }}>
             <input
@@ -352,6 +451,95 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
           onYes={() => void resetHome()}
           onCancel={() => setConfirmHomeReset(false)}
         />
+      )}
+      {mergeOpen && (
+        <Modal title="合并到另一位访客" onClose={() => setMergeOpen(false)} wide>
+          {!confirmMerge ? (
+            <>
+              <div className="fld">
+                <label>
+                  目标访客<i className="req">必填</i>
+                </label>
+                <div className="inrow">
+                  <input
+                    aria-label="搜索目标访客"
+                    type="search"
+                    placeholder="按名字搜索目标访客"
+                    value={mergeQuery}
+                    onChange={(e) => setMergeQuery(e.target.value)}
+                  />
+                  <select
+                    className="sel"
+                    aria-label="选择目标访客"
+                    value={mergeTargetID ? String(mergeTargetID) : ''}
+                    onChange={(e) => setMergeTargetID(Number(e.target.value))}
+                  >
+                    <option value="">— 选择目标访客 —</option>
+                    {(mergeTargets ?? []).map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.name}
+                        {g.claim_name ? `（已认领 · ${g.claim_name}）` : g.claimed_at ? '（已认领）' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              {mergeTargetsError ? (
+                <div className="warnbox">{mergeTargetsError}</div>
+              ) : mergeTargets === null ? (
+                <div className="hint">正在读取可选访客…</div>
+              ) : mergeTargetID === 0 ? (
+                <div className="hint">先选择「{guest.name}」要并入哪一位访客。</div>
+              ) : mergePreview ? (
+                <div className="reset-info">
+                  将把「{mergePreview.source_guest_name}」的 {mergePreview.link_count} 条链接改归
+                  「{mergePreview.target_guest_name}」，并作废来源访客的 {mergePreview.device_count} 台设备。
+                </div>
+              ) : mergePreviewError ? (
+                <div className="warnbox">{mergePreviewError}</div>
+              ) : (
+                <div className="hint">正在加载影响范围…</div>
+              )}
+              <div className="hint">
+                目标访客的访问码、已登录设备和主页地址保持不变；来源访客的主页、访问码和设备会全部失效。
+              </div>
+              <div className="mrow">
+                <button className="btn ghost" onClick={() => setMergeOpen(false)}>
+                  取消
+                </button>
+                <span className="sp" />
+                <button
+                  className="btn"
+                  onClick={() => setConfirmMerge(true)}
+                  disabled={busy || !mergeTargetID || !mergePreview}
+                >
+                  下一步：确认合并
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="reset-lead">
+                确认把「{guest.name}」并入「{mergePreview?.target_guest_name ?? '目标访客'}」？
+              </p>
+              <div className="reset-info">
+                改归 {mergePreview?.link_count ?? 0} 条链接；作废来源访客 {mergePreview?.device_count ?? 0} 台设备。
+              </div>
+              <div className="warnbox">
+                这是二次确认：合并不能撤回。来源访客不会再出现在访客名单，也不能再被选作建链接的访客。
+              </div>
+              <div className="mrow">
+                <button className="btn ghost" onClick={() => setConfirmMerge(false)}>
+                  返回上一步
+                </button>
+                <span className="sp" />
+                <button className="btn danger" onClick={() => void submitMerge()} disabled={busy}>
+                  确认合并
+                </button>
+              </div>
+            </>
+          )}
+        </Modal>
       )}
     </div>
   )

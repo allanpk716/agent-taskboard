@@ -17,6 +17,8 @@ type guestView struct {
 	ID                 int64      `json:"id"`
 	Name               string     `json:"name"`
 	DisabledAt         *time.Time `json:"disabled_at,omitempty"`
+	MergedIntoGuestID  int64      `json:"merged_into_guest_id,omitempty"`
+	MergedAt           *time.Time `json:"merged_at,omitempty"`
 	ClaimedAt          *time.Time `json:"claimed_at,omitempty"`
 	ClaimName          string     `json:"claim_name,omitempty"`
 	AccessCodeLockedAt *time.Time `json:"access_code_locked_at,omitempty"`
@@ -56,9 +58,11 @@ func (a *API) handleGuests(w http.ResponseWriter, r *http.Request) {
 //	GET  /api/v1/guests/{id}/reset-access-code/preview  重置访问码影响预览（仅网页成员）
 //	POST /api/v1/guests/{id}/reset-access-code          访客级重置访问码（仅网页成员）
 //	POST /api/v1/guests/{id}/reset-home-key             重置主页地址（仅网页成员）
+//	GET  /api/v1/guests/{b}/merge-into/{a}/preview      合并影响预览（仅网页成员）
+//	POST /api/v1/guests/{b}/merge-into                   合并访客（仅网页成员）
 func (a *API) handleGuestsRef(w http.ResponseWriter, r *http.Request) {
 	rest := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if (len(rest) < 5 || len(rest) > 6) && len(rest) != 4 ||
+	if (len(rest) < 5 || len(rest) > 7) && len(rest) != 4 ||
 		rest[0] != "api" || rest[1] != "v1" || rest[2] != "guests" || rest[3] == "" {
 		WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "")
 		return
@@ -70,6 +74,20 @@ func (a *API) handleGuestsRef(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(rest) == 4 {
 		a.guestDetail(w, r, id)
+		return
+	}
+	if len(rest) == 7 {
+		targetID, err := strconv.ParseInt(rest[5], 10, 64)
+		if err != nil || targetID <= 0 || rest[4] != "merge-into" || rest[6] != "preview" {
+			WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口", "")
+			return
+		}
+		if r.Method != http.MethodGet {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法",
+				"合并影响预览用 GET /api/v1/guests/{b_id}/merge-into/{a_id}/preview")
+			return
+		}
+		a.previewGuestMerge(w, r, id, targetID)
 		return
 	}
 	action := rest[4]
@@ -93,13 +111,16 @@ func (a *API) handleGuestsRef(w http.ResponseWriter, r *http.Request) {
 		a.setGuestDisabled(w, r, id, true)
 	case action == "enable" && len(rest) == 5 && r.Method == http.MethodPost:
 		a.setGuestDisabled(w, r, id, false)
+	case action == "merge-into" && len(rest) == 5 && r.Method == http.MethodPost:
+		a.mergeGuest(w, r, id)
 	default:
 		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法",
 			"访客操作接口：POST /api/v1/guests/{id}/home-share-text、"+
 				"GET /api/v1/guests/{id}/reset-access-code/preview、"+
 				"POST /api/v1/guests/{id}/reset-access-code、"+
 				"POST /api/v1/guests/{id}/reset-home-key、POST /api/v1/guests/{id}/rename、"+
-				"POST /api/v1/guests/{id}/disable、POST /api/v1/guests/{id}/enable")
+				"POST /api/v1/guests/{id}/disable、POST /api/v1/guests/{id}/enable、"+
+				"POST /api/v1/guests/{b_id}/merge-into")
 	}
 }
 
@@ -229,6 +250,8 @@ func (a *API) copyGuestHomeText(w http.ResponseWriter, r *http.Request, id int64
 	switch {
 	case errors.Is(err, tickets.ErrGuestNotFound), errors.Is(err, tickets.ErrGuestDisabled):
 		WriteError(w, http.StatusNotFound, CodeGuestNotFound, "没有这位访客或她已停用", "")
+	case errors.Is(err, tickets.ErrGuestAlreadyMerged):
+		WriteError(w, http.StatusNotFound, CodeGuestAlreadyMerged, err.Error(), "")
 	case errors.Is(err, tickets.ErrGuestManagementNotAllowed):
 		WriteError(w, http.StatusForbidden, CodeGuestManagementNotAllowed, err.Error(),
 			"只有访客建立者、管理员或名下链接的管理人可以复制主页文案")
@@ -305,12 +328,81 @@ func (a *API) resetGuestHomeKey(w http.ResponseWriter, r *http.Request, id int64
 	})
 }
 
+func (a *API) previewGuestMerge(w http.ResponseWriter, r *http.Request, sourceID, targetID int64) {
+	w.Header().Set("Cache-Control", "no-store")
+	viewer, ok := a.webSessionFromRequest(w, r)
+	if !ok {
+		return
+	}
+	preview, err := a.tickets.GuestMergePreviewForViewer(r.Context(), viewer, sourceID, targetID)
+	if !a.writeGuestMergeError(w, err) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"source_guest_id": preview.SourceGuestID, "source_guest_name": preview.SourceGuestName,
+		"target_guest_id": preview.TargetGuestID, "target_guest_name": preview.TargetGuestName,
+		"link_count": preview.LinkCount, "device_count": preview.DeviceCount,
+	})
+}
+
+func (a *API) mergeGuest(w http.ResponseWriter, r *http.Request, sourceID int64) {
+	w.Header().Set("Cache-Control", "no-store")
+	viewer, ok := a.webSessionFromRequest(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		TargetGuestID int64 `json:"target_guest_id"`
+	}
+	if !decodeJSON(w, r, &req, `{"target_guest_id": 2}`) {
+		return
+	}
+	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
+		merged, err := a.tickets.MergeGuest(r.Context(), viewer, sourceID, req.TargetGuestID)
+		if !a.writeGuestMergeError(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"source_guest_id": merged.SourceGuestID, "target_guest_id": merged.TargetGuestID,
+			"link_count": merged.LinkCount, "device_count": merged.DeviceCount,
+		})
+	})
+}
+
+func (a *API) writeGuestMergeError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, tickets.ErrGuestNotFound):
+		WriteError(w, http.StatusNotFound, CodeGuestNotFound, "没有这位访客", "")
+	case errors.Is(err, tickets.ErrGuestMergeTargetRequired):
+		WriteError(w, http.StatusUnprocessableEntity, CodeGuestMergeTargetRequired, err.Error(),
+			"先选择一位未被停用、未并入别人的目标访客")
+	case errors.Is(err, tickets.ErrGuestMergeSelf):
+		WriteError(w, http.StatusConflict, CodeGuestMergeSelf, err.Error(), "")
+	case errors.Is(err, tickets.ErrGuestAlreadyMerged):
+		WriteError(w, http.StatusConflict, CodeGuestAlreadyMerged, err.Error(), "合并不能撤回")
+	case errors.Is(err, tickets.ErrGuestMergeTargetMerged):
+		WriteError(w, http.StatusConflict, CodeGuestMergeTargetMerged, err.Error(), "")
+	case errors.Is(err, tickets.ErrGuestMergeTargetDisabled):
+		WriteError(w, http.StatusConflict, CodeGuestMergeTargetDisabled, err.Error(), "先恢复目标访客，再执行合并")
+	case errors.Is(err, tickets.ErrGuestManagementNotAllowed):
+		WriteError(w, http.StatusForbidden, CodeGuestManagementNotAllowed, err.Error(),
+			"只有访客建立者、管理员或名下链接的管理人，且须同时能管理两位访客")
+	case err == nil:
+		return true
+	default:
+		panic(err)
+	}
+	return false
+}
+
 // writeGuestResetError 统一映射访客级重置的管理与凭证错误；返回 false 表示
 // 已写出响应。shareHint 传给 share_text_unavailable，两个接口的恢复建议不同。
 func (a *API) writeGuestResetError(w http.ResponseWriter, err error, shareHint string) bool {
 	switch {
 	case errors.Is(err, tickets.ErrGuestNotFound), errors.Is(err, tickets.ErrGuestDisabled):
 		WriteError(w, http.StatusNotFound, CodeGuestNotFound, "没有这位访客或她已停用", "")
+	case errors.Is(err, tickets.ErrGuestAlreadyMerged):
+		WriteError(w, http.StatusNotFound, CodeGuestAlreadyMerged, err.Error(), "")
 	case errors.Is(err, tickets.ErrGuestManagementNotAllowed):
 		WriteError(w, http.StatusForbidden, CodeGuestManagementNotAllowed, err.Error(),
 			"只有访客建立者、管理员或名下链接的管理人可以重置")
@@ -336,7 +428,9 @@ func (a *API) writeGuestResetError(w http.ResponseWriter, err error, shareHint s
 
 func newGuestView(g tickets.GuestInfo) guestView {
 	return guestView{
-		ID: g.ID, Name: g.Name, DisabledAt: g.DisabledAt, ClaimedAt: g.ClaimedAt, ClaimName: g.ClaimName,
+		ID: g.ID, Name: g.Name, DisabledAt: g.DisabledAt,
+		MergedIntoGuestID: g.MergedIntoGuestID, MergedAt: g.MergedAt,
+		ClaimedAt: g.ClaimedAt, ClaimName: g.ClaimName,
 		AccessCodeLockedAt: g.AccessCodeLockedAt, LinkCount: g.LinkCount,
 		CreatedBy: newAuthorView(g.CreatedBy, false), CreatedAt: g.CreatedAt,
 	}

@@ -65,6 +65,7 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
 - 主人让你了解某位访客的往来时，用名单里的 `guest_id` 调
   `GET {{BASE}}/api/v1/guests/<guest_id>`。响应的 `tickets` 只列你主人可见范围内的
   工单和这位访客名下指向它们的链接；`guest.disabled_at` 非空表示已停用。
+  已并入另一位访客的重复访客不会出现在名单，也不能再被选作建链接的 `guest_id`。
 - 主人让你给访客改名时（名字写错或对方换部门），调
   `POST {{BASE}}/api/v1/guests/<guest_id>/rename`，请求体 `{"name": "新名字"}`。
   权限与复制主页文案相同：访客建立者、管理员或名下任一链接的管理人（含其成员 Agent）。
@@ -72,6 +73,12 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
 - **停用和恢复访客不是你能做的**：它们影响多张工单且难撤回，只接受主人在网页上
   亲自操作（`POST /api/v1/guests/<guest_id>/disable|enable`）。成员 Agent 调用会得到
   403 `web_session_required`；收到这个需求时告诉主人去网页的访客管理页操作。
+- **合并重复访客也不是你能做的**：它会把 B 的全部链接改归 A、作废 B 的主页、访问码
+  和设备，且不能撤回。预览与执行接口
+  （`GET /api/v1/guests/<b_id>/merge-into/<a_id>/preview`、
+  `POST /api/v1/guests/<b_id>/merge-into`）只接受主人的网页会话；成员 Agent 一律得到
+  403 `web_session_required`。收到这个需求时告诉主人去网页的访客管理页先看影响预览，
+  再二次确认。
 
 ## 访客链接转发文案
 

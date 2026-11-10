@@ -756,6 +756,8 @@ export interface GuestSummary {
   id: number
   name: string
   disabled_at?: string
+  merged_into_guest_id?: number
+  merged_at?: string
   claimed_at?: string
   claim_name?: string
   access_code_locked_at?: string
@@ -928,6 +930,40 @@ export async function resetGuestHomeKey(
 ): Promise<{ guest_id: number; home_url: string; share_text: string }> {
   return api(`/api/v1/guests/${guestId}/reset-home-key`, {
     method: 'POST',
+    idempotencyKey: crypto.randomUUID(),
+  })
+}
+
+export interface GuestMergePreview {
+  source_guest_id: number
+  source_guest_name: string
+  target_guest_id: number
+  target_guest_name: string
+  link_count: number
+  device_count: number
+}
+
+/** 合并重复访客的影响预览：B 将改归多少条链接、作废多少台设备。 */
+export async function previewGuestMerge(
+  sourceGuestId: number,
+  targetGuestId: number,
+): Promise<GuestMergePreview> {
+  return api(`/api/v1/guests/${sourceGuestId}/merge-into/${targetGuestId}/preview`)
+}
+
+/** 合并重复访客：不可撤回；仅网页成员本人可操作。 */
+export async function mergeGuest(
+  sourceGuestId: number,
+  targetGuestId: number,
+): Promise<{
+  source_guest_id: number
+  target_guest_id: number
+  link_count: number
+  device_count: number
+}> {
+  return api(`/api/v1/guests/${sourceGuestId}/merge-into`, {
+    method: 'POST',
+    body: JSON.stringify({ target_guest_id: targetGuestId }),
     idempotencyKey: crypto.randomUUID(),
   })
 }

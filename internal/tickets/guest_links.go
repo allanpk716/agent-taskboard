@@ -341,7 +341,8 @@ func (m *Manager) guestForNewLinkTx(ctx context.Context, tx *sql.Tx, actor Autho
 			SELECT gu.id, gu.name, h.claimed_at
 			FROM guests gu
 			JOIN guest_credential_holders h ON h.owner_type = 'guest' AND h.owner_id = gu.id
-			WHERE gu.id = ?`, spec.GuestID).Scan(&guestID, &guestName, &claimedAt); err != nil {
+			WHERE gu.id = ? AND gu.merged_into_guest_id IS NULL`,
+			spec.GuestID).Scan(&guestID, &guestName, &claimedAt); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return 0, "", 0, false, ErrGuestNotFound
 			}
@@ -515,6 +516,8 @@ type GuestInfo struct {
 	ID                 int64
 	Name               string
 	DisabledAt         *time.Time
+	MergedIntoGuestID  int64
+	MergedAt           *time.Time
 	ClaimedAt          *time.Time
 	ClaimName          string
 	AccessCodeLockedAt *time.Time
@@ -527,10 +530,10 @@ type GuestInfo struct {
 // 成员和成员 Agent 能调用）。按名字排序，成员和 Agent 都能稳定查找。
 func (m *Manager) Guests(ctx context.Context, query string) ([]GuestInfo, error) {
 	query = strings.TrimSpace(query)
-	where := ""
+	where := " WHERE gu.merged_into_guest_id IS NULL"
 	args := []any{}
 	if query != "" {
-		where = " WHERE gu.name LIKE ? ESCAPE '\\'"
+		where += " AND gu.name LIKE ? ESCAPE '\\'"
 		args = append(args, "%"+escapeLike(query)+"%")
 	}
 	return m.guestsQuery(ctx, where, args)
@@ -540,7 +543,8 @@ func (m *Manager) Guests(ctx context.Context, query string) ([]GuestInfo, error)
 // 取详情共用同一份投影与扫描）。
 func (m *Manager) guestsQuery(ctx context.Context, where string, args []any) ([]GuestInfo, error) {
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT gu.id, gu.name, gu.disabled_at, h.claimed_at, h.claim_name, h.access_code_locked_at,
+		SELECT gu.id, gu.name, gu.disabled_at, gu.merged_into_guest_id, gu.merged_at,
+		       h.claimed_at, h.claim_name, h.access_code_locked_at,
 		       (SELECT COUNT(*) FROM guest_links l WHERE l.guest_id = gu.id),
 		       gu.created_by_member_id, mm.name, aa.id, aa.name, aa.revoked_at, gu.created_at
 		FROM guests gu
@@ -557,6 +561,8 @@ func (m *Manager) guestsQuery(ctx context.Context, where string, args []any) ([]
 		var (
 			info         GuestInfo
 			disabledAt   sql.NullString
+			mergedInto   sql.NullInt64
+			mergedAt     sql.NullString
 			claimedAt    sql.NullString
 			claimName    sql.NullString
 			lockedAt     sql.NullString
@@ -567,7 +573,8 @@ func (m *Manager) guestsQuery(ctx context.Context, where string, args []any) ([]
 			agentRevoked sql.NullString
 			createdAt    string
 		)
-		if err := rows.Scan(&info.ID, &info.Name, &disabledAt, &claimedAt, &claimName, &lockedAt,
+		if err := rows.Scan(&info.ID, &info.Name, &disabledAt, &mergedInto, &mergedAt,
+			&claimedAt, &claimName, &lockedAt,
 			&info.LinkCount, &memberID, &memberName, &agentID, &agentName, &agentRevoked, &createdAt); err != nil {
 			return nil, err
 		}
@@ -579,6 +586,10 @@ func (m *Manager) guestsQuery(ctx context.Context, where string, args []any) ([]
 			return nil, err
 		}
 		if info.AccessCodeLockedAt, err = nullableTime(lockedAt); err != nil {
+			return nil, err
+		}
+		info.MergedIntoGuestID = mergedInto.Int64
+		if info.MergedAt, err = nullableTime(mergedAt); err != nil {
 			return nil, err
 		}
 		if info.CreatedAt, err = parseTime(createdAt); err != nil {
