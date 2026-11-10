@@ -95,6 +95,56 @@ func TestWaitingOnOfFeedbackGuestLinkExpiryRecomputes(t *testing.T) {
 	}
 }
 
+// 所属访客已停用视同链接失效：需要访客补全说明的工单回到指派人；
+// 成员回复后的反馈工单不再轮到访客，理由沿用链接过期后的规则。
+func TestWaitingOnOfGuestDisabledTreatedAsInvalidLink(t *testing.T) {
+	now := time.Date(2026, 10, 20, 9, 0, 0, 0, time.Local)
+	assignee := Author{MemberID: 7, MemberName: "李工"}
+	disabledLink := func(canEdit bool) []GuestLinkInfo {
+		return []GuestLinkInfo{{
+			CanEditBrief: canEdit, GuestDisabled: true, ExpiresAt: now.Add(time.Hour),
+		}}
+	}
+	tests := []struct {
+		name   string
+		events []Event
+		links  []GuestLinkInfo
+		want   WaitingOn
+	}{
+		{
+			name:  "访客未补全说明而访客已停用",
+			links: disabledLink(true),
+			want:  WaitingOn{Party: "assignee", MemberID: 7, Member: "李工", Why: WhyGuestNotCompleted},
+		},
+		{
+			name: "成员回复后访客已停用",
+			events: []Event{
+				{Seq: 3, Type: "reply", Actor: Author{LinkID: 1, AuthorName: "张三", GuestName: "检验科-张三"}},
+				{Seq: 5, Type: "reply", Actor: assignee},
+			},
+			links: disabledLink(false),
+			want:  WaitingOn{Party: "assignee", MemberID: 7, Member: "李工", Why: WhyGuestReplied, SinceSeq: 5},
+		},
+		{
+			name: "同一访客的另一条有效链接仍可轮到访客",
+			events: []Event{
+				{Seq: 3, Type: "reply", Actor: assignee},
+			},
+			links: append(disabledLink(false), GuestLinkInfo{ExpiresAt: now.Add(time.Hour)}),
+			want:  WaitingOn{Party: "guest", Text: "访客", SinceSeq: 3},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := WaitingOnOf(feedbackFixture(assignee, tt.events), tt.links, now)
+			if got.Party != tt.want.Party || got.MemberID != tt.want.MemberID ||
+				got.Member != tt.want.Member || got.Why != tt.want.Why || got.SinceSeq != tt.want.SinceSeq {
+				t.Fatalf("轮次 = %+v, 想 %+v", got, tt.want)
+			}
+		})
+	}
+}
+
 func feedbackFixture(assignee Author, events []Event) Full {
 	return Full{
 		Ticket: Ticket{

@@ -74,65 +74,71 @@ func (m *Manager) GuestHomeShareForViewer(ctx context.Context, viewer identity.V
 	if viewer.Kind != identity.ViewerMember {
 		return GuestHomeShare{}, ErrGuestManagementNotAllowed
 	}
+	if err := m.guestManagementAllowed(ctx, viewer, guestID); err != nil {
+		return GuestHomeShare{}, err
+	}
+	return m.GuestHomeShare(ctx, guestID)
+}
+
+// guestManagementAllowed 判断 viewer 是否属于“访客建立者、管理员，或其名下
+// 任一链接的管理人”。链接管理人沿用链接管理口径：创建该链接，或工单在
+// 自己可见范围内。无关成员统一返回 ErrGuestManagementNotAllowed。
+func (m *Manager) guestManagementAllowed(ctx context.Context, viewer identity.Viewer, guestID int64) error {
 	var createdByMember, createdByAgent int64
 	err := m.db.QueryRowContext(ctx, `
 		SELECT created_by_member_id, COALESCE(created_by_agent_id, 0)
 		FROM guests WHERE id = ?`, guestID).Scan(&createdByMember, &createdByAgent)
 	if errors.Is(err, sql.ErrNoRows) {
-		return GuestHomeShare{}, ErrGuestNotFound
+		return ErrGuestNotFound
 	}
 	if err != nil {
-		return GuestHomeShare{}, err
+		return err
 	}
 	memberID := viewer.Member.ID
 	allowed := viewer.Member.IsAdmin || createdByMember == memberID ||
 		(viewer.Agent != nil && createdByAgent == viewer.Agent.ID)
-	if !allowed {
-		rows, err := m.db.QueryContext(ctx, `
-			SELECT ticket_seq, created_by_member_id FROM guest_links
-			WHERE guest_id = ? AND revoked_at IS NULL`, guestID)
+	if allowed {
+		return nil
+	}
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT ticket_seq, created_by_member_id FROM guest_links
+		WHERE guest_id = ? AND revoked_at IS NULL`, guestID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type candidate struct {
+		ticketSeq int64
+		createdBy int64
+	}
+	candidates := []candidate{}
+	for rows.Next() {
+		var c candidate
+		if err := rows.Scan(&c.ticketSeq, &c.createdBy); err != nil {
+			return err
+		}
+		candidates = append(candidates, c)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, c := range candidates {
+		if c.createdBy == memberID {
+			return nil
+		}
+		full, err := m.ByRef(ctx, strconv.FormatInt(c.ticketSeq, 10))
 		if err != nil {
-			return GuestHomeShare{}, err
+			return err
 		}
-		defer rows.Close()
-		type candidate struct {
-			ticketSeq int64
-			createdBy int64
+		visible, err := m.CanSee(ctx, viewer, full)
+		if err != nil {
+			return err
 		}
-		candidates := []candidate{}
-		for rows.Next() {
-			var c candidate
-			if err := rows.Scan(&c.ticketSeq, &c.createdBy); err != nil {
-				return GuestHomeShare{}, err
-			}
-			candidates = append(candidates, c)
-		}
-		if err := rows.Err(); err != nil {
-			return GuestHomeShare{}, err
-		}
-		for _, c := range candidates {
-			if c.createdBy == memberID {
-				allowed = true
-				break
-			}
-			full, err := m.ByRef(ctx, strconv.FormatInt(c.ticketSeq, 10))
-			if err != nil {
-				return GuestHomeShare{}, err
-			}
-			visible, err := m.CanSee(ctx, viewer, full)
-			if err != nil {
-				return GuestHomeShare{}, err
-			}
-			if visible {
-				allowed = true
-				break
-			}
+		if visible {
+			return nil
 		}
 	}
-	if !allowed {
-		return GuestHomeShare{}, ErrGuestManagementNotAllowed
-	}
-	return m.GuestHomeShare(ctx, guestID)
+	return ErrGuestManagementNotAllowed
 }
 
 // ensureGuestHomeKeyTx 生成或还原一位访客的主页密钥。老迁移数据没有密钥；

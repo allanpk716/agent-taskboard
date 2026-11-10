@@ -114,6 +114,9 @@ const (
 	CodeGuestLinkCipherUnavailable = "guest_link_cipher_unavailable" // 服务端加密密钥写不出来（503），新建链接/换新地址暂不可用
 	CodeGuestAccessCodeGuestLevel  = "guest_access_code_guest_level" // 有主链接的访问码按访客为单位管理，不能单独重置
 	CodeGuestLinkAlreadyAssigned   = "guest_link_already_assigned"   // 链接已归属访客，不能再次手动归属
+	CodeGuestNameRequired          = "guest_name_required"           // 给访客改名时名字为空（422）
+	CodeGuestAlreadyDisabled       = "guest_already_disabled"        // 访客已停用，重复停用（409）
+	CodeGuestNotDisabled           = "guest_not_disabled"            // 访客未停用，无需恢复（409）
 	CodeLinkCannotEditBrief        = "link_cannot_edit_brief"        // 链接没有「可填写说明」权限
 	CodeTicketClosed               = "ticket_closed"                 // 工单已关闭，访客链接只读；成员回复草稿保存/发出同样使用
 

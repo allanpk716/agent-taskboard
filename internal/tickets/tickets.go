@@ -1165,7 +1165,9 @@ func hasActiveGuestLink(links []GuestLinkInfo, now time.Time) bool {
 }
 
 func activeGuestLink(l GuestLinkInfo, now time.Time) bool {
-	return l.RevokedAt == nil && now.Before(l.ExpiresAt)
+	// 所属访客已停用时，整条链接视同失效（#332）：撤销与有效期字段不改写，
+	// 恢复后按原有效期重新生效。
+	return l.RevokedAt == nil && !l.GuestDisabled && now.Before(l.ExpiresAt)
 }
 
 func hasEditGuestLink(links []GuestLinkInfo) bool {
