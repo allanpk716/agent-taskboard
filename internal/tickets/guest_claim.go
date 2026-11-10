@@ -29,6 +29,15 @@ var (
 	ErrGuestAccessCodeGuestLevel = errors.New("这条链接属于一位访客，访问码按访客为单位管理")
 )
 
+// GuestAccessCodeGuestLevelError 表示有主链接的访问码属于整个访客，不能在
+// 单条链接上重置；GuestID 告诉调用方改用哪位访客的访客级重置接口。
+type GuestAccessCodeGuestLevelError struct {
+	GuestID int64
+}
+
+func (e *GuestAccessCodeGuestLevelError) Error() string { return ErrGuestAccessCodeGuestLevel.Error() }
+func (e *GuestAccessCodeGuestLevelError) Unwrap() error { return ErrGuestAccessCodeGuestLevel }
+
 // GuestClaimResult 是认领成功的输出；DeviceToken 只出现一次。
 type GuestClaimResult struct {
 	DeviceToken string
@@ -181,7 +190,7 @@ func (m *Manager) ResetGuestAccessCode(ctx context.Context, viewer identity.View
 		return GuestLinkShare{}, err
 	}
 	if row.GuestID != 0 {
-		return GuestLinkShare{}, ErrGuestAccessCodeGuestLevel
+		return GuestLinkShare{}, &GuestAccessCodeGuestLevelError{GuestID: row.GuestID}
 	}
 	if !row.ClaimedAt.Valid {
 		return GuestLinkShare{}, ErrLinkNotClaimed
