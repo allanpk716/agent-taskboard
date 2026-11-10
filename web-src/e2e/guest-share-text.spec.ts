@@ -4,7 +4,7 @@ import { ADMIN, createTicket, login } from './helpers'
 test('详情卡片和管理弹窗都能再次复制访客转发文案', async ({ page, request }) => {
   const number = await createTicket(request, { title: '再次复制转发文案的工单' })
   const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
-    data: { note: '检验科-张三', valid_days: 30 },
+    data: { note: '检验科-张三', new_guest_name: '检验科-张三', valid_days: 30 },
   })
   expect(link.status(), `创建访客链接失败：${await link.text()}`).toBe(201)
   const linkURL = ((await link.json()) as { url: string }).url
@@ -35,7 +35,7 @@ test('详情卡片和管理弹窗都能再次复制访客转发文案', async ({
 test('老访客链接换新地址前先确认再复制', async ({ page, request }) => {
   const number = await createTicket(request, { title: '老链接换新地址的工单' })
   const linkRes = await request.post(`/api/v1/tickets/${number}/guest-links`, {
-    data: { note: '检验科-张三', valid_days: 30 },
+    data: { note: '检验科-张三', new_guest_name: '检验科-张三', valid_days: 30 },
   })
   expect(linkRes.status(), `创建访客链接失败：${await linkRes.text()}`).toBe(201)
   const link = (await linkRes.json()) as { id: number; url: string }

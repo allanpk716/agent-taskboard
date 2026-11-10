@@ -912,6 +912,7 @@ type ticketViewerView struct {
 	// 访客凭证（#32）：链接备注与到期时刻（can_edit_brief 即 can.edit_brief）。
 	LinkNote      *string `json:"link_note,omitempty"`
 	LinkExpiresAt *string `json:"link_expires_at,omitempty"`
+	GuestName     *string `json:"guest_name,omitempty"`
 }
 
 type eventView struct {
@@ -1110,6 +1111,10 @@ func (a *API) newTicketView(full tickets.Full, viewer identity.Viewer, r *http.R
 		expiresAt := viewer.GuestLink.ExpiresAt.Format(time.RFC3339Nano)
 		tv.LinkNote = &note
 		tv.LinkExpiresAt = &expiresAt
+		if viewer.GuestLink.GuestName != "" {
+			guestName := viewer.GuestLink.GuestName
+			tv.GuestName = &guestName
+		}
 	} else {
 		tv.Member = &memberRef{ID: viewer.Member.ID, Name: viewer.Member.Name}
 		if viewer.Agent != nil {

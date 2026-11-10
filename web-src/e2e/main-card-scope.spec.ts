@@ -12,6 +12,7 @@ async function seedGuestLink(
   const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
     data: {
       note: '检验科-张三',
+      new_guest_name: '检验科-张三',
       valid_days: 30,
       can_edit_brief: opts.canEditBrief ?? false,
     },
@@ -69,7 +70,7 @@ test('PC 成员页不继承登录卡片', async ({ page }) => {
   await expect(page.getByRole('heading', { name: '选一个模板' })).toBeVisible()
   await expectPlainMain(page)
   await page.locator('.tplpick').first().click()
-  await expect(page.getByLabel('请谁填写')).toBeVisible()
+  await expect(page.getByLabel('新建访客名字')).toBeVisible()
   await expectPlainMain(page)
 })
 

@@ -216,6 +216,7 @@ test('详情页创建访客链接并复制', async ({ page, request }) => {
   await page.goto(`/t/${number}`)
 
   await page.getByRole('button', { name: '访客链接' }).click()
+  await page.getByLabel('新建访客名字').fill('检验科-张三')
   await page.getByLabel('备注').fill('检验科-张三')
   await page.getByRole('button', { name: '创建', exact: true }).click()
 
@@ -249,7 +250,7 @@ test('反馈没有可用访客链接时提示并可发链接', async ({ page, re
       title: '没有可用访客链接的反馈',
       labels: ['机型:UD-2300'],
       assignee: '管理员',
-      guest_link: { note: '检验科-张三' },
+      guest_link: { note: '检验科-张三', new_guest_name: '检验科-张三' },
     },
   })
   expect(created.status(), await created.text()).toBe(201)
@@ -265,6 +266,7 @@ test('反馈没有可用访客链接时提示并可发链接', async ({ page, re
 
   await page.getByRole('button', { name: '发访客链接' }).click()
   await expect(page.locator('.modal')).toContainText(`访客链接 · ${body.number}`)
+  await page.getByLabel('新建访客名字').fill('检验科-李四')
   await page.getByLabel('备注').fill('检验科-李四')
   await page.getByRole('button', { name: '创建', exact: true }).click()
   await expect(page.getByText('这张反馈没有可用的访客链接，访客看不到回复')).toHaveCount(0)
@@ -471,6 +473,7 @@ test('访客链接支持指定日期创建与延期', async ({ page, request }) 
   const pickLabel = `${fmt(pickStr)}为止` // 日期写法当天有效：展示为所选那天「为止」
 
   // 创建：有效期选「指定日期」，到期日按当天有效展示
+  await page.getByLabel('新建访客名字').fill('外包-赵')
   await page.getByLabel('备注').fill('外包-赵')
   await page.getByLabel('有效期').selectOption('date')
   await page.getByLabel('到期日期').fill(pickStr)

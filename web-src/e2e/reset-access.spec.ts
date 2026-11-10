@@ -47,6 +47,64 @@ async function guestHomeURL(
   return ((await res.json()) as { home_url: string }).home_url
 }
 
+test('建链接时可新建访客，之后再选同一位并重置访问码', async ({ page, request }) => {
+  test.setTimeout(60_000)
+  const guestName = `检验科-张三-${Date.now()}`
+  const firstNumber = await createTicket(request, { title: '第一次联系这位访客' })
+  const secondNumber = await createTicket(request, { title: '第二次联系这位访客' })
+
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await login(page, ADMIN)
+  await page.goto(`/t/${firstNumber}`)
+  await page.getByRole('button', { name: '访客链接' }).click()
+  await page.getByLabel('新建访客名字').fill(guestName)
+  await page.getByLabel('备注').fill('补全说明')
+  await page.getByRole('button', { name: '创建', exact: true }).click()
+  await expect(page.getByText('✓ 已创建（完整链接只在创建时出现一次）')).toBeVisible()
+  const firstURL = await page.locator('.linkbox').textContent()
+  expect(firstURL).toMatch(/\/g\/tbg_/)
+  await page.getByRole('button', { name: '关闭', exact: true }).click()
+
+  const firstLinks = await (await page.request.get(`/api/v1/tickets/${firstNumber}/guest-links`)).json()
+  expect(firstLinks.links).toHaveLength(1)
+  const guestID = firstLinks.links[0].guest_id as number
+  expect(firstLinks.links[0].guest_name).toBe(guestName)
+
+  await page.goto(`/t/${secondNumber}`)
+  await page.getByRole('button', { name: '访客链接' }).click()
+  await page.getByLabel('选择访客').selectOption({ label: guestName })
+  await page.getByLabel('备注').fill('追问日志')
+  await page.getByRole('button', { name: '创建', exact: true }).click()
+  await expect(page.getByText('✓ 已创建（完整链接只在创建时出现一次）')).toBeVisible()
+  await page.getByRole('button', { name: '关闭', exact: true }).click()
+
+  const secondLinks = await (await page.request.get(`/api/v1/tickets/${secondNumber}/guest-links`)).json()
+  expect(secondLinks.links).toHaveLength(1)
+  expect(secondLinks.links[0].guest_id).toBe(guestID)
+  const claim = await claimGuestLink(request, new URL(firstURL!, page.url()).pathname.slice(3))
+  expect(claim.access_code).toMatch(/^\d{6}$/)
+
+  await page.reload()
+  await page.getByRole('region', { name: '工单操作' })
+    .getByRole('button', { name: '🔑 重置访问' })
+    .click()
+  const wizard = page.getByRole('dialog', { name: '🔑 重置访问' })
+  await wizard.getByRole('button', { name: '重置访问码' }).click()
+  await wizard.getByRole('button', { name: '下一步：确认' }).click()
+  await expect(wizard.getByTestId('reset-access-preview')).toContainText('将作废 1 台设备')
+  await expect(wizard.getByTestId('reset-access-preview')).toContainText('涉及 2 张工单')
+  await wizard.getByRole('button', { name: '确认重置访问码' }).click()
+
+  const result = page.getByRole('dialog', { name: '重置访问码完成' })
+  const code = await result.locator('.reset-code').textContent()
+  expect(code).toMatch(/^\d{6}$/)
+  await result.getByRole('button', { name: '📋 一键复制' }).click()
+  await expect(page.locator('#toast')).toHaveText('已复制，可直接粘贴给对方')
+  const copied = await page.evaluate(() => navigator.clipboard.readText())
+  expect(copied).toContain(`${guestName}：你的访问码已重置。`)
+  expect(copied).toContain(`新访问码：${code}`)
+})
+
 test('访客级重置访问码展示影响预览并复制重置文案', async ({ page, request }) => {
   const number = await createTicket(request, { title: '血球仪 BH-7600CS 开机报错 E203' })
   const link = await createGuestLink(request, number, '补全说明')

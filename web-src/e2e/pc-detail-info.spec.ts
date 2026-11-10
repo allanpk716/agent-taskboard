@@ -27,6 +27,7 @@ test('wide detail keeps actions in the header and shows ordered ticket informati
   ])
 
   await page.getByRole('region', { name: '工单操作' }).getByRole('button', { name: '访客链接' }).click()
+  await page.getByLabel('新建访客名字').fill('检验科-张三')
   await page.getByLabel('备注').fill('检验科-张三')
   await page.getByLabel('有效期').selectOption('7')
   await page.getByLabel('可填写说明').check()
@@ -74,7 +75,7 @@ test('medium detail collapses ticket information into an expandable summary', as
     assignee: '王工',
   })
   const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
-    data: { note: '检验科-张三', valid_days: 7 },
+    data: { note: '检验科-张三', new_guest_name: '检验科-张三', valid_days: 7 },
   })
   expect(link.status(), `创建访客链接失败：${await link.text()}`).toBe(201)
 

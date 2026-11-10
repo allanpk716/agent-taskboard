@@ -219,6 +219,7 @@ export interface TicketView {
     role: string
     your_turn: boolean
     link_note?: string
+    guest_name?: string
     link_expires_at?: string
     can: Record<string, boolean>
   }

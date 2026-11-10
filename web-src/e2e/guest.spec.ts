@@ -60,7 +60,7 @@ async function seedGuestTicket(
   }
 
   const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
-    data: { note: '检验科-张三', valid_days: 30, can_edit_brief: false },
+    data: { note: '检验科-张三', new_guest_name: '检验科-张三', valid_days: 30, can_edit_brief: false },
   })
   expect(link.status(), `创建访客链接失败：${await link.text()}`).toBe(201)
   const linkBody = await link.json()
@@ -286,7 +286,11 @@ test('工单关闭后只读；链接撤销或过期后显示整页提示', async
 
   // 过期：整页提示原因（已到期）
   const short = await request.post(`/api/v1/tickets/${seed.number}/guest-links`, {
-    data: { note: '短期', expires_at: new Date(Date.now() + 1500).toISOString() },
+    data: {
+      note: '短期',
+      new_guest_name: '检验科-张三',
+      expires_at: new Date(Date.now() + 1500).toISOString(),
+    },
   })
   expect(short.ok(), await short.text()).toBeTruthy()
   const shortKey = String((await short.json()).url).slice(3)

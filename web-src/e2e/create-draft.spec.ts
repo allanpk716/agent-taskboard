@@ -38,7 +38,7 @@ test('Agent 建单草稿经通知确认后发出并展示访客文案', async ({
       title: 'Agent 起草的建单',
       brief_md: markdown,
       labels: ['机型:UD-2300'],
-      guest_link: { note: '检验科-张三', can_edit_brief: true },
+      guest_link: { note: '检验科-张三', new_guest_name: '检验科-张三', can_edit_brief: true },
     },
     headers: { Authorization: `Bearer ${token}` },
   })
