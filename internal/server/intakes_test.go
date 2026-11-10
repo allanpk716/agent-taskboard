@@ -46,6 +46,11 @@ type intakeSubmitBody struct {
 		ExpiresAt    string `json:"expires_at"`
 		CanEditBrief bool   `json:"can_edit_brief"`
 	} `json:"guest_link"`
+	Guest struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	} `json:"guest"`
+	HomeURL           string `json:"home_url"`
 	DeviceToken       string `json:"device_token"`
 	AccessCode        string `json:"access_code"`
 	DepartmentContact string `json:"department_contact"`
@@ -298,6 +303,62 @@ func Test入口提交成功即认领并返回访问码(t *testing.T) {
 	tbtest.DecodeJSON(t, res, &err)
 	if err.Error.Code != "link_claimed" {
 		t.Fatalf("单凭链接错误码 = %q, 想 link_claimed", err.Error.Code)
+	}
+}
+
+// 新设备第一次走反馈入口：新建一位长期访客，一次性交给主页地址、链接、
+// 设备凭证和访问码；凭主页地址加访问码能重新进入主页。
+func Test新设备经入口新建访客并可凭主页进入(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+
+	submitted := submitToIntake(t, s, "bug", map[string]any{
+		"title":       "第一次从入口提交",
+		"fields":      bugFields(),
+		"author_name": "检验科 张三",
+	})
+	if submitted.Guest.ID == 0 || submitted.Guest.Name != "检验科 张三" {
+		t.Fatalf("新建访客 = %+v, 想“检验科 张三”", submitted.Guest)
+	}
+	if !strings.HasPrefix(submitted.HomeURL, "/h/tbh_") {
+		t.Fatalf("主页地址 = %q, 想形如 /h/tbh_…", submitted.HomeURL)
+	}
+	if submitted.DeviceToken == "" || submitted.AccessCode == "" {
+		t.Fatalf("新设备应拿到设备凭证和访问码：%+v", submitted)
+	}
+
+	var guests struct {
+		Guests []struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		} `json:"guests"`
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/guests", nil, &guests)
+	if len(guests.Guests) != 1 || guests.Guests[0].Name != "检验科 张三" {
+		t.Fatalf("访客名单 = %+v, 想 1 位“检验科 张三”", guests.Guests)
+	}
+
+	homeKey := submitted.HomeURL[strings.LastIndex(submitted.HomeURL, "/h/")+len("/h/"):]
+	var entered struct {
+		DeviceToken string `json:"device_token"`
+	}
+	res := s.Do(t, s.AgentClient(homeKey), http.MethodPost, "/api/v1/guest-home/enter",
+		map[string]string{"access_code": submitted.AccessCode}, &entered)
+	if res.StatusCode != http.StatusCreated || entered.DeviceToken == "" {
+		t.Fatalf("凭主页地址和访问码进入 = %d/%+v, 想 201 且有设备凭证", res.StatusCode, entered)
+	}
+	var home struct {
+		State   string `json:"state"`
+		Tickets []struct {
+			Number string `json:"number"`
+		} `json:"tickets"`
+	}
+	res = s.Do(t, s.GuestCookieClient(entered.DeviceToken), http.MethodGet, "/api/v1/guest-home", nil, &home)
+	if res.StatusCode != http.StatusOK || home.State != "claimed" || len(home.Tickets) != 1 ||
+		home.Tickets[0].Number != submitted.Ticket.Number {
+		t.Fatalf("重新进入后的主页 = %d/%+v, 想包含新反馈 %s", res.StatusCode, home, submitted.Ticket.Number)
 	}
 }
 

@@ -308,6 +308,8 @@ type SubmissionInput struct {
 	Title      string
 	Fields     map[string]string
 	AuthorName string
+	// DeviceToken 是本机已有的访客设备凭证；属于长期访客时复用这位访客。
+	DeviceToken string
 	// IdempotencyKey 认领提交前匿名上传到这个入口的附件。
 	IdempotencyKey string
 }
@@ -319,6 +321,9 @@ type SubmissionResult struct {
 	LinkKey           string
 	LinkID            int64
 	LinkNote          string
+	GuestID           int64
+	GuestName         string
+	HomeKey           string
 	ExpiresAt         time.Time
 	DeviceToken       string
 	AccessCode        string
@@ -449,27 +454,30 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 		return SubmissionResult{}, fmt.Errorf("写入工单失败：%w", err)
 	}
 
+	// 提交者对应一位长期访客：新设备当场新建；设备已认领某位访客时复用她。
+	guestID, guestName, holderID, home, err := m.intakeGuestTx(ctx, tx, intake, in, authorName, now)
+	if err != nil {
+		return SubmissionResult{}, err
+	}
+
 	// 交给提交者的访客链接：30 天、「可填写说明」（提交者视同创建者，靠它修订说明）。
 	var linkID int64
 	if err := tx.QueryRowContext(ctx, `
-		INSERT INTO guest_links (ticket_seq, key_hash, key_ciphertext, note, expires_at, can_edit_brief,
-		                         created_by_member_id, created_at)
-		VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+		INSERT INTO guest_links (ticket_seq, guest_id, credential_holder_id, key_hash, key_ciphertext,
+		                         note, expires_at, can_edit_brief, created_by_member_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
 		RETURNING id`,
-		t.Seq, identity.CredentialHash(key), keyCiphertext, note,
+		t.Seq, nullInt(guestID), holderID, identity.CredentialHash(key), keyCiphertext, note,
 		now.Add(30*24*time.Hour).Format(time.RFC3339Nano),
 		intake.CreatedBy.MemberID, now.Format(time.RFC3339Nano)).Scan(&linkID); err != nil {
 		return SubmissionResult{}, fmt.Errorf("写入提交者的访客链接失败：%w", err)
-	}
-	holder, err := guestcredentials.CreateLinkHolder(ctx, tx, linkID, now)
-	if err != nil {
-		return SubmissionResult{}, err
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE tickets SET creator_link_id = ? WHERE seq = ?`, linkID, t.Seq); err != nil {
 		return SubmissionResult{}, err
 	}
 	author.LinkID, author.LinkNote = linkID, note
+	author.GuestName = guestName
 	t.Creator = author
 	t.CreatorLinkID = linkID
 
@@ -517,12 +525,14 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	result := SubmissionResult{
 		Ticket:  t,
 		LinkKey: key, LinkID: linkID, LinkNote: note,
+		GuestID: guestID, GuestName: guestName, HomeKey: home.Key,
 		ExpiresAt: now.Add(30 * 24 * time.Hour),
 	}
 	claim, err := m.ClaimGuestLink(ctx, identity.GuestLink{
 		ID: linkID, TicketSeq: t.Seq, Note: note,
+		GuestID: guestID, GuestName: guestName,
 		ExpiresAt: result.ExpiresAt, CanEditBrief: true,
-		CredentialHolderID: holder.ID,
+		CredentialHolderID: holderID,
 	}, authorName)
 	if err != nil {
 		return SubmissionResult{}, err
@@ -532,6 +542,34 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	result.ClaimedAt = claim.ClaimedAt
 	result.DepartmentContact = intake.DepartmentContact
 	return result, nil
+}
+
+// intakeGuestTx 为本次入口提交确定长期访客。新设备新建一位名字取自报署名的
+// 访客，并确保她有主页密钥；已认领设备复用访客的逻辑由后续分支接入。
+func (m *Manager) intakeGuestTx(ctx context.Context, tx *sql.Tx, intake Intake,
+	in SubmissionInput, authorName string, now time.Time) (guestID int64, guestName string,
+	holderID int64, home GuestHomeShare, err error) {
+	var agentID any
+	if intake.CreatedBy.AgentID != 0 {
+		agentID = intake.CreatedBy.AgentID
+	}
+	if err := tx.QueryRowContext(ctx, `
+		INSERT INTO guests (name, created_by_member_id, created_by_agent_id, created_at)
+		VALUES (?, ?, ?, ?) RETURNING id`,
+		authorName, intake.CreatedBy.MemberID, agentID, now.Format(time.RFC3339Nano)).
+		Scan(&guestID); err != nil {
+		return 0, "", 0, GuestHomeShare{}, fmt.Errorf("写入入口提交的访客失败：%w", err)
+	}
+	guestName = authorName
+	holder, err := guestcredentials.CreateGuestHolder(ctx, tx, guestID, now)
+	if err != nil {
+		return 0, "", 0, GuestHomeShare{}, err
+	}
+	home, err = m.ensureGuestHomeKeyTx(ctx, tx, guestID)
+	if err != nil {
+		return 0, "", 0, GuestHomeShare{}, err
+	}
+	return guestID, guestName, holder.ID, home, nil
 }
 
 // reserveIntakeDailyTx 在建单事务里预留一个每日提交名额；达到上限时返回暂停错误。
