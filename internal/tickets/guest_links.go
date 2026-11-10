@@ -1347,9 +1347,12 @@ func (m *Manager) AssignGuestLinks(ctx context.Context, viewer identity.Viewer, 
 		for _, link := range links {
 			if link.ID == choice.SourceLinkID {
 				orderedLinks = append(orderedLinks, link)
-				continue
 			}
-			orderedLinks = append(orderedLinks, link)
+		}
+		for _, link := range links {
+			if link.ID != choice.SourceLinkID {
+				orderedLinks = append(orderedLinks, link)
+			}
 		}
 	}
 	newAccessCode := ""

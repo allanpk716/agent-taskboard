@@ -90,6 +90,96 @@ func Test未认领访客批量归属可沿用所选老链接访问码(t *testing
 	}
 }
 
+// 批量归属的链接按 id 顺序处理；成员选择排序靠后的已认领链接时，也必须
+// 沿用这条链接的访问码和设备，而不是顺带吃掉排序靠前那条的凭证。
+func Test未认领访客批量归属沿用排序靠后的来源访问码(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	targetTicket := mustCreateTicket(t, s, web, "排序靠后来源访客的工单")
+	mustCreateGuestLink(t, s, web, targetTicket,
+		map[string]any{"note": "访客链接", "new_guest_name": "检验科-张三"})
+	guestID := listGuestLinks(t, s, web, targetTicket).Links[0].GuestID
+
+	earlierTicket := mustCreateTicket(t, s, web, "排序靠前的已认领老工单")
+	earlier := s.CreateLegacyGuestLink(t, web, earlierTicket,
+		map[string]any{"note": "检验科-张三旧设备"})
+	earlierClaim := claimGuestLink(t, s,
+		guestKeyOf(t, guestLinkResponse{ID: earlier.ID, URL: earlier.URL}), "旧设备")
+	laterTicket := mustCreateTicket(t, s, web, "排序靠后的已认领老工单")
+	later := s.CreateLegacyGuestLink(t, web, laterTicket,
+		map[string]any{"note": "检验科-张三来源设备"})
+	laterClaim := claimGuestLink(t, s,
+		guestKeyOf(t, guestLinkResponse{ID: later.ID, URL: later.URL}), "来源设备")
+	if earlier.ID >= later.ID {
+		t.Fatalf("测试链接顺序 = %d, %d，想 earlier 在 later 前", earlier.ID, later.ID)
+	}
+
+	var preview batchAssignPreviewResponse
+	previewPath := "/api/v1/guests/" + itoa(guestID) + "/assign-links/preview?link_ids=" +
+		itoa(earlier.ID) + "," + itoa(later.ID) + "&source_link_id=" + itoa(later.ID)
+	if res := s.Do(t, web, http.MethodGet, previewPath, nil, &preview); res.StatusCode != http.StatusOK {
+		t.Fatalf("排序靠后来源预览状态码 = %d，想 200", res.StatusCode)
+	}
+	if preview.SourceLinkID != later.ID || preview.SourceDeviceCount != 1 || preview.InvalidatedDeviceCount != 1 {
+		t.Fatalf("排序靠后来源预览 = %+v，想保留来源设备、作废另一台设备", preview)
+	}
+
+	res, result := batchAssignGuestLinks(t, s, web, guestID, map[string]any{
+		"link_ids":    []int64{earlier.ID, later.ID},
+		"access_code": map[string]any{"source_link_id": later.ID},
+	})
+	if res.StatusCode != http.StatusOK || result.AccessCodeAction != "reuse_source_link" || result.LinkCount != 2 {
+		t.Fatalf("排序靠后来源批量归属 = %d/%+v，想 200/reuse_source_link", res.StatusCode, result)
+	}
+	var detail struct {
+		Guest struct {
+			ClaimName   string `json:"claim_name"`
+			DeviceCount int    `json:"device_count"`
+		} `json:"guest"`
+	}
+	if res := s.Do(t, web, http.MethodGet, "/api/v1/guests/"+itoa(guestID), nil, &detail); res.StatusCode != http.StatusOK ||
+		detail.Guest.ClaimName != "来源设备" || detail.Guest.DeviceCount != preview.SourceDeviceCount {
+		t.Fatalf("排序靠后来源归属结果 = %d/%+v，预览 = %+v，想来源凭证生效", res.StatusCode, detail, preview)
+	}
+
+	home := copyGuestHomeText(t, s, web, guestID)
+	homeKey := strings.TrimPrefix(home.URL, "/h/")
+	if res := s.Do(t, s.GuestCookieClient(laterClaim.DeviceToken), http.MethodGet,
+		"/api/v1/guest-home", nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("排序靠后来源链接设备读取主页状态码 = %d，想 200", res.StatusCode)
+	}
+	if res := s.Do(t, s.GuestCookieClient(earlierClaim.DeviceToken), http.MethodGet,
+		"/api/v1/tickets/"+earlierTicket, nil, nil); res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("非来源且排序靠前链接设备状态码 = %d，想 401", res.StatusCode)
+	}
+
+	for _, link := range []guestLinkResponse{
+		{ID: earlier.ID, URL: earlier.URL}, {ID: later.ID, URL: later.URL},
+	} {
+		var entered claimResult
+		if res := s.Do(t, s.AgentClient(guestKeyOf(t, link)), http.MethodPost,
+			"/api/v1/guest-links/enter",
+			map[string]string{"access_code": laterClaim.AccessCode}, &entered); res.StatusCode != http.StatusCreated {
+			t.Fatalf("排序靠后来源访问码进入链接 %d 状态码 = %d，想 201", link.ID, res.StatusCode)
+		}
+	}
+	var homeEntered claimResult
+	if res := s.Do(t, s.AgentClient(homeKey), http.MethodPost, "/api/v1/guest-home/enter",
+		map[string]string{"access_code": laterClaim.AccessCode}, &homeEntered); res.StatusCode != http.StatusCreated {
+		t.Fatalf("排序靠后来源访问码进入主页状态码 = %d，想 201", res.StatusCode)
+	}
+	for _, link := range []guestLinkResponse{
+		{ID: earlier.ID, URL: earlier.URL}, {ID: later.ID, URL: later.URL},
+	} {
+		if res := s.Do(t, s.AgentClient(guestKeyOf(t, link)), http.MethodPost,
+			"/api/v1/guest-links/enter",
+			map[string]string{"access_code": earlierClaim.AccessCode}, nil); res.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("非来源旧访问码进入链接 %d 状态码 = %d，想 401", link.ID, res.StatusCode)
+		}
+	}
+}
+
 // 未认领访客也可以生成新访问码；新码只在提交响应出现一次，旧码与设备全作废。
 // 生成新码只接受网页成员会话，成员 Agent 会被拒绝。
 func Test未认领访客批量归属可生成只显示一次的新访问码(t *testing.T) {
