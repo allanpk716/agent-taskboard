@@ -28,8 +28,8 @@ type guestLinkRequest struct {
 	NewGuestName string `json:"new_guest_name"`
 }
 
-// rotateGuestLinkResponse 是换新地址的一次性响应。已认领链接的 access_code
-// 只在这里出现；未认领链接没有访问码，字段整个省略。
+// rotateGuestLinkResponse 是换新地址的一次性响应。重置链接只换地址，
+// 不再返回访问码；access_code 字段保留给旧客户端兼容判断，恒为空。
 type rotateGuestLinkResponse struct {
 	URL        string `json:"url"`
 	ShareText  string `json:"share_text"`
@@ -207,9 +207,9 @@ func (a *API) rotateGuestLinkKey(w http.ResponseWriter, r *http.Request, ref str
 			URL: url,
 			ShareText: tickets.GuestShareText(link.DisplayName(), link.Title, url,
 				"", link.HasHome, link.ExpiresAt, link.Claimed),
-			ResetText:  tickets.GuestLinkResetText(link.DisplayName(), link.Title, url, link.AccessCode, link.ExpiresAt),
-			AccessCode: link.AccessCode,
-			ExpiresAt:  link.ExpiresAt.Format(time.RFC3339Nano),
+			ResetText: tickets.GuestLinkResetText(link.DisplayName(), link.Title, url,
+				link.Claimed, link.ExpiresAt),
+			ExpiresAt: link.ExpiresAt.Format(time.RFC3339Nano),
 		})
 	})
 }
@@ -229,8 +229,13 @@ func (a *API) resetGuestAccessCode(w http.ResponseWriter, r *http.Request, ref s
 		case errors.Is(err, tickets.ErrGuestLinkNotFound):
 			a.writeTicketError(w, r, ref, err)
 		case errors.Is(err, tickets.ErrGuestAccessCodeGuestLevel):
-			WriteError(w, http.StatusConflict, CodeGuestAccessCodeGuestLevel, err.Error(),
-				"有主访客链接的访问码属于这位访客的全部工单，请对这位访客重置访问码")
+			hint := "有主访客链接的访问码属于这位访客的全部工单，请对这位访客重置访问码"
+			var guestLevel *tickets.GuestAccessCodeGuestLevelError
+			if errors.As(err, &guestLevel) {
+				hint = "请改用访客级重置：POST /api/v1/guests/" +
+					strconv.FormatInt(guestLevel.GuestID, 10) + "/reset-access-code"
+			}
+			WriteError(w, http.StatusConflict, CodeGuestAccessCodeGuestLevel, err.Error(), hint)
 		case errors.Is(err, tickets.ErrLinkNotClaimed):
 			WriteError(w, http.StatusConflict, CodeLinkUnclaimed, "这条链接尚未认领，不需要重置访问码", "等待访客认领后再重置")
 		case errors.Is(err, tickets.ErrGuestLinkCipherUnavailable):

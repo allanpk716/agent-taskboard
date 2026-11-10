@@ -8,11 +8,16 @@ import {
   disableGuest,
   enableGuest,
   fetchGuestDetail,
+  previewGuestAccessCodeReset,
   renameGuest,
+  resetGuestAccessCodeForGuest,
+  resetGuestHomeKey,
+  type GuestAccessCodeResetPreview,
   type GuestDetail,
 } from './memberApi'
-import { Confirm, copyText, nav, toast } from './ui'
-import { fmtDateCN } from '../shared/format'
+import { ResetAccessResultDialog } from './ResetAccessDialog'
+import { Confirm, Modal, copyText, nav, toast } from './ui'
+import { absoluteUrl, fmtDateCN } from '../shared/format'
 
 export function GuestDetailPage({ guestId }: { guestId: string }) {
   const id = Number(guestId)
@@ -23,6 +28,17 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
   const [busy, setBusy] = useState(false)
   const [confirmDisable, setConfirmDisable] = useState(false)
   const [confirmEnable, setConfirmEnable] = useState(false)
+  const [confirmCodeReset, setConfirmCodeReset] = useState(false)
+  const [confirmHomeReset, setConfirmHomeReset] = useState(false)
+  const [codePreview, setCodePreview] = useState<GuestAccessCodeResetPreview | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const [resetResult, setResetResult] = useState<{
+    action: 'code' | 'home'
+    url: string
+    urlLabel: string
+    accessCode?: string
+    resetText: string
+  } | null>(null)
 
   const refresh = useCallback(() => {
     fetchGuestDetail(id)
@@ -33,6 +49,24 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  // 打开重置访问码确认时先取影响预览（作废设备数 / 涉及工单数）。
+  useEffect(() => {
+    if (!confirmCodeReset || codePreview || previewError) return
+    let cancelled = false
+    previewGuestAccessCodeReset(id)
+      .then((got) => {
+        if (!cancelled) setCodePreview(got)
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setPreviewError(e instanceof ApiError ? e.message : '影响预览加载失败，请稍后重试')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [confirmCodeReset, codePreview, previewError, id])
 
   if (error) {
     return (
@@ -108,6 +142,51 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
     }
   }
 
+  async function resetCode() {
+    setBusy(true)
+    try {
+      const res = await resetGuestAccessCodeForGuest(id)
+      setResetResult({
+        action: 'code',
+        url: res.home_url,
+        urlLabel: '访客主页',
+        accessCode: res.access_code,
+        resetText: res.reset_text.replaceAll(res.home_url, absoluteUrl(res.home_url)),
+      })
+      setConfirmCodeReset(false)
+      setCodePreview(null)
+      setPreviewError(null)
+      refresh()
+    } catch (e) {
+      toast(e instanceof ApiError ? `${e.code}：${e.message}` : '重置访问码失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function resetHome() {
+    setBusy(true)
+    try {
+      const res = await resetGuestHomeKey(id)
+      setResetResult({
+        action: 'home',
+        url: res.home_url,
+        urlLabel: '新的主页地址',
+        resetText: res.share_text.replaceAll(res.home_url, absoluteUrl(res.home_url)),
+      })
+      setConfirmHomeReset(false)
+      refresh()
+    } catch (e) {
+      toast(e instanceof ApiError ? `${e.code}：${e.message}` : '重置主页地址失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (resetResult) {
+    return <ResetAccessResultDialog result={resetResult} onClose={() => setResetResult(null)} />
+  }
+
   return (
     <div className="bpage">
       <div className="mcard" style={{ marginTop: 12 }}>
@@ -127,6 +206,19 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
         <div className="guest-actions">
           <button className="btn ghost" onClick={() => void copyHome()}>
             复制主页文案
+          </button>
+          <button
+            className="btn ghost"
+            onClick={() => {
+              setCodePreview(null)
+              setPreviewError(null)
+              setConfirmCodeReset(true)
+            }}
+          >
+            重置访问码
+          </button>
+          <button className="btn ghost" onClick={() => setConfirmHomeReset(true)}>
+            重置主页地址
           </button>
           <button
             className="btn ghost"
@@ -220,6 +312,45 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
           yesLabel="恢复"
           onYes={() => void toggleDisabled(true)}
           onCancel={() => setConfirmEnable(false)}
+        />
+      )}
+      {confirmCodeReset && (
+        <Modal title="🔐 重置访问码" onClose={() => setConfirmCodeReset(false)} wide>
+          <p className="reset-lead">
+            将按访客「{guest.name}」重置访问码：主页与名下全部链接共用同一个访问码。
+          </p>
+          {codePreview ? (
+            <div className="reset-info">
+              影响范围：作废 {codePreview.device_count} 台设备，涉及 {codePreview.ticket_count} 张工单
+              {codePreview.access_code_locked ? '，并解除当前的输错锁定' : ''}。
+            </div>
+          ) : previewError ? (
+            <div className="warnbox">{previewError}</div>
+          ) : (
+            <div className="hint">正在加载影响范围…</div>
+          )}
+          <div className="warnbox">
+            这位访客的所有已登录设备（主页、名下全部链接与对方的 Agent）会立即失效，连续输错造成的锁定会解除；
+            将生成新的 6 位访问码，链接地址与主页地址保持不变。新码只显示一次。
+          </div>
+          <div className="mrow">
+            <button className="btn ghost" onClick={() => setConfirmCodeReset(false)}>
+              取消
+            </button>
+            <span className="sp" />
+            <button className="btn" onClick={() => void resetCode()} disabled={busy}>
+              重置访问码
+            </button>
+          </div>
+        </Modal>
+      )}
+      {confirmHomeReset && (
+        <Confirm
+          title="🔄 重置主页地址？"
+          body={`「${guest.name}」的旧主页地址立即失效；访问码、已登录设备和名下链接都不受影响。将生成新的主页地址。`}
+          yesLabel="重置主页地址"
+          onYes={() => void resetHome()}
+          onCancel={() => setConfirmHomeReset(false)}
         />
       )}
     </div>

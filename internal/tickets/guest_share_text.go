@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
-	"github.com/allanpk716/agent-taskboard/internal/guestcredentials"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 )
 
@@ -76,9 +75,8 @@ func (m *Manager) RecoverGuestLink(ctx context.Context, viewer identity.Viewer, 
 }
 
 // RotateGuestLinkKey 给 ref 工单下的一条有效链接换新密钥，并在同一事务里写
-// guest_link_rotated 事件。已认领的链接同时重置访问码并删除全部设备凭证；
-// 未认领的链接尚无访问码，只换新地址。除地址和访问码外，备注、有效期、
-// 认领状态与「可填写说明」权限都保持不变。
+// guest_link_rotated 事件。重置链接只换单条链接的地址：访问码、设备、备注、
+// 有效期、认领状态与「可填写说明」权限都保持不变（ADR 0019）。
 func (m *Manager) RotateGuestLinkKey(ctx context.Context, viewer identity.Viewer, ref string, id int64) (GuestLinkShare, error) {
 	full, err := m.ForViewer(ctx, viewer, ref)
 	if err != nil {
@@ -110,22 +108,11 @@ func (m *Manager) RotateGuestLinkKey(ctx context.Context, viewer identity.Viewer
 	if !keyCiphertext.Valid {
 		return GuestLinkShare{}, ErrGuestLinkCipherUnavailable
 	}
-	accessCode := ""
-	// 有主链接的访问码属于整个访客：重置链接只换单条链接的地址，访问码、
-	// 设备、备注与认领状态都不变（ADR 0019）。无主老链接沿用旧语义。
-	resetCredential := row.ClaimedAt.Valid && row.GuestID == 0
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE guest_links SET key_hash = ?, key_ciphertext = ?
 		WHERE id = ? AND ticket_seq = ?`,
 		identity.CredentialHash(key), keyCiphertext, id, full.Seq); err != nil {
 		return GuestLinkShare{}, err
-	}
-	if resetCredential {
-		reset, err := guestcredentials.Reset(ctx, tx, row.HolderID, now)
-		if err != nil {
-			return GuestLinkShare{}, err
-		}
-		accessCode = reset.AccessCode
 	}
 	if err := m.insertLinkEvent(ctx, tx, full.Seq, authorOf(viewer), "guest_link_rotated",
 		row.Note, "", now); err != nil {
@@ -137,7 +124,7 @@ func (m *Manager) RotateGuestLinkKey(ctx context.Context, viewer identity.Viewer
 	return GuestLinkShare{
 		Key: key, HasHome: row.GuestID != 0, Note: row.Note, GuestID: row.GuestID, GuestName: row.GuestName,
 		Title: full.Title, ExpiresAt: row.ExpiresAtTime,
-		Claimed: row.ClaimedAt.Valid, AccessCode: accessCode,
+		Claimed: row.ClaimedAt.Valid,
 	}, nil
 }
 
@@ -194,15 +181,13 @@ func GuestAccessCodeResetText(note, title, url, accessCode string, expiresAt tim
 		"。访问码请勿转发；如果你让 Agent 处理过这张工单，也请把新访问码告诉它。"
 }
 
-// GuestLinkResetText 生成「新链接」的重置文案。已认领链接会同时拿到新访问码；
-// 未认领链接尚无访问码，只提醒第一条链接不要转发。
-func GuestLinkResetText(note, title, url, accessCode string, expiresAt time.Time) string {
-	prefix := note + "：这张工单的链接已更换，旧链接已失效。工单「" + title + "」的链接：" + url
-	if accessCode == "" {
-		return prefix + " 。有效期至 " + expiresAt.In(clock.Beijing).Format("2006-01-02") +
-			"。链接只归第一位打开并确认的人，请不要转发。"
+// GuestLinkResetText 生成「新链接」的重置文案。重置链接不再连带重置访问码：
+// 已认领的链接提醒沿用原访问码；未认领的链接提醒首次认领后才会生成访问码。
+func GuestLinkResetText(note, title, url string, claimed bool, expiresAt time.Time) string {
+	prefix := note + "：这张工单的链接已更换，旧链接已失效。工单「" + title + "」的链接：" + url +
+		" 。有效期至 " + expiresAt.In(clock.Beijing).Format("2006-01-02")
+	if claimed {
+		return prefix + "。访问码保持不变，换设备打开链接时仍输入原来的访问码。"
 	}
-	return prefix + " ，新访问码：" + accessCode + " 。换设备打开链接时输入新访问码即可，有效期至 " +
-		expiresAt.In(clock.Beijing).Format("2006-01-02") +
-		"。访问码请勿转发；如果你让 Agent 处理过这张工单，也请把新访问码告诉它。"
+	return prefix + "。链接只归第一位打开并确认的人，请不要转发。"
 }

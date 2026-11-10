@@ -877,6 +877,7 @@ export async function revokeGuestLink(number: string, id: number): Promise<void>
   await api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}`, { method: 'DELETE' })
 }
 
+/** 无主老链接的链接级重置访问码：有主链接请改用访客级接口。 */
 export async function resetGuestAccessCode(
   number: string,
   id: number,
@@ -888,6 +889,46 @@ export async function resetGuestAccessCode(
 }> {
   return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}/reset-access-code`, {
     method: 'POST',
+  })
+}
+
+export interface GuestAccessCodeResetPreview {
+  guest_id: number
+  guest_name: string
+  device_count: number
+  ticket_count: number
+  access_code_locked: boolean
+}
+
+/** 访客级重置访问码的影响预览：将作废的设备数与涉及的工单数。 */
+export async function previewGuestAccessCodeReset(
+  guestId: number,
+): Promise<GuestAccessCodeResetPreview> {
+  return api(`/api/v1/guests/${guestId}/reset-access-code/preview`)
+}
+
+/** 访客级重置访问码：作废名下全部设备并清除锁定；新码只返回一次。 */
+export async function resetGuestAccessCodeForGuest(
+  guestId: number,
+): Promise<{
+  guest_id: number
+  access_code: string
+  home_url: string
+  reset_text: string
+}> {
+  return api(`/api/v1/guests/${guestId}/reset-access-code`, {
+    method: 'POST',
+    idempotencyKey: crypto.randomUUID(),
+  })
+}
+
+/** 重置访客主页地址：旧主页地址失效，访问码与设备不变。 */
+export async function resetGuestHomeKey(
+  guestId: number,
+): Promise<{ guest_id: number; home_url: string; share_text: string }> {
+  return api(`/api/v1/guests/${guestId}/reset-home-key`, {
+    method: 'POST',
+    idempotencyKey: crypto.randomUUID(),
   })
 }
 

@@ -682,7 +682,7 @@ function LinksDialog({
                         >
                           延期到该日
                         </button>{' '}
-                        {g.status !== 'unclaimed' && !g.guest_id && (
+                        {g.status !== 'unclaimed' && (
                           <button
                             className="btn sm ghost"
                             onClick={() => onResetAccess(g, 'code', 'action')}

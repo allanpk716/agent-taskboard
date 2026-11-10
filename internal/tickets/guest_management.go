@@ -109,7 +109,7 @@ func (m *Manager) RenameGuest(ctx context.Context, viewer identity.Viewer, guest
 	if name == "" {
 		return GuestInfo{}, ErrGuestNameRequired
 	}
-	if err := m.guestManagementAllowed(ctx, viewer, guestID); err != nil {
+	if err := m.ensureGuestManageable(ctx, viewer, guestID); err != nil {
 		return GuestInfo{}, err
 	}
 	if _, err := m.db.ExecContext(ctx, `UPDATE guests SET name = ? WHERE id = ?`, name, guestID); err != nil {
@@ -134,7 +134,7 @@ func (m *Manager) setGuestDisabled(ctx context.Context, viewer identity.Viewer, 
 	if !viewer.IsWebSession() {
 		return ErrGuestManagementNotAllowed
 	}
-	if err := m.guestManagementAllowed(ctx, viewer, guestID); err != nil {
+	if err := m.ensureGuestManageable(ctx, viewer, guestID); err != nil {
 		return err
 	}
 	now := m.clk.Now()

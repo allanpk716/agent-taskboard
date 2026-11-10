@@ -318,6 +318,8 @@ func eventText(e Event) string {
 		return "延期访客链接「" + e.Note + "」至 " + e.LinkExpiresAt
 	case "guest_link_rotated":
 		return "更换访客链接「" + e.Note + "」的地址"
+	case "guest_access_code_reset":
+		return "重置访客「" + e.Note + "」的访问码（名下全部工单）"
 	case "guest_link_assigned":
 		if e.Reason == "merge" {
 			return "合并访客后把访客链接「" + e.Note + "」改归到 " + e.AssignTo
