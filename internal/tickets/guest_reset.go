@@ -43,19 +43,24 @@ func (m *Manager) GuestAccessCodeResetPreviewForViewer(ctx context.Context,
 		return GuestAccessCodeResetPreview{}, err
 	}
 	var out GuestAccessCodeResetPreview
+	var mergedInto sql.NullInt64
 	err := m.db.QueryRowContext(ctx, `
 		SELECT gu.id, gu.name,
+		       gu.merged_into_guest_id,
 		       (SELECT COUNT(*) FROM guest_credential_devices d
 		         JOIN guest_credential_holders h ON h.id = d.credential_holder_id
 		         WHERE h.owner_type = 'guest' AND h.owner_id = gu.id),
 		       (SELECT COUNT(DISTINCT g.ticket_seq) FROM guest_links g WHERE g.guest_id = gu.id)
 		FROM guests gu WHERE gu.id = ?`, guestID).
-		Scan(&out.GuestID, &out.GuestName, &out.DeviceCount, &out.TicketCount)
+		Scan(&out.GuestID, &out.GuestName, &mergedInto, &out.DeviceCount, &out.TicketCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return GuestAccessCodeResetPreview{}, ErrGuestNotFound
 	}
 	if err != nil {
 		return GuestAccessCodeResetPreview{}, err
+	}
+	if mergedInto.Valid {
+		return GuestAccessCodeResetPreview{}, ErrGuestAlreadyMerged
 	}
 	locked, err := m.guestAccessCodeLocked(ctx, guestID)
 	if err != nil {
@@ -87,17 +92,21 @@ func (m *Manager) ResetGuestAccessCodeForGuest(ctx context.Context,
 		name        string
 		holderID    int64
 		claimedNull sql.NullString
+		mergedInto  sql.NullInt64
 	)
 	err = tx.QueryRowContext(ctx, `
-		SELECT gu.name, h.id, h.claimed_at
+		SELECT gu.name, gu.merged_into_guest_id, h.id, h.claimed_at
 		FROM guests gu
 		LEFT JOIN guest_credential_holders h ON h.owner_type = 'guest' AND h.owner_id = gu.id
-		WHERE gu.id = ?`, guestID).Scan(&name, &holderID, &claimedNull)
+		WHERE gu.id = ?`, guestID).Scan(&name, &mergedInto, &holderID, &claimedNull)
 	if errors.Is(err, sql.ErrNoRows) {
 		return GuestAccessCodeReset{}, ErrGuestNotFound
 	}
 	if err != nil {
 		return GuestAccessCodeReset{}, err
+	}
+	if mergedInto.Valid {
+		return GuestAccessCodeReset{}, ErrGuestAlreadyMerged
 	}
 	if holderID == 0 || !claimedNull.Valid {
 		return GuestAccessCodeReset{}, ErrGuestNotClaimed
@@ -178,13 +187,18 @@ func (m *Manager) ResetGuestHomeKeyForViewer(ctx context.Context,
 	defer tx.Rollback()
 
 	var share GuestHomeShare
-	err = tx.QueryRowContext(ctx, `SELECT id, name FROM guests WHERE id = ?`, guestID).
-		Scan(&share.GuestID, &share.GuestName)
+	var mergedInto sql.NullInt64
+	err = tx.QueryRowContext(ctx,
+		`SELECT id, name, merged_into_guest_id FROM guests WHERE id = ?`, guestID).
+		Scan(&share.GuestID, &share.GuestName, &mergedInto)
 	if errors.Is(err, sql.ErrNoRows) {
 		return GuestHomeShare{}, ErrGuestNotFound
 	}
 	if err != nil {
 		return GuestHomeShare{}, err
+	}
+	if mergedInto.Valid {
+		return GuestHomeShare{}, ErrGuestAlreadyMerged
 	}
 	key, err := identity.NewGuestHomeKey()
 	if err != nil {

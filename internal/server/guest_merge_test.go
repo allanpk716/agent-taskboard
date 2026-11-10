@@ -3,6 +3,7 @@ package server_test
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
@@ -82,6 +83,11 @@ func Test合并访客后链接改归且B凭证全部失效(t *testing.T) {
 	if res := s.Do(t, s.AgentClient(trimGuestHomeKey(bHome.URL)), http.MethodGet, "/api/v1/guest-home", nil, nil); res.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("B 的旧主页状态码 = %d，想 401", res.StatusCode)
 	}
+	res = s.Do(t, web, http.MethodPost, "/api/v1/guests/"+strconv.FormatInt(bLink.GuestID, 10)+"/home-share-text", nil, nil)
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("合并后复制 B 的主页文案状态码 = %d，想 404", res.StatusCode)
+	}
+	assertErrorCode(t, res, "guest_already_merged")
 	if res := enterGuestAccessCode(t, s, guestKeyOf(t, bLink), bClaim.AccessCode); res.StatusCode < http.StatusBadRequest {
 		t.Fatalf("B 的旧访问码状态码 = %d，想失败", res.StatusCode)
 	}
@@ -203,6 +209,19 @@ func Test合并访客拒绝Agent非法目标与权限边界(t *testing.T) {
 	if res := s.Do(t, admin, http.MethodPost, mergeURL(b.GuestID),
 		map[string]int64{"target_guest_id": a.GuestID}, nil); res.StatusCode != http.StatusOK {
 		t.Fatalf("合法合并状态码 = %d，想 200", res.StatusCode)
+	}
+	mergedBase := "/api/v1/guests/" + strconv.FormatInt(b.GuestID, 10)
+	for name, method := range map[string]string{
+		"重置访问码预览": http.MethodGet + " " + mergedBase + "/reset-access-code/preview",
+		"重置访问码":   http.MethodPost + " " + mergedBase + "/reset-access-code",
+		"重置主页地址":  http.MethodPost + " " + mergedBase + "/reset-home-key",
+	} {
+		parts := strings.SplitN(method, " ", 2)
+		res := s.Do(t, admin, parts[0], parts[1], nil, nil)
+		if res.StatusCode != http.StatusNotFound {
+			t.Fatalf("[%s] 操作已并入访客状态码 = %d，想 404", name, res.StatusCode)
+		}
+		assertErrorCode(t, res, "guest_already_merged")
 	}
 	res = s.Do(t, admin, http.MethodPost, mergeURL(c.GuestID),
 		map[string]int64{"target_guest_id": b.GuestID}, nil)

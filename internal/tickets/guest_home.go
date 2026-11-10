@@ -151,13 +151,14 @@ func (m *Manager) ensureGuestHomeKeyTx(ctx context.Context, tx *sql.Tx, guestID 
 	var (
 		share      GuestHomeShare
 		disabledAt sql.NullString
+		mergedInto sql.NullInt64
 		hash       sql.NullString
 		ciphertext sql.NullString
 	)
 	err := tx.QueryRowContext(ctx, `
-		SELECT id, name, disabled_at, home_key_hash, home_key_ciphertext
+		SELECT id, name, disabled_at, merged_into_guest_id, home_key_hash, home_key_ciphertext
 		FROM guests WHERE id = ?`, guestID).
-		Scan(&share.GuestID, &share.GuestName, &disabledAt, &hash, &ciphertext)
+		Scan(&share.GuestID, &share.GuestName, &disabledAt, &mergedInto, &hash, &ciphertext)
 	if errors.Is(err, sql.ErrNoRows) {
 		return GuestHomeShare{}, ErrGuestNotFound
 	}
@@ -166,6 +167,9 @@ func (m *Manager) ensureGuestHomeKeyTx(ctx context.Context, tx *sql.Tx, guestID 
 	}
 	if disabledAt.Valid {
 		return GuestHomeShare{}, ErrGuestDisabled
+	}
+	if mergedInto.Valid {
+		return GuestHomeShare{}, ErrGuestAlreadyMerged
 	}
 	if !hash.Valid && !ciphertext.Valid {
 		if m.guestLinkCipher == nil {
