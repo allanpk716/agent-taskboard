@@ -1,5 +1,5 @@
-// 部门访客名单（#328）：成员和成员 Agent 都能列出并按名字搜索，
-// 建访客链接时据此选择已有访客；访客建立本身发生在建链接时（选或新建）。
+// 访客接口：成员和成员 Agent 都能列出并按名字搜索部门访客名单（#328），
+// 也能不建工单、先单独新建一位访客（#339）。
 package httpapi
 
 import (
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
 
@@ -30,15 +31,22 @@ type guestView struct {
 	CreatedAt          time.Time  `json:"created_at"`
 }
 
-// handleGuests 处理 GET /api/v1/guests?q=<名字>：列出部门访客名单。
+// handleGuests 处理 /api/v1/guests：
+//
+//	GET  /api/v1/guests?q=<名字>  列出部门访客名单
+//	POST /api/v1/guests           单独新建访客（成员与成员 Agent）
 func (a *API) handleGuests(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
 		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法",
-			"列出部门访客用 GET /api/v1/guests?q=<名字>")
+			"列出部门访客用 GET /api/v1/guests?q=<名字>，新建访客用 POST /api/v1/guests")
 		return
 	}
 	viewer, ok := a.memberFromRequestFor(w, r, "访客不能查看部门访客名单")
 	if !ok {
+		return
+	}
+	if r.Method == http.MethodPost {
+		a.createGuest(w, r, viewer)
 		return
 	}
 	guests, err := a.tickets.Guests(r.Context(), viewer, r.URL.Query().Get("q"))
@@ -50,6 +58,28 @@ func (a *API) handleGuests(w http.ResponseWriter, r *http.Request) {
 		out = append(out, newGuestView(g))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"guests": out})
+}
+
+// createGuest 处理 POST /api/v1/guests {"name": "..."}：单独新建一位访客。
+// 名字规则与建链接当场新建完全一致（空白 422 guest_required），返回
+// 未认领、名下没有链接的访客视图。
+func (a *API) createGuest(w http.ResponseWriter, r *http.Request, viewer identity.Viewer) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if !decodeJSON(w, r, &req, `{"name": "检验科-张三"}`) {
+		return
+	}
+	guest, err := a.tickets.CreateGuest(r.Context(), viewer, req.Name)
+	if errors.Is(err, tickets.ErrGuestRequired) {
+		WriteError(w, http.StatusUnprocessableEntity, CodeGuestRequired,
+			"访客名字不能为空", "请填写去空白后的访客名字，如「检验科-张三」；规则与建链接时新建访客一致")
+		return
+	}
+	if err != nil {
+		panic(err)
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"guest": newGuestView(guest)})
 }
 
 // handleGuestsRef 处理 /api/v1/guests/{id}/ 下的成员操作：

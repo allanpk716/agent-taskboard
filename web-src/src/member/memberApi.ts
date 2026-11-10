@@ -809,6 +809,14 @@ export async function fetchGuestLinks(number: string): Promise<GuestLink[]> {
   return body.links as GuestLink[]
 }
 
+/** 单独新建访客（#339）：不建工单、不带链接；新访客未认领、名下没有链接。 */
+export async function createGuest(name: string): Promise<{ guest: GuestSummary }> {
+  return api('/api/v1/guests', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+}
+
 export async function createGuestLink(
   number: string,
   body: {

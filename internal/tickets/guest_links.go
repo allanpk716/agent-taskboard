@@ -86,13 +86,28 @@ func (spec *GuestLinkSpec) validateCreate(now time.Time) (time.Time, error) {
 		return time.Time{}, err
 	}
 	spec.NewGuestName = strings.TrimSpace(spec.NewGuestName)
-	if spec.GuestID == 0 && spec.NewGuestName == "" {
-		return time.Time{}, ErrGuestRequired
+	if spec.GuestID == 0 {
+		var err error
+		spec.NewGuestName, err = NormalizeNewGuestName(spec.NewGuestName)
+		if err != nil {
+			return time.Time{}, err
+		}
 	}
 	if spec.GuestID != 0 && spec.NewGuestName != "" {
 		return time.Time{}, ErrGuestBothProvided
 	}
 	return expiresAt, nil
+}
+
+// NormalizeNewGuestName 校验并规范化新建访客的名字：去空白后必填。
+// 建链接时当场新建（new_guest_name）与单独新建访客（POST /api/v1/guests）
+// 共用这一条规则，保证两个入口的名字约束与错误完全一致。
+func NormalizeNewGuestName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", ErrGuestRequired
+	}
+	return name, nil
 }
 
 // validate 校验并算出到期时刻（不检查备注：延期请求不带备注）。
@@ -355,32 +370,62 @@ func (m *Manager) guestForNewLinkTx(ctx context.Context, tx *sql.Tx, actor Autho
 		}
 		claimed = claimedAt.Valid
 	} else {
-		var agentID any
-		if actor.AgentID != 0 {
-			agentID = actor.AgentID
-		}
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO guests (name, created_by_member_id, created_by_agent_id, created_at)
-			VALUES (?, ?, ?, ?) RETURNING id`,
-			spec.NewGuestName, actor.MemberID, agentID, now.Format(time.RFC3339Nano)).
-			Scan(&guestID); err != nil {
-			return 0, "", 0, false, fmt.Errorf("写入访客失败：%w", err)
+		var err error
+		guestID, holderID, err = m.createGuestTx(ctx, tx, actor, spec.NewGuestName, now)
+		if err != nil {
+			return 0, "", 0, false, err
 		}
 		guestName = spec.NewGuestName
+		return guestID, guestName, holderID, claimed, nil
 	}
+	holderID, err = m.guestCredentialHolderTx(ctx, tx, guestID, now)
+	if err != nil {
+		return 0, "", 0, false, err
+	}
+	return guestID, guestName, holderID, claimed, nil
+}
+
+// createGuestTx 在调用方事务里写入一位新访客（名字须已校验）并补齐其
+// 凭证持有者，返回访客 id 与持有者 id。建链接当场新建与单独新建访客
+// （POST /api/v1/guests）共用，建档规则只有这一份。
+func (m *Manager) createGuestTx(ctx context.Context, tx *sql.Tx, actor Author,
+	name string, now time.Time) (int64, int64, error) {
+	var agentID any
+	if actor.AgentID != 0 {
+		agentID = actor.AgentID
+	}
+	var guestID int64
+	if err := tx.QueryRowContext(ctx, `
+		INSERT INTO guests (name, created_by_member_id, created_by_agent_id, created_at)
+		VALUES (?, ?, ?, ?) RETURNING id`,
+		name, actor.MemberID, agentID, now.Format(time.RFC3339Nano)).
+		Scan(&guestID); err != nil {
+		return 0, 0, fmt.Errorf("写入访客失败：%w", err)
+	}
+	holderID, err := m.guestCredentialHolderTx(ctx, tx, guestID, now)
+	if err != nil {
+		return 0, 0, err
+	}
+	return guestID, holderID, nil
+}
+
+// guestCredentialHolderTx 返回访客的凭证持有者，不存在时当场创建。
+func (m *Manager) guestCredentialHolderTx(ctx context.Context, tx *sql.Tx, guestID int64,
+	now time.Time) (int64, error) {
+	var holderID int64
 	if err := tx.QueryRowContext(ctx,
 		`SELECT id FROM guest_credential_holders WHERE owner_type = 'guest' AND owner_id = ?`, guestID).
 		Scan(&holderID); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			return 0, "", 0, false, err
+			return 0, err
 		}
 		holder, err := guestcredentials.CreateGuestHolder(ctx, tx, guestID, now)
 		if err != nil {
-			return 0, "", 0, false, err
+			return 0, err
 		}
 		holderID = holder.ID
 	}
-	return guestID, guestName, holderID, claimed, nil
+	return holderID, nil
 }
 
 // GuestLinkInfo 是访客链接的列表项：不含明文密钥。keyCiphertext 只在服务端

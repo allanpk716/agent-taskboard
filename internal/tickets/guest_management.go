@@ -1,4 +1,4 @@
-// 访客管理（#332）：成员查看访客详情、改名、停用与恢复。
+// 访客管理（#332、#339）：成员单独新建访客、查看访客详情、改名、停用与恢复。
 // 查看详情只列调用者可见范围内的工单与链接；改名沿用“访客建立者、管理员
 // 或名下任一链接的管理人”的管理边界；停用与恢复只接受网页成员会话。
 package tickets
@@ -22,6 +22,35 @@ var (
 	// ErrGuestNotDisabled 表示访客当前是正常状态，无需恢复。
 	ErrGuestNotDisabled = errors.New("这位访客没有停用")
 )
+
+// CreateGuest 单独新建一位访客（#339）：不建工单、不带链接，先建好身份。
+// 成员和成员 Agent 都可以；名字规则与建链接当场新建完全一致
+// （NormalizeNewGuestName）。新访客未认领、名下没有链接，主页密钥沿用
+// 惰性生成（首次复制主页文案时确保存在）。
+func (m *Manager) CreateGuest(ctx context.Context, viewer identity.Viewer, name string) (GuestInfo, error) {
+	if viewer.Kind != identity.ViewerMember {
+		return GuestInfo{}, ErrGuestManagementNotAllowed
+	}
+	name, err := NormalizeNewGuestName(name)
+	if err != nil {
+		return GuestInfo{}, err
+	}
+	now := m.clk.Now()
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return GuestInfo{}, err
+	}
+	defer tx.Rollback()
+
+	guestID, _, err := m.createGuestTx(ctx, tx, authorOf(viewer), name, now)
+	if err != nil {
+		return GuestInfo{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return GuestInfo{}, err
+	}
+	return m.guestByID(ctx, guestID)
+}
 
 // GuestDetailTicket 是访客详情里的一张工单：工单概要加上这位访客名下
 // 指向这张工单的全部链接。

@@ -964,6 +964,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/rotate-key` | 重置链接（一般用于老链接，也可用于疑似外泄），成功 `{url, share_text, reset_text, expires_at}`；只换这一条链接的地址，旧地址立即失效，访问码、设备、备注与认领状态都不变（有主、无主链接语义一致）。响应带 `Cache-Control: no-store`，支持 `Idempotency-Key`。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/assign-guest` | 把无主老链接手动归到访客：`{"guest_id"}` 或 `{"new_guest_name"}` 二选一；成功返回归属后的链接视图，写 `guest_link_assigned` 事件，不发通知。 |
 | `GET /api/v1/guests?q=<名字>` | 部门访客名单（成员与成员 Agent；访客 403 `members_only`）：按名字包含搜索，按名字排序；每项 `{id, name, claimed_at?, claim_name?, access_code_locked_at?, link_count, created_by, created_at}`。已并入另一位访客的重复访客不出现在名单，也不能再被选作建链接或归属目标。 |
+| `POST /api/v1/guests` | 单独新建访客（#339，不建工单、不带链接）：`{"name"}`（去空白后必填，空白 422 `guest_required`，与建链接时 `new_guest_name` 同规则同错误码）；成员与成员 Agent 都可调用，访客 403 `members_only`。成功 201 返回 `{guest}`，与名单项同构：未认领、`link_count` 为 0；名下有有效链接之前，其访客主页是空列表。 |
 | `GET /api/v1/guest-link` | 用 `tbg_` 密钥读取认领页信息：邀请人、备注、有效期、可见范围提示；未认领时不返回工单内容。 |
 | `POST /api/v1/guest-links/claim` | 用 `tbg_` 密钥认领：`{"author_name"}`；成功返回一次 `device_token` 和 6 位 `access_code`，并写 `guest_link_claimed` 事件。有主链接的认领作用于整个访客。 |
 | `POST /api/v1/guest-links/enter` | 用 `tbg_` 密钥凭访问码进入：`{"access_code"}`；成功返回一次新 `device_token`；有主链接签发的设备对这位访客名下全部链接可信。 |

@@ -14,6 +14,7 @@ export type Route =
   | { page: 'draft'; id: string }
   | { page: 'tools' }
   | { page: 'guests' }
+  | { page: 'guestNew' }
   | { page: 'guestDetail'; id: string }
   | { page: 'me' }
   | { page: 'templates' }
@@ -26,6 +27,8 @@ export function parseRoute(pathname: string): Route {
     return { page: 'draft', id: decodeURIComponent(pathname.slice('/drafts/'.length)) }
   if (pathname.startsWith('/templates/'))
     return { page: 'templateEdit', key: decodeURIComponent(pathname.slice('/templates/'.length)) }
+  // /guests/new 必须先于 /guests/{id} 判断，否则会被当成 id 为 "new" 的详情页。
+  if (pathname === '/guests/new') return { page: 'guestNew' }
   if (pathname.startsWith('/guests/'))
     return { page: 'guestDetail', id: decodeURIComponent(pathname.slice('/guests/'.length)) }
   if (pathname === '/guests') return { page: 'guests' }

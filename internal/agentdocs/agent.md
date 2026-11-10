@@ -46,6 +46,11 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
   `guest_id` 选这位已有访客；名单里没有才用 `new_guest_name` 当场新建一位。
   两者都不带会返回 `422 guest_required`，同时带会返回 `422 guest_required`（只能二选一）。
   已停用的访客不能作为目标，返回 `422 guest_disabled`；请改选其他访客或询问主人是否先恢复。
+- 主人想先建好一位访客、之后再发工单或归入老工单时，调
+  `POST {{BASE}}/api/v1/guests`，请求体 `{"name": "检验科-张三"}`。名字去空白后必填，
+  空白返回 422 `guest_required`（与建链接时 `new_guest_name` 同规则同错误码）。
+  成功返回 201 `{guest}`：未认领、名下没有链接；在名下有有效链接之前，TA 的访客主页
+  是空列表。建好后把 `guest.id` 记下来，之后建链接、归属老链接都直接用它。
 - 建链接：`POST {{BASE}}/api/v1/tickets/<工单编号>/guest-links`，请求体带
   `{"note": "这条链接的用途", "guest_id": <已有访客id>, "valid_days": 30}`；
   新建访客时把 `guest_id` 换成 `"new_guest_name": "检验科-张三"`。备注只写这条链接的

@@ -3458,3 +3458,58 @@ textarea.src {
   flex-wrap: wrap;
   font-size: 15px;
 }
+
+/* 单独新建访客（#339）：单页渐进展开；#343 会在此基础上加勾选区与摘要栏。 */
+.guest-new-page {
+  padding-bottom: 40px;
+}
+.guest-similar {
+  border: 1px solid #f0d9a8;
+  border-radius: 12px;
+  background: #fffaf0;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.guest-similar-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #8a6116;
+}
+.guest-similar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.guest-similar-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.guest-similar-main strong {
+  font-size: 14.5px;
+}
+.guest-similar-row .btn {
+  flex: none;
+}
+.guest-new-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+  margin-top: 6px;
+}
+.guest-new-actions .btn {
+  width: 100%;
+}
+.guest-new-home {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #eef1f6;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
