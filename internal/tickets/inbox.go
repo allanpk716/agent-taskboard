@@ -315,6 +315,9 @@ func guestDisplayName(a Author) string {
 	if a.ViaAgent {
 		return a.DisplayName()
 	}
+	if a.GuestName != "" {
+		return a.GuestName
+	}
 	if a.AuthorName != "" {
 		return a.AuthorName
 	}
@@ -344,11 +347,25 @@ func inboxCounterpartOf(memberID int64, full Full, links []GuestLinkInfo) InboxC
 }
 
 func guestCounterpartName(full Full, links []GuestLinkInfo) string {
-	// 归属只看身份：固定取最早发出的那条访客链接（GuestLinksForTicket 按 id
-	// 升序返回），不随后来的访客回复跳动。展示名优先用这位访客最近一次自报
-	// 的称呼；没有就退回认领称呼/链接备注，再没有才是「访客」。
+	// 归属只看身份：优先取最早发出的有主链接的访客名字（#328）；没有有主
+	// 链接时沿用无主老链接的口径——固定取最早那条（GuestLinksForTicket 按
+	// id 升序返回），不随后来的访客回复跳动。展示名优先用这位访客最近一次
+	// 自报的称呼；没有就退回访客名字/认领称呼/链接备注，再没有才是「访客」。
+	var ownerless *GuestLinkInfo
 	if len(links) > 0 {
-		link := links[0]
+		var link *GuestLinkInfo
+		for i := range links {
+			if links[i].GuestID != 0 {
+				link = &links[i]
+				break
+			}
+			if ownerless == nil {
+				ownerless = &links[i]
+			}
+		}
+		if link == nil {
+			link = ownerless
+		}
 		for i := len(full.Timeline) - 1; i >= 0; i-- {
 			e := full.Timeline[i]
 			if e.Actor.MemberID != 0 || e.Actor.LinkID != link.ID {
@@ -359,6 +376,9 @@ func guestCounterpartName(full Full, links []GuestLinkInfo) string {
 					return name
 				}
 			}
+		}
+		if link.GuestName != "" {
+			return link.GuestName
 		}
 		name := link.ClaimName
 		if name == "" {

@@ -627,12 +627,18 @@ func (m *Manager) appendEvent(ctx context.Context, tx *sql.Tx, ticketSeq int64, 
 	if actor.AuthorName != "" {
 		authorName = actor.AuthorName
 	}
+	var guestName any
+	if actor.GuestName != "" {
+		guestName = actor.GuestName
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO timeline_events (ticket_seq, seq, change_seq, type, actor_member_id, actor_agent_id, at,
-		                            actor_system, actor_link_id, actor_link_note, actor_author_name, actor_via_agent)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                            actor_system, actor_link_id, actor_link_note, actor_guest_name,
+		                            actor_author_name, actor_via_agent)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ticketSeq, seq, change, typ, memberID, agentID, at.Format(time.RFC3339Nano),
-		boolToInt(actor.System), linkID, actor.LinkNote, authorName, boolToInt(actor.ViaAgent)); err != nil {
+		boolToInt(actor.System), linkID, actor.LinkNote, guestName, authorName,
+		boolToInt(actor.ViaAgent)); err != nil {
 		return 0, 0, fmt.Errorf("写入 %s 事件失败：%w", typ, err)
 	}
 	return seq, change, nil
@@ -677,9 +683,15 @@ func authorOf(v identity.Viewer) Author {
 // 自报信息未经平台核实，展示时与成员 Agent 的平台认证署名明确区分）。
 func guestAuthorOf(v identity.Viewer, authorName string, viaAgent bool) Author {
 	a := Author{AuthorName: strings.TrimSpace(authorName), ViaAgent: viaAgent}
+	if v.Guest != nil {
+		a.GuestName = v.Guest.Name
+	}
 	if v.GuestLink != nil {
 		a.LinkID = v.GuestLink.ID
 		a.LinkNote = v.GuestLink.Note
+		if a.GuestName == "" {
+			a.GuestName = v.GuestLink.GuestName
+		}
 	}
 	return a
 }

@@ -45,6 +45,7 @@ import { absoluteUrl, authorName, closeReasonText, fmtBeijing, fmtLinkExpiry, fm
 import { Confirm, Modal, copyText, invalidate, nav, toast, useLocationSearch } from './ui'
 import { HandoffDialog, PeerHandoffDialog, type HandoffPeer } from './HandoffDialog'
 import { ResetAccessDialog, type ResetAccessAction, type ResetAccessStart } from './ResetAccessDialog'
+import { GuestPicker, guestSelectionBody, type GuestSelection } from './GuestPicker'
 import { LabelChips, chipClass, turnLabel } from './TicketsPage'
 import { detailListSource, filtersFromSearch, toQuery, toggleLabelCondition } from './listFilters'
 import { useLayoutTier } from './useLayoutTier'
@@ -473,6 +474,7 @@ function LinksDialog({
   onClose: () => void
 }) {
   const [note, setNote] = useState('')
+  const [guest, setGuest] = useState<GuestSelection | null>(null)
   const [days, setDays] = useState('30')
   const [date, setDate] = useState('') // 「指定日期」写法的到期日（YYYY-MM-DD，管满该日全天）
   const [canEdit, setCanEdit] = useState(false)
@@ -486,25 +488,33 @@ function LinksDialog({
 
   async function create() {
     if (!note.trim()) {
-      setErr('note_required：备注必填，写上给谁用的，如「检验科-张三」')
+      setErr('note_required：备注必填，写这条链接的用途，如「请补全说明」')
+      return
+    }
+    if (!guest) {
+      setErr('guest_required：选择一位已有访客，或填写新访客名字')
       return
     }
     try {
+      const guestBody = guestSelectionBody(guest)
       const link =
         days === 'date'
           ? await createGuestLink(ticket.number, {
               note: note.trim(),
               expires_at: date,
               can_edit_brief: canEdit,
+              ...guestBody,
             })
           : await createGuestLink(ticket.number, {
               note: note.trim(),
               valid_days: Number(days),
               can_edit_brief: canEdit,
+              ...guestBody,
             })
       setCreated({ url: link.url })
       setErr(null)
       setNote('')
+      setGuest(null)
       onCreated(link)
       onChanged()
       void reload()
@@ -531,7 +541,12 @@ function LinksDialog({
               return (
                 <tr key={g.id}>
                   <td>
-                    {g.note}
+                    {g.guest_name ? (
+                      <b data-guest-name>{g.guest_name}</b>
+                    ) : (
+                      <span className="hint">无主老链接</span>
+                    )}
+                    <div className="mini">{g.note}</div>
                     {g.can_edit_brief && <span className="mini">可填写说明</span>}
                   </td>
                   <td>
@@ -591,7 +606,7 @@ function LinksDialog({
                         >
                           延期到该日
                         </button>{' '}
-                        {g.status !== 'unclaimed' && (
+                        {g.status !== 'unclaimed' && !g.guest_id && (
                           <button
                             className="btn sm ghost"
                             onClick={() => onResetAccess(g, 'code', 'action')}
@@ -615,10 +630,11 @@ function LinksDialog({
         </tbody>
       </table>
       <div className="sec-t">创建新链接</div>
-      <div className="inrow">
+      <GuestPicker value={guest} onChange={setGuest} onError={(message) => setErr(message)} />
+      <div className="inrow top-gap">
         <input
           aria-label="备注"
-          placeholder="备注（必填），如：检验科-张三"
+          placeholder="备注（必填），写这条链接的用途，如：请补全说明"
           value={note}
           onChange={(e) => setNote(e.target.value)}
         />
@@ -637,7 +653,9 @@ function LinksDialog({
           <input type="checkbox" checked={canEdit} onChange={(e) => setCanEdit(e.target.checked)} /> 可填写说明
         </label>
       </div>
-      <div className="hint">没有永久有效的选项；链接的创建、撤销和延期都会记入时间线。</div>
+      <div className="hint">
+        人名记在访客上，备注只写用途；没有永久有效的选项；链接的创建、撤销和延期都会记入时间线。
+      </div>
       {err && <div className="errbox">{err}</div>}
       {created && (
         <div className="okbox">

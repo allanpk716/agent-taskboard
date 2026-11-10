@@ -24,7 +24,7 @@ func Test再次复制新访客链接得到同一条可打开链接(t *testing.T)
 		"title":    "UD-2300 质控时报警 E-203",
 		"fields":   map[string]string{},
 		"labels":   []string{},
-		"guest_link": map[string]any{
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三",
 			"note":           "检验科-张三",
 			"can_edit_brief": true,
 		},
@@ -88,7 +88,7 @@ func Test再次复制转发文案按当前标题和有效期生成(t *testing.T)
 		"title":    "UD-2300 报警",
 		"fields":   map[string]string{},
 		"labels":   []string{},
-		"guest_link": map[string]any{
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三",
 			"note":           "检验科-张三",
 			"can_edit_brief": true,
 		},
@@ -207,7 +207,7 @@ func Test无服务端加密密钥时单建访客链接仍成功并按老链接�
 	number := mustCreateTicket(t, s, web, "无服务端加密密钥也能建链接")
 
 	res := s.Do(t, web, http.MethodPost, "/api/v1/tickets/"+number+"/guest-links",
-		map[string]any{"note": "检验科-张三"}, nil)
+		map[string]any{"note": "检验科-张三", "new_guest_name": "检验科-张三"}, nil)
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("无服务端加密密钥时创建访客链接状态码 = %d, 想 201", res.StatusCode)
 	}
@@ -269,7 +269,7 @@ func Test无服务端加密密钥时发链接请人填写仍成功(t *testing.T)
 		"title":    "无加密密钥的请人填写",
 		"fields":   map[string]string{},
 		"labels":   []string{},
-		"guest_link": map[string]any{
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三",
 			"note":           "检验科-张三",
 			"can_edit_brief": true,
 		},
@@ -468,9 +468,11 @@ func Test老访客链接换新地址同时重置访问码并记入时间线(t *t
 	s.CreateAdmin("陈工", "secret-pass")
 	web := s.Login("陈工", "secret-pass")
 	number := mustCreateTicket(t, s, web, "老链接换新地址")
-	link := mustCreateGuestLink(t, s, web, number, map[string]any{
+	legacy := s.CreateLegacyGuestLink(t, web, number, map[string]any{
 		"note": "检验科-张三", "can_edit_brief": true,
 	})
+	link := guestLinkResponse{ID: legacy.ID, URL: legacy.URL, Note: legacy.Note,
+		ExpiresAt: legacy.ExpiresAt, CanEditBrief: legacy.CanEditBrief}
 
 	var claim struct {
 		DeviceToken string `json:"device_token"`
@@ -841,7 +843,7 @@ func Test配置public_url时再次复制用绝对链接(t *testing.T) {
 		"title":    "绝对地址",
 		"fields":   map[string]string{},
 		"labels":   []string{},
-		"guest_link": map[string]any{
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三",
 			"note":           "检验科-张三",
 			"can_edit_brief": true,
 		},

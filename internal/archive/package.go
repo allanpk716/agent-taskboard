@@ -100,7 +100,10 @@ type ticketExport struct {
 	Collaborators []map[string]any `json:"collaborators"`
 	// GuestLinks/GuestDevices 是 v1 归档格式的兼容投影。当前导出同时带
 	// guest_credential_holders/guest_credential_devices；恢复时以后者为准。
-	GuestLinks             []map[string]any `json:"guest_links"`
+	GuestLinks []map[string]any `json:"guest_links"`
+	// Guests 是本工单链接涉及的访客快照（#328）：完整归档移除工单时导出，
+	// 恢复时原样带回；访客本体不随工单删除。
+	Guests                 []map[string]any `json:"guests"`
 	GuestDevices           []map[string]any `json:"guest_devices"`
 	GuestCredentialHolders []map[string]any `json:"guest_credential_holders"`
 	GuestCredentialDevices []map[string]any `json:"guest_credential_devices"`
@@ -464,7 +467,7 @@ func exportTicket(ctx context.Context, q archiveQueryer, summary TicketSummary) 
 	if out.BriefVersions, err = queryObjects(ctx, q, `
 		SELECT ticket_seq, revision, title, brief_md, fields_json, attachment_ids,
 		       actor_member_id, actor_agent_id, actor_link_id, actor_link_note,
-		       actor_author_name, actor_via_agent, at
+		       actor_guest_name, actor_author_name, actor_via_agent, at
 		FROM brief_versions WHERE ticket_seq = ? ORDER BY revision`, summary.Seq); err != nil {
 		return out, err
 	}
@@ -505,6 +508,9 @@ func exportTicket(ctx context.Context, q archiveQueryer, summary TicketSummary) 
 	}
 	if out.GuestLinks, err = queryObjects(ctx, q, guestLinkColumns+`
 		WHERE g.ticket_seq = ? ORDER BY g.id`, summary.Seq); err != nil {
+		return out, err
+	}
+	if out.Guests, err = exportGuests(ctx, q, out.GuestLinks); err != nil {
 		return out, err
 	}
 	if out.GuestCredentialHolders, err = guestCredentialHolders(ctx, q, out.GuestLinks); err != nil {
@@ -607,7 +613,7 @@ func normalizeSQLValue(value any) any {
 
 const timelineColumns = `SELECT ticket_seq, seq, change_seq, type, actor_member_id, actor_agent_id, at,
 	       body_md, reply_no, deliver, revision, reason, duplicate_of, label, actor_link_id,
-	       actor_link_note, actor_author_name, actor_via_agent, note, link_expires_at,
+	       actor_link_note, actor_guest_name, actor_author_name, actor_via_agent, note, link_expires_at,
 	       assign_from, assign_to, attachment_ids, collaborator_member_id, collaborator_name,
 	       actor_system`
 
@@ -632,7 +638,7 @@ const accessRecordColumns = `SELECT id, ticket_seq, actor_kind, actor_name, acto
 	       attachment_ref, attachment_filename, first_at, last_at, count`
 
 const guestLinkColumns = `SELECT g.id, g.ticket_seq, g.key_hash, g.note, g.expires_at, g.revoked_at,
-		       g.can_edit_brief, g.created_by_member_id, g.created_by_agent_id, g.created_at,
+		       g.can_edit_brief, g.created_by_member_id, g.created_by_agent_id, g.created_at, g.guest_id,
 		       h.claimed_at, h.claim_name, h.access_code_hash, h.access_code_failures,
 		       h.access_code_locked_at, g.key_ciphertext, g.credential_holder_id
 		FROM guest_links g
@@ -645,10 +651,14 @@ const draftVersionColumns = `SELECT draft_id, version, request_json, author_memb
 	       author_agent_id, at`
 
 func guestDevices(ctx context.Context, q archiveQueryer, links []map[string]any) ([]map[string]any, error) {
+	// v1 兼容投影：无主链接按链接持有者对齐；有主链接的设备属于整个访客，
+	// 按链接当前指向的持有者投影（恢复以 guest_credential_devices 为准）。
 	ids := make([]any, 0, len(links))
 	for _, link := range links {
-		id, _ := link["id"].(int64)
-		ids = append(ids, id)
+		id, _ := link["credential_holder_id"].(int64)
+		if id != 0 {
+			ids = append(ids, id)
+		}
 	}
 	if len(ids) == 0 {
 		return []map[string]any{}, nil
@@ -657,24 +667,51 @@ func guestDevices(ctx context.Context, q archiveQueryer, links []map[string]any)
 		d.token_hash, d.created_at, d.entry_method
 		FROM guest_credential_devices d
 		JOIN guest_credential_holders h ON h.id = d.credential_holder_id
-		WHERE h.owner_type = 'guest_link' AND h.owner_id IN (`+store.Placeholders(len(ids))+`)
+		WHERE h.id IN (`+store.Placeholders(len(ids))+`)
 		ORDER BY h.owner_id, d.id`, ids...)
 }
 
-func guestCredentialHolders(ctx context.Context, q archiveQueryer, links []map[string]any) ([]map[string]any, error) {
+// exportGuests 导出本工单链接涉及的长期访客快照。完整归档移除工单时，
+// 归档包带上这些快照以便恢复；平台上的访客本体不会被删除。
+func exportGuests(ctx context.Context, q archiveQueryer, links []map[string]any) ([]map[string]any, error) {
 	ids := make([]any, 0, len(links))
 	for _, link := range links {
-		id, _ := link["id"].(int64)
-		ids = append(ids, id)
+		id, _ := link["guest_id"].(int64)
+		if id != 0 {
+			ids = append(ids, id)
+		}
 	}
 	if len(ids) == 0 {
 		return []map[string]any{}, nil
 	}
-	return queryObjects(ctx, q, `SELECT id, owner_type, owner_id, claimed_at, claim_name,
+	return queryObjects(ctx, q, `SELECT id, name, created_by_member_id, created_by_agent_id,
+		created_at, disabled_at FROM guests WHERE id IN (`+store.Placeholders(len(ids))+`)
+		ORDER BY id`, ids...)
+}
+
+func guestCredentialHolders(ctx context.Context, q archiveQueryer, links []map[string]any) ([]map[string]any, error) {
+	linkIDs := make([]any, 0, len(links))
+	guestIDs := make([]any, 0, len(links))
+	for _, link := range links {
+		id, _ := link["id"].(int64)
+		linkIDs = append(linkIDs, id)
+		if guestID, _ := link["guest_id"].(int64); guestID != 0 {
+			guestIDs = append(guestIDs, guestID)
+		}
+	}
+	if len(linkIDs) == 0 {
+		return []map[string]any{}, nil
+	}
+	query := `SELECT id, owner_type, owner_id, claimed_at, claim_name,
 		access_code_hash, access_code_failures, access_code_locked_at, created_at
 		FROM guest_credential_holders
-		WHERE owner_type = 'guest_link' AND owner_id IN (`+store.Placeholders(len(ids))+`)
-		ORDER BY owner_id, id`, ids...)
+		WHERE owner_type = 'guest_link' AND owner_id IN (` + store.Placeholders(len(linkIDs)) + `)`
+	args := linkIDs
+	if len(guestIDs) > 0 {
+		query += ` OR owner_type = 'guest' AND owner_id IN (` + store.Placeholders(len(guestIDs)) + `)`
+		args = append(args, guestIDs...)
+	}
+	return queryObjects(ctx, q, query+` ORDER BY owner_type, owner_id, id`, args...)
 }
 
 func guestCredentialDevices(ctx context.Context, q archiveQueryer, holders []map[string]any) ([]map[string]any, error) {

@@ -635,10 +635,19 @@ func (s *Service) checkImportIDsTx(ctx context.Context, tx *sql.Tx, export ticke
 	for _, row := range export.GuestLinks {
 		refs = append(refs, idRef{"guest_links", importInt(row, "id"), "访客链接 ID 已被平台使用"})
 	}
+	// 访客本体与访客级凭证持有者不随工单删除：同一访客的其他工单仍在平台
+	// 上时，恢复按原 id 复用已有行（导入时用 INSERT OR IGNORE）。
 	for _, row := range export.GuestCredentialHolders {
+		if stringValue(row["owner_type"]) == "guest" {
+			continue
+		}
 		refs = append(refs, idRef{"guest_credential_holders", importInt(row, "id"), "访客凭证持有者 ID 已被平台使用"})
 	}
+	guestHolderIDs := guestHolderIDSet(export)
 	for _, row := range export.GuestCredentialDevices {
+		if guestHolderIDs[importInt(row, "credential_holder_id")] {
+			continue
+		}
 		refs = append(refs, idRef{"guest_credential_devices", importInt(row, "id"), "访客设备凭证 ID 已被平台使用"})
 	}
 	for _, item := range export.Drafts {
@@ -667,6 +676,7 @@ func (s *Service) checkImportReferencesTx(ctx context.Context, tx *sql.Tx,
 	agentIDs := newIntSet()
 	intakeIDs := newIntSet()
 	linkIDs := newIntSet()
+	guestIDs := newIntSet()
 	ticketSeqs := newIntSet()
 	for _, row := range []*map[string]any{&export.Ticket} {
 		memberIDs.addRows(*row, "creator_member_id", "assignee_id")
@@ -700,6 +710,9 @@ func (s *Service) checkImportReferencesTx(ctx context.Context, tx *sql.Tx,
 	}
 	for _, row := range export.TicketReads {
 		memberIDs.addRows(row, "member_id")
+	}
+	for _, row := range export.GuestLinks {
+		guestIDs.add(row["guest_id"])
 	}
 	for _, row := range export.GuestLinks {
 		memberIDs.addRows(row, "created_by_member_id")
@@ -746,6 +759,19 @@ func (s *Service) checkImportReferencesTx(ctx context.Context, tx *sql.Tx,
 		}
 		if err != nil {
 			return "", fmt.Errorf("检查访客链接引用失败：%w", err)
+		}
+	}
+	for _, id := range guestIDs.values() {
+		if pkgHasGuest(export, id) {
+			continue
+		}
+		var exists int64
+		err := tx.QueryRowContext(ctx, `SELECT 1 FROM guests WHERE id = ?`, id).Scan(&exists)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "引用的访客缺失", nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("检查访客引用失败：%w", err)
 		}
 	}
 	for _, seq := range ticketSeqs.values() {
@@ -863,6 +889,15 @@ func pkgHasLink(export ticketExport, id int64) bool {
 	return false
 }
 
+func pkgHasGuest(export ticketExport, id int64) bool {
+	for _, row := range export.Guests {
+		if importInt(row, "id") == id {
+			return true
+		}
+	}
+	return false
+}
+
 func pkgHasTicket(pkg *parsedImportPackage, seq int64) bool {
 	for _, export := range pkg.Tickets {
 		if importInt(export.Ticket, "seq") == seq {
@@ -897,11 +932,11 @@ var importTableColumns = []struct {
 		"creator_author_name", "brief_attachment_ids"}},
 	{"brief_versions", []string{"ticket_seq", "revision", "title", "brief_md", "fields_json",
 		"attachment_ids", "actor_member_id", "actor_agent_id", "actor_link_id", "actor_link_note",
-		"actor_author_name", "actor_via_agent", "at"}},
+		"actor_guest_name", "actor_author_name", "actor_via_agent", "at"}},
 	{"timeline_events", []string{"ticket_seq", "seq", "change_seq", "type", "actor_member_id",
 		"actor_agent_id", "at", "body_md", "reply_no", "deliver", "revision", "reason",
-		"duplicate_of", "label", "actor_link_id", "actor_link_note", "actor_author_name",
-		"actor_via_agent", "note", "link_expires_at", "assign_from", "assign_to",
+		"duplicate_of", "label", "actor_link_id", "actor_link_note", "actor_guest_name",
+		"actor_author_name", "actor_via_agent", "note", "link_expires_at", "assign_from", "assign_to",
 		"attachment_ids", "collaborator_member_id", "collaborator_name", "actor_system"}},
 	{"attachments", []string{"id", "ticket_seq", "filename", "size", "state", "attached_to",
 		"uploader_member_id", "uploader_agent_id", "uploader_link_id", "uploader_intake_id",
@@ -917,11 +952,13 @@ var importTableColumns = []struct {
 		"attachment_id", "attachment_ref", "attachment_filename", "first_at", "last_at", "count"}},
 	{"ticket_labels", []string{"ticket_seq", "label"}},
 	{"ticket_collaborators", []string{"ticket_seq", "member_id", "added_at"}},
+	{"guests", []string{"id", "name", "created_by_member_id", "created_by_agent_id",
+		"created_at", "disabled_at"}},
 	{"guest_credential_holders", []string{"id", "owner_type", "owner_id", "claimed_at",
 		"claim_name", "access_code_hash", "access_code_failures", "access_code_locked_at", "created_at"}},
 	{"guest_links", []string{"id", "ticket_seq", "key_hash", "note", "expires_at", "revoked_at",
 		"can_edit_brief", "created_by_member_id", "created_by_agent_id", "created_at",
-		"credential_holder_id", "key_ciphertext"}},
+		"guest_id", "credential_holder_id", "key_ciphertext"}},
 	{"guest_credential_devices", []string{"id", "credential_holder_id", "token_hash",
 		"created_at", "entry_method"}},
 	{"ticket_reads", []string{"member_id", "ticket_seq", "last_read_seq"}},
@@ -939,11 +976,44 @@ func insertImportTicketTx(ctx context.Context, tx *sql.Tx, export ticketExport) 
 		if err != nil {
 			return err
 		}
-		if err := insertRowsTx(ctx, tx, table.name, table.columns, rows); err != nil {
+		// 访客与访客级持有者跨工单共享：已存在（含本次导入早前工单写入）时复用。
+		ignoreConflict := table.name == "guests" ||
+			(table.name == "guest_credential_holders" && onlyGuestHolders(rows)) ||
+			(table.name == "guest_credential_devices" && onlyGuestHolderDevices(export, rows))
+		if err := insertRowsTx(ctx, tx, table.name, table.columns, rows, ignoreConflict); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func guestHolderIDSet(export ticketExport) map[int64]bool {
+	out := map[int64]bool{}
+	for _, row := range export.GuestCredentialHolders {
+		if stringValue(row["owner_type"]) == "guest" {
+			out[importInt(row, "id")] = true
+		}
+	}
+	return out
+}
+
+func onlyGuestHolderDevices(export ticketExport, rows []map[string]any) bool {
+	guestHolders := guestHolderIDSet(export)
+	for _, row := range rows {
+		if !guestHolders[importInt(row, "credential_holder_id")] {
+			return false
+		}
+	}
+	return true
+}
+
+func onlyGuestHolders(rows []map[string]any) bool {
+	for _, row := range rows {
+		if stringValue(row["owner_type"]) != "guest" {
+			return false
+		}
+	}
+	return true
 }
 
 func insertLegacyGuestCredentialsTx(ctx context.Context, tx *sql.Tx, export ticketExport) error {
@@ -1010,6 +1080,8 @@ func importRowsForTable(export ticketExport, table string, draftRows, draftVersi
 		return export.Labels, nil
 	case "ticket_collaborators":
 		return export.Collaborators, nil
+	case "guests":
+		return export.Guests, nil
 	case "guest_credential_holders":
 		return export.GuestCredentialHolders, nil
 	case "guest_links":
@@ -1023,7 +1095,7 @@ func importRowsForTable(export ticketExport, table string, draftRows, draftVersi
 	}
 }
 
-func insertRowsTx(ctx context.Context, tx *sql.Tx, table string, columns []string, rows []map[string]any) error {
+func insertRowsTx(ctx context.Context, tx *sql.Tx, table string, columns []string, rows []map[string]any, ignoreConflict bool) error {
 	for _, row := range rows {
 		args := make([]any, 0, len(columns))
 		for _, column := range columns {
@@ -1034,7 +1106,11 @@ func insertRowsTx(ctx context.Context, tx *sql.Tx, table string, columns []strin
 			args = append(args, value)
 		}
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(columns)), ",")
-		if _, err := tx.ExecContext(ctx, `INSERT INTO `+table+` (`+strings.Join(columns, ",")+
+		verb := "INSERT INTO "
+		if ignoreConflict {
+			verb = "INSERT OR IGNORE INTO "
+		}
+		if _, err := tx.ExecContext(ctx, verb+table+` (`+strings.Join(columns, ",")+
 			`) VALUES (`+placeholders+`)`, args...); err != nil {
 			return fmt.Errorf("写入 %s：%w", table, err)
 		}

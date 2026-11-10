@@ -38,7 +38,7 @@ func Test配置public_url时访客链接与shareText用绝对地址(t *testing.T
 		URL string `json:"url"`
 	}
 	res = s.Do(t, web, http.MethodPost, "/api/v1/tickets/"+created.Number+"/guest-links",
-		map[string]any{"note": "检验科-张三", "valid_days": 7}, &link)
+		map[string]any{"note": "检验科-张三", "new_guest_name": "检验科-张三", "valid_days": 7}, &link)
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("建访客链接状态码 = %d, 想 201", res.StatusCode)
 	}

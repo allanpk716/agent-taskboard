@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, api } from '../api'
 import { fetchMembers, type MemberRef, type Me, type TemplateSummary } from './memberApi'
+import { GuestPicker, guestSelectionBody, type GuestSelection } from './GuestPicker'
 import { copyText, invalidate, nav, toast } from './ui'
 
 interface CreatedFeedback {
@@ -12,6 +13,8 @@ interface CreatedFeedback {
     id: number
     url: string
     note: string
+    guest_id: number
+    guest_name: string
     expires_at: string
     can_edit_brief: boolean
     share_text: string
@@ -20,7 +23,7 @@ interface CreatedFeedback {
 
 type Phase =
   | { step: 'form' }
-  | { step: 'done'; created: CreatedFeedback; who: string; follow: string }
+  | { step: 'done'; created: CreatedFeedback; guestName: string; follow: string }
 
 export function FeedbackRequestPage({
   me,
@@ -32,7 +35,7 @@ export function FeedbackRequestPage({
   onPickAnother: () => void
 }) {
   const [phase, setPhase] = useState<Phase>({ step: 'form' })
-  const [who, setWho] = useState('')
+  const [guest, setGuest] = useState<GuestSelection | null>(null)
   const [title, setTitle] = useState('')
   const [days, setDays] = useState(30)
   const [assignee, setAssignee] = useState(me.name)
@@ -71,7 +74,12 @@ export function FeedbackRequestPage({
         title: title.trim(),
         assignee,
         labels: [],
-        guest_link: { note: who.trim(), valid_days: days, can_edit_brief: true },
+        guest_link: {
+          note: '请填写反馈',
+          valid_days: days,
+          can_edit_brief: true,
+          ...guestSelectionBody(guest!),
+        },
       }
       if (template) {
         body.template = template.key
@@ -88,7 +96,10 @@ export function FeedbackRequestPage({
       })
       idemKeyRef.current = undefined
       invalidate()
-      setPhase({ step: 'done', created, who: who.trim(), follow: assignee })
+      const guestName =
+        created.guest_link.guest_name ||
+        (guest?.kind === 'new' ? guest.name : guest?.kind === 'existing' ? guest.name : '')
+      setPhase({ step: 'done', created, guestName, follow: assignee })
       window.scrollTo(0, 0)
     } catch (e) {
       if (!(e instanceof ApiError) || e.status >= 500 || e.status === 429) {
@@ -105,7 +116,7 @@ export function FeedbackRequestPage({
   }
 
   if (phase.step === 'done') {
-    const { created, who: w, follow } = phase
+    const { created, guestName: w, follow } = phase
     const link = created.guest_link
     return (
       <div className="bpage">
@@ -161,7 +172,7 @@ export function FeedbackRequestPage({
           <button
             className="btn ghost"
             onClick={() => {
-              setWho('')
+              setGuest(null)
               setTitle('')
               setPhase({ step: 'form' })
               window.scrollTo(0, 0)
@@ -200,20 +211,7 @@ export function FeedbackRequestPage({
         {` 发链接请人填写 · ${template?.name ?? '自由格式'}`}
       </div>
       <div className="mcard form">
-        <div className="fld">
-          <label htmlFor="fr-who">
-            请谁填写<i className="req">必填</i>
-          </label>
-          <div className="guide">写部门和名字，之后用来区分是谁回的。</div>
-          <input
-            id="fr-who"
-            aria-label="请谁填写"
-            type="text"
-            placeholder="例如：检验科-张三"
-            value={who}
-            onChange={(e) => setWho(e.target.value)}
-          />
-        </div>
+        <GuestPicker value={guest} onChange={setGuest} onError={setSubmitErr} />
         <div className="fld">
           <label htmlFor="fr-title">
             什么事<i className="req">必填</i>
@@ -269,7 +267,7 @@ export function FeedbackRequestPage({
       <div className="submitrow">
         <button
           className="btn big"
-          disabled={!who.trim() || !title.trim() || busy}
+          disabled={!guest || !title.trim() || busy}
           onClick={() => void generate()}
         >
           生成链接

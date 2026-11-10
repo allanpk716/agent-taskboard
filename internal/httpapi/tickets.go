@@ -386,6 +386,7 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 				guestDraft = &drafts.CreateGuestLinkRequest{
 					Note: guestSpec.Note, ValidDays: guestSpec.ValidDays, ExpiresAt: req.GuestLink.ExpiresAt,
 					CanEditBrief: guestSpec.CanEditBrief,
+					GuestID:      guestSpec.GuestID, NewGuestName: guestSpec.NewGuestName,
 				}
 			}
 			d, err := a.drafts.SaveCreate(r.Context(), viewer, drafts.CreateRequest{
@@ -450,10 +451,11 @@ func (a *API) createTicket(w http.ResponseWriter, r *http.Request) {
 			res.GuestLink = &createGuestLinkView{
 				guestLinkBase: guestLinkBase{
 					ID: link.ID, URL: url, Note: link.Note,
+					GuestID: link.GuestID, GuestName: link.GuestName,
 					ExpiresAt:    link.ExpiresAt.Format(time.RFC3339Nano),
 					CanEditBrief: link.CanEditBrief,
 				},
-				ShareText: tickets.GuestShareText(link.Note, full.Title, url, link.ExpiresAt, false),
+				ShareText: tickets.GuestShareText(linkDisplayName(link.GuestName, link.Note), full.Title, url, link.ExpiresAt, false),
 			}
 		}
 		writeJSON(w, http.StatusCreated, res)
@@ -530,7 +532,10 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, ref strin
 	var changed *tickets.TicketChangedError
 	var invisible *tickets.TicketInvisibleError
 	var crossTicket *tickets.GuestLinkScopeError
+	var linkStatus *identity.LinkStatusError
 	switch {
+	case errors.As(err, &linkStatus):
+		a.writeGuestLinkError(w, r, err)
 	case errors.As(err, &invisible):
 		if recordErr := a.accessRecords.RecordDenied(r.Context(), invisible.Seq, invisible.Viewer); recordErr != nil {
 			panic(recordErr)
@@ -655,6 +660,8 @@ func (a *API) writeTicketError(w http.ResponseWriter, r *http.Request, ref strin
 		WriteError(w, http.StatusForbidden, CodeDeliverAssigneeOnly, e.Error(), hint)
 	case errors.Is(err, tickets.ErrNoteRequired):
 		WriteError(w, http.StatusUnprocessableEntity, CodeNoteRequired, err.Error(), "备注写对方是谁，如「检验科-张三」；链接创建后凭备注区分多条链接")
+	case isGuestSelectionError(err):
+		writeGuestSelectionError(w, err)
 	case errors.Is(err, tickets.ErrInvalidValidDays):
 		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidValidDays, err.Error(), "valid_days 只能是 7、30 或 90；或改用 expires_at 指定日期，两者二选一")
 	case errors.Is(err, tickets.ErrInvalidExpiresAt):
@@ -773,6 +780,7 @@ type authorView struct {
 	Member     *memberRef `json:"member"`
 	Agent      *agentRef  `json:"agent"`
 	LinkNote   *string    `json:"link_note,omitempty"`
+	GuestName  *string    `json:"guest_name,omitempty"`
 	AuthorName *string    `json:"author_name,omitempty"`
 	ViaAgent   *bool      `json:"via_agent,omitempty"`
 }
@@ -795,9 +803,13 @@ func newAuthorView(a tickets.Author, includeAccountState bool) authorView {
 		}
 		return v
 	}
-	// 访客作者：带链接备注与自报信息。
+	// 访客作者：带链接备注、所属访客的名字快照（#328）与自报信息。
 	note := a.LinkNote
 	v.LinkNote = &note
+	if a.GuestName != "" {
+		guest := a.GuestName
+		v.GuestName = &guest
+	}
 	if a.AuthorName != "" {
 		name := a.AuthorName
 		v.AuthorName = &name
@@ -853,7 +865,10 @@ func newLastRevisedView(full tickets.Full, includeAccountState bool) lastRevised
 		return v
 	}
 	v.Type = "guest"
-	v.DisplayName = actor.LinkNote
+	v.DisplayName = actor.GuestName
+	if v.DisplayName == "" {
+		v.DisplayName = actor.LinkNote
+	}
 	return v
 }
 

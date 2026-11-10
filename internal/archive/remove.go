@@ -432,6 +432,7 @@ func (s *Service) removalState(ctx context.Context, tx *sql.Tx, numbers []string
 		FROM guest_links l
 		JOIN guest_credential_holders h ON h.id = l.credential_holder_id
 		LEFT JOIN guest_credential_devices d ON d.credential_holder_id = h.id
+		  AND h.owner_type = 'guest_link'
 		WHERE l.ticket_seq IN (`+store.Placeholders(len(seqArgs))+`)`, seqArgs...)
 	if err != nil {
 		return removalSnapshot{}, err
@@ -559,8 +560,12 @@ func deleteTicketsTx(ctx context.Context, tx *sql.Tx, tickets []TicketSummary) e
 		`DELETE FROM ticket_reads WHERE ticket_seq IN (` + placeholder + `)`,
 		`DELETE FROM timeline_events WHERE ticket_seq IN (` + placeholder + `)`,
 		`DELETE FROM tickets WHERE seq IN (` + placeholder + `)`,
+		// 访客级持有者与设备被同一位访客的多张工单共享：完整归档移除其中
+		// 一张工单时不作废访客的其他链接，只清理无主链接自己的凭证。
 		`DELETE FROM guest_credential_devices WHERE credential_holder_id IN (
-			SELECT credential_holder_id FROM guest_links WHERE ticket_seq IN (` + placeholder + `))`,
+			SELECT l.credential_holder_id FROM guest_links l
+			JOIN guest_credential_holders h ON h.id = l.credential_holder_id
+			WHERE h.owner_type = 'guest_link' AND l.ticket_seq IN (` + placeholder + `))`,
 		`UPDATE guest_links SET credential_holder_id = NULL WHERE ticket_seq IN (` + placeholder + `)`,
 		`DELETE FROM guest_credential_holders WHERE owner_type = 'guest_link' AND owner_id IN (
 			SELECT id FROM guest_links WHERE ticket_seq IN (` + placeholder + `))`,

@@ -24,6 +24,9 @@ var (
 	ErrAccessCodeInvalid = errors.New("访问码不正确")
 	// ErrAccessCodeLocked 表示连续输错后访问码已被锁定。
 	ErrAccessCodeLocked = errors.New("访问码已锁定")
+	// ErrGuestAccessCodeGuestLevel 表示有主链接不能单独重置访问码：
+	// 访问码以访客为单位管理。
+	ErrGuestAccessCodeGuestLevel = errors.New("这条链接属于一位访客，访问码按访客为单位管理")
 )
 
 // GuestClaimResult 是认领成功的输出；DeviceToken 只出现一次。
@@ -115,6 +118,12 @@ func (m *Manager) ViewerFromGuestAgentCredential(ctx context.Context, link ident
 		return identity.Viewer{}, err
 	}
 	link.EntryMethod = "access_code"
+	if link.GuestID != 0 {
+		return identity.Viewer{Kind: identity.ViewerGuest, Guest: &identity.Guest{
+			ID: link.GuestID, Name: link.GuestName, ClaimName: link.ClaimName,
+			EntryMethod: "access_code", CredentialHolderID: link.CredentialHolderID,
+		}, GuestLink: &link}, nil
+	}
 	return identity.Viewer{Kind: identity.ViewerGuest, GuestLink: &link}, nil
 }
 
@@ -170,6 +179,9 @@ func (m *Manager) ResetGuestAccessCode(ctx context.Context, viewer identity.View
 	row, err := m.activeLinkRowForTicketTx(ctx, tx, full.Seq, id, now)
 	if err != nil {
 		return GuestLinkShare{}, err
+	}
+	if row.GuestID != 0 {
+		return GuestLinkShare{}, ErrGuestAccessCodeGuestLevel
 	}
 	if !row.ClaimedAt.Valid {
 		return GuestLinkShare{}, ErrLinkNotClaimed

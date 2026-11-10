@@ -727,6 +727,8 @@ export async function reopenTicket(number: string): Promise<void> {
 export interface GuestLink {
   id: number
   note: string
+  guest_id?: number
+  guest_name?: string
   expires_at: string
   revoked_at?: string | null
   can_edit_brief: boolean
@@ -744,8 +746,29 @@ export interface CreatedGuestLink {
   id: number
   url: string
   note: string
+  guest_id?: number
+  guest_name?: string
   expires_at: string
   can_edit_brief: boolean
+}
+
+export interface GuestSummary {
+  id: number
+  name: string
+  claimed_at?: string
+  claim_name?: string
+  access_code_locked_at?: string
+  link_count: number
+  created_at: string
+}
+
+/** 部门访客名单：按名字包含搜索（#328）。 */
+export async function fetchGuests(query = ''): Promise<GuestSummary[]> {
+  const path = query
+    ? `/api/v1/guests?q=${encodeURIComponent(query)}`
+    : '/api/v1/guests'
+  const body = await api(path)
+  return body.guests as GuestSummary[]
 }
 
 export async function fetchGuestLinks(number: string): Promise<GuestLink[]> {
@@ -755,7 +778,14 @@ export async function fetchGuestLinks(number: string): Promise<GuestLink[]> {
 
 export async function createGuestLink(
   number: string,
-  body: { note: string; valid_days?: number; expires_at?: string; can_edit_brief?: boolean },
+  body: {
+    note: string
+    guest_id?: number
+    new_guest_name?: string
+    valid_days?: number
+    expires_at?: string
+    can_edit_brief?: boolean
+  },
 ): Promise<CreatedGuestLink> {
   return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links`, {
     method: 'POST',

@@ -34,7 +34,7 @@ func Test迁移保留老访客链接的设备凭证访问码和锁定状态(t *t
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if strings.HasPrefix(name, "0047_") {
+		if strings.HasPrefix(name, "0047_") || strings.HasPrefix(name, "0048_") {
 			continue
 		}
 		body, err := os.ReadFile(filepath.Join("migrations", name))

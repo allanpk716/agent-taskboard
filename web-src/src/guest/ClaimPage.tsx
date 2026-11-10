@@ -7,6 +7,7 @@ export interface ClaimInfo {
   state: 'unclaimed' | 'claimed' | 'access_code_locked'
   inviter: string
   note: string
+  guest_name?: string
   valid_until: string
   visibility_hint: string
 }
@@ -57,6 +58,12 @@ export function ClaimPage({
           <div className="claim-meta">
             {info.inviter} 邀请你处理一张工单
             <br />
+            {info.guest_name ? (
+              <>
+                访客：{info.guest_name}
+                <br />
+              </>
+            ) : null}
             链接备注：{info.note}
             <br />
             有效期至：{fmtDateCN(info.valid_until)}
