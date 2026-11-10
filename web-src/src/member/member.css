@@ -3173,6 +3173,10 @@ textarea.src {
   line-height: 1.45;
 }
 
+.guest-ticket .guest-links {
+  margin-top: 4px;
+}
+
 /* 批量归属老链接（#341）：详情提示、全屏页与三段共用组件 */
 .guest-possible-links {
   display: flex;
@@ -3676,4 +3680,107 @@ textarea.src {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* 先选访客再建单（#340）：向导第一步的通讯录式选择、填写步顶部的“发给”
+   固定条、完成页首次带主页地址的醒目提示，以及访客详情底部固定动作。 */
+.guest-pick-page {
+  padding-bottom: 32px;
+}
+.guest-pick-page .guest-search {
+  margin-bottom: 10px;
+}
+.guest-pick-page .guest-recent-item {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+.guest-row.pick {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #f0f2f6;
+  border-radius: 0;
+  background: transparent;
+  padding: 10px 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.guest-row.pick:last-child {
+  border-bottom: 0;
+}
+.guest-row.pick:hover {
+  background: #f7f9fc;
+}
+.guest-pick-go {
+  color: #98a1b3;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.guest-create {
+  padding: 14px 16px;
+}
+.guest-send-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  border: 1px solid #cfe0f8;
+  border-radius: 10px;
+  background: #eef5ff;
+  padding: 9px 12px;
+  margin-bottom: 12px;
+  color: #24589f;
+  font-weight: 700;
+}
+.guest-send-bar b {
+  word-break: break-all;
+}
+.guest-send-bar .btn {
+  padding: 6px 10px;
+  font-size: 12.5px;
+}
+.guest-first-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border: 1px solid #f0d9a8;
+  border-radius: 12px;
+  background: #fffaf0;
+  color: #8a6116;
+  padding: 11px 14px;
+  margin: 10px 0;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.guest-first-notice b {
+  font-size: 14px;
+}
+.guest-detail {
+  padding-bottom: 92px;
+}
+.guest-detail-footer {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 78px;
+  z-index: 44;
+  display: flex;
+}
+.guest-detail-footer .btn {
+  flex: 1;
+}
+@media (min-width: 768px) {
+  .guest-detail {
+    padding-bottom: 40px;
+  }
+  .guest-detail-footer {
+    left: auto;
+    right: 24px;
+    bottom: 24px;
+    width: 230px;
+  }
 }

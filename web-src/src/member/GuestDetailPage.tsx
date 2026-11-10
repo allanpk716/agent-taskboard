@@ -706,6 +706,19 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
           )}
         </Modal>
       )}
+      {/* 底部固定动作（#340，用户故事 6）：带访客 id 进建单向导并跳过选访客。 */}
+      <div className="guest-detail-footer">
+        <a
+          className="btn big"
+          href={`/tickets/new?guest=${guest.id}`}
+          onClick={(e) => {
+            e.preventDefault()
+            nav(`/tickets/new?guest=${guest.id}`)
+          }}
+        >
+          ✉️ 给 TA 发新工单
+        </a>
+      </div>
     </div>
   )
 }

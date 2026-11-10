@@ -89,7 +89,7 @@ test('手机：工单标签顶部分段切到通讯录式访客名单', async ({
   // 浮动「＋」两项入口。
   await page.getByRole('button', { name: '＋' }).click()
   await expect(page.getByRole('link', { name: /新建访客/ })).toHaveAttribute('href', '/guests/new')
-  await expect(page.getByRole('link', { name: /给访客发新工单/ })).toHaveAttribute('href', '/feedback')
+  await expect(page.getByRole('link', { name: /给访客发新工单/ })).toHaveAttribute('href', '/tickets/new')
 })
 
 test('电脑：侧边栏一级「访客」入口，工具页不再有访客管理', async ({ page, request }) => {

@@ -1,9 +1,12 @@
-// 发链接请人填写（#195）：模板已在建单第二屏选定，这里只填请谁填写、
-// 什么事、有效期和跟进人，一次建好工单和带「可填写说明」权限的访客链接。
+// 发链接请人填写（#195、#340）：向导里模板已在第二步选定，访客已在第一
+// 步选定；这里只填什么事、有效期和跟进人，一次建好工单和带「可填写说明」
+// 权限的访客链接。顶部固定“发给：某某”，可回第一步改人；完成页在访客第一
+// 次收到工单时醒目提示转发文案里带了主页地址。
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, api } from '../api'
 import { fetchMembers, type MemberRef, type Me, type TemplateSummary } from './memberApi'
-import { GuestPicker, guestSelectionBody, type GuestSelection } from './GuestPicker'
+import { guestSelectionBody } from './GuestPicker'
+import type { WizardGuest } from './GuestPickerStep'
 import { copyText, invalidate, nav, toast } from './ui'
 
 interface CreatedFeedback {
@@ -28,14 +31,17 @@ type Phase =
 export function FeedbackRequestPage({
   me,
   template,
+  guest,
+  onChangeGuest,
   onPickAnother,
 }: {
   me: Me
   template: TemplateSummary | null
+  guest: WizardGuest
+  onChangeGuest: () => void
   onPickAnother: () => void
 }) {
   const [phase, setPhase] = useState<Phase>({ step: 'form' })
-  const [guest, setGuest] = useState<GuestSelection | null>(null)
   const [title, setTitle] = useState('')
   const [days, setDays] = useState(30)
   const [assignee, setAssignee] = useState(me.name)
@@ -78,7 +84,7 @@ export function FeedbackRequestPage({
           note: '请填写反馈',
           valid_days: days,
           can_edit_brief: true,
-          ...guestSelectionBody(guest!),
+          ...guestSelectionBody(guest),
         },
       }
       if (template) {
@@ -96,9 +102,7 @@ export function FeedbackRequestPage({
       })
       idemKeyRef.current = undefined
       invalidate()
-      const guestName =
-        created.guest_link.guest_name ||
-        (guest?.kind === 'new' ? guest.name : guest?.kind === 'existing' ? guest.name : '')
+      const guestName = created.guest_link.guest_name || guest.name
       setPhase({ step: 'done', created, guestName, follow: assignee })
       window.scrollTo(0, 0)
     } catch (e) {
@@ -118,6 +122,9 @@ export function FeedbackRequestPage({
   if (phase.step === 'done') {
     const { created, guestName: w, follow } = phase
     const link = created.guest_link
+    // 访客未认领（含当场新建）时，后端会在转发文案里附上主页地址；完成页
+    // 要醒目提醒成员这段文案第一次带出了访客主页。
+    const firstTicket = (guest.kind === 'new' || !guest.claimed) && link.share_text.includes('/h/')
     return (
       <div className="bpage">
         <div className="bigok">✓</div>
@@ -127,6 +134,13 @@ export function FeedbackRequestPage({
         <div className="hint" style={{ textAlign: 'center' }}>
           链接发给 {w} 就行
         </div>
+        {firstTicket && (
+          <div className="guest-first-notice" role="alert">
+            <b>{w} 第一次收到工单</b>
+            转发文案里已附上 TA 的访客主页地址。对方第一次打开任一链接或主页会认领全部工单，
+            访问码只显示一次，请提醒 TA 保存。
+          </div>
+        )}
         <div className="mcard fr-card">
           <div style={{ fontWeight: 600 }}>转发文案</div>
           <div className="linkbox">{link.share_text}</div>
@@ -172,13 +186,11 @@ export function FeedbackRequestPage({
           <button
             className="btn ghost"
             onClick={() => {
-              setGuest(null)
               setTitle('')
-              setPhase({ step: 'form' })
-              window.scrollTo(0, 0)
+              onChangeGuest()
             }}
           >
-            再请一个人
+            换一位访客
           </button>
           <button
             className="btn ghost"
@@ -211,7 +223,14 @@ export function FeedbackRequestPage({
         {` 发链接请人填写 · ${template?.name ?? '自由格式'}`}
       </div>
       <div className="mcard form">
-        <GuestPicker value={guest} onChange={setGuest} onError={setSubmitErr} />
+        <div className="guest-send-bar" data-testid="guest-send-bar">
+          <span>发给：</span>
+          <b>{guest.name}</b>
+          <span className="sp" />
+          <button type="button" className="btn ghost" onClick={onChangeGuest}>
+            改访客
+          </button>
+        </div>
         <div className="fld">
           <label htmlFor="fr-title">
             什么事<i className="req">必填</i>
@@ -267,7 +286,7 @@ export function FeedbackRequestPage({
       <div className="submitrow">
         <button
           className="btn big"
-          disabled={!guest || !title.trim() || busy}
+          disabled={!title.trim() || busy}
           onClick={() => void generate()}
         >
           生成链接
