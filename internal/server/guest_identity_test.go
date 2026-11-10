@@ -517,3 +517,40 @@ func Test有主链接转发文案称呼访客名字(t *testing.T) {
 		t.Errorf("转发文案应称呼访客名字：%q", got.ShareText)
 	}
 }
+
+// 建单时顺带建链接：响应里的 guest_link 带访客归属，转发文案称呼访客名字。
+func Test建单响应的访客链接带访客归属(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	var created struct {
+		Number    string `json:"number"`
+		GuestLink struct {
+			URL       string `json:"url"`
+			Note      string `json:"note"`
+			GuestID   int64  `json:"guest_id"`
+			GuestName string `json:"guest_name"`
+			ShareText string `json:"share_text"`
+		} `json:"guest_link"`
+	}
+	res := createWithGuestLink(t, s, web, map[string]any{
+		"kind": "report", "title": "带归属的建单", "labels": []string{},
+		"guest_link": map[string]any{
+			"note": "请补充说明", "new_guest_name": "检验科-张三", "can_edit_brief": true,
+		},
+	})
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("建单状态码 = %d，想 201", res.StatusCode)
+	}
+	tbtest.DecodeJSON(t, res, &created)
+	if created.GuestLink.GuestID == 0 || created.GuestLink.GuestName != "检验科-张三" {
+		t.Fatalf("建单响应的 guest_link 缺少访客归属：%+v", created.GuestLink)
+	}
+	list := listGuestLinks(t, s, web, created.Number)
+	if len(list.Links) != 1 || list.Links[0].GuestName != "检验科-张三" || list.Links[0].GuestID == 0 {
+		t.Fatalf("链接列表缺少访客归属：%+v", list.Links)
+	}
+	if !strings.Contains(created.GuestLink.ShareText, "检验科-张三：") {
+		t.Errorf("转发文案应称呼访客名字：%q", created.GuestLink.ShareText)
+	}
+}

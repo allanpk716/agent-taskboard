@@ -332,12 +332,15 @@ export function ResetAccessDialog({
       {step === 'action' && selected && (
         <fieldset className="reset-panel">
           <legend className="sr-only">选择重置操作</legend>
-          <p className="reset-lead">已选择「{selected.note}」。请选择适合的处理方式。</p>
+          <p className="reset-lead">
+            已选择{selected.guest_name ? `「${selected.guest_name}」的` : '无主老'}链接「{selected.note}」。
+            请选择适合的处理方式。
+          </p>
           <div className="reset-operation-options">
             <button
               type="button"
               className={`reset-operation-option${action === 'code' ? ' selected' : ''}`}
-              disabled={!selectedClaimed}
+              disabled={!selectedClaimed || !!selected.guest_id}
               aria-pressed={action === 'code'}
               aria-label="重置访问码"
               onClick={() => setAction('code')}
@@ -349,7 +352,11 @@ export function ResetAccessDialog({
                 </span>
                 <span className="reset-fit">适合：对方忘了访问码，或换了设备需要重新登录。</span>
                 <span className="reset-invalidates">会失效：对方所有已登录设备（含对方的 Agent）。</span>
-                <span className="reset-option-note">链接地址保持不变，只生成新的 6 位访问码。</span>
+                <span className="reset-option-note">
+                  {selected.guest_id
+                    ? '有主链接的访问码按访客为单位管理，不能单独重置。'
+                    : '链接地址保持不变，只生成新的 6 位访问码。'}
+                </span>
               </span>
             </button>
             <button

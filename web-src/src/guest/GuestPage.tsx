@@ -16,7 +16,7 @@ import { VersionBanner } from '../shared/VersionBanner'
 import { SlimBanner } from '../shared/widgets'
 import { useVersionCheck } from '../shared/versionCheck'
 import { Modal, copyText } from '../member/ui'
-import type { ArchivedTicket, GuestSession, TicketView } from '../shared/types'
+import type { ArchivedTicket, TicketView } from '../shared/types'
 
 type Mode = 'land' | 'talk' | 'fill'
 
@@ -158,14 +158,15 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
 
   const load = useCallback(async () => {
     try {
+      // #328 起设备凭证是访客级、全站一份：先用链接密钥读这条链接指向哪张工单，
+      // 再凭设备凭证打开（同一位访客的其他链接也都能打开）。
+      const info = await guestRawApi(linkKey, '/api/v1/guest-link')
       if (!guestDeviceToken(linkKey)) {
-        const info = await guestRawApi(linkKey, '/api/v1/guest-link')
         setPhase(info.state === 'unclaimed' ? { kind: 'claim', info } : { kind: 'enter', info })
         return
       }
-      const sess: GuestSession = await guestApi(linkKey, '/api/v1/session')
-      setExpiresAt(sess.viewer.link_expires_at)
-      const ticket: TicketView = await guestApi(linkKey, sess.ticket.api)
+      setExpiresAt(info.valid_until)
+      const ticket: TicketView = await guestApi(linkKey, info.ticket_api)
       setPhase({ kind: 'ready', ticket })
       if (!decidedRef.current) {
         decidedRef.current = true

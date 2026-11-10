@@ -174,6 +174,7 @@ func (a *API) sendDraft(w http.ResponseWriter, r *http.Request, id string) {
 			res.GuestLink = &createGuestLinkView{
 				guestLinkBase: guestLinkBase{
 					ID: link.ID, URL: url, Note: link.Note,
+					GuestID: link.GuestID, GuestName: link.GuestName,
 					ExpiresAt:    link.ExpiresAt.Format(time.RFC3339Nano),
 					CanEditBrief: link.CanEditBrief,
 				},

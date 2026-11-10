@@ -21,7 +21,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
   1. **成员本人**：网页会话 cookie `tb_session`（HttpOnly + Secure + SameSite=Lax）。本人操作的唯一来源。
   2. **成员 Agent**：`Authorization: Bearer <Agent token>`，token 由 `POST /api/v1/me/agent-tokens` 签发（前缀 `tbag_`）。ADR 0003：用 token 的操作一律署名为「某成员 的 Agent · 名字」，永远不算本人。
   3. **桌面客户端**：`Authorization: Bearer <客户端凭证>`（前缀 `tbc_`）。权限边界是 `client_scope`：只能调用通知接口、`GET /session`，以及撤销自己的 `DELETE /me/clients/self`；它不署名、不代表成员操作工单。
-  4. **访客**：链接密钥（前缀 `tbg_`）只用于读取认领/输码页信息、执行认领和凭访问码进入；浏览器成功后使用同源设备凭证（Bearer 前缀 `tbgd_`，同时收到 HttpOnly cookie `tb_guest_device`）。访客 Agent 后续请求用组合凭证 `Authorization: Bearer tbg_<链接密钥>:<访问码>`。
+  4. **访客**：访客是部门级、长期存在的身份（#328），链接密钥（前缀 `tbg_`）只用于读取认领/输码页信息、执行认领和凭访问码进入；浏览器成功后使用同源设备凭证（Bearer 前缀 `tbgd_`，同时收到 HttpOnly cookie `tb_guest_device`）。访客 Agent 后续请求用组合凭证 `Authorization: Bearer tbg_<链接密钥>:<访问码>`。认领或输码作用于整个访客身份：这台设备对这位访客名下全部未撤销、未过期的链接可信，之后成员新加的链接也直接可信；换设备时在任一链接输一次访问码即可。
 - 请求同时带 Bearer 和 cookie 时按 Bearer 解析，且解析失败不回退到 cookie：凭证坏了应当报错（401），而不是悄悄当作本人。Bearer 先按客户端凭证、成员 Agent token、访客设备凭证、`tbg_…:…` 访客 Agent 组合凭证、访客链接密钥的顺序解析。
 - 401 错误码：`unauthenticated`（未登录/会话过期）、`invalid_token`（Agent token 或访客链接密钥未知）、`link_revoked`（访客链接已撤销）、`link_expired`（访客链接已过期）。访客链接的撤销与过期即时生效：每个请求都实时查库（密钥只存哈希）。
 - 撤销 Agent token 立即生效：每次请求都实时查库校验（token 只存哈希，无状态 JWT 不可用）。
@@ -29,8 +29,10 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
   工单尚未指派时的有效初筛人可见的工单；管理员能读取全部。成员 Agent 的
   可见范围与其主人相同。标签、维度和别名字典仍对全体成员共享。
 - 访客链接另有 `link_unclaimed`（未认领）与 `link_claimed`（已被认领，单凭密钥不可用）。
-  访问码错误返回 401 `access_code_invalid`；连续输错 5 次后返回 403 `access_code_locked`，
-  只能由成员重置解除。
+  访问码错误返回 401 `access_code_invalid`；连续输错 5 次后返回 403 `access_code_locked`
+  （浏览器输码与访客 Agent 凭证共用同一计数，锁定作用于整个访客），只能由成员重置解除。
+  访客按“名下未撤销、未过期链接”的集合访问工单；访问名下没有链接的工单返回 404
+  `ticket_not_found`，与工单不存在不可区分。
 
 ## 会话与身份
 
@@ -292,9 +294,11 @@ spec 用户故事 84），没有 `inbox`：
     （写了会被忽略），其余成员在建单的同一事务里加入名单，并在时间线上依次记
     `collaborator_added` 事件、发出「加入协作」通知，与详情页手动加人完全一致。
     例：`{"title": "整理清单", "labels": ["机型:UD-2300"], "assignee": "陈工", "collaborators": [4, "李工"]}`。
-  - `guest_link`（#64）是 `{"note", "valid_days?", "can_edit_brief"}`：`note` 必填
-    （写对方是谁，如「检验科-张三」），`valid_days` 只能 7/30/90（不填默认 30），
-    复用单建访客链接的校验与错误码（422 `note_required` / `invalid_valid_days`）。
+  - `guest_link`（#64）是 `{"note", "guest_id" 或 "new_guest_name" 二选一, "valid_days?", "can_edit_brief"}`：
+    `note` 必填（写这条链接的用途，如「请补全说明」），访客选择沿用单建链接的规则
+    （缺访客 422 `guest_required`；查无访客 422 `guest_not_found`），`valid_days` 只能
+    7/30/90（不填默认 30），复用单建访客链接的校验与错误码（422 `note_required` /
+    `invalid_valid_days`）。
     链接与工单在同一个事务里创建：任何一步失败都不留下工单；时间线依次是
     `created`、`assigned`（有指派人时）、`guest_link_created`（带 `note`）。
 - 建单响应 `201`：`{number, seq, url, warnings, assignee, waiting_on, share_text, guest_link?}`
@@ -306,7 +310,7 @@ spec 用户故事 84），没有 `inbox`：
   「我的 → Agent」token 的用法与缺失时的处理、读工单 `curl`、照「下一步」做
   并看收件箱。交接文案不含任何成员 token 或访客链接凭证。
   请求带 `guest_link` 时，响应另带嵌套对象 `guest_link:
-  {id, url, note, expires_at, can_edit_brief, share_text}`：`url` 是访客链接地址
+  {id, url, note, guest_id, guest_name, expires_at, can_edit_brief, share_text}`：`url` 是访客链接地址
   （完整密钥只出现这一次；配置了 `[server] public_url` 时是绝对地址），`share_text`
   是服务端生成的面向访客的转发文案（称呼对方 + 标题 + 请按提示写详细、可传日志照片 +
   链接 + 不用登录、有效期至某日），网页与成员 Agent 用同一份，与给被指派人的顶层
@@ -931,29 +935,34 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 
 | 方法与路径 | 说明 |
 |---|---|
-| `POST /api/v1/tickets/{id}/guest-links` | 创建：`{"note", "valid_days"?, "expires_at"?, "can_edit_brief"}`；支持 `Idempotency-Key`（首次创建响应返回完整地址，重放返回首次结果）。 |
+| `POST /api/v1/tickets/{id}/guest-links` | 创建：`{"note", "guest_id" 或 "new_guest_name" 二选一, "valid_days"?, "expires_at"?, "can_edit_brief"}`；支持 `Idempotency-Key`（首次创建响应返回完整地址，重放返回首次结果）。 |
 | `GET /api/v1/tickets/{id}/guest-links` | 列表（可见范围内的成员；**不回显密钥**，每项带 `share_text_available`）。 |
 | `DELETE /api/v1/tickets/{id}/guest-links/{链接id}` | 撤销（立即生效，幂等 204）。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/extend` | 延期：`{"valid_days"|"expires_at"}`（二选一，必填其一）。 |
-| `POST /api/v1/tickets/{id}/guest-links/{链接id}/reset-access-code` | 重置访问码：作废旧设备与新码，成功返回一次 `{access_code, url, reset_text, expires_at}`。 |
+| `POST /api/v1/tickets/{id}/guest-links/{链接id}/reset-access-code` | 重置访问码（仅无主老链接）：作废旧设备与新码，成功返回一次 `{access_code, url, reset_text, expires_at}`；有主链接返回 409 `guest_access_code_guest_level`，访问码按访客为单位管理。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/share-text` | 再次复制同一条有效链接的转发文案，成功 `{share_text}`；响应带 `Cache-Control: no-store`。 |
-| `POST /api/v1/tickets/{id}/guest-links/{链接id}/rotate-key` | 重置链接（一般用于老链接，也可用于疑似外泄），成功 `{url, share_text, reset_text, expires_at, access_code?}`；旧地址立即失效，已认领链接同时返回一次新访问码，响应带 `Cache-Control: no-store`，支持 `Idempotency-Key`。 |
+| `POST /api/v1/tickets/{id}/guest-links/{链接id}/rotate-key` | 重置链接（一般用于老链接，也可用于疑似外泄），成功 `{url, share_text, reset_text, expires_at, access_code?}`；旧地址立即失效。有主链接只换单条链接的地址，访问码与设备不变；无主老链接沿用旧语义：已认领时同时重置访问码并作废旧设备，`access_code` 一次性返回。响应带 `Cache-Control: no-store`，支持 `Idempotency-Key`。 |
+| `GET /api/v1/guests?q=<名字>` | 部门访客名单（成员与成员 Agent；访客 403 `members_only`）：按名字包含搜索，按名字排序；每项 `{id, name, claimed_at?, claim_name?, access_code_locked_at?, link_count, created_by, created_at}`。 |
 | `GET /api/v1/guest-link` | 用 `tbg_` 密钥读取认领页信息：邀请人、备注、有效期、可见范围提示；未认领时不返回工单内容。 |
-| `POST /api/v1/guest-links/claim` | 用 `tbg_` 密钥认领：`{"author_name"}`；成功返回一次 `device_token` 并写 `guest_link_claimed` 事件。 |
-| `POST /api/v1/guest-links/enter` | 用 `tbg_` 密钥凭访问码进入：`{"access_code"}`；成功返回一次新 `device_token`。 |
+| `POST /api/v1/guest-links/claim` | 用 `tbg_` 密钥认领：`{"author_name"}`；成功返回一次 `device_token` 和 6 位 `access_code`，并写 `guest_link_claimed` 事件。有主链接的认领作用于整个访客。 |
+| `POST /api/v1/guest-links/enter` | 用 `tbg_` 密钥凭访问码进入：`{"access_code"}`；成功返回一次新 `device_token`；有主链接签发的设备对这位访客名下全部链接可信。 |
 | 受保护的工单接口 | 访客 Agent 直接带 `Authorization: Bearer tbg_<链接密钥>:<访问码>` 读取、回复和下载附件；单凭链接密钥仍为 401 `link_claimed`。 |
 
-- 创建：`note` 必填（422 `note_required`）；有效期 `valid_days: 7|30|90` 或
+- 创建必须带 `guest_id`（选择已有访客）或 `new_guest_name`（当场新建一位）之一：
+  都不带、都带或新名字为空白返回 422 `guest_required`；`guest_id` 查无此人返回
+  422 `guest_not_found`。部门访客名单见 `GET /api/v1/guests?q=<名字>`（成员与成员
+  Agent 可用，访客 403 `members_only`）。备注 `note` 必填（422 `note_required`），
+  只写这条链接的用途，人名记在访客上；有效期 `valid_days: 7|30|90` 或
   `expires_at`（`YYYY-MM-DD` 指「管满这一整天」：到 12-01 为止的链接在
   12-02 00:00（北京时间）过期；也可写 RFC3339 时刻）**二选一**，
   都不填时默认 30 天，**没有永久有效的选项**（显式 `valid_days: 0`、非法天数、
   `expires_at` 不晚于现在或格式错误分别返回 422 `invalid_valid_days` /
   `invalid_expires_at`）。`can_edit_brief` 授予「可填写说明」权限（默认 false）。
-- 创建成功 `201`：`{id, url: "/g/<密钥>", note, expires_at, can_edit_brief, use_count, status: "unclaimed"}`。配置了
+- 创建成功 `201`：`{id, url: "/g/<密钥>", note, guest_id, guest_name, expires_at, can_edit_brief, use_count, status: "unclaimed"}`。配置了
   `[server] public_url` 时 `url` 是绝对地址（`https://…/g/<密钥>`，评审 P2-7）。
   新链接的密钥会另外用服务端密钥做 AEAD 加密保存，鉴权仍只查 SHA-256 哈希；服务端密钥不可用时仍会创建老链接；服务端
   首次启动会在数据目录自动生成独立密钥文件，不提供配置项。列表项是
-  `{id, note, expires_at, revoked_at?, can_edit_brief, use_count, share_text_available, status, claim_name?, claimed_at?, device_count?, created_by, created_at}`；
+  `{id, note, guest_id?, guest_name?, expires_at, revoked_at?, can_edit_brief, use_count, share_text_available, status, claim_name?, claimed_at?, device_count?, created_by, created_at}`（无主老链接没有 `guest_id`/`guest_name`）；
   `use_count` 是经这条链接写入的回复 / 说明修订数量（从时间线溯源，不记录单纯打开页面）。
 - `POST …/share-text` 按工单当前标题、链接当前有效期和认领状态重新生成文案，并返回
   **同一条链接**；已认领时末尾提醒换设备要输入当初的访问码。带 `guest_link` 建单响应里的
