@@ -795,6 +795,42 @@ export interface GuestDetail {
   tickets: GuestDetailTicket[]
 }
 
+export interface UnassignedGuestLink {
+  id: number
+  ticket_number: string
+  ticket_title: string
+  note: string
+  claimed: boolean
+  claim_name: string
+  last_used_at?: string | null
+  possible_person: boolean
+}
+
+export interface GuestLinkAssignmentPreview {
+  guest_id: number
+  guest_name: string
+  guest_claimed: boolean
+  link_count: number
+  ticket_count: number
+  claimed_link_count: number
+  device_count: number
+  access_code_action: 'keep_guest' | 'remain_unclaimed' | 'choice_required'
+  source_link_ids: number[]
+}
+
+export type GuestAccessCodeChoiceBody =
+  | { source_link_id: number }
+  | 'generate'
+
+export interface GuestLinkAssignmentResult {
+  guest_id: number
+  guest_name: string
+  link_count: number
+  ticket_count: number
+  access_code_action: 'keep_guest' | 'remain_unclaimed'
+  links: Array<{ id: number; ticket_number: string; ticket_title: string }>
+}
+
 /** 部门访客名单：按名字包含搜索（#328）。 */
 export async function fetchGuests(query = ''): Promise<GuestSummary[]> {
   const path = query
@@ -853,6 +889,40 @@ export async function copyGuestHomeText(
 /** 访客详情：工单与链接已按当前成员可见范围过滤。 */
 export async function fetchGuestDetail(guestId: number): Promise<GuestDetail> {
   return api(`/api/v1/guests/${guestId}`)
+}
+
+/** 无主老链接列表：q 搜索；name 会把名字相近的链接排前并标记。 */
+export async function fetchUnassignedGuestLinks(
+  opts: { q?: string; name?: string } = {},
+): Promise<UnassignedGuestLink[]> {
+  const params = new URLSearchParams()
+  if (opts.q) params.set('q', opts.q)
+  if (opts.name) params.set('name', opts.name)
+  const suffix = params.toString() ? `?${params}` : ''
+  const body = await api(`/api/v1/guest-links/unassigned${suffix}`)
+  return body.links as UnassignedGuestLink[]
+}
+
+/** 批量归属影响预览：访问码处理方式和将受影响的链接、设备数。 */
+export async function previewGuestLinkAssignment(
+  guestId: number,
+  linkIds: number[],
+): Promise<GuestLinkAssignmentPreview> {
+  const params = new URLSearchParams({ link_ids: linkIds.join(',') })
+  return api(`/api/v1/guests/${guestId}/assign-links/preview?${params}`)
+}
+
+/** 批量归属无主老链接；#341 的两种成功路径都省略 access_code。 */
+export async function assignGuestLinks(
+  guestId: number,
+  linkIds: number[],
+  accessCode?: GuestAccessCodeChoiceBody,
+): Promise<GuestLinkAssignmentResult> {
+  return api(`/api/v1/guests/${guestId}/assign-links`, {
+    method: 'POST',
+    body: JSON.stringify({ link_ids: linkIds, ...(accessCode ? { access_code: accessCode } : {}) }),
+    idempotencyKey: crypto.randomUUID(),
+  })
 }
 
 /** 给访客改名：访客建立者、管理员或名下链接管理人可用，成员 Agent 同样可用。 */

@@ -3173,7 +3173,171 @@ textarea.src {
   line-height: 1.45;
 }
 
-  margin-top: 4px;
+/* 批量归属老链接（#341）：详情提示、全屏页与三段共用组件 */
+.guest-possible-links {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid #dbe7f7;
+  border-radius: 8px;
+  background: #f3f8ff;
+  color: #24589f;
+  font-weight: 700;
+}
+.guest-possible-links .btn {
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+.guest-import-old {
+  margin-bottom: 10px;
+}
+.guest-assign-page {
+  max-width: 680px;
+}
+.guest-assign-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.guest-assign-header h1 {
+  margin: 0;
+  font-size: 20px;
+}
+.guest-assign-header .btn {
+  padding: 6px 10px;
+}
+.guest-assign-target {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 3px;
+}
+.legacy-link-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.legacy-search input {
+  width: 100%;
+}
+.legacy-group-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: baseline;
+  font-weight: 700;
+}
+.legacy-group-title span,
+.legacy-others-toggle span {
+  color: #8a94a6;
+  font-size: 12px;
+  font-weight: 400;
+}
+.legacy-link-row,
+.guest-access-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid #e3e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+.legacy-link-row input,
+.guest-access-choice input {
+  margin-top: 3px;
+}
+.legacy-link-main,
+.guest-access-choice > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+.legacy-link-title {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.legacy-link-meta,
+.guest-access-choice .hint {
+  color: #8a94a6;
+  font-size: 12px;
+}
+.legacy-likely,
+.legacy-locked {
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 3px 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.legacy-likely {
+  color: #a3601a;
+  background: #fdf0e3;
+}
+.legacy-locked {
+  color: #24589f;
+  background: #e3ecfa;
+}
+.legacy-empty {
+  color: #8a94a6;
+  padding: 4px 2px;
+}
+.legacy-others-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 0;
+  border-top: 1px solid #edf0f5;
+  background: transparent;
+  padding: 10px 2px 0;
+  color: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.legacy-others {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.guest-access-card {
+  margin-bottom: 10px;
+}
+.guest-access-choice.selected {
+  border-color: #cbe0f7;
+  background: #f5f9ff;
+}
+.guest-access-choice strong {
+  font-size: 14px;
+}
+.assign-consequence {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #f0d9b8;
+  background: #fffaf0;
+}
+.assign-consequence strong {
+  color: #8a5a16;
+}
+.assign-consequence p {
+  margin: 4px 0 0;
+  color: #6c5b43;
+  line-height: 1.5;
+}
+.guest-assign-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.guest-assign-footer .btn.block {
+  width: 100%;
 }
 
 /* 访客一级入口与通讯录式名单（#345）：手机「工单｜访客」分段、搜索、

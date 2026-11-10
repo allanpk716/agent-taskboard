@@ -1,7 +1,11 @@
 // 访客详情档案页（#338）：工单/访问/管理三个标签；工单标签里轮到访客的
 // 置顶并注明原因，访问标签给访问码状态与已登录设备数，管理保留原有操作。
 import { expect, test, type APIRequestContext } from '@playwright/test'
-import { ADMIN, login, loginAdmin } from './helpers'
+import { readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+import { ADMIN, createTicket, login, loginAdmin } from './helpers'
 
 interface Seed {
   guestID: number
@@ -44,6 +48,41 @@ async function seedGuestArchive(request: APIRequestContext): Promise<Seed> {
   })
   expect(claim.status(), `访客认领失败：${await claim.text()}`).toBe(201)
   return { guestID: linkBody.guest_id, fillTicket, repliedTicket }
+}
+
+async function createLegacyLink(
+  request: APIRequestContext,
+  ticket: string,
+  note: string,
+): Promise<number> {
+  const res = await request.post(`/api/v1/tickets/${ticket}/guest-links`, {
+    data: { note, new_guest_name: note, valid_days: 30 },
+  })
+  expect(res.status(), `创建老链接失败：${await res.text()}`).toBe(201)
+  const body = (await res.json()) as { id: number; guest_id: number }
+  const port = process.env.E2E_PORT || '8901'
+  const info = JSON.parse(
+    readFileSync(join(tmpdir(), `tb-e2e-server-${port}.json`), 'utf8'),
+  ) as { data_dir: string }
+  const db = new DatabaseSync(join(info.data_dir, 'taskboard.db'))
+  try {
+    db.prepare(`
+      INSERT INTO guest_credential_holders (owner_type, owner_id, access_code_failures, created_at)
+      VALUES ('guest_link', ?, 0, ?)
+    `).run(body.id, new Date().toISOString())
+    const holder = db.prepare(`
+      SELECT id FROM guest_credential_holders WHERE owner_type = 'guest_link' AND owner_id = ?
+    `).get(body.id) as { id: number }
+    db.prepare(`
+      UPDATE guest_links SET guest_id = NULL, credential_holder_id = ? WHERE id = ?
+    `).run(holder.id, body.id)
+    db.prepare(`DELETE FROM guest_credential_holders WHERE owner_type = 'guest' AND owner_id = ?`)
+      .run(body.guest_id)
+    db.prepare('DELETE FROM guests WHERE id = ?').run(body.guest_id)
+    return body.id
+  } finally {
+    db.close()
+  }
 }
 
 test('访客详情档案页分三个标签，轮到访客的工单置顶', async ({ page, request }) => {
@@ -119,4 +158,49 @@ test('访客详情访问标签里可以重置访问码', async ({ page, request 
   const result = page.getByRole('dialog', { name: '重置访问码完成' })
   const code = await result.locator('.reset-code').textContent()
   expect(code).toMatch(/^\d{6}$/)
+})
+
+test('访客详情提示老工单并可批量归属给已认领访客', async ({ page, request }) => {
+  await loginAdmin(request)
+  const targetTicket = await createTicket(request, { title: '张三的新工单' })
+  const targetLink = await request.post(`/api/v1/tickets/${targetTicket}/guest-links`, {
+    data: { note: '新联系', new_guest_name: '检验科-张三', valid_days: 30 },
+  })
+  expect(targetLink.status(), `创建目标访客失败：${await targetLink.text()}`).toBe(201)
+  const target = (await targetLink.json()) as { guest_id: number; url: string }
+  const claim = await request.post('/api/v1/guest-links/claim', {
+    data: { author_name: '张三' },
+    headers: { Authorization: `Bearer ${target.url.slice(3)}` },
+  })
+  expect(claim.status(), `目标访官认领失败：${await claim.text()}`).toBe(201)
+
+  const firstTicket = await createTicket(request, { title: '张三的第一张老工单' })
+  const secondTicket = await createTicket(request, { title: '现场设备的第二张老工单' })
+  await createLegacyLink(request, firstTicket, '检验科-张三')
+  await createLegacyLink(request, secondTicket, '设备科-张三')
+
+  await login(page, ADMIN)
+  await page.goto(`/guests/${target.guest_id}`)
+  const notice = page.getByTestId('guest-possible-links')
+  await expect(notice).toContainText('还有 2 条老工单可能是 TA 的 → 归进来')
+  await notice.getByRole('button', { name: '归进来' }).click()
+  await page.waitForURL((u) => u.pathname === `/guests/${target.guest_id}/assign`)
+
+  const assignPage = page.getByTestId('guest-assign-page')
+  await expect(assignPage).toContainText('把老工单归到访客')
+  await expect(assignPage).toContainText('检验科-张三')
+  await expect(assignPage).toContainText('保留 张三 的访问码')
+  await expect(assignPage).toContainText('所选老链接原来的访问码和设备都会作废')
+  const confirm = assignPage.getByRole('button', { name: '确认归到访客' })
+  await expect(confirm).toBeDisabled()
+  await assignPage.getByLabel(/张三的第一张老工单/).check()
+  await assignPage.getByLabel(/现场设备的第二张老工单/).check()
+  await expect(assignPage.getByRole('button', { name: '确认归到访客（2 条）' })).toBeEnabled()
+  await assignPage.getByRole('button', { name: '确认归到访客（2 条）' }).click()
+
+  await page.waitForURL((u) => u.pathname === `/guests/${target.guest_id}`)
+  const tickets = page.getByTestId('guest-panel-tickets')
+  await expect(tickets).toContainText('张三的第一张老工单')
+  await expect(tickets).toContainText('现场设备的第二张老工单')
+  await expect(page.locator('#toast')).toContainText('已归入 2 张工单')
 })
