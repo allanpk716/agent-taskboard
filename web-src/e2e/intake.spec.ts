@@ -56,7 +56,7 @@ async function seedEditableTicket(request: APIRequestContext): Promise<{ number:
   expect(created.status(), `建单失败：${await created.text()}`).toBe(201)
   const number: string = (await created.json()).number
   const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
-    data: { note: '检验科-张三', valid_days: 30, can_edit_brief: true },
+    data: { note: '检验科-张三', new_guest_name: '检验科-张三', valid_days: 30, can_edit_brief: true },
   })
   expect(link.ok(), `创建访客链接失败：${await link.text()}`).toBeTruthy()
   return { number, linkKey: String((await link.json()).url).slice(3) }
@@ -256,13 +256,11 @@ test('入口附件立即上传刷新不丢，提交后说明自带附件且无�
   await expect(page.getByRole('heading', { name: /已提交/ })).toBeVisible({ timeout: 20000 })
 
   // 打开专属链接：说明气泡里有插图，日志列在附件条里
-  const guestPath = await page.getByRole('link', { name: '打开这条反馈' }).getAttribute('href')
-  const guestKey = new URL(guestPath ?? '', page.url()).pathname.slice(3)
-  const guestToken = (await page.evaluate((key) => localStorage.getItem(`tb:guest-device:${key}`), guestKey)) ?? ''
+  const guestToken = (await page.evaluate(() => localStorage.getItem('tb:guest-device'))) ?? ''
   expect(guestToken).toMatch(/^tbgd_/)
-  await page.addInitScript(({ guestKey, guestToken }) => {
-    localStorage.setItem(`tb:guest-device:${guestKey}`, guestToken)
-  }, { guestKey, guestToken })
+  await page.addInitScript(({ guestToken }) => {
+    localStorage.setItem('tb:guest-device', guestToken)
+  }, { guestToken })
   await page.getByRole('link', { name: '打开这条反馈' }).click()
   await page.getByRole('button', { name: '先不填，直接回复 →' }).click()
   const brief = page.locator('[data-bubble="brief"]')

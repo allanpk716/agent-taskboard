@@ -60,7 +60,7 @@ func (m *Manager) ClaimGuestLink(ctx context.Context, link identity.GuestLink, a
 		}
 		return GuestClaimResult{}, err
 	}
-	actor := Author{LinkID: link.ID, LinkNote: link.Note, AuthorName: authorName}
+	actor := Author{LinkID: link.ID, LinkNote: link.Note, GuestName: link.GuestName, AuthorName: authorName}
 	eventSeq, change, err := m.appendEvent(ctx, tx, link.TicketSeq, now, actor, "guest_link_claimed")
 	if err != nil {
 		return GuestClaimResult{}, err

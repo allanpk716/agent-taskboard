@@ -886,6 +886,12 @@ button.att {
 .intake-done .btn {
   margin-top: 4px;
 }
+.intake-done .action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
 
 /* 维度下拉框（可按别名搜索） */
 .dim-select {
