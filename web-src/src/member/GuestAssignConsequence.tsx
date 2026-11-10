@@ -50,8 +50,10 @@ export function GuestAssignConsequence({
         <div className="assign-consequence" data-testid="guest-assign-consequence">
           <strong>归属后果</strong>
           <p>
-            {source.ticket_number} 的访问码和已登录设备会转给 {person}，认领状态、称呼、失败计数和锁定一并沿用；
-            其余 {selectedCount - 1} 条所选链接原来的访问码和设备都会作废。
+            {source.ticket_number} 的访问码和已登录设备会转给 {person}，认领状态、称呼、失败计数和锁定一并沿用
+            {selectedCount > 1
+              ? `；其余 ${selectedCount - 1} 条所选链接原来的访问码和设备都会作废。`
+              : '。'}
           </p>
         </div>
       )

@@ -6,17 +6,26 @@ interface Props {
   links: UnassignedGuestLink[]
   selectedIds: number[]
   lockedIds?: number[]
+  /** 置顶且不受「其他老链接」折叠影响（如工单详情面板里的当前链接）。 */
+  pinnedIds?: number[]
   onToggle: (id: number) => void
 }
 
 /** 老链接勾选列表：推荐置顶并标记，默认不自动勾选；其余可展开再搜索。 */
-export function GuestLegacyLinkPicker({ links, selectedIds, lockedIds = [], onToggle }: Props) {
+export function GuestLegacyLinkPicker({
+  links,
+  selectedIds,
+  lockedIds = [],
+  pinnedIds = [],
+  onToggle,
+}: Props) {
   const [query, setQuery] = useState('')
   const [othersOpen, setOthersOpen] = useState(false)
   const locked = new Set(lockedIds)
   const selected = new Set(selectedIds)
   const keyword = query.trim().toLowerCase()
   const { likely, others } = useMemo(() => {
+    const pinned = new Set(pinnedIds)
     const matched = links.filter((link) => {
       if (!keyword) return true
       return [link.ticket_number, link.ticket_title, link.note, link.claim_name]
@@ -25,10 +34,12 @@ export function GuestLegacyLinkPicker({ links, selectedIds, lockedIds = [], onTo
         .includes(keyword)
     })
     return {
-      likely: matched.filter((link) => link.possible_person),
-      others: matched.filter((link) => !link.possible_person),
+      likely: matched
+        .filter((link) => pinned.has(link.id) || link.possible_person)
+        .sort((a, b) => Number(pinned.has(b.id)) - Number(pinned.has(a.id))),
+      others: matched.filter((link) => !pinned.has(link.id) && !link.possible_person),
     }
-  }, [keyword, links])
+  }, [keyword, links, pinnedIds])
 
   return (
     <div className="legacy-link-picker">

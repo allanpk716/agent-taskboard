@@ -22,14 +22,16 @@ export function selectWizardGuest(g: GuestSummary): WizardGuest {
   }
 }
 
-export function GuestPickerStep({
+/** 访客选择列表本体：搜索、最近联系、全部、当场新建与相似提示。
+ *  供建单向导（#340）和工单详情「归到访客」面板（#344）共用。 */
+export function GuestPickerList({
   onSelect,
-  onBack,
   onError,
+  newHint = '将随这张工单一起建立「{name}」；同一个人的工单会归在一起。',
 }: {
   onSelect: (guest: WizardGuest) => void
-  onBack: () => void
   onError?: (message: string) => void
+  newHint?: string
 }) {
   const [query, setQuery] = useState('')
   const [guests, setGuests] = useState<GuestSummary[] | null>(null)
@@ -102,15 +104,7 @@ export function GuestPickerStep({
   }
 
   return (
-    <div className="bpage guest-pick-page">
-      <div className="mcard template-screen">
-        <button type="button" className="btn ghost back" onClick={onBack}>
-          ← 返回
-        </button>
-        <h2 className="page-title">选访客</h2>
-        <span className="badge filler">发链接请人填写</span>
-        <p className="guide">先选要发给谁；人名记在访客上，名下链接一码通行。</p>
-      </div>
+    <>
       <div className="guest-search">
         <input
           type="search"
@@ -226,11 +220,33 @@ export function GuestPickerStep({
           >
             新建并继续
           </button>
-          <div className="hint">
-            将随这张工单一起建立「{trimmedNew || '新访客'}」；同一个人的工单会归在一起。
-          </div>
+          <div className="hint">{newHint.replace('{name}', trimmedNew || '新访客')}</div>
         </div>
       </div>
+    </>
+  )
+}
+
+export function GuestPickerStep({
+  onSelect,
+  onBack,
+  onError,
+}: {
+  onSelect: (guest: WizardGuest) => void
+  onBack: () => void
+  onError?: (message: string) => void
+}) {
+  return (
+    <div className="bpage guest-pick-page">
+      <div className="mcard template-screen">
+        <button type="button" className="btn ghost back" onClick={onBack}>
+          ← 返回
+        </button>
+        <h2 className="page-title">选访客</h2>
+        <span className="badge filler">发链接请人填写</span>
+        <p className="guide">先选要发给谁；人名记在访客上，名下链接一码通行。</p>
+      </div>
+      <GuestPickerList onSelect={onSelect} onError={onError} />
     </div>
   )
 }
