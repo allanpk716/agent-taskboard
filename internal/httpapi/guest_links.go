@@ -452,8 +452,7 @@ func isGuestSelectionError(err error) bool {
 	return errors.Is(err, tickets.ErrGuestRequired) ||
 		errors.Is(err, tickets.ErrGuestBothProvided) ||
 		errors.Is(err, tickets.ErrGuestNotFound) ||
-		errors.Is(err, tickets.ErrGuestDisabled) ||
-		errors.Is(err, tickets.ErrGuestAlreadyMerged)
+		errors.Is(err, tickets.ErrGuestDisabled)
 }
 
 func writeGuestSelectionError(w http.ResponseWriter, err error) {
@@ -467,12 +466,7 @@ func writeGuestSelectionError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, tickets.ErrGuestDisabled):
 		code = CodeGuestDisabled
-		status = http.StatusConflict
 		hint = "先恢复访客，或另选/新建一位访客"
-	case errors.Is(err, tickets.ErrGuestAlreadyMerged):
-		code = CodeGuestAlreadyMerged
-		status = http.StatusConflict
-		hint = "已并入的访客不能再建链接；请选择合并后的访客"
 	}
 	WriteError(w, status, code, err.Error(), hint)
 }

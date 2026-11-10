@@ -254,7 +254,7 @@ func (a *API) copyGuestHomeText(w http.ResponseWriter, r *http.Request, id int64
 	case errors.Is(err, tickets.ErrGuestNotFound), errors.Is(err, tickets.ErrGuestDisabled):
 		WriteError(w, http.StatusNotFound, CodeGuestNotFound, "没有这位访客，或这位访客已停用", "")
 	case errors.Is(err, tickets.ErrGuestAlreadyMerged):
-		WriteError(w, http.StatusConflict, CodeGuestAlreadyMerged, err.Error(), "")
+		WriteError(w, http.StatusNotFound, CodeGuestAlreadyMerged, err.Error(), "")
 	case errors.Is(err, tickets.ErrGuestManagementNotAllowed):
 		WriteError(w, http.StatusForbidden, CodeGuestManagementNotAllowed, err.Error(),
 			"只有访客建立者、管理员或名下链接的管理人可以复制主页文案")

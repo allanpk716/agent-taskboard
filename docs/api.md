@@ -982,8 +982,8 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 
 - 创建必须带 `guest_id`（选择已有访客）或 `new_guest_name`（当场新建一位）之一：
   都不带、都带或新名字为空白返回 422 `guest_required`；`guest_id` 查无此人返回
-  422 `guest_not_found`；访客已停用返回 409 `guest_disabled`，已并入返回
-  409 `guest_already_merged`。部门访客名单见 `GET /api/v1/guests?q=<名字>`（成员与成员
+  422 `guest_not_found`；访客已停用返回 422 `guest_disabled`。部门访客名单见
+  `GET /api/v1/guests?q=<名字>`（成员与成员
   Agent 可用，访客 403 `members_only`）。备注 `note` 必填（422 `note_required`），
   只写这条链接的用途，人名记在访客上；有效期 `valid_days: 7|30|90` 或
   `expires_at`（`YYYY-MM-DD` 指「管满这一整天」：到 12-01 为止的链接在
@@ -1008,7 +1008,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   `manage_guest_links` 能力的成员凭证（访客 403 `members_only`）。请求体与建链接的
   访客选择同规则：`guest_id` 或去空白后非空的 `new_guest_name` 二选一；都不带、都带
   或新名字空白返回 422 `guest_required`，查无访客返回 422 `guest_not_found`，目标
-  已停用返回 409 `guest_disabled`，已并入返回 409 `guest_already_merged`。
+  已停用返回 422 `guest_disabled`。
   目标访客未认领而老链接已认领时，老链接的认领状态、访问码、失败计数、锁定状态和设备
   在同一事务里转给访客；目标访客已认领时，老链接自己的访问码与设备作废，改用访客凭证；
   老链接未认领时直接归入并沿用访客当前状态。归属后这条链接不再有自己的访问码和设备。

@@ -338,8 +338,8 @@ func Test已停用访客不能建链接或归属老链接(t *testing.T) {
 	ticketB := mustCreateTicket(t, s, admin, "再建链接")
 	res := s.Do(t, admin, http.MethodPost, "/api/v1/tickets/"+ticketB+"/guest-links",
 		map[string]any{"note": "第二次联系", "guest_id": link.GuestID}, nil)
-	if res.StatusCode != http.StatusConflict {
-		t.Fatalf("给停用访客建链接状态码 = %d, 想 409", res.StatusCode)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("给停用访客建链接状态码 = %d, 想 422", res.StatusCode)
 	}
 	var got errorBody
 	tbtest.DecodeJSON(t, res, &got)
@@ -352,8 +352,8 @@ func Test已停用访客不能建链接或归属老链接(t *testing.T) {
 	res = s.Do(t, admin, http.MethodPost,
 		"/api/v1/tickets/"+ticketC+"/guest-links/"+itoa(legacy.ID)+"/assign-guest",
 		map[string]any{"guest_id": link.GuestID}, nil)
-	if res.StatusCode != http.StatusConflict {
-		t.Fatalf("老链接归属停用访客状态码 = %d, 想 409", res.StatusCode)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("老链接归属停用访客状态码 = %d, 想 422", res.StatusCode)
 	}
 	tbtest.DecodeJSON(t, res, &got)
 	if got.Error.Code != "guest_disabled" {
