@@ -844,6 +844,18 @@ export async function resetGuestAccessCode(
   })
 }
 
+/** 把上线前的无主老链接归到已有访客或新建访客名下。 */
+export async function assignGuestLinkToGuest(
+  number: string,
+  id: number,
+  body: { guest_id?: number; new_guest_name?: string },
+): Promise<GuestLink> {
+  return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}/assign-guest`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
 /** 延期：valid_days（7/30/90）或 expires_at（YYYY-MM-DD，管满该日全天）二选一。 */
 export async function extendGuestLink(
   number: string,

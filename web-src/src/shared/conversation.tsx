@@ -40,6 +40,10 @@ export function eventText(e: TimelineEvent): string {
       return `延长了访客链接「${e.note}」${e.expires_at ? `至 ${fmtDateCN(e.expires_at)}` : ''}`
     case 'guest_link_rotated':
       return `更换了访客链接「${e.note}」的地址`
+    case 'guest_link_assigned':
+      return e.reason === 'merge'
+        ? `合并访客后把访客链接「${e.note}」改归到 ${e.to}`
+        : `把访客链接「${e.note}」归到 ${e.to}`
     case 'brief_revised':
       return `修订了说明（第 ${e.revision} 版）`
     case 'closed':

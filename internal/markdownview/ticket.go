@@ -22,7 +22,7 @@ type Event struct {
 	BodyMD        string   // reply 的正文
 	Deliver       bool     // reply 带「交付」标记（#36 启用）
 	Revision      int64    // brief_revised 修订后的版本号
-	Reason        string   // closed 的原因：done | wontfix | duplicate
+	Reason        string   // closed / guest_link_assigned 的原因
 	DuplicateOf   string   // closed=重复时另一张工单的编号
 	LinkExpiresAt string   // guest_link_extended 的新到期时刻（RFC3339，#32）
 	AttachmentIDs []string // reply 引用的附件（#33）
@@ -318,6 +318,11 @@ func eventText(e Event) string {
 		return "延期访客链接「" + e.Note + "」至 " + e.LinkExpiresAt
 	case "guest_link_rotated":
 		return "更换访客链接「" + e.Note + "」的地址"
+	case "guest_link_assigned":
+		if e.Reason == "merge" {
+			return "合并访客后把访客链接「" + e.Note + "」改归到 " + e.AssignTo
+		}
+		return "把访客链接「" + e.Note + "」归到 " + e.AssignTo
 	case "brief_revised":
 		return "修订说明（第 " + strconv.FormatInt(e.Revision, 10) + " 版）"
 	case "closed":

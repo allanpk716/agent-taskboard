@@ -466,7 +466,8 @@ spec 用户故事 84），没有 `inbox`：
   `closed` 带 `reason`/`duplicate_of`，`assigned` 带 `from`/`to`（from 为 null 表示
   创建时指派，否则是改派），`guest_link_created`/`guest_link_revoked`/
   `guest_link_rotated` 带 `note`，`guest_link_extended` 带 `note` 与
-  `expires_at`，协作者事件带
+  `expires_at`，`guest_link_assigned` 带 `note`、`to` 与 `reason`
+  （`manual`=手动归属，`merge`=访客合并后的改归），协作者事件带
   `collaborator`）。时间线只追加：每条都记录
   作者与时间，旧事件永不改动。访客可见性过滤（跳过标签事件）在 #32 已生效；
   访客的 `cursor` 是它可见的最后一条事件 `seq`（跳过的序号不会当作增量重发）。
@@ -947,7 +948,8 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 设备凭 `tbgd_` 凭证查看和回复。链接地址 `/g/<密钥>` 里的 `tbg_` 密钥只在认领
 接口中使用，已认领链接单凭密钥一律 401 `link_claimed`。
 一张工单可以有多条链接，每条都有成员写的备注（如「检验科-张三」）；可见范围内的
-成员（含成员 Agent）能创建、列出、撤销、延期这些链接。
+成员（含成员 Agent）能创建、列出、撤销、延期这些链接，也能把上线前的无主老链接
+手动归到某位访客名下。
 
 | 方法与路径 | 说明 |
 |---|---|
@@ -958,6 +960,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/reset-access-code` | 重置访问码（仅无主老链接）：作废旧设备与新码，成功返回一次 `{access_code, url, reset_text, expires_at}`；有主链接返回 409 `guest_access_code_guest_level`，访问码按访客为单位管理。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/share-text` | 再次复制同一条有效链接的转发文案，成功 `{share_text}`；响应带 `Cache-Control: no-store`。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/rotate-key` | 重置链接（一般用于老链接，也可用于疑似外泄），成功 `{url, share_text, reset_text, expires_at, access_code?}`；旧地址立即失效。有主链接只换单条链接的地址，访问码与设备不变；无主老链接沿用旧语义：已认领时同时重置访问码并作废旧设备，`access_code` 一次性返回。响应带 `Cache-Control: no-store`，支持 `Idempotency-Key`。 |
+| `POST /api/v1/tickets/{id}/guest-links/{链接id}/assign-guest` | 把无主老链接手动归到访客：`{"guest_id"}` 或 `{"new_guest_name"}` 二选一；成功返回归属后的链接视图，写 `guest_link_assigned` 事件，不发通知。 |
 | `GET /api/v1/guests?q=<名字>` | 部门访客名单（成员与成员 Agent；访客 403 `members_only`）：按名字包含搜索，按名字排序；每项 `{id, name, claimed_at?, claim_name?, access_code_locked_at?, link_count, created_by, created_at}`。 |
 | `GET /api/v1/guest-link` | 用 `tbg_` 密钥读取认领页信息：邀请人、备注、有效期、可见范围提示；未认领时不返回工单内容。 |
 | `POST /api/v1/guest-links/claim` | 用 `tbg_` 密钥认领：`{"author_name"}`；成功返回一次 `device_token` 和 6 位 `access_code`，并写 `guest_link_claimed` 事件。有主链接的认领作用于整个访客。 |
@@ -991,6 +994,17 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   `Cache-Control: no-store`。已撤销或已过期返回 409 `link_not_extendable`；上线前没有
   加密密钥的老链接返回 409 `share_text_unavailable`，hint 提示换一个新地址；服务端加密密钥本身不可用时仍返回这个错误码，但 hint 改为请管理员检查。复制本身不写时间线。
   服务端密钥文件丢失或换过后解不开的密文同样按老链接处理，返回同一个 409。
+- `POST …/assign-guest` 只作用于 `guest_id` 为空的无主老链接，且只限可见范围内、有
+  `manage_guest_links` 能力的成员凭证（访客 403 `members_only`）。请求体与建链接的
+  访客选择同规则：`guest_id` 或去空白后非空的 `new_guest_name` 二选一；都不带、都带
+  或新名字空白返回 422 `guest_required`，查无访客返回 422 `guest_not_found`。
+  目标访客未认领而老链接已认领时，老链接的认领状态、访问码、失败计数、锁定状态和设备
+  在同一事务里转给访客；目标访客已认领时，老链接自己的访问码与设备作废，改用访客凭证；
+  老链接未认领时直接归入并沿用访客当前状态。归属后这条链接不再有自己的凭证持有者。
+  已归属链接再归返回 409 `guest_link_already_assigned`（后续由访客合并处理改归）。
+  成功返回列表项同构的链接视图。时间线写 `guest_link_assigned`，`actor` 是操作成员
+  （或成员 Agent），`at` 为归属时刻，`note` 是链接备注快照，`to` 是目标访客名字快照，
+  `reason` 当前为 `manual`（访客合并引起的改归保留 `merge`），不生成通知。
 - `POST …/rotate-key` 给同一条链接写入新的哈希与加密密钥并返回新的
   `{url, share_text, reset_text, expires_at, access_code?}`；旧地址立即失效。
   已认领链接同时删除全部设备凭证、重置访问码并在响应里一次性返回 `access_code`；
@@ -1012,7 +1026,8 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   链接不会重新开放认领。新码只在重置响应里出现一次，并写 `guest_access_reset` 事件。
 - 创建、撤销、换新地址、延期各记一条时间线事件（`guest_link_created` /
   `guest_link_revoked` / `guest_link_rotated` / `guest_link_extended`，都带 `note`；
-  延期另带新 `expires_at`），访问码锁定与重置分别记
+  延期另带新 `expires_at`），归属记 `guest_link_assigned`（带 `note`、目标访客
+  `to` 与 `reason: manual`），访问码锁定与重置分别记
   `guest_access_locked` / `guest_access_reset`，并推进全局变更序号。
   这些事件对访客也可见（访客看不到的只有标签事件）。
 - 撤销立即生效：之后用这条密钥的任何请求 401 `link_revoked`。已撤销的再撤销是

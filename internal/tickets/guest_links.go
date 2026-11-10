@@ -30,6 +30,8 @@ var (
 	ErrGuestDisabled = errors.New("这位访客已停用")
 	// ErrGuestManagementNotAllowed 表示当前成员不能管理这位访客。
 	ErrGuestManagementNotAllowed = errors.New("你不能管理这位访客")
+	// ErrGuestLinkAlreadyAssigned 表示链接已经归属一位访客；改归须走访客合并。
+	ErrGuestLinkAlreadyAssigned = errors.New("这条链接已归属访客，不能再手动归属")
 	// ErrInvalidValidDays 表示 valid_days 不是 7/30/90 之一（或与 expires_at 并存）。
 	ErrInvalidValidDays = errors.New("有效期只能选 7、30 或 90 天，或改用 expires_at 指定日期（二选一）")
 	// ErrInvalidExpiresAt 表示 expires_at 不是合法时间或不晚于现在（没有永久选项）。
@@ -203,6 +205,129 @@ func (m *Manager) createGuestLinkTx(ctx context.Context, tx *sql.Tx, ticketSeq i
 		Claimed: claimed, ExpiresAt: expiresAt, CanEditBrief: spec.CanEditBrief,
 		HomeKey: home.Key,
 	}, nil
+}
+
+// AssignGuestLink 把一条上线前的无主老链接手动归到已有访客或新建访客名下。
+// 访客未认领时，链接原有的认领、访问码和设备整体转给访客；访客已认领时，
+// 链接原有凭证作废并改用访客凭证。凭证转移、链接归属和时间线在同一个事务里完成。
+func (m *Manager) AssignGuestLink(ctx context.Context, viewer identity.Viewer, ref string,
+	id int64, spec GuestLinkSpec) (GuestLinkInfo, error) {
+	spec.NewGuestName = strings.TrimSpace(spec.NewGuestName)
+	if spec.GuestID == 0 && spec.NewGuestName == "" {
+		return GuestLinkInfo{}, ErrGuestRequired
+	}
+	if spec.GuestID != 0 && spec.NewGuestName != "" {
+		return GuestLinkInfo{}, ErrGuestBothProvided
+	}
+	full, err := m.ForViewer(ctx, viewer, ref)
+	if err != nil {
+		return GuestLinkInfo{}, err
+	}
+	now := m.clk.Now()
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return GuestLinkInfo{}, err
+	}
+	defer tx.Rollback()
+
+	row, err := m.linkForTicketTx(ctx, tx, full.Seq, id)
+	if err != nil {
+		return GuestLinkInfo{}, err
+	}
+	if row.GuestID != 0 {
+		return GuestLinkInfo{}, ErrGuestLinkAlreadyAssigned
+	}
+	actor := authorOf(viewer)
+	guestID, guestName, guestHolderID, _, err := m.guestForNewLinkTx(ctx, tx, actor, spec, now)
+	if err != nil {
+		return GuestLinkInfo{}, err
+	}
+	if _, err := m.ensureGuestHomeKeyTx(ctx, tx, guestID); err != nil {
+		return GuestLinkInfo{}, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE guest_links SET guest_id = ?, credential_holder_id = ? WHERE id = ?`,
+		guestID, guestHolderID, id); err != nil {
+		return GuestLinkInfo{}, err
+	}
+	if err := assignGuestCredentialsTx(ctx, tx, row.HolderID, guestHolderID, row.ClaimedAt.Valid); err != nil {
+		return GuestLinkInfo{}, err
+	}
+	if err := m.insertAssignmentEvent(ctx, tx, full.Seq, actor, row.Note, guestName, "manual", now); err != nil {
+		return GuestLinkInfo{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return GuestLinkInfo{}, err
+	}
+
+	links, err := m.GuestLinks(ctx, ref)
+	if err != nil {
+		return GuestLinkInfo{}, err
+	}
+	for _, link := range links {
+		if link.ID == id {
+			return link, nil
+		}
+	}
+	return GuestLinkInfo{}, ErrGuestLinkNotFound
+}
+
+// assignGuestCredentialsTx 把无主链接的凭证合并到访客持有者。目标访客已认领时
+// 保留访客凭证并丢弃链接凭证；目标访客未认领且链接已认领时，把链接的认领
+// 状态、访问码、失败计数、锁定和设备全部搬过去。两种情形都会删除链接自己的
+// 持有者，归属后的链接只指向访客持有者。
+func assignGuestCredentialsTx(ctx context.Context, tx *sql.Tx, linkHolderID, guestHolderID int64,
+	linkClaimed bool) error {
+	var guestClaimedAt sql.NullString
+	if err := tx.QueryRowContext(ctx,
+		`SELECT claimed_at FROM guest_credential_holders WHERE id = ?`, guestHolderID).
+		Scan(&guestClaimedAt); err != nil {
+		return err
+	}
+	if !guestClaimedAt.Valid && linkClaimed {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE guest_credential_holders
+			SET claimed_at = (SELECT claimed_at FROM guest_credential_holders WHERE id = ?),
+			    claim_name = (SELECT claim_name FROM guest_credential_holders WHERE id = ?),
+			    access_code_hash = (SELECT access_code_hash FROM guest_credential_holders WHERE id = ?),
+			    access_code_failures = (SELECT access_code_failures FROM guest_credential_holders WHERE id = ?),
+			    access_code_locked_at = (SELECT access_code_locked_at FROM guest_credential_holders WHERE id = ?)
+			WHERE id = ?`,
+			linkHolderID, linkHolderID, linkHolderID, linkHolderID, linkHolderID, guestHolderID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE guest_credential_devices SET credential_holder_id = ?
+			WHERE credential_holder_id = ?`, guestHolderID, linkHolderID); err != nil {
+			return err
+		}
+	} else if guestClaimedAt.Valid {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM guest_credential_devices WHERE credential_holder_id = ?`, linkHolderID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM guest_credential_holders WHERE id = ?`, linkHolderID); err != nil {
+		return err
+	}
+	return nil
+}
+
+// insertAssignmentEvent 写链接归属事件。reason 区分手动归属（manual）与后续
+// 合并访客引起的改归（merge）；assign_to 是目标访客名字快照。
+func (m *Manager) insertAssignmentEvent(ctx context.Context, tx *sql.Tx, ticketSeq int64,
+	actor Author, note, guestName, reason string, at time.Time) error {
+	eventSeq, change, err := m.appendEvent(ctx, tx, ticketSeq, at, actor, "guest_link_assigned")
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE timeline_events SET note = ?, reason = ?, assign_to = ?
+		WHERE ticket_seq = ? AND seq = ?`, note, reason, guestName, ticketSeq, eventSeq); err != nil {
+		return fmt.Errorf("写入 guest_link_assigned 事件的附加字段失败：%w", err)
+	}
+	return touchLastChange(ctx, tx, ticketSeq, change)
 }
 
 // guestForNewLinkTx 解析新链接的归属访客：选择已有访客或当场新建一位，

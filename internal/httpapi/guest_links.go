@@ -82,6 +82,7 @@ type guestLinkView struct {
 //	POST   /api/v1/tickets/{id}/guest-links/{链接id}/reset-access-code  重置访问码
 //	POST   /api/v1/tickets/{id}/guest-links/{链接id}/share-text       再次复制转发文案
 //	POST   /api/v1/tickets/{id}/guest-links/{链接id}/rotate-key       老链接换新地址
+//	POST   /api/v1/tickets/{id}/guest-links/{链接id}/assign-guest     老链接归到访客
 func (a *API) handleGuestLinks(w http.ResponseWriter, r *http.Request, ref string, rest []string) {
 	if len(rest) == 0 {
 		switch r.Method {
@@ -138,8 +139,16 @@ func (a *API) handleGuestLinks(w http.ResponseWriter, r *http.Request, ref strin
 		a.rotateGuestLinkKey(w, r, ref, id)
 		return
 	}
+	if len(rest) == 2 && rest[1] == "assign-guest" {
+		if r.Method != http.MethodPost {
+			WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法", "归属访客用 POST")
+			return
+		}
+		a.assignGuestLink(w, r, ref, id)
+		return
+	}
 	WriteError(w, http.StatusNotFound, CodeNotFound, "没有这个接口",
-		"访客链接接口：POST …/guest-links、GET …/guest-links、DELETE …/guest-links/{id}、POST …/guest-links/{id}/extend、POST …/guest-links/{id}/reset-access-code、POST …/guest-links/{id}/share-text、POST …/guest-links/{id}/rotate-key")
+		"访客链接接口：POST …/guest-links、GET …/guest-links、DELETE …/guest-links/{id}、POST …/guest-links/{id}/extend、POST …/guest-links/{id}/reset-access-code、POST …/guest-links/{id}/share-text、POST …/guest-links/{id}/rotate-key、POST …/guest-links/{id}/assign-guest")
 }
 
 func (a *API) copyGuestShareText(w http.ResponseWriter, r *http.Request, ref string, id int64) {
@@ -241,6 +250,37 @@ func (a *API) resetGuestAccessCode(w http.ResponseWriter, r *http.Request, ref s
 		ResetText:  tickets.GuestAccessCodeResetText(link.DisplayName(), link.Title, url, link.AccessCode, link.ExpiresAt),
 		ExpiresAt:  link.ExpiresAt.Format(time.RFC3339Nano),
 	})
+}
+
+func (a *API) assignGuestLink(w http.ResponseWriter, r *http.Request, ref string, id int64) {
+	viewer, ok := a.memberFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if _, err := a.tickets.ForViewer(r.Context(), viewer, ref); err != nil {
+		a.writeTicketError(w, r, ref, err)
+		return
+	}
+	var req guestLinkRequest
+	if !decodeJSON(w, r, &req, `{"guest_id": 1} 或 {"new_guest_name": "检验科-张三"}`) {
+		return
+	}
+	link, err := a.tickets.AssignGuestLink(r.Context(), viewer, ref, id, tickets.GuestLinkSpec{
+		GuestID: req.GuestID, NewGuestName: req.NewGuestName,
+	})
+	if err != nil {
+		switch {
+		case isGuestSelectionError(err):
+			writeGuestSelectionError(w, err)
+		case errors.Is(err, tickets.ErrGuestLinkAlreadyAssigned):
+			WriteError(w, http.StatusConflict, CodeGuestLinkAlreadyAssigned, err.Error(),
+				"这条链接已有归属；需要改归时等访客合并功能处理")
+		default:
+			a.writeTicketError(w, r, ref, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, newGuestLinkView(link))
 }
 
 func (a *API) createGuestLink(w http.ResponseWriter, r *http.Request, ref string) {
