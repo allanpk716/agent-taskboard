@@ -17,6 +17,8 @@ type guestView struct {
 	ID                 int64      `json:"id"`
 	Name               string     `json:"name"`
 	DisabledAt         *time.Time `json:"disabled_at,omitempty"`
+	MergedIntoGuestID  int64      `json:"merged_into_guest_id,omitempty"`
+	MergedAt           *time.Time `json:"merged_at,omitempty"`
 	ClaimedAt          *time.Time `json:"claimed_at,omitempty"`
 	ClaimName          string     `json:"claim_name,omitempty"`
 	AccessCodeLockedAt *time.Time `json:"access_code_locked_at,omitempty"`
@@ -426,7 +428,9 @@ func (a *API) writeGuestResetError(w http.ResponseWriter, err error, shareHint s
 
 func newGuestView(g tickets.GuestInfo) guestView {
 	return guestView{
-		ID: g.ID, Name: g.Name, DisabledAt: g.DisabledAt, ClaimedAt: g.ClaimedAt, ClaimName: g.ClaimName,
+		ID: g.ID, Name: g.Name, DisabledAt: g.DisabledAt,
+		MergedIntoGuestID: g.MergedIntoGuestID, MergedAt: g.MergedAt,
+		ClaimedAt: g.ClaimedAt, ClaimName: g.ClaimName,
 		AccessCodeLockedAt: g.AccessCodeLockedAt, LinkCount: g.LinkCount,
 		CreatedBy: newAuthorView(g.CreatedBy, false), CreatedAt: g.CreatedAt,
 	}

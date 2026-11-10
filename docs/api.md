@@ -961,7 +961,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/share-text` | 再次复制同一条有效链接的转发文案，成功 `{share_text}`；响应带 `Cache-Control: no-store`。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/rotate-key` | 重置链接（一般用于老链接，也可用于疑似外泄），成功 `{url, share_text, reset_text, expires_at}`；只换这一条链接的地址，旧地址立即失效，访问码、设备、备注与认领状态都不变（有主、无主链接语义一致）。响应带 `Cache-Control: no-store`，支持 `Idempotency-Key`。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/assign-guest` | 把无主老链接手动归到访客：`{"guest_id"}` 或 `{"new_guest_name"}` 二选一；成功返回归属后的链接视图，写 `guest_link_assigned` 事件，不发通知。 |
-| `GET /api/v1/guests?q=<名字>` | 部门访客名单（成员与成员 Agent；访客 403 `members_only`）：按名字包含搜索，按名字排序；每项 `{id, name, claimed_at?, claim_name?, access_code_locked_at?, link_count, created_by, created_at}`。 |
+| `GET /api/v1/guests?q=<名字>` | 部门访客名单（成员与成员 Agent；访客 403 `members_only`）：按名字包含搜索，按名字排序；每项 `{id, name, claimed_at?, claim_name?, access_code_locked_at?, link_count, created_by, created_at}`。已并入另一位访客的重复访客不出现在名单，也不能再被选作建链接或归属目标。 |
 | `GET /api/v1/guest-link` | 用 `tbg_` 密钥读取认领页信息：邀请人、备注、有效期、可见范围提示；未认领时不返回工单内容。 |
 | `POST /api/v1/guest-links/claim` | 用 `tbg_` 密钥认领：`{"author_name"}`；成功返回一次 `device_token` 和 6 位 `access_code`，并写 `guest_link_claimed` 事件。有主链接的认领作用于整个访客。 |
 | `POST /api/v1/guest-links/enter` | 用 `tbg_` 密钥凭访问码进入：`{"access_code"}`；成功返回一次新 `device_token`；有主链接签发的设备对这位访客名下全部链接可信。 |
@@ -973,6 +973,8 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 | `GET /api/v1/guests/{访客id}/reset-access-code/preview` | 重置访问码影响预览（仅成员本人网页会话）：`{guest_id, guest_name, device_count, ticket_count, access_code_locked}`；`device_count` 是将作废的设备数，`ticket_count` 是名下涉及工单数（同一工单多条链接只算一次）。 |
 | `POST /api/v1/guests/{访客id}/reset-access-code` | 访客级重置访问码（仅成员本人网页会话）：作废该访客主页与名下全部链接的设备、清除输错锁定、生成新 6 位码，成功一次性返回 `{guest_id, access_code, home_url, reset_text}`；重置文案含称呼、当前主页地址、新访问码与「勿转发 / Agent 改用新码」提醒。名下每张工单写 `guest_access_code_reset` 事件。支持 `Idempotency-Key`，响应带 `Cache-Control: no-store`。 |
 | `POST /api/v1/guests/{访客id}/reset-home-key` | 重置主页地址（仅成员本人网页会话）：旧主页地址立即失效，成功返回 `{guest_id, home_url, share_text}`（新主页地址与可复制的主页文案，不含访问码）；访问码、设备与名下链接不变，不写工单时间线。支持 `Idempotency-Key`，响应带 `Cache-Control: no-store`。 |
+| `GET /api/v1/guests/{b_id}/merge-into/{a_id}/preview` | 合并影响预览（仅成员本人网页会话，且须能同时管理 A、B）：返回 `{source_guest_id, source_guest_name, target_guest_id, target_guest_name, link_count, device_count}`；`link_count` 是将从 B 改归 A 的链接数，`device_count` 是将作废的 B 设备数。 |
+| `POST /api/v1/guests/{b_id}/merge-into` | 合并重复访客：`{"target_guest_id": a_id}`（仅成员本人网页会话，且须能同时管理 A、B；成员 Agent 403 `web_session_required`）。一个事务内把 B 的全部链接改归 A、作废 B 的主页/访问码/设备并把 B 标记为已并入 A；A 的凭证不变。每条改归链接写 `guest_link_assigned`（`reason:"merge"`），历史署名快照不变，不发通知，不能撤回。成功返回 `{source_guest_id, target_guest_id, link_count, device_count}`；支持 `Idempotency-Key`。合并到自己 409 `guest_merge_self`，目标已停用 409 `guest_merge_target_disabled`，目标或来源已并入分别 409 `guest_merge_target_merged` / `guest_already_merged`。 |
 | `GET /api/v1/guest-home` | 主页信息与列表：未认领主页密钥只返回 `{state, guest_name, guest_agent_instruction}`；设备凭证或 `tbh_` Agent 凭证返回 `{state:"claimed", guest_name, tickets, guest_agent_instruction}`。 |
 | `POST /api/v1/guest-home/claim` | 用 `tbh_` 主页密钥认领整个访客：`{"author_name"}`；成功一次性返回 `device_token` 与 6 位 `access_code`。 |
 | `POST /api/v1/guest-home/enter` | 用 `tbh_` 主页密钥凭访问码进入：`{"access_code"}`；成功返回一次新 `device_token`。 |
