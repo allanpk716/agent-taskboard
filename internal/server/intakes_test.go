@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
 )
@@ -436,6 +437,52 @@ func Test已认领设备再次经入口提交复用访客(t *testing.T) {
 	}
 	if !foundFirst || !foundSecond {
 		t.Fatalf("主页应包含两张反馈：%+v", home.Tickets)
+	}
+}
+
+// 设备属于已停用访客时不能复用她；入口按新设备处理，新建访客并重新给凭证。
+func Test设备属于已停用访客时入口按新访客处理(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+
+	first := submitToIntake(t, s, "bug", map[string]any{
+		"title":       "停用前的反馈",
+		"fields":      bugFields(),
+		"author_name": "检验科 张三",
+	})
+	if _, err := s.Store().DB.Exec(`UPDATE guests SET disabled_at = ? WHERE id = ?`,
+		s.Clock().Now().Format(time.RFC3339Nano), first.Guest.ID); err != nil {
+		t.Fatalf("构造已停用访客失败：%v", err)
+	}
+
+	client := s.GuestCookieClient(first.DeviceToken)
+	res := s.Do(t, client, http.MethodPost, "/api/v1/intakes/bug/tickets", map[string]any{
+		"title":       "停用后的反馈",
+		"fields":      bugFields(),
+		"author_name": "检验科 李四",
+	}, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("停用访客的设备提交状态码 = %d, 想 201", res.StatusCode)
+	}
+	var second intakeSubmitBody
+	tbtest.DecodeJSON(t, res, &second)
+	if second.Guest.ID == first.Guest.ID || second.Guest.Name != "检验科 李四" {
+		t.Fatalf("停用后提交访客 = %+v, 想新建“检验科 李四”", second.Guest)
+	}
+	if second.DeviceToken == "" || second.AccessCode == "" || second.HomeURL == "" {
+		t.Fatalf("停用后应按新访客给凭证和主页：%+v", second)
+	}
+
+	var guests struct {
+		Guests []struct {
+			ID int64 `json:"id"`
+		} `json:"guests"`
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/guests", nil, &guests)
+	if len(guests.Guests) != 2 {
+		t.Fatalf("访客数量 = %d, 想 2", len(guests.Guests))
 	}
 }
 
