@@ -755,11 +755,35 @@ export interface CreatedGuestLink {
 export interface GuestSummary {
   id: number
   name: string
+  disabled_at?: string
   claimed_at?: string
   claim_name?: string
   access_code_locked_at?: string
   link_count: number
   created_at: string
+}
+
+export interface GuestDetailLink {
+  id: number
+  note: string
+  expires_at: string
+  revoked_at?: string | null
+  can_edit_brief: boolean
+  status: string
+  claim_name?: string
+}
+
+export interface GuestDetailTicket {
+  number: string
+  title: string
+  status: string
+  api: string
+  links: GuestDetailLink[]
+}
+
+export interface GuestDetail {
+  guest: GuestSummary & { created_by?: { member?: { name: string }; agent?: { name: string } | null } }
+  tickets: GuestDetailTicket[]
 }
 
 /** 部门访客名单：按名字包含搜索（#328）。 */
@@ -807,6 +831,29 @@ export async function copyGuestHomeText(
   guestId: number,
 ): Promise<{ home_url: string; share_text: string }> {
   return api(`/api/v1/guests/${guestId}/home-share-text`, { method: 'POST' })
+}
+
+/** 访客详情：工单与链接已按当前成员可见范围过滤。 */
+export async function fetchGuestDetail(guestId: number): Promise<GuestDetail> {
+  return api(`/api/v1/guests/${guestId}`)
+}
+
+/** 给访客改名：访客建立者、管理员或名下链接管理人可用，成员 Agent 同样可用。 */
+export async function renameGuest(guestId: number, name: string): Promise<{ guest: GuestSummary }> {
+  return api(`/api/v1/guests/${guestId}/rename`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+}
+
+/** 停用访客：主页与名下全部链接一起失效；仅网页成员会话可用。 */
+export async function disableGuest(guestId: number): Promise<void> {
+  await api(`/api/v1/guests/${guestId}/disable`, { method: 'POST' })
+}
+
+/** 恢复已停用的访客：未过期链接按原有效期重新生效。 */
+export async function enableGuest(guestId: number): Promise<void> {
+  await api(`/api/v1/guests/${guestId}/enable`, { method: 'POST' })
 }
 
 export async function rotateGuestLinkKey(

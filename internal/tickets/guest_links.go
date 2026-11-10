@@ -384,6 +384,7 @@ type GuestLinkInfo struct {
 	Note               string
 	GuestID            int64
 	GuestName          string
+	GuestDisabled      bool
 	ExpiresAt          time.Time
 	RevokedAt          *time.Time
 	ClaimedAt          *time.Time
@@ -425,7 +426,7 @@ func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]Gue
 		SELECT g.id, g.key_ciphertext, g.note, g.expires_at, g.revoked_at,
 		       cred.claimed_at, cred.claim_name, cred.access_code_locked_at,
 		       g.can_edit_brief, g.created_at,
-		       g.guest_id, gu.name,
+		       g.guest_id, gu.name, gu.disabled_at,
 		       m.id, m.name, a.id, a.name, a.revoked_at,
 		       (SELECT COUNT(*) FROM timeline_events e
 		         WHERE e.actor_link_id = g.id AND e.type != 'guest_link_claimed'),
@@ -444,30 +445,32 @@ func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]Gue
 	out := []GuestLinkInfo{}
 	for rows.Next() {
 		var (
-			info         GuestLinkInfo
-			expiresAt    string
-			createdAt    string
-			revokedAt    sql.NullString
-			canEdit      int
-			memberID     sql.NullInt64
-			memberName   sql.NullString
-			agentID      sql.NullInt64
-			agentName    sql.NullString
-			agentRevoked sql.NullString
-			claimedAt    sql.NullString
-			claimName    sql.NullString
-			lockedAt     sql.NullString
-			keyCipher    sql.NullString
-			guestID      sql.NullInt64
-			guestName    sql.NullString
+			info          GuestLinkInfo
+			expiresAt     string
+			createdAt     string
+			revokedAt     sql.NullString
+			canEdit       int
+			memberID      sql.NullInt64
+			memberName    sql.NullString
+			agentID       sql.NullInt64
+			agentName     sql.NullString
+			agentRevoked  sql.NullString
+			claimedAt     sql.NullString
+			claimName     sql.NullString
+			lockedAt      sql.NullString
+			keyCipher     sql.NullString
+			guestID       sql.NullInt64
+			guestName     sql.NullString
+			guestDisabled sql.NullString
 		)
 		if err := rows.Scan(&info.ID, &keyCipher, &info.Note, &expiresAt, &revokedAt, &claimedAt, &claimName,
-			&lockedAt, &canEdit, &createdAt, &guestID, &guestName, &memberID, &memberName, &agentID, &agentName, &agentRevoked,
+			&lockedAt, &canEdit, &createdAt, &guestID, &guestName, &guestDisabled, &memberID, &memberName, &agentID, &agentName, &agentRevoked,
 			&info.UseCount, &info.DeviceCount); err != nil {
 			return nil, err
 		}
 		info.GuestID = guestID.Int64
 		info.GuestName = guestName.String
+		info.GuestDisabled = guestDisabled.Valid
 		if info.ExpiresAt, err = parseTime(expiresAt); err != nil {
 			return nil, err
 		}
@@ -511,6 +514,7 @@ func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]Gue
 type GuestInfo struct {
 	ID                 int64
 	Name               string
+	DisabledAt         *time.Time
 	ClaimedAt          *time.Time
 	ClaimName          string
 	AccessCodeLockedAt *time.Time
@@ -529,8 +533,14 @@ func (m *Manager) Guests(ctx context.Context, query string) ([]GuestInfo, error)
 		where = " WHERE gu.name LIKE ? ESCAPE '\\'"
 		args = append(args, "%"+escapeLike(query)+"%")
 	}
+	return m.guestsQuery(ctx, where, args)
+}
+
+// guestsQuery 执行访客名单查询；where/args 由调用方拼好（名单搜索与按 id
+// 取详情共用同一份投影与扫描）。
+func (m *Manager) guestsQuery(ctx context.Context, where string, args []any) ([]GuestInfo, error) {
 	rows, err := m.db.QueryContext(ctx, `
-		SELECT gu.id, gu.name, h.claimed_at, h.claim_name, h.access_code_locked_at,
+		SELECT gu.id, gu.name, gu.disabled_at, h.claimed_at, h.claim_name, h.access_code_locked_at,
 		       (SELECT COUNT(*) FROM guest_links l WHERE l.guest_id = gu.id),
 		       gu.created_by_member_id, mm.name, aa.id, aa.name, aa.revoked_at, gu.created_at
 		FROM guests gu
@@ -546,6 +556,7 @@ func (m *Manager) Guests(ctx context.Context, query string) ([]GuestInfo, error)
 	for rows.Next() {
 		var (
 			info         GuestInfo
+			disabledAt   sql.NullString
 			claimedAt    sql.NullString
 			claimName    sql.NullString
 			lockedAt     sql.NullString
@@ -556,11 +567,14 @@ func (m *Manager) Guests(ctx context.Context, query string) ([]GuestInfo, error)
 			agentRevoked sql.NullString
 			createdAt    string
 		)
-		if err := rows.Scan(&info.ID, &info.Name, &claimedAt, &claimName, &lockedAt,
+		if err := rows.Scan(&info.ID, &info.Name, &disabledAt, &claimedAt, &claimName, &lockedAt,
 			&info.LinkCount, &memberID, &memberName, &agentID, &agentName, &agentRevoked, &createdAt); err != nil {
 			return nil, err
 		}
 		var err error
+		if info.DisabledAt, err = nullableTime(disabledAt); err != nil {
+			return nil, err
+		}
 		if info.ClaimedAt, err = nullableTime(claimedAt); err != nil {
 			return nil, err
 		}

@@ -966,6 +966,10 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 | `POST /api/v1/guest-links/claim` | 用 `tbg_` 密钥认领：`{"author_name"}`；成功返回一次 `device_token` 和 6 位 `access_code`，并写 `guest_link_claimed` 事件。有主链接的认领作用于整个访客。 |
 | `POST /api/v1/guest-links/enter` | 用 `tbg_` 密钥凭访问码进入：`{"access_code"}`；成功返回一次新 `device_token`；有主链接签发的设备对这位访客名下全部链接可信。 |
 | `POST /api/v1/guests/{访客id}/home-share-text` | 复制访客主页文案（访客建立者、管理员或名下链接管理人，含成员 Agent）：成功 `{home_url, share_text}`；`home_url` 是 `/h/tbh_…`，可重复生成，文案不含访问码；无关成员 403 `guest_management_not_allowed`。 |
+| `GET /api/v1/guests/{访客id}` | 访客详情（成员与成员 Agent；访客 403 `members_only`）：`{guest, tickets}`；`guest` 与名单项同构并带 `disabled_at`，`tickets` 只列调用者可见范围内的工单和这位访客名下指向它们的链接。 |
+| `POST /api/v1/guests/{访客id}/rename` | 改名：`{"name"}`（去空白后必填，空白 422 `guest_name_required`）。访客建立者、管理员或名下链接管理人可用，成员 Agent 同样可以；无关成员 403 `guest_management_not_allowed`。新回复记新名字，历史署名保持快照；改名不写工单时间线。 |
+| `POST /api/v1/guests/{访客id}/disable` | 停用访客（仅网页成员会话且具备上述管理边界；成员 Agent 403 `web_session_required`，无关成员 403 `guest_management_not_allowed`）。成功 204；重复停用 409 `guest_already_disabled`。 |
+| `POST /api/v1/guests/{访客id}/enable` | 恢复访客（权限同停用）。成功 204；未停用时 409 `guest_not_disabled`。 |
 | `GET /api/v1/guests/{访客id}/reset-access-code/preview` | 重置访问码影响预览（仅成员本人网页会话）：`{guest_id, guest_name, device_count, ticket_count, access_code_locked}`；`device_count` 是将作废的设备数，`ticket_count` 是名下涉及工单数（同一工单多条链接只算一次）。 |
 | `POST /api/v1/guests/{访客id}/reset-access-code` | 访客级重置访问码（仅成员本人网页会话）：作废该访客主页与名下全部链接的设备、清除输错锁定、生成新 6 位码，成功一次性返回 `{guest_id, access_code, home_url, reset_text}`；重置文案含称呼、当前主页地址、新访问码与「勿转发 / Agent 改用新码」提醒。名下每张工单写 `guest_access_code_reset` 事件。支持 `Idempotency-Key`，响应带 `Cache-Control: no-store`。 |
 | `POST /api/v1/guests/{访客id}/reset-home-key` | 重置主页地址（仅成员本人网页会话）：旧主页地址立即失效，成功返回 `{guest_id, home_url, share_text}`（新主页地址与可复制的主页文案，不含访问码）；访问码、设备与名下链接不变，不写工单时间线。支持 `Idempotency-Key`，响应带 `Cache-Control: no-store`。 |
@@ -1045,6 +1049,15 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   `guest_access_code_reset`（带访客名字快照 `note`），并推进全局变更序号；
   主页地址重置不写工单时间线。
   这些事件对访客也可见（访客看不到的只有标签事件）。
+- 停用访客等同其名下链接全部失效，但**不改写各链接自己的撤销与有效期字段**：
+  `revoked_at`、`expires_at` 原样保留，恢复后未过期的链接按原有效期重新生效。
+  停用期间设备凭证（`tbgd_`）、链接密钥（`tbg_`）、主页密钥（`tbh_`）与两类
+  Agent 凭证（`tbg_…:码`、`tbh_…:码`）一律被拒绝（401 `invalid_token`），
+  也不进入认领或输码流程。轮次把“所属访客已停用”视同链接失效：需要访客
+  填写说明的工单按既有规则回到指派人（`why: guest_not_completed`）。
+  停用与恢复在这次操作真正改变链接可用性的每张工单上各写一条
+  `guest_disabled` / `guest_enabled` 时间线事件（`actor` 是操作成员，`to` 是
+  访客名字快照；链接本已撤销或过期的工单不留痕），不发通知。改名不写时间线。
 - 撤销立即生效：之后用这条密钥的任何请求 401 `link_revoked`。已撤销的再撤销是
   幂等 204，不重复记事件。
 - 延期把有效期改到新时刻；**已撤销或已过期的链接不能延期**（409 `link_not_extendable`，

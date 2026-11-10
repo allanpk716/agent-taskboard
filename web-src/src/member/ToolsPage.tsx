@@ -120,6 +120,17 @@ export function ToolsPage() {
           📄 模板维护
           <span className="hint">Markdown 模板 · 版本 · 停用</span>
         </a>
+        <a
+          className="toolrow"
+          href="/guests"
+          onClick={(e) => {
+            e.preventDefault()
+            nav('/guests')
+          }}
+        >
+          👥 访客管理
+          <span className="hint">名单 · 详情 · 改名 · 停用与恢复</span>
+        </a>
       </div>
     </div>
   )

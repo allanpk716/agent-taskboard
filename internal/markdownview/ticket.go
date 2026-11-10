@@ -325,6 +325,10 @@ func eventText(e Event) string {
 			return "合并访客后把访客链接「" + e.Note + "」改归到 " + e.AssignTo
 		}
 		return "把访客链接「" + e.Note + "」归到 " + e.AssignTo
+	case "guest_disabled":
+		return "停用访客「" + e.AssignTo + "」，名下链接一并失效"
+	case "guest_enabled":
+		return "恢复访客「" + e.AssignTo + "」，名下链接按原有效期重新生效"
 	case "brief_revised":
 		return "修订说明（第 " + strconv.FormatInt(e.Revision, 10) + " 版）"
 	case "closed":
