@@ -140,15 +140,7 @@ func (m *Manager) verifyGuestAccessCodeTx(ctx context.Context, tx *sql.Tx,
 	becameLocked, err := guestcredentials.VerifyAccessCode(ctx, tx,
 		link.CredentialHolderID, code, now)
 	if err != nil {
-		mapped := err
-		switch {
-		case errors.Is(err, guestcredentials.ErrAccessCodeRequired):
-			mapped = ErrAccessCodeRequired
-		case errors.Is(err, guestcredentials.ErrAccessCodeInvalid):
-			mapped = ErrAccessCodeInvalid
-		case errors.Is(err, guestcredentials.ErrAccessCodeLocked):
-			mapped = ErrAccessCodeLocked
-		}
+		mapped := ticketGuestCredentialError(err)
 		if becameLocked {
 			actor := Author{LinkID: link.ID, LinkNote: link.Note, AuthorName: link.ClaimName}
 			if eventErr := m.insertLinkEvent(ctx, tx, link.TicketSeq, actor,
@@ -166,6 +158,20 @@ func (m *Manager) verifyGuestAccessCodeTx(ctx context.Context, tx *sql.Tx,
 		}
 	}
 	return becameLocked, nil
+}
+
+// ticketGuestCredentialError 把凭证模块的访问码错误换成 tickets 层的稳定错误。
+func ticketGuestCredentialError(err error) error {
+	switch {
+	case errors.Is(err, guestcredentials.ErrAccessCodeRequired):
+		return ErrAccessCodeRequired
+	case errors.Is(err, guestcredentials.ErrAccessCodeInvalid):
+		return ErrAccessCodeInvalid
+	case errors.Is(err, guestcredentials.ErrAccessCodeLocked):
+		return ErrAccessCodeLocked
+	default:
+		return err
+	}
 }
 
 // ResetGuestAccessCode 让所有已记住设备失效并签发新的访问码，不重新开放链接

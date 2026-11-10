@@ -281,15 +281,7 @@ func verifyGuestHomeAccessCodeTx(ctx context.Context, tx *sql.Tx, home identity.
 	if err == nil {
 		return becameLocked, nil
 	}
-	switch {
-	case errors.Is(err, guestcredentials.ErrAccessCodeRequired):
-		return becameLocked, ErrAccessCodeRequired
-	case errors.Is(err, guestcredentials.ErrAccessCodeInvalid):
-		return becameLocked, ErrAccessCodeInvalid
-	case errors.Is(err, guestcredentials.ErrAccessCodeLocked):
-		return becameLocked, ErrAccessCodeLocked
-	}
-	return becameLocked, err
+	return becameLocked, ticketGuestCredentialError(err)
 }
 
 func trimClaimName(s string) string {
