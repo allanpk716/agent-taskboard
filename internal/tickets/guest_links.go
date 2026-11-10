@@ -46,7 +46,27 @@ var (
 	ErrGuestLinkCipherUnavailable = errors.New("访客链接加密密钥不可用，暂不能直接复制或换新地址")
 	// ErrGuestShareTextUnavailable 表示老链接没有可恢复的密钥，不能直接复制转发文案。
 	ErrGuestShareTextUnavailable = errors.New("这是老访客链接，平台没有保存可恢复的密钥")
+	// ErrInvalidGuestLinkIDs 表示批量归属没有给链接 id、给了非正数或重复 id。
+	ErrInvalidGuestLinkIDs = errors.New("link_ids 必须是非空、不重复的正整数数组")
+	// ErrGuestAccessCodeChoiceNotAllowed 表示当前批量归属情形不接受访问码选项。
+	ErrGuestAccessCodeChoiceNotAllowed = errors.New("这种归属情形不用选择访问码")
+	// ErrGuestAccessCodeChoiceRequired 表示未认领访客归入已认领链接时缺少访问码选项。
+	ErrGuestAccessCodeChoiceRequired = errors.New("访客未认领且所选链接里有已认领链接，需要选择访问码处理方式")
+	// ErrGuestAccessCodeChoiceInvalid 表示 source_link_id 不在所选链接中或那条链接未认领。
+	ErrGuestAccessCodeChoiceInvalid = errors.New("source_link_id 必须是所选链接中一条已认领链接")
+	// ErrGuestAccessCodeGenerateWebSessionRequired 表示生成新访问码只接受网页成员会话。
+	ErrGuestAccessCodeGenerateWebSessionRequired = errors.New("生成新的访问码只接受网页成员会话")
 )
+
+// GuestLinkNotAssignableError 表示批量归属选中了已撤销或已过期的链接。
+type GuestLinkNotAssignableError struct{ Reason string }
+
+func (e *GuestLinkNotAssignableError) Error() string {
+	if e.Reason == "revoked" {
+		return "所选访客链接已被撤销，不能归属"
+	}
+	return "所选访客链接已过期，不能归属"
+}
 
 // LinkNotExtendableError 是对已撤销或已过期的链接延期（409）。
 type LinkNotExtendableError struct {
@@ -85,13 +105,28 @@ func (spec *GuestLinkSpec) validateCreate(now time.Time) (time.Time, error) {
 		return time.Time{}, err
 	}
 	spec.NewGuestName = strings.TrimSpace(spec.NewGuestName)
-	if spec.GuestID == 0 && spec.NewGuestName == "" {
-		return time.Time{}, ErrGuestRequired
+	if spec.GuestID == 0 {
+		var err error
+		spec.NewGuestName, err = NormalizeNewGuestName(spec.NewGuestName)
+		if err != nil {
+			return time.Time{}, err
+		}
 	}
 	if spec.GuestID != 0 && spec.NewGuestName != "" {
 		return time.Time{}, ErrGuestBothProvided
 	}
 	return expiresAt, nil
+}
+
+// NormalizeNewGuestName 校验并规范化新建访客的名字：去空白后必填。
+// 建链接时当场新建（new_guest_name）与单独新建访客（POST /api/v1/guests）
+// 共用这一条规则，保证两个入口的名字约束与错误完全一致。
+func NormalizeNewGuestName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", ErrGuestRequired
+	}
+	return name, nil
 }
 
 // validate 校验并算出到期时刻（不检查备注：延期请求不带备注）。
@@ -354,32 +389,62 @@ func (m *Manager) guestForNewLinkTx(ctx context.Context, tx *sql.Tx, actor Autho
 		}
 		claimed = claimedAt.Valid
 	} else {
-		var agentID any
-		if actor.AgentID != 0 {
-			agentID = actor.AgentID
-		}
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO guests (name, created_by_member_id, created_by_agent_id, created_at)
-			VALUES (?, ?, ?, ?) RETURNING id`,
-			spec.NewGuestName, actor.MemberID, agentID, now.Format(time.RFC3339Nano)).
-			Scan(&guestID); err != nil {
-			return 0, "", 0, false, fmt.Errorf("写入访客失败：%w", err)
+		var err error
+		guestID, holderID, err = m.createGuestTx(ctx, tx, actor, spec.NewGuestName, now)
+		if err != nil {
+			return 0, "", 0, false, err
 		}
 		guestName = spec.NewGuestName
+		return guestID, guestName, holderID, claimed, nil
 	}
+	holderID, err = m.guestCredentialHolderTx(ctx, tx, guestID, now)
+	if err != nil {
+		return 0, "", 0, false, err
+	}
+	return guestID, guestName, holderID, claimed, nil
+}
+
+// createGuestTx 在调用方事务里写入一位新访客（名字须已校验）并补齐其
+// 凭证持有者，返回访客 id 与持有者 id。建链接当场新建与单独新建访客
+// （POST /api/v1/guests）共用，建档规则只有这一份。
+func (m *Manager) createGuestTx(ctx context.Context, tx *sql.Tx, actor Author,
+	name string, now time.Time) (int64, int64, error) {
+	var agentID any
+	if actor.AgentID != 0 {
+		agentID = actor.AgentID
+	}
+	var guestID int64
+	if err := tx.QueryRowContext(ctx, `
+		INSERT INTO guests (name, created_by_member_id, created_by_agent_id, created_at)
+		VALUES (?, ?, ?, ?) RETURNING id`,
+		name, actor.MemberID, agentID, now.Format(time.RFC3339Nano)).
+		Scan(&guestID); err != nil {
+		return 0, 0, fmt.Errorf("写入访客失败：%w", err)
+	}
+	holderID, err := m.guestCredentialHolderTx(ctx, tx, guestID, now)
+	if err != nil {
+		return 0, 0, err
+	}
+	return guestID, holderID, nil
+}
+
+// guestCredentialHolderTx 返回访客的凭证持有者，不存在时当场创建。
+func (m *Manager) guestCredentialHolderTx(ctx context.Context, tx *sql.Tx, guestID int64,
+	now time.Time) (int64, error) {
+	var holderID int64
 	if err := tx.QueryRowContext(ctx,
 		`SELECT id FROM guest_credential_holders WHERE owner_type = 'guest' AND owner_id = ?`, guestID).
 		Scan(&holderID); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			return 0, "", 0, false, err
+			return 0, err
 		}
 		holder, err := guestcredentials.CreateGuestHolder(ctx, tx, guestID, now)
 		if err != nil {
-			return 0, "", 0, false, err
+			return 0, err
 		}
 		holderID = holder.ID
 	}
-	return guestID, guestName, holderID, claimed, nil
+	return holderID, nil
 }
 
 // GuestLinkInfo 是访客链接的列表项：不含明文密钥。keyCiphertext 只在服务端
@@ -526,13 +591,19 @@ type GuestInfo struct {
 	ClaimName          string
 	AccessCodeLockedAt *time.Time
 	LinkCount          int
+	PendingCount       int
+	TicketCount        int
+	LastContactAt      *time.Time
+	LastSentAt         *time.Time
+	DeviceCount        int
 	CreatedBy          Author
 	CreatedAt          time.Time
 }
 
 // Guests 列出部门访客名单；query 非空时按名字包含匹配（HTTP 层保证只有
 // 成员和成员 Agent 能调用）。按名字排序，成员和 Agent 都能稳定查找。
-func (m *Manager) Guests(ctx context.Context, query string) ([]GuestInfo, error) {
+// 每行附通讯录式名单（#345）需要的最近联系与待处理数。
+func (m *Manager) Guests(ctx context.Context, viewer identity.Viewer, query string) ([]GuestInfo, error) {
 	query = strings.TrimSpace(query)
 	where := " WHERE gu.merged_into_guest_id IS NULL"
 	args := []any{}
@@ -540,7 +611,14 @@ func (m *Manager) Guests(ctx context.Context, query string) ([]GuestInfo, error)
 		where += " AND gu.name LIKE ? ESCAPE '\\'"
 		args = append(args, "%"+escapeLike(query)+"%")
 	}
-	return m.guestsQuery(ctx, where, args)
+	guests, err := m.guestsQuery(ctx, where, args)
+	if err != nil || len(guests) == 0 {
+		return guests, err
+	}
+	if err := m.fillGuestListActivity(ctx, viewer, guests); err != nil {
+		return nil, err
+	}
+	return guests, nil
 }
 
 // guestsQuery 执行访客名单查询；where/args 由调用方拼好（名单搜索与按 id
@@ -550,6 +628,7 @@ func (m *Manager) guestsQuery(ctx context.Context, where string, args []any) ([]
 		SELECT gu.id, gu.name, gu.disabled_at, gu.merged_into_guest_id, gu.merged_at,
 		       h.claimed_at, h.claim_name, h.access_code_locked_at,
 		       (SELECT COUNT(*) FROM guest_links l WHERE l.guest_id = gu.id),
+		       (SELECT COUNT(*) FROM guest_credential_devices d WHERE d.credential_holder_id = h.id),
 		       gu.created_by_member_id, mm.name, aa.id, aa.name, aa.revoked_at, gu.created_at
 		FROM guests gu
 		JOIN guest_credential_holders h ON h.owner_type = 'guest' AND h.owner_id = gu.id
@@ -579,7 +658,7 @@ func (m *Manager) guestsQuery(ctx context.Context, where string, args []any) ([]
 		)
 		if err := rows.Scan(&info.ID, &info.Name, &disabledAt, &mergedInto, &mergedAt,
 			&claimedAt, &claimName, &lockedAt,
-			&info.LinkCount, &memberID, &memberName, &agentID, &agentName, &agentRevoked, &createdAt); err != nil {
+			&info.LinkCount, &info.DeviceCount, &memberID, &memberName, &agentID, &agentName, &agentRevoked, &createdAt); err != nil {
 			return nil, err
 		}
 		var err error

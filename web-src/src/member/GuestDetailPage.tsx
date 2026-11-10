@@ -1,6 +1,6 @@
-// 访客详情（#332）：名字、认领与停用状态、可见范围内的工单和链接；
-// 集中提供改名、停用/恢复、复制主页文案。访客级重置访问码与重置主页地址
-// 的入口由 #331 接入时加在这里的操作区。
+// 访客详情档案页（#338）：档案头部 + 工单/访问/管理三个标签。
+// 工单只列当前成员可见范围，轮到访客的置顶并注明原因；访问集中访问码、
+// 设备与主页操作；管理保留改名、停用/恢复与合并（规则不变）。
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError } from '../api'
 import {
@@ -9,6 +9,7 @@ import {
   enableGuest,
   fetchGuestDetail,
   fetchGuests,
+  fetchUnassignedGuestLinks,
   mergeGuest,
   previewGuestMerge,
   previewGuestAccessCodeReset,
@@ -19,6 +20,7 @@ import {
   type GuestDetail,
   type GuestMergePreview,
   type GuestSummary,
+  type UnassignedGuestLink,
 } from './memberApi'
 import { ResetAccessResultDialog } from './ResetAccessDialog'
 import { guestLinkStatusText } from './guestLinkStatus'
@@ -28,6 +30,7 @@ import { absoluteUrl, fmtDateCN } from '../shared/format'
 export function GuestDetailPage({ guestId }: { guestId: string }) {
   const id = Number(guestId)
   const [detail, setDetail] = useState<GuestDetail | null>(null)
+  const [tab, setTab] = useState<'tickets' | 'access' | 'manage'>('tickets')
   const [error, setError] = useState<string | null>(null)
   const [renaming, setRenaming] = useState(false)
   const [newName, setNewName] = useState('')
@@ -46,6 +49,9 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
   const [confirmMerge, setConfirmMerge] = useState(false)
   const [codePreview, setCodePreview] = useState<GuestAccessCodeResetPreview | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
+  const [homeURL, setHomeURL] = useState<string | null>(null)
+  const [homeURLError, setHomeURLError] = useState<string | null>(null)
+  const [homeURLBusy, setHomeURLBusy] = useState(false)
   const [resetResult, setResetResult] = useState<{
     action: 'code' | 'home'
     url: string
@@ -53,6 +59,7 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
     accessCode?: string
     resetText: string
   } | null>(null)
+  const [possibleLinks, setPossibleLinks] = useState<UnassignedGuestLink[]>([])
 
   const refresh = useCallback(() => {
     fetchGuestDetail(id)
@@ -63,6 +70,31 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  // 主页地址带凭证，不随详情常驻展示；成员显式要求时才取回。
+  useEffect(() => {
+    setHomeURL(null)
+    setHomeURLError(null)
+  }, [id])
+
+  // 工单标签只提示名字相近且当前成员可见的无主老链接；推荐不自动归属。
+  useEffect(() => {
+    if (!detail || detail.guest.disabled_at || detail.guest.merged_at) {
+      setPossibleLinks([])
+      return
+    }
+    let alive = true
+    fetchUnassignedGuestLinks({ name: detail.guest.name })
+      .then((links) => {
+        if (alive) setPossibleLinks(links.filter((link) => link.possible_person))
+      })
+      .catch(() => {
+        if (alive) setPossibleLinks([])
+      })
+    return () => {
+      alive = false
+    }
+  }, [detail])
 
   // 打开重置访问码确认时先取影响预览（作废设备数 / 涉及工单数）。
   useEffect(() => {
@@ -181,6 +213,20 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
     }
   }
 
+  async function revealHome() {
+    if (homeURL || homeURLBusy) return
+    setHomeURLBusy(true)
+    try {
+      const result = await copyGuestHomeText(id)
+      setHomeURL(absoluteUrl(result.home_url))
+      setHomeURLError(null)
+    } catch (e) {
+      setHomeURLError(e instanceof ApiError ? `${e.code}：${e.message}` : '读取主页地址失败')
+    } finally {
+      setHomeURLBusy(false)
+    }
+  }
+
   async function toggleDisabled(enable: boolean) {
     setBusy(true)
     try {
@@ -266,13 +312,33 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
     return <ResetAccessResultDialog result={resetResult} onClose={() => setResetResult(null)} />
   }
 
+  const accessCodeStatus = merged
+    ? '已失效'
+    : disabled
+      ? '已停用'
+      : guest.access_code_locked_at
+        ? '已认领 · 输码已锁定'
+        : guest.claimed_at
+          ? '已认领'
+          : '未认领'
+
   return (
-    <div className="bpage">
-      <div className="mcard" style={{ marginTop: 12 }}>
-        <div className="sec-t" style={{ marginTop: 0 }}>
-          {guest.name}
-          {disabled && <span className="badge closed">已停用</span>}
-          {merged && <span className="badge closed">已并入</span>}
+    <div className="bpage guest-detail">
+      <div className="mcard guest-profile">
+        <h2 className="guest-profile-name">{guest.name}</h2>
+        <div className="guest-profile-status">
+          {merged ? (
+            <span className="badge closed">已并入</span>
+          ) : disabled ? (
+            <span className="badge closed">已停用</span>
+          ) : guest.claimed_at ? (
+            <span className="badge open">已认领</span>
+          ) : (
+            <span className="badge">未认领</span>
+          )}
+          {!merged && !disabled && guest.access_code_locked_at && (
+            <span className="badge myturn">访问码已锁定</span>
+          )}
         </div>
         <div className="hint">
           {merged
@@ -285,117 +351,262 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
           {' · '}
           {guest.link_count} 条链接
         </div>
-        {!merged && (
-        <div className="guest-actions">
-          <button className="btn ghost" onClick={() => void copyHome()}>
-            复制主页文案
-          </button>
-          <button
-            className="btn ghost"
-            onClick={() => {
-              setCodePreview(null)
-              setPreviewError(null)
-              setConfirmCodeReset(true)
-            }}
-          >
-            重置访问码
-          </button>
-          <button className="btn ghost" onClick={() => setConfirmHomeReset(true)}>
-            重置主页地址
-          </button>
-          <button
-            className="btn ghost"
-            onClick={() => {
-              setMergeTargets(null)
-              setMergeTargetsError(null)
-              setMergeTargetID(0)
-              setMergePreview(null)
-              setMergePreviewError(null)
-              setConfirmMerge(false)
-              setMergeQuery('')
-              setMergeOpen(true)
-            }}
-            disabled={busy}
-          >
-            合并到另一位访客
-          </button>
-          <button
-            className="btn ghost"
-            onClick={() => {
-              setNewName(guest.name)
-              setRenaming(true)
-            }}
-          >
-            改名
-          </button>
-          {disabled ? (
-            <button className="btn ghost" onClick={() => setConfirmEnable(true)} disabled={busy}>
-              恢复
-            </button>
-          ) : (
-            <button className="btn ghost danger" onClick={() => setConfirmDisable(true)} disabled={busy}>
-              停用
-            </button>
-          )}
-        </div>
-        )}
-        {renaming && (
-          <div className="inrow" style={{ marginTop: 10 }}>
-            <input
-              aria-label="访客新名字"
-              value={newName}
-              placeholder="如：检验科-张三"
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void submitRename()}
-            />
-            <button className="btn" onClick={() => void submitRename()} disabled={busy}>
-              保存
-            </button>
-            <button className="btn ghost" onClick={() => setRenaming(false)}>
-              取消
-            </button>
-          </div>
-        )}
-        <div className="hint">
-          只有访客建立者、管理员或名下链接的管理人可以管理这位访客；停用和恢复只能在网页上操作。
-        </div>
       </div>
 
-      <div className="mcard">
-        <div className="sec-t" style={{ marginTop: 0 }}>
-          名下工单 <span className="hint">只列你可见范围内的工单</span>
-        </div>
-        {detail.tickets.length === 0 ? (
-          <div className="hint">你可见范围内没有这位访客名下的工单。</div>
-        ) : (
-          detail.tickets.map((t) => (
-            <div className="guest-ticket" key={t.number}>
-              <a
-                href={`/t/${t.number}`}
-                onClick={(e) => {
-                  e.preventDefault()
-                  nav(`/t/${t.number}`)
-                }}
-              >
-                <span className={`badge ${t.status === 'closed' ? 'closed' : 'open'}`}>
-                  {t.status === 'closed' ? '已关闭' : '开启'}
-                </span>
-                {t.title}
-              </a>
-              <div className="guest-links">
-                {t.links.map((l) => (
-                  <span className="hint" key={l.id}>
-                    「{l.note}」{l.can_edit_brief ? ' · 可填写说明' : ''}
-                    {' · '}
-                    {guestLinkStatusText(l)}
-                    {!l.revoked_at ? ` · 到 ${fmtDateCN(l.expires_at)}` : ''}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))
-        )}
+      <div className="guest-tabs" role="tablist" aria-label="访客档案">
+        {(
+          [
+            ['tickets', '工单'],
+            ['access', '访问'],
+            ['manage', '管理'],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            type="button"
+            key={key}
+            role="tab"
+            aria-selected={tab === key}
+            data-testid={`guest-tab-${key}`}
+            onClick={() => setTab(key)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
+
+      {tab === 'tickets' && (
+        <div className="mcard" role="tabpanel" data-testid="guest-panel-tickets">
+          {possibleLinks.length > 0 && (
+            <div className="guest-possible-links" data-testid="guest-possible-links">
+              <span>
+                还有 {possibleLinks.length} 条老工单可能是 TA 的 →{' '}
+              </span>
+              <button className="btn ghost" onClick={() => nav(`/guests/${id}/assign`)}>
+                归进来
+              </button>
+            </div>
+          )}
+          <div className="actrow guest-import-old">
+            <button className="btn ghost" onClick={() => nav(`/guests/${id}/assign`)}>
+              把以前的工单归进来
+            </button>
+          </div>
+          <div className="sec-t" style={{ marginTop: 0 }}>
+            名下工单{' '}
+            <span className="hint">
+              {detail.tickets.length} 张 · 只列你可见范围内的工单
+            </span>
+          </div>
+          {detail.tickets.length === 0 ? (
+            <div className="hint">你可见范围内没有这位访客名下的工单。</div>
+          ) : (
+            detail.tickets.map((t) => (
+              <div className="guest-ticket" key={t.number} data-ticket-number={t.number}>
+                {t.waiting_on_guest && (
+                  <div className="guest-turn">
+                    <span className="badge myturn">轮到访客</span>
+                    <span className="hint">{t.waiting_reason}</span>
+                  </div>
+                )}
+                <a
+                  href={`/t/${t.number}`}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    nav(`/t/${t.number}`)
+                  }}
+                >
+                  <span className={`badge ${t.status === 'closed' ? 'closed' : 'open'}`}>
+                    {t.status === 'closed' ? '已关闭' : '开启'}
+                  </span>
+                  {t.title}
+                </a>
+                <div className="guest-links">
+                  {t.links.map((l) => (
+                    <span className="hint" key={l.id}>
+                      「{l.note}」{l.can_edit_brief ? ' · 可填写说明' : ''}
+                      {' · '}
+                      {guestLinkStatusText(l)}
+                      {!l.revoked_at ? ` · 到 ${fmtDateCN(l.expires_at)}` : ''}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {tab === 'access' && (
+        <div role="tabpanel" data-testid="guest-panel-access">
+          <div className="mcard">
+            <div className="sec-t" style={{ marginTop: 0 }}>
+              访问码 <span className="hint">{accessCodeStatus}</span>
+            </div>
+            <div className="kv">
+              <span>状态</span>
+              <b>{accessCodeStatus}</b>
+            </div>
+            <div className="kv">
+              <span>已登录设备</span>
+              <b>{merged ? '0 台（已失效）' : `${guest.device_count} 台`}</b>
+            </div>
+            <div className="kv">
+              <span>适用范围</span>
+              <b>这位访客名下所有访客链接</b>
+            </div>
+            {!merged && (
+              <div className="actrow">
+                <button
+                  className="btn ghost"
+                  onClick={() => {
+                    setCodePreview(null)
+                    setPreviewError(null)
+                    setConfirmCodeReset(true)
+                  }}
+                >
+                  重置访问码
+                </button>
+              </div>
+            )}
+            <div className="hint">
+              重置后这位访客的全部已登录设备作废，新访问码只显示一次；主页地址和链接不变。
+            </div>
+          </div>
+          <div className="mcard">
+            <div className="sec-t" style={{ marginTop: 0 }}>
+              访客主页 <span className="hint">长期地址</span>
+            </div>
+            <div className="hint">长期有效的带凭证地址，列出名下链接仍有效的工单。</div>
+            <div className="kv">
+              <span>主页地址</span>
+              {homeURL ? (
+                <b data-testid="guest-home-url">{homeURL}</b>
+              ) : (
+                <span className="hint">{merged ? '已失效' : '按需显示'}</span>
+              )}
+            </div>
+            {homeURLError && <div className="ecard">{homeURLError}</div>}
+            {!merged && (
+              <div className="actrow">
+                {!homeURL && (
+                  <button className="btn ghost" disabled={homeURLBusy} onClick={() => void revealHome()}>
+                    {homeURLBusy ? '正在读取…' : '显示主页地址'}
+                  </button>
+                )}
+                {homeURL && (
+                  <button
+                    className="btn ghost"
+                    onClick={() => {
+                      void copyText(homeURL).then((ok) =>
+                        toast(ok ? '✓ 主页地址已复制' : '复制失败，请手动选择文字复制'),
+                      )
+                    }}
+                  >
+                    复制主页地址
+                  </button>
+                )}
+                <button className="btn ghost" onClick={() => void copyHome()}>
+                  复制主页文案
+                </button>
+                <button className="btn ghost" onClick={() => setConfirmHomeReset(true)}>
+                  重置主页地址
+                </button>
+              </div>
+            )}
+            <div className="hint">
+              复制的是发给访客的转发文案；文案不包含访问码。重置后旧主页地址立即失效。
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === 'manage' && (
+        <div className="mcard" role="tabpanel" data-testid="guest-panel-manage">
+          <div className="sec-t" style={{ marginTop: 0 }}>基础管理</div>
+          <div className="guest-manage-row">
+            <div className="guest-manage-top">
+              <strong>改名</strong>
+              {!renaming && (
+                <button
+                  className="btn ghost"
+                  onClick={() => {
+                    setNewName(guest.name)
+                    setRenaming(true)
+                  }}
+                >
+                  改名
+                </button>
+              )}
+            </div>
+            <p>名字写在访客上，改名后名下所有访客链接一起沿用新名字；历史署名保持原样。</p>
+            {renaming && (
+              <div className="inrow" style={{ marginTop: 10 }}>
+                <input
+                  aria-label="访客新名字"
+                  value={newName}
+                  placeholder="如：检验科-张三"
+                  onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && void submitRename()}
+                />
+                <button className="btn" onClick={() => void submitRename()} disabled={busy}>
+                  保存
+                </button>
+                <button className="btn ghost" onClick={() => setRenaming(false)}>
+                  取消
+                </button>
+              </div>
+            )}
+          </div>
+          {!merged && (
+            <div className="guest-manage-row">
+              <div className="guest-manage-top">
+                <strong>{disabled ? '恢复' : '停用'}</strong>
+                {disabled ? (
+                  <button className="btn ghost" onClick={() => setConfirmEnable(true)} disabled={busy}>
+                    恢复
+                  </button>
+                ) : (
+                  <button className="btn ghost danger" onClick={() => setConfirmDisable(true)} disabled={busy}>
+                    停用
+                  </button>
+                )}
+              </div>
+              <p>
+                {disabled
+                  ? '恢复后主页重新可用，名下未撤销、未过期的链接按原有效期重新生效。'
+                  : '停用后访客主页和名下全部链接一起失效；需要访客补充的工单回到跟进人。'}
+              </p>
+            </div>
+          )}
+          {!merged && (
+            <div className="guest-manage-row">
+              <div className="guest-manage-top">
+                <strong>合并到另一位访客</strong>
+                <button
+                  className="btn ghost"
+                  onClick={() => {
+                    setMergeTargets(null)
+                    setMergeTargetsError(null)
+                    setMergeTargetID(0)
+                    setMergePreview(null)
+                    setMergePreviewError(null)
+                    setConfirmMerge(false)
+                    setMergeQuery('')
+                    setMergeOpen(true)
+                  }}
+                  disabled={busy}
+                >
+                  合并到另一位访客
+                </button>
+              </div>
+              <p>把这位访客的链接并入目标访客；来源访客的访问码和设备作废，合并不能撤回。</p>
+            </div>
+          )}
+          <div className="hint">
+            只有访客建立者、管理员或名下链接的管理人可以管理这位访客；停用和恢复只能在网页上操作。
+          </div>
+        </div>
+      )}
 
       {confirmDisable && (
         <Confirm
@@ -544,6 +755,19 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
           )}
         </Modal>
       )}
+      {/* 底部固定动作（#340，用户故事 6）：带访客 id 进建单向导并跳过选访客。 */}
+      <div className="guest-detail-footer">
+        <a
+          className="btn big"
+          href={`/tickets/new?guest=${guest.id}`}
+          onClick={(e) => {
+            e.preventDefault()
+            nav(`/tickets/new?guest=${guest.id}`)
+          }}
+        >
+          ✉️ 给 TA 发新工单
+        </a>
+      </div>
     </div>
   )
 }

@@ -9,7 +9,6 @@ import type { MemberTicket } from './memberApi'
 import type { ArchivedTicket, Attachment, DraftView } from '../shared/types'
 import {
   addCollaborator,
-  assignGuestLinkToGuest,
   assignTicket,
   changeLabels,
   closeTicket,
@@ -48,6 +47,7 @@ import { Confirm, Modal, copyText, invalidate, nav, toast, useLocationSearch } f
 import { HandoffDialog, PeerHandoffDialog, type HandoffPeer } from './HandoffDialog'
 import { ResetAccessDialog, type ResetAccessAction, type ResetAccessStart } from './ResetAccessDialog'
 import { GuestPicker, guestSelectionBody, type GuestSelection } from './GuestPicker'
+import { GuestAssignSheet } from './GuestAssignSheet'
 import { guestLinkStatusText } from './guestLinkStatus'
 import { LabelChips, chipClass, turnLabel } from './TicketsPage'
 import { detailListSource, filtersFromSearch, toQuery, toggleLabelCondition } from './listFilters'
@@ -501,9 +501,7 @@ function LinksDialog({
   const [canEdit, setCanEdit] = useState(false)
   const [created, setCreated] = useState<{ url: string } | null>(null)
   const [err, setErr] = useState<string | null>(null)
-  const [assigningId, setAssigningId] = useState<number | null>(null)
-  const [assignment, setAssignment] = useState<GuestSelection | null>(null)
-  const [assignErr, setAssignErr] = useState<string | null>(null)
+  const [assignSheet, setAssignSheet] = useState<GuestLink | null>(null)
   const [extendDates, setExtendDates] = useState<Record<number, string>>({}) // 每条链接「延期到该日」的日期
   const canManageLinks = ticket.viewer.can?.manage_guest_links !== false
   const shareActions = useGuestLinkShareActions(ticket.number, (link) =>
@@ -547,54 +545,17 @@ function LinksDialog({
     }
   }
 
-  async function assignLegacy(id: number) {
-    if (!assignment) {
-      setAssignErr('guest_required：选择一位已有访客，或填写新访客名字')
-      return
-    }
-    try {
-      const assigned = await assignGuestLinkToGuest(ticket.number, id, guestSelectionBody(assignment))
-      toast(`✓ 已归到「${assigned.guest_name ?? '访客'}」`)
-      setAssigningId(null)
-      setAssignment(null)
-      setAssignErr(null)
-      onChanged()
-      await reload()
-    } catch (e) {
-      setAssignErr(e instanceof ApiError ? `${e.code}：${e.message}` : '归属失败，请重试')
-    }
-  }
-
   function renderAssignEntry(link: GuestLink) {
     if (!canManageLinks || link.guest_id) return null
-    const open = assigningId === link.id
     return (
-      <>
-        <button
-          className="btn sm ghost"
-          onClick={() => {
-            setAssigningId(open ? null : link.id)
-            setAssignment(null)
-            setAssignErr(null)
-          }}
-        >
-          归到访客
-        </button>{' '}
-        {open && (
-          <div className="assign-guest-box">
-            <GuestPicker value={assignment} onChange={setAssignment} onError={setAssignErr} />
-            {assignErr && <div className="errbox">{assignErr}</div>}
-            <div className="inrow">
-              <button className="btn ghost sm" onClick={() => setAssigningId(null)}>
-                取消
-              </button>
-              <button className="btn sm" onClick={() => void assignLegacy(link.id)}>
-                确认归属
-              </button>
-            </div>
-          </div>
-        )}
-      </>
+      <button
+        className="btn sm ghost"
+        onClick={() => {
+          setAssignSheet(assignSheet?.id === link.id ? null : link)
+        }}
+      >
+        归到访客
+      </button>
     )
   }
 
@@ -755,6 +716,18 @@ function LinksDialog({
           创建
         </button>
       </div>
+      {assignSheet && (
+        <GuestAssignSheet
+          ticketNumber={ticket.number}
+          ticketTitle={ticket.title}
+          currentLink={assignSheet}
+          onClose={() => setAssignSheet(null)}
+          onAssigned={() => {
+            onChanged()
+            void reload()
+          }}
+        />
+      )}
     </Modal>
   )
 }

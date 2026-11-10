@@ -762,6 +762,15 @@ export interface GuestSummary {
   claim_name?: string
   access_code_locked_at?: string
   link_count: number
+  /** 待处理数：当前轮到访客的工单数（按查看者可见范围过滤）。 */
+  pending_count: number
+  /** 名下工单数：按查看者可见范围过滤。 */
+  ticket_count: number
+  /** 最近联系：访客最近一次经名下链接打开查看者可见工单的时间。 */
+  last_contact_at?: string
+  /** 最近发送：查看者可见工单上访客链接的最近创建时间。 */
+  last_sent_at?: string
+  device_count: number
   created_at: string
 }
 
@@ -779,6 +788,8 @@ export interface GuestDetailTicket {
   number: string
   title: string
   status: string
+  waiting_on_guest: boolean
+  waiting_reason: string
   api: string
   links: GuestDetailLink[]
 }
@@ -786,6 +797,53 @@ export interface GuestDetailTicket {
 export interface GuestDetail {
   guest: GuestSummary & { created_by?: { member?: { name: string }; agent?: { name: string } | null } }
   tickets: GuestDetailTicket[]
+}
+
+export interface UnassignedGuestLink {
+  id: number
+  ticket_number: string
+  ticket_title: string
+  note: string
+  claimed: boolean
+  claim_name: string
+  last_used_at?: string | null
+  possible_person: boolean
+}
+
+export interface GuestLinkAssignmentPreview {
+  guest_id: number
+  guest_name: string
+  guest_claimed: boolean
+  link_count: number
+  ticket_count: number
+  claimed_link_count: number
+  device_count: number
+  access_code_action: GuestAccessCodeAction
+  source_link_ids: number[]
+  source_link_id?: number
+  source_device_count: number
+  invalidated_device_count: number
+}
+
+export type GuestAccessCodeChoiceBody =
+  | { source_link_id: number }
+  | 'generate'
+
+export type GuestAccessCodeAction =
+  | 'keep_guest'
+  | 'remain_unclaimed'
+  | 'choice_required'
+  | 'reuse_source_link'
+  | 'generate'
+
+export interface GuestLinkAssignmentResult {
+  guest_id: number
+  guest_name: string
+  link_count: number
+  ticket_count: number
+  access_code_action: Exclude<GuestAccessCodeAction, 'choice_required'>
+  access_code?: string
+  links: Array<{ id: number; ticket_number: string; ticket_title: string }>
 }
 
 /** 部门访客名单：按名字包含搜索（#328）。 */
@@ -800,6 +858,14 @@ export async function fetchGuests(query = ''): Promise<GuestSummary[]> {
 export async function fetchGuestLinks(number: string): Promise<GuestLink[]> {
   const body = await api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links`)
   return body.links as GuestLink[]
+}
+
+/** 单独新建访客（#339）：不建工单、不带链接；新访客未认领、名下没有链接。 */
+export async function createGuest(name: string): Promise<{ guest: GuestSummary }> {
+  return api('/api/v1/guests', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
 }
 
 export async function createGuestLink(
@@ -838,6 +904,43 @@ export async function copyGuestHomeText(
 /** 访客详情：工单与链接已按当前成员可见范围过滤。 */
 export async function fetchGuestDetail(guestId: number): Promise<GuestDetail> {
   return api(`/api/v1/guests/${guestId}`)
+}
+
+/** 无主老链接列表：q 搜索；name 会把名字相近的链接排前并标记。 */
+export async function fetchUnassignedGuestLinks(
+  opts: { q?: string; name?: string } = {},
+): Promise<UnassignedGuestLink[]> {
+  const params = new URLSearchParams()
+  if (opts.q) params.set('q', opts.q)
+  if (opts.name) params.set('name', opts.name)
+  const suffix = params.toString() ? `?${params}` : ''
+  const body = await api(`/api/v1/guest-links/unassigned${suffix}`)
+  return body.links as UnassignedGuestLink[]
+}
+
+/** 批量归属影响预览：choice_required 时带所选访问码方案，后果随选项变化。 */
+export async function previewGuestLinkAssignment(
+  guestId: number,
+  linkIds: number[],
+  accessCode?: GuestAccessCodeChoiceBody,
+): Promise<GuestLinkAssignmentPreview> {
+  const params = new URLSearchParams({ link_ids: linkIds.join(',') })
+  if (accessCode === 'generate') params.set('access_code', 'generate')
+  else if (accessCode) params.set('source_link_id', String(accessCode.source_link_id))
+  return api(`/api/v1/guests/${guestId}/assign-links/preview?${params}`)
+}
+
+/** 批量归属无主老链接；需要选择访问码时必须带 source_link_id 或 generate。 */
+export async function assignGuestLinks(
+  guestId: number,
+  linkIds: number[],
+  accessCode?: GuestAccessCodeChoiceBody,
+): Promise<GuestLinkAssignmentResult> {
+  return api(`/api/v1/guests/${guestId}/assign-links`, {
+    method: 'POST',
+    body: JSON.stringify({ link_ids: linkIds, ...(accessCode ? { access_code: accessCode } : {}) }),
+    idempotencyKey: crypto.randomUUID(),
+  })
 }
 
 /** 给访客改名：访客建立者、管理员或名下链接管理人可用，成员 Agent 同样可用。 */
@@ -965,18 +1068,6 @@ export async function mergeGuest(
     method: 'POST',
     body: JSON.stringify({ target_guest_id: targetGuestId }),
     idempotencyKey: crypto.randomUUID(),
-  })
-}
-
-/** 把上线前的无主老链接归到已有访客或新建访客名下。 */
-export async function assignGuestLinkToGuest(
-  number: string,
-  id: number,
-  body: { guest_id?: number; new_guest_name?: string },
-): Promise<GuestLink> {
-  return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}/assign-guest`, {
-    method: 'POST',
-    body: JSON.stringify(body),
   })
 }
 

@@ -1,13 +1,16 @@
-// 建单（#41）：第一步选「用模板」或「自由格式」；第二步填表单——模板工单
-// 复用 #39 的 FieldForm（按字段分区、维度字段可按别名搜索、统一附件区，
-// 附件先暂存本机，建单后立即上传并挂到整张工单的附件）；自由格式一整块
-// Markdown 说明。维度标签先经 resolve 换成标准值（建单接口只收标准值）；
-// 缺必填只弹确认、不拦截（spec 用户故事 6）；创建指派给同事后嵌入
-// 「发给指派人」交接面板。
+// 建单（#41、#340）：第一步选「我自己填」或「发链接请人填写」。
+// 自己填：选模板 → 表单——模板工单复用 #39 的 FieldForm（按字段分区、
+// 维度字段可按别名搜索、统一附件区，附件先暂存本机，建单后立即上传并挂到
+// 整张工单的附件）；自由格式一整块 Markdown 说明。维度标签先经 resolve 换
+// 成标准值（建单只收标准值）；缺必填只弹确认、不拦截（spec 用户故事 6）；
+// 创建指派给同事后嵌入「发给指派人」交接面板。
+// 发给访客（#340）：先选访客（支持 /tickets/new?guest=<id> 带入并跳过）→
+// 选模板 → 填写（顶部固定“发给：某某”）→ 完成页转发文案。
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, api } from '../api'
 import type { TemplateField } from '../shared/types'
 import {
+  fetchGuestDetail,
   fetchMembers,
   fetchTicket,
   uploadMemberAttachment,
@@ -16,6 +19,7 @@ import {
   type TemplateSummary,
 } from './memberApi'
 import { FeedbackRequestPage } from './FeedbackRequestPage'
+import { GuestPickerStep, type WizardGuest } from './GuestPickerStep'
 import { HandoffPanel } from './HandoffDialog'
 import { Confirm, invalidate, nav, toast } from './ui'
 import { chipClass } from './TicketsPage'
@@ -47,6 +51,7 @@ type Filler = 'self' | 'guest'
 
 type Step =
   | { phase: 'who' }
+  | { phase: 'guestPick' }
   | { phase: 'pick'; filler: Filler }
   | { phase: 'guest'; template: TemplateSummary | null }
   | { phase: 'form'; template: TemplateDetail | null }
@@ -64,17 +69,60 @@ const KIND_TEXT: Record<string, string> = { task: '任务', report: '反馈' }
 export function NewTicketPage({
   me,
   initialFiller = 'self',
+  initialGuestId,
   onPhaseTitleChange,
 }: {
   me: Me
   initialFiller?: Filler
+  initialGuestId?: number
   onPhaseTitleChange?: (title: string) => void
 }) {
-  const [step, setStep] = useState<Step>(initialFiller === 'guest' ? { phase: 'pick', filler: 'guest' } : { phase: 'who' })
+  // ?guest=<id>（访客详情 / 新建访客结果页进入）先读详情，成功后直接从
+  // 模板这一步开始；读取失败回到第一步让成员手动选。
+  const [step, setStep] = useState<Step>(
+    initialFiller === 'guest' ? { phase: initialGuestId ? 'pick' : 'guestPick', filler: 'guest' } : { phase: 'who' },
+  )
   const [templates, setTemplates] = useState<TemplateSummary[] | null>(null)
+  const [guest, setGuest] = useState<WizardGuest | null>(null)
+  const [entryGuestState, setEntryGuestState] = useState<'loading' | 'failed' | 'ready'>(
+    initialFiller === 'guest' && initialGuestId ? 'loading' : 'ready',
+  )
 
   useEffect(() => {
-    onPhaseTitleChange?.(step.phase === 'guest' ? '发链接请人填写' : '建单')
+    if (entryGuestState !== 'loading') return
+    let alive = true
+    fetchGuestDetail(initialGuestId!)
+      .then((detail) => {
+        if (!alive) return
+        setGuest({
+          kind: 'existing',
+          id: detail.guest.id,
+          name: detail.guest.name,
+          claimed: !!detail.guest.claimed_at,
+          ticketCount: detail.guest.ticket_count,
+        })
+        setEntryGuestState('ready')
+      })
+      .catch(() => {
+        if (!alive) return
+        setEntryGuestState('failed')
+        toast('带入选访客失败，请重新选择')
+      })
+    return () => {
+      alive = false
+    }
+  }, [entryGuestState, initialGuestId])
+
+  useEffect(() => {
+    if (entryGuestState === 'failed') setStep({ phase: 'guestPick' })
+  }, [entryGuestState])
+
+  useEffect(() => {
+    onPhaseTitleChange?.(
+      step.phase === 'guest' || step.phase === 'guestPick' || (step.phase === 'pick' && step.filler === 'guest')
+        ? '发链接请人填写'
+        : '建单',
+    )
   }, [step.phase, onPhaseTitleChange])
 
   useEffect(() => {
@@ -87,6 +135,7 @@ export function NewTicketPage({
   async function pickTemplate(summary: TemplateSummary | null) {
     if (step.phase !== 'pick') return
     if (step.filler === 'guest') {
+      if (!guest) return
       setStep({ phase: 'guest', template: summary })
       return
     }
@@ -115,13 +164,36 @@ export function NewTicketPage({
               <span className="hint">派任务、提需求、问问题：现在就把说明填好，再指派给同事</span>
               <span className="next">下一步：选模板 →</span>
             </button>
-            <button type="button" className="create-card" onClick={() => setStep({ phase: 'pick', filler: 'guest' })}>
+            <button type="button" className="create-card" onClick={() => setStep({ phase: 'guestPick' })}>
               <span className="tp-name">🔗 发链接请人填写</span>
               <span className="hint">给部门外的人发链接，由对方填写，对方不需要账号</span>
-              <span className="next">下一步：选模板 →</span>
+              <span className="next">下一步：选访客 →</span>
             </button>
           </div>
         </div>
+      </div>
+    )
+  }
+
+  if (step.phase === 'guestPick') {
+    return (
+      <GuestPickerStep
+        onSelect={(picked) => {
+          setGuest(picked)
+          setStep({ phase: 'pick', filler: 'guest' })
+          window.scrollTo(0, 0)
+        }}
+        onBack={() => setStep({ phase: 'who' })}
+        onError={(message) => toast(message)}
+      />
+    )
+  }
+
+  // ?guest=<id> 带入访客时先读详情，读完再展示模板，避免点击模板时访客还没就绪。
+  if (step.phase === 'pick' && step.filler === 'guest' && entryGuestState === 'loading') {
+    return (
+      <div className="bpage">
+        <div className="ecard">正在带入选客…</div>
       </div>
     )
   }
@@ -130,11 +202,23 @@ export function NewTicketPage({
     return (
       <div className="bpage">
         <div className="mcard template-screen">
-          <button type="button" className="btn ghost back" onClick={() => setStep({ phase: 'who' })}>
-            ← 建单
-          </button>
+          {step.filler === 'guest' ? (
+            <button
+              type="button"
+              className="btn ghost back"
+              onClick={() => setStep({ phase: 'guestPick' })}
+            >
+              ← 选访客
+            </button>
+          ) : (
+            <button type="button" className="btn ghost back" onClick={() => setStep({ phase: 'who' })}>
+              ← 建单
+            </button>
+          )}
           <h2 className="page-title">选一个模板</h2>
-          <span className="badge filler">{step.filler === 'self' ? '我自己填' : '发链接请人填写'}</span>
+          <span className="badge filler">
+            {step.filler === 'self' ? '我自己填' : guest ? `发给：${guest.name}` : '发链接请人填写'}
+          </span>
           <p className="guide">
             {step.filler === 'self'
               ? '按你要做的事选，模板决定要填哪些内容'
@@ -189,6 +273,11 @@ export function NewTicketPage({
       <FeedbackRequestPage
         me={me}
         template={step.template}
+        guest={guest!}
+        onChangeGuest={() => {
+          setStep({ phase: 'guestPick' })
+          window.scrollTo(0, 0)
+        }}
         onPickAnother={() => setStep({ phase: 'pick', filler: 'guest' })}
       />
     )

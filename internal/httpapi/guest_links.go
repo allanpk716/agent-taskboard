@@ -73,6 +73,50 @@ type guestLinkView struct {
 	CreatedAt          string     `json:"created_at"`
 }
 
+// unassignedGuestLinkView 是老链接勾选列表的一行；不回显链接地址或密钥。
+type unassignedGuestLinkView struct {
+	ID             int64   `json:"id"`
+	TicketNumber   string  `json:"ticket_number"`
+	TicketTitle    string  `json:"ticket_title"`
+	Note           string  `json:"note"`
+	Claimed        bool    `json:"claimed"`
+	ClaimName      string  `json:"claim_name"`
+	LastUsedAt     *string `json:"last_used_at"`
+	PossiblePerson bool    `json:"possible_person"`
+}
+
+// listUnassignedGuestLinks 处理 GET /api/v1/guest-links/unassigned?q=&name=。
+func (a *API) listUnassignedGuestLinks(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		WriteError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed, "不支持的请求方法",
+			"列出无主老链接用 GET /api/v1/guest-links/unassigned")
+		return
+	}
+	viewer, ok := a.memberFromRequestFor(w, r, "访客不能查看部门的无主老链接")
+	if !ok {
+		return
+	}
+	query := r.URL.Query()
+	if apiErr := rejectUnknownParams(query, []string{"q", "name"}, ""); apiErr != nil {
+		writeAPIError(w, apiErr)
+		return
+	}
+	links, err := a.tickets.UnassignedGuestLinks(r.Context(), viewer,
+		query.Get("q"), query.Get("name"))
+	if err != nil {
+		panic(err)
+	}
+	out := make([]unassignedGuestLinkView, 0, len(links))
+	for _, link := range links {
+		out = append(out, unassignedGuestLinkView{
+			ID: link.ID, TicketNumber: link.TicketNumber, TicketTitle: link.TicketTitle,
+			Note: link.Note, Claimed: link.Claimed, ClaimName: link.ClaimName,
+			LastUsedAt: link.LastUsedAt, PossiblePerson: link.PossiblePerson,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"links": out})
+}
+
 // handleGuestLinks 处理 …/guest-links 与 …/guest-links/{id}[/extend]：
 //
 //	POST   /api/v1/tickets/{id}/guest-links            创建（任何成员）

@@ -16,6 +16,7 @@ test('wide viewport shows sidebar, version and centered main area', async ({ pag
     expect.stringMatching(/^📥收件箱[1-9]\d*$/),
     '✎✎ 草稿',
     '🗂工单',
+    '👥访客',
     '🧰工具',
     '👤我的',
     '🛡管理',
@@ -46,7 +47,7 @@ test('medium viewport shows the icon rail', async ({ page }) => {
   const sidebar = page.getByRole('navigation', { name: '侧栏' })
   await expect(sidebar).toBeVisible()
   await expect(sidebar.locator('.pc-nav-item.primary')).toContainText('建单')
-  for (const name of ['收件箱', '工单', '工具', '我的', '管理']) {
+  for (const name of ['收件箱', '工单', '访客', '工具', '我的', '管理']) {
     await expect(sidebar.locator('a').filter({ hasText: name }).first()).toBeVisible()
   }
   await expect(sidebar.getByRole('link', { name: '请人反馈' })).toHaveCount(0)

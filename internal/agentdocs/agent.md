@@ -46,6 +46,11 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
   `guest_id` 选这位已有访客；名单里没有才用 `new_guest_name` 当场新建一位。
   两者都不带会返回 `422 guest_required`，同时带会返回 `422 guest_required`（只能二选一）。
   已停用的访客不能作为目标，返回 `422 guest_disabled`；请改选其他访客或询问主人是否先恢复。
+- 主人想先建好一位访客、之后再发工单或归入老工单时，调
+  `POST {{BASE}}/api/v1/guests`，请求体 `{"name": "检验科-张三"}`。名字去空白后必填，
+  空白返回 422 `guest_required`（与建链接时 `new_guest_name` 同规则同错误码）。
+  成功返回 201 `{guest}`：未认领、名下没有链接；在名下有有效链接之前，TA 的访客主页
+  是空列表。建好后把 `guest.id` 记下来，之后建链接、归属老链接都直接用它。
 - 建链接：`POST {{BASE}}/api/v1/tickets/<工单编号>/guest-links`，请求体带
   `{"note": "这条链接的用途", "guest_id": <已有访客id>, "valid_days": 30}`；
   新建访客时把 `guest_id` 换成 `"new_guest_name": "检验科-张三"`。备注只写这条链接的
@@ -60,6 +65,27 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
   老链接自己的访问码和设备作废；未认领老链接直接沿用访客状态。操作会写
   `guest_link_assigned` 时间线事件（`reason` 为 `manual`），不发通知；已归属链接返回
   409 `guest_link_already_assigned`，不要尝试重复归属。
+- 主人让你把多条上线前的无主老工单归给同一位访客时，先用
+  `GET {{BASE}}/api/v1/guest-links/unassigned?q=<搜索词>&name=<访客名字>` 取候选；
+  该列表只含你主人可见、未撤销、未过期、尚未归属的链接，`possible_person=true`
+  表示名字相近（只是推荐，不要自动勾选）。确认一批后先用
+  `GET {{BASE}}/api/v1/guests/<guest_id>/assign-links/preview?link_ids=1,2` 看影响，
+  再带 `Idempotency-Key` 调 `POST {{BASE}}/api/v1/guests/<guest_id>/assign-links`，
+  请求体按预览结果补访问码选项。
+- 批量归属规则：目标访客已认领时保留 TA 的访问码，被归入链接原来的访问码和
+  设备作废；目标访客未认领且所选链接都未认领时，访客保持未认领。这两种成功路径都
+  不能带 `access_code`，否则 422 `access_code_choice_not_allowed`。目标访客未认领而
+  所选里有已认领链接时必须二选一：沿用某条已认领链接则请求
+  `{"link_ids":[1,2], "access_code":{"source_link_id":1}}`，来源必须在所选且已认领，
+  其设备与访问码转给访客，其余旧凭证作废；缺少选项返回 422
+  `access_code_choice_required`，来源不在所选或未认领返回 422
+  `invalid_access_code_choice`。
+  **生成新的访问码不是你能做的**：`"generate"` 只接受主人本人在网页上的会话，
+  成员 Agent 会得到 403 `web_session_required`，也拿不到只显示一次的新码；请把这类
+  选择交回主人在网页完成，不要伪造或猜测访问码。`link_ids` 为空、含非正数或重复 id 返回
+  422 `invalid_link_ids`；任一链接不可见 404 `guest_link_not_found`，已归属
+  409 `guest_link_already_assigned`，已撤销或过期 422 `guest_link_not_assignable`。
+  整批原子完成：任一失败时其他链接不会变化。
 
 ## 访客详情与改名
 

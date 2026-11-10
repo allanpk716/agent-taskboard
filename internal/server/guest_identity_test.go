@@ -587,3 +587,62 @@ func Test建单响应的访客链接带访客归属(t *testing.T) {
 		t.Errorf("转发文案应称呼访客名字：%q", created.GuestLink.ShareText)
 	}
 }
+
+// 成员可以不建工单，先单独新建一位访客（#339）：成员和成员 Agent 都能调，
+// 名字规则与建链接当场新建完全一致（去空白后必填，空白 422 guest_required）；
+// 新访客未认领、名下没有链接，在名下有有效链接之前访客主页是空列表。
+func Test成员与Agent能单独新建访客(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+
+	for name, rawName := range map[string]string{"空名字": "", "空白名字": "   "} {
+		res := s.Do(t, web, http.MethodPost, "/api/v1/guests", map[string]string{"name": rawName}, nil)
+		if res.StatusCode != http.StatusUnprocessableEntity {
+			t.Errorf("[%s] 新建访客状态码 = %d，想 422（name=%q）", name, res.StatusCode, rawName)
+			continue
+		}
+		var got errorBody
+		tbtest.DecodeJSON(t, res, &got)
+		if got.Error.Code != "guest_required" {
+			t.Errorf("[%s] 错误码 = %q，想 guest_required（与建链接新建访客一致）", name, got.Error.Code)
+		}
+	}
+
+	_, token := s.IssueAgentToken(t, web, "笔记本")
+	agent := s.AgentClient(token)
+	for name, c := range map[string]*http.Client{"成员": web, "成员Agent": agent} {
+		guestName := "检验科-" + name
+		var created struct {
+			Guest struct {
+				ID        int64   `json:"id"`
+				Name      string  `json:"name"`
+				ClaimedAt *string `json:"claimed_at"`
+				LinkCount int     `json:"link_count"`
+			} `json:"guest"`
+		}
+		res := s.Do(t, c, http.MethodPost, "/api/v1/guests",
+			map[string]string{"name": "  " + guestName + "  "}, &created)
+		if res.StatusCode != http.StatusCreated {
+			t.Fatalf("[%s] 新建访客状态码 = %d，想 201", name, res.StatusCode)
+		}
+		if created.Guest.ID == 0 || created.Guest.Name != guestName {
+			t.Errorf("[%s] 新建访客 = %+v，想去空白后的名字 %q", name, created.Guest, guestName)
+		}
+		if created.Guest.ClaimedAt != nil || created.Guest.LinkCount != 0 {
+			t.Errorf("[%s] 新访客应未认领且名下没有链接：%+v", name, created.Guest)
+		}
+
+		// 只断言对外行为：名下还没有有效链接时，用访客主页接口验证是空列表。
+		home := copyGuestHomeText(t, s, web, created.Guest.ID)
+		homeKey := strings.TrimPrefix(home.URL, "/h/")
+		var list guestHomeBody
+		res = s.Do(t, s.AgentClient(homeKey), http.MethodGet, "/api/v1/guest-home", nil, &list)
+		if res.StatusCode != http.StatusOK || list.State != "unclaimed" || list.GuestName != guestName {
+			t.Fatalf("[%s] 新访客主页信息 = %d/%+v，想 200/unclaimed/%s", name, res.StatusCode, list, guestName)
+		}
+		if len(list.Tickets) != 0 {
+			t.Errorf("[%s] 新访客主页有 %d 张工单，想空列表：%+v", name, len(list.Tickets), list.Tickets)
+		}
+	}
+}

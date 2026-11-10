@@ -14,7 +14,9 @@ export type Route =
   | { page: 'draft'; id: string }
   | { page: 'tools' }
   | { page: 'guests' }
+  | { page: 'guestNew' }
   | { page: 'guestDetail'; id: string }
+  | { page: 'guestAssign'; id: string }
   | { page: 'me' }
   | { page: 'templates' }
   | { page: 'templateEdit'; key: string }
@@ -26,13 +28,22 @@ export function parseRoute(pathname: string): Route {
     return { page: 'draft', id: decodeURIComponent(pathname.slice('/drafts/'.length)) }
   if (pathname.startsWith('/templates/'))
     return { page: 'templateEdit', key: decodeURIComponent(pathname.slice('/templates/'.length)) }
-  if (pathname.startsWith('/guests/'))
-    return { page: 'guestDetail', id: decodeURIComponent(pathname.slice('/guests/'.length)) }
+  // /guests/new 必须先于 /guests/{id} 判断，否则会被当成 id 为 "new" 的详情页。
+  if (pathname === '/guests/new') return { page: 'guestNew' }
+  if (pathname.startsWith('/guests/')) {
+    const rest = pathname.slice('/guests/'.length).split('/')
+    if (rest.length === 2 && rest[1] === 'assign' && rest[0])
+      return { page: 'guestAssign', id: decodeURIComponent(rest[0]) }
+    if (rest.length === 1 && rest[0]) return { page: 'guestDetail', id: decodeURIComponent(rest[0]) }
+  }
   if (pathname === '/guests') return { page: 'guests' }
   if (pathname === '/templates') return { page: 'templates' }
   if (pathname === '/tickets') return { page: 'tickets' }
   if (pathname === '/drafts') return { page: 'drafts' }
   if (pathname === '/new') return { page: 'new' }
+  // 先选访客再建单的向导（#340）：/tickets/new 是成员给访客发新工单的入口，
+  // 与旧地址 /feedback 同页；?guest=<id> 带入访客并跳过第一步。
+  if (pathname === '/tickets/new') return { page: 'feedback' }
   if (pathname === '/feedback') return { page: 'feedback' }
   if (pathname === '/tools') return { page: 'tools' }
   if (pathname === '/me') return { page: 'me' }
