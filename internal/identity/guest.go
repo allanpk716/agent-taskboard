@@ -294,16 +294,19 @@ func (m *Manager) GuestHomeForKey(ctx context.Context, key string) (GuestHome, e
 	var (
 		home       GuestHome
 		disabledAt sql.NullString
+		mergedInto sql.NullInt64
 		claimedAt  sql.NullString
 		claimName  sql.NullString
 		lockedAt   sql.NullString
 	)
 	err := m.db.QueryRowContext(ctx, `
-		SELECT gu.id, gu.name, gu.disabled_at, h.id, h.claimed_at, h.claim_name, h.access_code_locked_at
+		SELECT gu.id, gu.name, gu.disabled_at, gu.merged_into_guest_id,
+		       h.id, h.claimed_at, h.claim_name, h.access_code_locked_at
 		FROM guests gu
 		JOIN guest_credential_holders h ON h.owner_type = 'guest' AND h.owner_id = gu.id
 		WHERE gu.home_key_hash = ?`, CredentialHash(key)).
-		Scan(&home.ID, &home.Name, &disabledAt, &home.CredentialHolderID, &claimedAt, &claimName, &lockedAt)
+		Scan(&home.ID, &home.Name, &disabledAt, &mergedInto,
+			&home.CredentialHolderID, &claimedAt, &claimName, &lockedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return GuestHome{}, ErrInvalidCredentials
 	}
@@ -311,6 +314,9 @@ func (m *Manager) GuestHomeForKey(ctx context.Context, key string) (GuestHome, e
 		return GuestHome{}, err
 	}
 	if disabledAt.Valid {
+		return GuestHome{}, ErrInvalidCredentials
+	}
+	if mergedInto.Valid {
 		return GuestHome{}, ErrInvalidCredentials
 	}
 	home.ClaimName = claimName.String
@@ -350,7 +356,7 @@ func (m *Manager) ViewerFromGuestDevice(ctx context.Context, token string) (View
 		return Viewer{}, err
 	}
 	if resolved.OwnerType == guestcredentials.OwnerTypeGuest {
-		if resolved.Guest == nil || resolved.Guest.Disabled {
+		if resolved.Guest == nil || resolved.Guest.Disabled || resolved.Guest.Merged {
 			return Viewer{}, ErrInvalidCredentials
 		}
 		return Viewer{Kind: ViewerGuest, Guest: &Guest{

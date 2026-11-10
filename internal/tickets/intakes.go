@@ -558,7 +558,7 @@ func (m *Manager) intakeGuestTx(ctx context.Context, tx *sql.Tx, intake Intake,
 			return 0, "", 0, GuestHomeShare{}, false, resolveErr
 		}
 		if resolveErr == nil && resolved.OwnerType == guestcredentials.OwnerTypeGuest &&
-			resolved.Guest != nil && !resolved.Guest.Disabled {
+			resolved.Guest != nil && !resolved.Guest.Disabled && !resolved.Guest.Merged {
 			home, homeErr := m.ensureGuestHomeKeyTx(ctx, tx, resolved.Guest.ID)
 			if homeErr != nil {
 				return 0, "", 0, GuestHomeShare{}, false, homeErr

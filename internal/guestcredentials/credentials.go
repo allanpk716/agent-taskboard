@@ -84,6 +84,7 @@ type Guest struct {
 	ID       int64
 	Name     string
 	Disabled bool
+	Merged   bool
 }
 
 // ResolvedDevice 是一台已信任设备解析出的凭证持有者。
@@ -282,12 +283,13 @@ func ResolveDevice(ctx context.Context, q Executor, token string) (ResolvedDevic
 		guestID     sql.NullInt64
 		guestName   sql.NullString
 		guestOffAt  sql.NullString
+		guestMerged sql.NullInt64
 	)
 	err := q.QueryRowContext(ctx, `
 		SELECT h.id, h.owner_type, h.owner_id, h.claim_name,
 		       d.entry_method, h.claimed_at,
 		       l.id, l.ticket_seq, l.note, l.expires_at, l.revoked_at, l.can_edit_brief,
-		       gu.id, gu.name, gu.disabled_at
+		       gu.id, gu.name, gu.disabled_at, gu.merged_into_guest_id
 		FROM guest_credential_devices d
 		JOIN guest_credential_holders h ON h.id = d.credential_holder_id
 		LEFT JOIN guest_links l
@@ -297,7 +299,7 @@ func ResolveDevice(ctx context.Context, q Executor, token string) (ResolvedDevic
 		WHERE d.token_hash = ?`, CredentialHash(token)).
 		Scan(&out.HolderID, &ownerType, &out.OwnerID, &claimName,
 			&out.EntryMethod, &claimedNull, &linkID, &ticketSeq, &note,
-			&expiresAt, &revokedAt, &canEdit, &guestID, &guestName, &guestOffAt)
+			&expiresAt, &revokedAt, &canEdit, &guestID, &guestName, &guestOffAt, &guestMerged)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ResolvedDevice{}, ErrDeviceNotFound
 	}
@@ -308,7 +310,7 @@ func ResolveDevice(ctx context.Context, q Executor, token string) (ResolvedDevic
 	out.ClaimName = claimName.String
 	if guestID.Valid {
 		out.Guest = &Guest{ID: guestID.Int64, Name: guestName.String,
-			Disabled: guestOffAt.Valid && guestOffAt.String != ""}
+			Disabled: guestOffAt.Valid && guestOffAt.String != "", Merged: guestMerged.Valid}
 	}
 	if linkID.Valid {
 		expiry, err := time.ParseInLocation(time.RFC3339Nano, expiresAt.String, clock.Beijing)
