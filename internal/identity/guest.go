@@ -185,30 +185,36 @@ func CredentialHash(credential string) string { return guestcredentials.Credenti
 // 撤销与过期即时生效：每次调用都实时查库，过期判定用注入时钟。
 func (m *Manager) ViewerFromGuestKey(ctx context.Context, key string) (Viewer, error) {
 	var (
-		id        int64
-		ticketSeq int64
-		note      string
-		expiresAt string
-		revokedAt sql.NullString
-		claimedAt sql.NullString
-		guestID   sql.NullInt64
-		guestName sql.NullString
-		holderID  int64
-		canEdit   int
+		id            int64
+		ticketSeq     int64
+		note          string
+		expiresAt     string
+		revokedAt     sql.NullString
+		claimedAt     sql.NullString
+		guestID       sql.NullInt64
+		guestName     sql.NullString
+		guestDisabled sql.NullString
+		holderID      int64
+		canEdit       int
 	)
 	err := m.db.QueryRowContext(ctx, `
 		SELECT g.id, g.ticket_seq, g.note, g.expires_at, g.revoked_at,
-		       g.credential_holder_id, g.can_edit_brief, h.claimed_at, g.guest_id, gu.name
+		       g.credential_holder_id, g.can_edit_brief, h.claimed_at, g.guest_id, gu.name, gu.disabled_at
 		FROM guest_links g
 		JOIN guest_credential_holders h ON h.id = g.credential_holder_id
 		LEFT JOIN guests gu ON gu.id = g.guest_id
 		WHERE g.key_hash = ?`, hashToken(key)).
-		Scan(&id, &ticketSeq, &note, &expiresAt, &revokedAt, &holderID, &canEdit, &claimedAt, &guestID, &guestName)
+		Scan(&id, &ticketSeq, &note, &expiresAt, &revokedAt, &holderID, &canEdit, &claimedAt, &guestID, &guestName, &guestDisabled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Viewer{}, ErrInvalidCredentials
 	}
 	if err != nil {
 		return Viewer{}, err
+	}
+	if guestDisabled.Valid {
+		// 所属访客已停用：链接视同失效（#332），与主页密钥同样返回
+		// ErrInvalidCredentials，不进入认领或输码流程。
+		return Viewer{}, ErrInvalidCredentials
 	}
 	expiry, err := time.ParseInLocation(time.RFC3339Nano, expiresAt, clock.Beijing)
 	if err != nil {
@@ -232,32 +238,36 @@ func (m *Manager) ViewerFromGuestKey(ctx context.Context, key string) (Viewer, e
 // GuestLinkForKey 服务认领接口：它能查看未认领链接，但不会转成普通 Viewer。
 func (m *Manager) GuestLinkForKey(ctx context.Context, key string) (GuestLink, error) {
 	var (
-		id        int64
-		ticketSeq int64
-		note      string
-		expiresAt string
-		revokedAt sql.NullString
-		claimedAt sql.NullString
-		claimName sql.NullString
-		guestID   sql.NullInt64
-		guestName sql.NullString
-		holderID  int64
-		canEdit   int
+		id            int64
+		ticketSeq     int64
+		note          string
+		expiresAt     string
+		revokedAt     sql.NullString
+		claimedAt     sql.NullString
+		claimName     sql.NullString
+		guestID       sql.NullInt64
+		guestName     sql.NullString
+		guestDisabled sql.NullString
+		holderID      int64
+		canEdit       int
 	)
 	err := m.db.QueryRowContext(ctx, `
 		SELECT g.id, g.ticket_seq, g.note, g.expires_at, g.revoked_at,
 		       g.credential_holder_id, g.can_edit_brief,
-		       h.claimed_at, h.claim_name, g.guest_id, gu.name
+		       h.claimed_at, h.claim_name, g.guest_id, gu.name, gu.disabled_at
 		FROM guest_links g
 		JOIN guest_credential_holders h ON h.id = g.credential_holder_id
 		LEFT JOIN guests gu ON gu.id = g.guest_id
 		WHERE g.key_hash = ?`, hashToken(key)).
-		Scan(&id, &ticketSeq, &note, &expiresAt, &revokedAt, &holderID, &canEdit, &claimedAt, &claimName, &guestID, &guestName)
+		Scan(&id, &ticketSeq, &note, &expiresAt, &revokedAt, &holderID, &canEdit, &claimedAt, &claimName, &guestID, &guestName, &guestDisabled)
 	if errors.Is(err, sql.ErrNoRows) {
 		return GuestLink{}, ErrInvalidCredentials
 	}
 	if err != nil {
 		return GuestLink{}, err
+	}
+	if guestDisabled.Valid {
+		return GuestLink{}, ErrInvalidCredentials
 	}
 	expiry, err := time.ParseInLocation(time.RFC3339Nano, expiresAt, clock.Beijing)
 	if err != nil {

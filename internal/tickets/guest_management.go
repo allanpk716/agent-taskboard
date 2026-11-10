@@ -169,17 +169,29 @@ func (m *Manager) setGuestDisabled(ctx context.Context, viewer identity.Viewer, 
 	if _, err := tx.ExecContext(ctx, `UPDATE guests SET disabled_at = ? WHERE id = ?`, newDisabled, guestID); err != nil {
 		return err
 	}
-	rows, err := tx.QueryContext(ctx,
-		`SELECT DISTINCT ticket_seq FROM guest_links WHERE guest_id = ? ORDER BY ticket_seq`, guestID)
+	rows, err := tx.QueryContext(ctx, `
+		SELECT DISTINCT ticket_seq, expires_at FROM guest_links
+		WHERE guest_id = ? AND revoked_at IS NULL ORDER BY ticket_seq`, guestID)
 	if err != nil {
 		return err
 	}
 	seqs := []int64{}
 	for rows.Next() {
 		var seq int64
-		if err := rows.Scan(&seq); err != nil {
+		var expiresAt string
+		if err := rows.Scan(&seq, &expiresAt); err != nil {
 			rows.Close()
 			return err
+		}
+		expiry, err := parseTime(expiresAt)
+		if err != nil {
+			rows.Close()
+			return err
+		}
+		// 只在这次操作真正改变链接可用性的工单上留痕：链接已撤销或已过期时，
+		// 停用/恢复不影响它，不写事件。
+		if !now.Before(expiry) {
+			continue
 		}
 		seqs = append(seqs, seq)
 	}
