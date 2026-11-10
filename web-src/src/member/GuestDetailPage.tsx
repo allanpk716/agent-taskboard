@@ -49,6 +49,9 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
   const [confirmMerge, setConfirmMerge] = useState(false)
   const [codePreview, setCodePreview] = useState<GuestAccessCodeResetPreview | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
+  const [homeURL, setHomeURL] = useState<string | null>(null)
+  const [homeURLError, setHomeURLError] = useState<string | null>(null)
+  const [homeURLBusy, setHomeURLBusy] = useState(false)
   const [resetResult, setResetResult] = useState<{
     action: 'code' | 'home'
     url: string
@@ -67,6 +70,12 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  // 主页地址带凭证，不随详情常驻展示；成员显式要求时才取回。
+  useEffect(() => {
+    setHomeURL(null)
+    setHomeURLError(null)
+  }, [id])
 
   // 工单标签只提示名字相近且当前成员可见的无主老链接；推荐不自动归属。
   useEffect(() => {
@@ -201,6 +210,20 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
       toast(ok ? `✓ ${guest.name}的主页文案已复制（不含访问码）` : '复制失败，请手动选择文字复制')
     } catch (e) {
       toast(e instanceof ApiError ? `${e.code}：${e.message}` : '复制主页文案失败')
+    }
+  }
+
+  async function revealHome() {
+    if (homeURL || homeURLBusy) return
+    setHomeURLBusy(true)
+    try {
+      const result = await copyGuestHomeText(id)
+      setHomeURL(absoluteUrl(result.home_url))
+      setHomeURLError(null)
+    } catch (e) {
+      setHomeURLError(e instanceof ApiError ? `${e.code}：${e.message}` : '读取主页地址失败')
+    } finally {
+      setHomeURLBusy(false)
     }
   }
 
@@ -454,8 +477,34 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
               访客主页 <span className="hint">长期地址</span>
             </div>
             <div className="hint">长期有效的带凭证地址，列出名下链接仍有效的工单。</div>
+            <div className="kv">
+              <span>主页地址</span>
+              {homeURL ? (
+                <b data-testid="guest-home-url">{homeURL}</b>
+              ) : (
+                <span className="hint">{merged ? '已失效' : '按需显示'}</span>
+              )}
+            </div>
+            {homeURLError && <div className="ecard">{homeURLError}</div>}
             {!merged && (
               <div className="actrow">
+                {!homeURL && (
+                  <button className="btn ghost" disabled={homeURLBusy} onClick={() => void revealHome()}>
+                    {homeURLBusy ? '正在读取…' : '显示主页地址'}
+                  </button>
+                )}
+                {homeURL && (
+                  <button
+                    className="btn ghost"
+                    onClick={() => {
+                      void copyText(homeURL).then((ok) =>
+                        toast(ok ? '✓ 主页地址已复制' : '复制失败，请手动选择文字复制'),
+                      )
+                    }}
+                  >
+                    复制主页地址
+                  </button>
+                )}
                 <button className="btn ghost" onClick={() => void copyHome()}>
                   复制主页文案
                 </button>

@@ -99,7 +99,7 @@ export function NewTicketPage({
           id: detail.guest.id,
           name: detail.guest.name,
           claimed: !!detail.guest.claimed_at,
-          linkCount: detail.guest.link_count,
+          ticketCount: detail.guest.ticket_count,
         })
         setEntryGuestState('ready')
       })

@@ -20,6 +20,7 @@ import { similarGuests } from './guestSimilarity'
 import { GuestAccessCodeCard } from './GuestAccessCodeCard'
 import { GuestAssignConsequence } from './GuestAssignConsequence'
 import { GuestLegacyLinkPicker } from './GuestLegacyLinkPicker'
+import { guestCreatedAssignmentFailed } from './guestAssignmentFailure'
 import { copyText, nav, toast } from './ui'
 
 export function NewGuestPage() {
@@ -163,11 +164,7 @@ export function NewGuestPage() {
           setAssigned(result)
           if (result.access_code) setGeneratedCode(result.access_code)
         } catch (e) {
-          // 归属失败不回滚：访客已建好，留在详情页并给出可见的失败原因。
-          window.dispatchEvent(new Event('tb:invalidate'))
-          const reason = e instanceof ApiError ? `${e.code}：${e.message}` : '请到详情页重试'
-          toast(`已建立访客「${guest.name}」，但归入老工单失败：${reason}`, 6000)
-          nav(`/guests/${guest.id}`)
+          guestCreatedAssignmentFailed(guest.id, guest.name, e)
           return
         }
       }

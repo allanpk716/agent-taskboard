@@ -26,7 +26,9 @@ type guestView struct {
 	AccessCodeLockedAt *time.Time `json:"access_code_locked_at,omitempty"`
 	LinkCount          int        `json:"link_count"`
 	PendingCount       int        `json:"pending_count"`
+	TicketCount        int        `json:"ticket_count"`
 	LastContactAt      *time.Time `json:"last_contact_at,omitempty"`
+	LastSentAt         *time.Time `json:"last_sent_at,omitempty"`
 	DeviceCount        int        `json:"device_count"`
 	CreatedBy          authorView `json:"created_by"`
 	CreatedAt          time.Time  `json:"created_at"`
@@ -686,7 +688,8 @@ func newGuestView(g tickets.GuestInfo) guestView {
 		MergedIntoGuestID: g.MergedIntoGuestID, MergedAt: g.MergedAt,
 		ClaimedAt: g.ClaimedAt, ClaimName: g.ClaimName,
 		AccessCodeLockedAt: g.AccessCodeLockedAt, LinkCount: g.LinkCount,
-		PendingCount: g.PendingCount, LastContactAt: g.LastContactAt, DeviceCount: g.DeviceCount,
+		PendingCount: g.PendingCount, TicketCount: g.TicketCount,
+		LastContactAt: g.LastContactAt, LastSentAt: g.LastSentAt, DeviceCount: g.DeviceCount,
 		CreatedBy: newAuthorView(g.CreatedBy, false), CreatedAt: g.CreatedAt,
 	}
 }

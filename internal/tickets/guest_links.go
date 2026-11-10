@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
@@ -595,7 +596,9 @@ type GuestInfo struct {
 	AccessCodeLockedAt *time.Time
 	LinkCount          int
 	PendingCount       int
+	TicketCount        int
 	LastContactAt      *time.Time
+	LastSentAt         *time.Time
 	DeviceCount        int
 	CreatedBy          Author
 	CreatedAt          time.Time
@@ -622,9 +625,10 @@ func (m *Manager) Guests(ctx context.Context, viewer identity.Viewer, query stri
 	return guests, nil
 }
 
-// fillGuestListActivity 补齐名单行的“最近联系”与“待处理数”。最近联系取
-// 访客经名下链接打开工单的最近一次访问记录；待处理数只数查看者可见、
-// 未关闭且当前轮到访客的工单（ADR 0019：访客聚合不能绕过工单可见范围）。
+// fillGuestListActivity 补齐名单行的活动统计与待处理数。最近联系取访客经
+// 名下链接打开查看者可见工单的最近一次访问记录；最近发送取名下可见工单上
+// 访客链接的最近创建时间；待处理数只数查看者可见、未关闭且当前轮到访客的
+// 工单（ADR 0019：访客聚合不能绕过工单可见范围）。
 func (m *Manager) fillGuestListActivity(ctx context.Context, viewer identity.Viewer, guests []GuestInfo) error {
 	placeholders := make([]string, len(guests))
 	idArgs := make([]any, len(guests))
@@ -635,13 +639,27 @@ func (m *Manager) fillGuestListActivity(ctx context.Context, viewer identity.Vie
 		byID[guests[i].ID] = &guests[i]
 	}
 	inList := strings.Join(placeholders, ",")
+	visible, err := m.VisibleSeqs(ctx, viewer)
+	if err != nil {
+		return err
+	}
+	visiblePlaceholders := make([]string, len(visible))
+	visibleArgs := make([]any, len(visible))
+	for i, seq := range visible {
+		visiblePlaceholders[i] = "?"
+		visibleArgs[i] = seq
+	}
+	visibleList := strings.Join(visiblePlaceholders, ",")
+	activityArgs := append(idArgs, visibleArgs...)
 
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT l.guest_id, MAX(r.last_at)
 		FROM access_records r
 		JOIN guest_links l ON l.id = r.actor_link_id
+		JOIN tickets t ON t.seq = l.ticket_seq
 		WHERE r.actor_kind = 'guest' AND l.guest_id IN (`+inList+`)
-		GROUP BY l.guest_id`, idArgs...)
+		  AND l.ticket_seq IN (`+visibleList+`)
+		GROUP BY l.guest_id`, activityArgs...)
 	if err != nil {
 		return err
 	}
@@ -664,6 +682,38 @@ func (m *Manager) fillGuestListActivity(ctx context.Context, viewer identity.Vie
 		return err
 	}
 	rows.Close()
+
+	sentRows, err := m.db.QueryContext(ctx, `
+		SELECT l.guest_id, MAX(l.created_at), COUNT(DISTINCT l.ticket_seq)
+		FROM guest_links l
+		JOIN tickets t ON t.seq = l.ticket_seq
+		WHERE l.guest_id IN (`+inList+`)
+		  AND l.ticket_seq IN (`+visibleList+`)
+		GROUP BY l.guest_id`, activityArgs...)
+	if err != nil {
+		return err
+	}
+	defer sentRows.Close()
+	for sentRows.Next() {
+		var guestID int64
+		var sentAt string
+		var ticketCount int
+		if err := sentRows.Scan(&guestID, &sentAt, &ticketCount); err != nil {
+			return err
+		}
+		at, err := parseTime(sentAt)
+		if err != nil {
+			return err
+		}
+		if g, ok := byID[guestID]; ok {
+			g.TicketCount = ticketCount
+			g.LastSentAt = &at
+		}
+	}
+	if err := sentRows.Err(); err != nil {
+		return err
+	}
+	sentRows.Close()
 
 	seqRows, err := m.db.QueryContext(ctx, `
 		SELECT DISTINCT l.guest_id, l.ticket_seq
@@ -693,10 +743,6 @@ func (m *Manager) fillGuestListActivity(ctx context.Context, viewer identity.Vie
 		return nil
 	}
 
-	visible, err := m.VisibleSeqs(ctx, viewer)
-	if err != nil {
-		return err
-	}
 	visibleSet := make(map[int64]bool, len(visible))
 	for _, seq := range visible {
 		visibleSet[seq] = true
@@ -1153,30 +1199,35 @@ func lastUsed(items []UnassignedGuestLink, i int) string {
 	return *items[i].LastUsedAt
 }
 
-// guestNameSimilar 使用规格拍板的简单规则：去掉“部门-”前缀后，目标姓名与
-// 备注或自报称呼互相包含，或首字（姓氏）相同。
-func guestNameSimilar(target string, candidates ...string) bool {
-	target = stripDepartmentPrefix(target)
+// guestNameSimilar 使用 #337 拍板的老链接推荐规则：只去掉访客名字的部门
+// 前缀；备注和自报称呼原样参与包含判断，共享姓氏只用于自报称呼。
+func guestNameSimilar(target, note, claim string) bool {
+	target = compactGuestText(stripDepartmentPrefix(target))
 	if target == "" {
 		return false
 	}
-	for _, candidate := range candidates {
-		candidate = stripDepartmentPrefix(normalizeGuestName(candidate))
-		if candidate == "" {
-			continue
-		}
-		if strings.Contains(target, candidate) || strings.Contains(candidate, target) {
-			return true
-		}
-		if utf8.RuneCountInString(target) > 0 && utf8.RuneCountInString(candidate) > 0 {
-			targetRunes := []rune(target)
-			candidateRunes := []rune(candidate)
-			if targetRunes[0] == candidateRunes[0] {
-				return true
-			}
-		}
+
+	if guestTextContains(target, compactGuestText(strings.TrimSpace(note))) ||
+		guestTextContains(target, compactGuestText(strings.TrimSpace(claim))) {
+		return true
 	}
-	return false
+
+	targetRunes := []rune(target)
+	claimRunes := []rune(compactGuestText(strings.TrimSpace(claim)))
+	return len(targetRunes) > 0 && len(claimRunes) > 0 &&
+		unicode.IsLetter(targetRunes[0]) && unicode.IsLetter(claimRunes[0]) &&
+		targetRunes[0] == claimRunes[0]
+}
+
+func guestTextContains(target, candidate string) bool {
+	if utf8.RuneCountInString(candidate) < 2 {
+		return false
+	}
+	return strings.Contains(target, candidate) || strings.Contains(candidate, target)
+}
+
+func compactGuestText(s string) string {
+	return strings.Join(strings.Fields(s), "")
 }
 
 func normalizeGuestName(s string) string {

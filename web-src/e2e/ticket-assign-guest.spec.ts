@@ -123,6 +123,93 @@ test('工单详情归到访客面板：已认领访客顺带老工单并复制�
   expect(copied).toMatch(/\/h\/tbh_/)
 })
 
+test('工单详情归到访客面板保留无主列表的后端排序', async ({ page, request }) => {
+  await loginAdmin(request)
+  const run = `${RUN}${++seedSeq}`
+  const ticket = await createTicket(request, { title: `排序当前工单${run}` })
+  const current = await createLegacyLink(request, ticket, '排序当前联系')
+
+  const links = [
+    {
+      id: current.id,
+      ticket_number: ticket,
+      ticket_title: `排序当前工单${run}`,
+      note: '排序当前联系',
+      claimed: false,
+      claim_name: '',
+      last_used_at: null,
+      possible_person: true,
+    },
+    {
+      id: current.id + 1,
+      ticket_number: `${ticket}A`,
+      ticket_title: `后端第二条${run}`,
+      note: '后端第二条',
+      claimed: false,
+      claim_name: '',
+      last_used_at: null,
+      possible_person: true,
+    },
+    {
+      id: current.id + 2,
+      ticket_number: `${ticket}B`,
+      ticket_title: `后端第三条${run}`,
+      note: '后端第三条',
+      claimed: false,
+      claim_name: '',
+      last_used_at: null,
+      possible_person: true,
+    },
+  ]
+  await page.route('**/api/v1/guest-links/unassigned**', (route) =>
+    route.fulfill({ contentType: 'application/json', body: JSON.stringify({ links }) }),
+  )
+  await login(page, ADMIN)
+  const sheet = await openAssignSheet(page, ticket)
+  await sheet.getByLabel('新建访客名字').fill(`检验科-排序客${run}`)
+  await sheet.getByRole('button', { name: '新建并继续' }).click()
+  await sheet.getByRole('button', { name: '下一步' }).click()
+
+  const rows = sheet.locator('.legacy-link-row')
+  await expect(rows).toHaveCount(3)
+  await expect(rows.nth(0)).toContainText(`排序当前工单${run}`)
+  await expect(rows.nth(1)).toContainText(`后端第二条${run}`)
+  await expect(rows.nth(2)).toContainText(`后端第三条${run}`)
+})
+
+test('工单详情归到访客面板新建后归属失败时留在访客详情', async ({ page, request }) => {
+  await loginAdmin(request)
+  const run = `${RUN}${++seedSeq}`
+  const guestName = `检验科-失败客${run}`
+  const ticket = await createTicket(request, { title: `归属失败当前工单${run}` })
+  await createLegacyLink(request, ticket, '归属失败当前联系')
+
+  await page.route('**/api/v1/guests/*/assign-links', (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        error: {
+          code: 'guest_link_already_assigned',
+          message: '这条链接已归属访客，不能再手动归属',
+        },
+      }),
+    }),
+  )
+  await login(page, ADMIN)
+  const sheet = await openAssignSheet(page, ticket)
+  await sheet.getByLabel('新建访客名字').fill(guestName)
+  await sheet.getByRole('button', { name: '新建并继续' }).click()
+  await sheet.getByRole('button', { name: '下一步' }).click()
+  await sheet.getByRole('button', { name: '下一步' }).click()
+  await sheet.getByRole('button', { name: '确认归属（1 条）' }).click()
+
+  await page.waitForURL((url) => /^\/guests\/\d+$/.test(url.pathname))
+  await expect(page.getByTestId('ticket-assign-guest-sheet')).toHaveCount(0)
+  await expect(page.locator('#toast')).toContainText(`已建立访客「${guestName}」，但归入老工单失败`)
+  await expect(page.locator('.guest-profile')).toContainText(guestName)
+})
+
 test('工单详情归到访客面板：新建访客沿用当前链接访问码', async ({ page, request }) => {
   await loginAdmin(request)
   const run = `${RUN}${++seedSeq}`

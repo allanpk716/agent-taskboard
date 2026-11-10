@@ -3,6 +3,7 @@ package server_test
 import (
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
 )
@@ -12,7 +13,9 @@ type guestListItem struct {
 	Name          string  `json:"name"`
 	LinkCount     int     `json:"link_count"`
 	PendingCount  int     `json:"pending_count"`
+	TicketCount   int     `json:"ticket_count"`
 	LastContactAt *string `json:"last_contact_at"`
+	LastSentAt    *string `json:"last_sent_at"`
 }
 
 func guestsByName(t testing.TB, s *tbtest.Server, c *http.Client) map[string]guestListItem {
@@ -103,5 +106,45 @@ func Test访客名单待处理数按查看者可见范围过滤(t *testing.T) {
 	}
 	if got := guestsByName(t, s, member)["检验科-张三"].PendingCount; got != 1 {
 		t.Fatalf("王工看到的待处理数 = %d，想 1（不可见工单不计入）", got)
+	}
+}
+
+// “最近发过”与“最近联系”都不能借访客聚合绕过工单可见范围；前者在成员
+// 刚建链接、访客尚未打开时就出现，供建单向导使用。
+func Test访客名单最近发过与最近联系按可见范围过滤(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	s.CreateMember("王工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	member := s.Login("王工", "secret-pass")
+
+	beijing := time.FixedZone("UTC+8", 8*60*60)
+	visible := mustCreateTicketAssignedTo(t, s, admin, "王工可见的访客工单", "王工")
+	s.Clock().Set(time.Date(2026, 10, 16, 10, 0, 0, 0, beijing))
+	visibleLink := mustCreateGuestLink(t, s, admin, visible,
+		map[string]any{"note": "可见联系", "new_guest_name": "检验科-张三"})
+	invisible := mustCreateTicket(t, s, admin, "只有陈工可见的访客工单")
+	s.Clock().Set(time.Date(2026, 10, 16, 11, 0, 0, 0, beijing))
+	invisibleLink := mustCreateGuestLink(t, s, admin, invisible,
+		map[string]any{"note": "不可见联系", "guest_id": visibleLink.GuestID})
+	s.Clock().Set(time.Date(2026, 10, 16, 11, 30, 0, 0, beijing))
+	claim := claimGuestLink(t, s, guestKeyOf(t, guestLinkResponse{
+		ID: invisibleLink.ID, URL: invisibleLink.URL,
+	}), "检验科 张三")
+	if res := s.Do(t, s.AgentClient(claim.DeviceToken), http.MethodGet,
+		"/api/v1/tickets/"+invisible, nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("访客打开不可见工单状态码 = %d，想 200", res.StatusCode)
+	}
+
+	adminGot := guestsByName(t, s, admin)["检验科-张三"]
+	memberGot := guestsByName(t, s, member)["检验科-张三"]
+	if adminGot.TicketCount != 2 || adminGot.LastSentAt == nil || adminGot.LastContactAt == nil {
+		t.Fatalf("管理员访客活动统计 = %+v，想可见两张工单且带最近发送/联系", adminGot)
+	}
+	if memberGot.TicketCount != 1 || memberGot.LastSentAt == nil || memberGot.LastContactAt != nil {
+		t.Fatalf("王工访客活动统计 = %+v，想只计可见工单的最近发送且不计不可见访问", memberGot)
+	}
+	if *memberGot.LastSentAt != "2026-10-16T10:00:00+08:00" {
+		t.Fatalf("王工最近发送时间 = %q，想可见链接创建时间", *memberGot.LastSentAt)
 	}
 }

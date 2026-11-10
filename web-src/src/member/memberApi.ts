@@ -764,8 +764,12 @@ export interface GuestSummary {
   link_count: number
   /** 待处理数：当前轮到访客的工单数（按查看者可见范围过滤）。 */
   pending_count: number
-  /** 最近联系：访客最近一次经名下链接打开工单的时间。 */
+  /** 名下工单数：按查看者可见范围过滤。 */
+  ticket_count: number
+  /** 最近联系：访客最近一次经名下链接打开查看者可见工单的时间。 */
   last_contact_at?: string
+  /** 最近发送：查看者可见工单上访客链接的最近创建时间。 */
+  last_sent_at?: string
   device_count: number
   created_at: string
 }

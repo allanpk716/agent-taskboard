@@ -416,6 +416,51 @@ func Test无主老链接列表只列可见有效无主并支持搜索和相近�
 	}
 }
 
+// 相近判定按 #337 的口径：只有访客名字去部门前缀；备注和自报称呼原样参与
+// 包含判断，共享姓氏只用于自报称呼。
+func Test无主老链接名字相近判定按规格口径(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+
+	cases := []struct {
+		title     string
+		note      string
+		claimName string
+		possible  bool
+	}{
+		// 备注里的“张三-”是事由前缀，不是部门前缀；去掉后应仍能命中访客名字。
+		{title: "复查报告", note: "张三-复查报告", claimName: "", possible: true},
+		// 备注只和目标同姓时不算相近；共享姓氏只用于自报称呼。
+		{title: "同姓备注", note: "张四的报告", claimName: "", possible: false},
+		// 自报称呼和目标共享姓氏时算相近。
+		{title: "同姓自称", note: "现场联系", claimName: "张四", possible: true},
+		// 单字被包含时不标记，避免“张三”误命中所有单字简称。
+		{title: "单字备注", note: "A", claimName: "", possible: false},
+	}
+	ids := map[string]int64{}
+	for _, tc := range cases {
+		ticket := mustCreateTicket(t, s, web, tc.title)
+		link := s.CreateLegacyGuestLink(t, web, ticket, map[string]any{"note": tc.note})
+		ids[tc.title] = link.ID
+		if tc.claimName == "" {
+			continue
+		}
+		claimGuestLink(t, s, guestKeyOf(t, guestLinkResponse{ID: link.ID, URL: link.URL}), tc.claimName)
+	}
+
+	got := listUnassignedGuestLinks(t, s, web, "?name="+url.QueryEscape("检验科-张三"))
+	possibleByID := map[int64]bool{}
+	for _, link := range got.Links {
+		possibleByID[link.ID] = link.PossiblePerson
+	}
+	for _, tc := range cases {
+		if got := possibleByID[ids[tc.title]]; got != tc.possible {
+			t.Errorf("%s possible_person = %v，想 %v", tc.title, got, tc.possible)
+		}
+	}
+}
+
 // 批量归给已认领访客时保留访客自己的访问码与设备；所有老链接的旧凭证作废。
 func Test批量归给已认领访客保留访客访问码(t *testing.T) {
 	s := tbtest.Start(t)

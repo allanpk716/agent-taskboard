@@ -13,28 +13,21 @@ async function seedGuest(request: APIRequestContext, name: string): Promise<numb
   return ((await res.json()) as { guest: { id: number } }).guest.id
 }
 
-/** 最近联系：给访客建链接并让 TA 打开一次，名单接口才有 last_contact_at。 */
-async function seedRecentGuest(request: APIRequestContext, name: string): Promise<void> {
+/** 最近发过：只要成员建过链接，即使访客从未打开也会出现在向导第一步。 */
+async function seedSentGuest(request: APIRequestContext, name: string): Promise<void> {
   const ticket = await request.post('/api/v1/tickets', {
-    data: { title: `${name} 的旧工单`, brief_md: '用于产生最近联系。', labels: ['机型:UD-2300'] },
+    data: {
+      title: `${name} 的未打开工单`,
+      brief_md: '用于产生最近发送。',
+      labels: ['机型:UD-2300'],
+    },
   })
-  expect(ticket.status(), await ticket.text()).toBe(201)
+  expect(ticket.status(), `建单失败：${await ticket.text()}`).toBe(201)
   const number = ((await ticket.json()) as { number: string }).number
   const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
-    data: { note: '联系', new_guest_name: name, valid_days: 30 },
+    data: { note: '已发送未打开', new_guest_name: name, valid_days: 30 },
   })
-  expect(link.status(), await link.text()).toBe(201)
-  const url = ((await link.json()) as { url: string }).url
-  const claim = await request.post('/api/v1/guest-links/claim', {
-    data: { author_name: name },
-    headers: { Authorization: `Bearer ${url.slice('/g/'.length)}` },
-  })
-  expect(claim.status(), `认领失败：${await claim.text()}`).toBe(201)
-  const device = ((await claim.json()) as { device_token: string }).device_token
-  const viewed = await request.get(`/api/v1/tickets/${number}`, {
-    headers: { Authorization: `Bearer ${device}` },
-  })
-  expect(viewed.status(), '访客打开工单失败').toBe(200)
+  expect(link.status(), `给 ${name} 建链接失败：${await link.text()}`).toBe(201)
 }
 
 test('向导主流程：搜索选访客 → 模板 → 填写可改访客 → 完成页带主页提示', async ({
@@ -47,18 +40,18 @@ test('向导主流程：搜索选访客 → 模板 → 填写可改访客 → �
   const li = `检验科-李四${run}`
   await seedGuest(request, zhang)
   await seedGuest(request, li)
-  await seedRecentGuest(request, `设备科-王五${run}`)
+  await seedSentGuest(request, `设备科-王五${run}`)
   await login(page, ADMIN)
 
-  // 第一步：选访客。搜索过滤、最近联系、名下链接数与认领状态。
+  // 第一步：选访客。搜索过滤、最近发过（不要求访客已打开）、名下工单数与认领状态。
   await page.goto('/tickets/new')
   await expect(page.getByRole('heading', { name: '选访客' })).toBeVisible()
-  await expect(page.getByRole('region', { name: '最近联系' })).toContainText('王五')
+  await expect(page.getByRole('region', { name: '最近发过' })).toContainText('王五')
   await page.getByLabel('搜索访客').fill(zhang)
   const zhangRow = page.getByRole('button', { name: new RegExp(zhang) })
   await expect(zhangRow).toBeVisible()
   await expect(zhangRow).toContainText('未认领')
-  await expect(zhangRow).toContainText('0 条访客链接')
+  await expect(zhangRow).toContainText('0 张工单')
   await expect(page.getByRole('button', { name: new RegExp(li) })).toHaveCount(0)
   zhangRow.click()
 

@@ -160,6 +160,23 @@ test('访客详情访问标签里可以重置访问码', async ({ page, request 
   expect(code).toMatch(/^\d{6}$/)
 })
 
+test('访客详情访问标签可按需显示并复制主页地址', async ({ page, request }) => {
+  const seed = await seedGuestArchive(request)
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await login(page, ADMIN)
+  await page.goto(`/guests/${seed.guestID}`)
+  await page.getByRole('tab', { name: '访问', exact: true }).click()
+
+  const access = page.getByTestId('guest-panel-access')
+  await expect(access).not.toContainText('/h/')
+  await access.getByRole('button', { name: '显示主页地址' }).click()
+  const address = access.locator('[data-testid="guest-home-url"]')
+  await expect(address).toContainText(/\/h\//)
+  await access.getByRole('button', { name: '复制主页地址' }).click()
+  await expect(page.locator('#toast')).toContainText('主页地址已复制')
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toMatch(/\/h\//)
+})
+
 test('访客详情提示老工单并可批量归属给已认领访客', async ({ page, request }) => {
   await loginAdmin(request)
   const targetTicket = await createTicket(request, { title: '张三的新工单' })

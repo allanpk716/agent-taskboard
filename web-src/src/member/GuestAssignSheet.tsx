@@ -18,6 +18,7 @@ import { GuestAccessCodeCard } from './GuestAccessCodeCard'
 import { GuestAssignConsequence } from './GuestAssignConsequence'
 import { GuestLegacyLinkPicker } from './GuestLegacyLinkPicker'
 import { GuestPickerList, type WizardGuest } from './GuestPickerStep'
+import { guestCreatedAssignmentFailed } from './guestAssignmentFailure'
 import { toast } from './ui'
 
 export function GuestAssignSheet({
@@ -100,12 +101,8 @@ export function GuestAssignSheet({
               },
               ...list,
             ]
-        setLinks(
-          [...merged].sort((a, b) => {
-            if (a.possible_person !== b.possible_person) return a.possible_person ? -1 : 1
-            return b.id - a.id
-          }),
-        )
+        // 后端已按“可能是这个人 + 最近使用”排序；这里不再重排，避免丢掉口径。
+        setLinks(merged)
       })
       .catch((e) => {
         if (!alive) return
@@ -202,9 +199,9 @@ export function GuestAssignSheet({
     if (!guest || busy) return
     setBusy(true)
     setError(null)
+    let targetId = guest.kind === 'existing' ? guest.id : 0
     let guestCreated = false
     try {
-      let targetId = guest.kind === 'existing' ? guest.id : 0
       if (guest.kind === 'new') {
         // 先建访客再批量归属；归属失败时人已建好，下面会转成已有访客，重试不会重复建人。
         const created = await createGuest(guest.name)
@@ -215,7 +212,7 @@ export function GuestAssignSheet({
           id: created.guest.id,
           name: created.guest.name,
           claimed: false,
-          linkCount: 0,
+          ticketCount: 0,
         })
       }
       const result = await assignGuestLinks(targetId, selectedIds, accessCode)
@@ -228,9 +225,8 @@ export function GuestAssignSheet({
       onClose()
     } catch (e) {
       if (guestCreated) {
-        setError(
-          `访客已建立，但归属失败：${e instanceof ApiError ? `${e.code}：${e.message}` : '请重试'}。可在这里重试，或关闭后到访客详情继续处理。`,
-        )
+        onClose()
+        guestCreatedAssignmentFailed(targetId, guest.name, e)
       } else if (guest.kind === 'new') {
         setError(e instanceof ApiError ? `${e.code}：${e.message}` : '建立访客失败，请重试')
       } else {

@@ -1,5 +1,5 @@
-// 先选访客再建单（#340）向导第一步：搜索、最近联系、全部访客（按部门分组、
-// 显示名下链接数与认领状态），或当场新建一位访客；输入新名字时用
+// 先选访客再建单（#340）向导第一步：搜索、最近发过、全部访客（按部门分组、
+// 显示名下工单数与认领状态），或当场新建一位访客；输入新名字时用
 // guestSimilarity 提示已有相似访客，避免建出重复的人。
 import { useEffect, useMemo, useState } from 'react'
 import { fmtShort } from '../shared/format'
@@ -9,7 +9,7 @@ import { similarGuests } from './guestSimilarity'
 
 /** 向导已选定的访客：已有访客带认领状态与链接数，用于完成页首次提示。 */
 export type WizardGuest =
-  | { kind: 'existing'; id: number; name: string; claimed: boolean; linkCount: number }
+  | { kind: 'existing'; id: number; name: string; claimed: boolean; ticketCount: number }
   | { kind: 'new'; name: string }
 
 export function selectWizardGuest(g: GuestSummary): WizardGuest {
@@ -18,11 +18,11 @@ export function selectWizardGuest(g: GuestSummary): WizardGuest {
     id: g.id,
     name: g.name,
     claimed: !!g.claimed_at,
-    linkCount: g.link_count,
+    ticketCount: g.ticket_count,
   }
 }
 
-/** 访客选择列表本体：搜索、最近联系、全部、当场新建与相似提示。
+/** 访客选择列表本体：搜索、最近发过、全部、当场新建与相似提示。
  *  供建单向导（#340）和工单详情「归到访客」面板（#344）共用。 */
 export function GuestPickerList({
   onSelect,
@@ -54,7 +54,7 @@ export function GuestPickerList({
     }
   }, [onError])
 
-  // 全量名单在浏览器内过滤：搜索时也能保留最近联系之外的全部匹配。
+  // 全量名单在浏览器内过滤：搜索时也能保留最近发过之外的全部匹配。
   const available = useMemo(
     () => (guests ?? []).filter((g) => !g.disabled_at && !g.merged_into_guest_id),
     [guests],
@@ -69,8 +69,8 @@ export function GuestPickerList({
       keyword
         ? []
         : available
-            .filter((g) => g.last_contact_at)
-            .sort((a, b) => (a.last_contact_at! < b.last_contact_at! ? 1 : -1))
+            .filter((g) => g.last_sent_at)
+            .sort((a, b) => (a.last_sent_at! < b.last_sent_at! ? 1 : -1))
             .slice(0, 8),
     [available, keyword],
   )
@@ -99,8 +99,8 @@ export function GuestPickerList({
     const claimed = g.claimed_at
       ? `已认领${g.claim_name ? ` · ${g.claim_name}` : ''}`
       : '未认领'
-    const contact = g.last_contact_at ? ` · 最近联系 ${fmtShort(g.last_contact_at)}` : ''
-    return `${claimed} · ${g.link_count} 条访客链接${contact}`
+    const sent = g.last_sent_at ? ` · 最近发过 ${fmtShort(g.last_sent_at)}` : ''
+    return `${claimed} · ${g.ticket_count} 张工单${sent}`
   }
 
   return (
@@ -118,9 +118,9 @@ export function GuestPickerList({
       {guests !== null && (
         <>
           {recent.length > 0 && (
-            <section className="mcard guest-recent" aria-label="最近联系">
+            <section className="mcard guest-recent" aria-label="最近发过">
               <div className="sec-t" style={{ marginTop: 0 }}>
-                最近联系 <span className="hint">{recent.length} 位</span>
+                最近发过 <span className="hint">{recent.length} 位</span>
               </div>
               <div className="guest-recent-scroll">
                 {recent.map((g) => (
