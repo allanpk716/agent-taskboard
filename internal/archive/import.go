@@ -32,6 +32,13 @@ var (
 const maxArchiveJSONBytes int64 = 16 << 20
 const maxArchiveUncompressedBytes int64 = 4 << 30
 
+// guestLinkCipher 加密访客主页密钥；与工单层使用同一实现，但不引入领域依赖。
+type guestLinkCipher interface {
+	Encrypt(string) (string, error)
+	Decrypt(string) (string, error)
+	CanDecrypt(string) bool
+}
+
 // ImportTicket 是检查归档包时的一张候选工单。
 type ImportTicket struct {
 	Seq             int64
@@ -162,7 +169,7 @@ func (s *Service) Import(ctx context.Context, readerAt io.ReaderAt, size int64,
 			s.removeImportFiles(ctx, written)
 			return ImportResult{}, err
 		}
-		if err := insertImportTicketTx(ctx, tx, parsed.Tickets[meta.Number]); err != nil {
+		if err := s.insertImportTicketTx(ctx, tx, parsed.Tickets[meta.Number]); err != nil {
 			s.removeImportFiles(ctx, written)
 			return ImportResult{}, fmt.Errorf("恢复工单 %s 失败：%w", meta.Number, err)
 		}
@@ -311,6 +318,7 @@ func (s *Service) parseImportPackage(readerAt io.ReaderAt, size int64) (*parsedI
 			return nil, fmt.Errorf("%w：%s 后有多余内容", ErrPackageInvalid, name)
 		}
 		normalizeImportTicket(&export)
+		normalizeLegacyGuestCredentials(&export)
 		if err := validateImportTicket(meta, export); err != nil {
 			return nil, fmt.Errorf("%w：%v", ErrPackageInvalid, err)
 		}
@@ -323,10 +331,12 @@ func (s *Service) parseImportPackage(readerAt io.ReaderAt, size int64) (*parsedI
 }
 
 func validateImportTicket(meta manifestTicket, export ticketExport) error {
+	normalizeLegacyGuestCredentials(&export)
 	if export.Ticket == nil || export.BriefVersions == nil || export.Replies == nil ||
 		export.Attachments == nil || export.Timeline == nil || export.Drafts == nil ||
 		export.AccessRecords == nil || export.Labels == nil || export.Collaborators == nil ||
-		export.GuestLinks == nil || export.GuestDevices == nil || export.TicketReads == nil {
+		export.GuestLinks == nil || export.GuestDevices == nil || export.TicketReads == nil ||
+		export.GuestCredentialHolders == nil || export.GuestCredentialDevices == nil {
 		return fmt.Errorf("%s 的结构化数据不完整", meta.Number)
 	}
 	seq := importInt(export.Ticket, "seq")
@@ -363,6 +373,19 @@ func validateImportTicket(meta manifestTicket, export ticketExport) error {
 			return fmt.Errorf("%s 的访客设备关联到缺失链接", meta.Number)
 		}
 	}
+	holderIDs := newIntSet()
+	for _, row := range export.GuestCredentialHolders {
+		holderIDs.add(row["id"])
+		ownerType, _ := row["owner_type"].(string)
+		if ownerType == "guest_link" && !linkIDs.items[importInt(row, "owner_id")] {
+			return fmt.Errorf("%s 的访客链接凭证关联缺失", meta.Number)
+		}
+	}
+	for _, row := range export.GuestCredentialDevices {
+		if !holderIDs.items[importInt(row, "credential_holder_id")] {
+			return fmt.Errorf("%s 的访客设备关联缺失", meta.Number)
+		}
+	}
 	var attachmentBytes int64
 	slimPackages := map[string]bool{}
 	for _, row := range export.Attachments {
@@ -390,6 +413,17 @@ func validateImportTicket(meta manifestTicket, export ticketExport) error {
 		return fmt.Errorf("%s 的清单瘦身包与附件瘦身状态不一致", meta.Number)
 	}
 	return nil
+}
+
+func normalizeLegacyGuestCredentials(export *ticketExport) {
+	if export.GuestCredentialHolders != nil {
+		return
+	}
+	export.GuestCredentialHolders = []map[string]any{}
+	export.GuestCredentialDevices = []map[string]any{}
+	for _, link := range export.GuestLinks {
+		link["credential_holder_id"] = int64(0)
+	}
 }
 
 func sameStringSet(got map[string]bool, want []string) bool {
@@ -485,7 +519,8 @@ func safeImportPath(name string) bool {
 func normalizeImportTicket(export *ticketExport) {
 	for _, rows := range []*[]map[string]any{&export.BriefVersions, &export.Replies,
 		&export.Attachments, &export.Timeline, &export.AccessRecords, &export.Labels,
-		&export.Collaborators, &export.GuestLinks, &export.GuestDevices, &export.TicketReads} {
+		&export.Collaborators, &export.Guests, &export.GuestLinks, &export.GuestDevices,
+		&export.GuestCredentialHolders, &export.GuestCredentialDevices, &export.TicketReads} {
 		for i, row := range *rows {
 			(*rows)[i] = normalizeImportMap(row).(map[string]any)
 		}
@@ -498,6 +533,17 @@ func normalizeImportTicket(export *ticketExport) {
 		export.Drafts[i] = normalized
 	}
 	// 旧格式的归档包没有瘦身列；统一补默认值，恢复时与「仍在服务器上」一致。
+	// 旧格式的访客快照也没有合并状态；未合并时两列为 NULL。
+	for i, row := range export.Guests {
+		if _, ok := row["merged_into_guest_id"]; !ok {
+			row["merged_into_guest_id"] = nil
+		}
+		if _, ok := row["merged_at"]; !ok {
+			row["merged_at"] = nil
+		}
+		export.Guests[i] = row
+	}
+	sanitizeGuestLongTermCredentials(export)
 	for i, row := range export.Attachments {
 		if _, ok := row["slim_removed_at"]; !ok {
 			row["slim_removed_at"] = nil
@@ -506,6 +552,51 @@ func normalizeImportTicket(export *ticketExport) {
 			row["slim_package_name"] = ""
 		}
 		export.Attachments[i] = row
+	}
+}
+
+// sanitizeGuestLongTermCredentials 阻止单张工单的归档包恢复或带出访客级
+// 长期凭证。老格式包里已有这些列时也在这里丢弃；有主链接导入时重新生成
+// 未认领凭证。
+func sanitizeGuestLongTermCredentials(export *ticketExport) {
+	for _, guest := range export.Guests {
+		delete(guest, "home_key_hash")
+		delete(guest, "home_key_ciphertext")
+	}
+	guestHolders := map[int64]bool{}
+	hadGuestHolders := false
+	holders := make([]map[string]any, 0, len(export.GuestCredentialHolders))
+	for _, holder := range export.GuestCredentialHolders {
+		if stringValue(holder["owner_type"]) == "guest" {
+			guestHolders[importInt(holder, "id")] = true
+			hadGuestHolders = true
+			continue
+		}
+		holders = append(holders, holder)
+	}
+	export.GuestCredentialHolders = holders
+
+	for _, link := range export.GuestLinks {
+		if importInt(link, "guest_id") == 0 {
+			continue
+		}
+		for _, key := range []string{"claimed_at", "claim_name", "access_code_hash",
+			"access_code_failures", "access_code_locked_at", "credential_holder_id"} {
+			link[key] = nil
+		}
+	}
+	devices := make([]map[string]any, 0, len(export.GuestCredentialDevices))
+	for _, device := range export.GuestCredentialDevices {
+		if guestHolders[importInt(device, "credential_holder_id")] {
+			continue
+		}
+		devices = append(devices, device)
+	}
+	export.GuestCredentialDevices = devices
+	if hadGuestHolders {
+		// #335 后的 v1 投影把访客级设备错标在 guest_link_id 下；新结构
+		// 中的链接设备已经保留，旧投影整体不作为恢复依据。
+		export.GuestDevices = []map[string]any{}
 	}
 }
 
@@ -607,8 +698,20 @@ func (s *Service) checkImportIDsTx(ctx context.Context, tx *sql.Tx, export ticke
 	for _, row := range export.GuestLinks {
 		refs = append(refs, idRef{"guest_links", importInt(row, "id"), "访客链接 ID 已被平台使用"})
 	}
-	for _, row := range export.GuestDevices {
-		refs = append(refs, idRef{"guest_devices", importInt(row, "id"), "访客设备 ID 已被平台使用"})
+	// 访客本体与访客级凭证持有者不随工单删除：同一访客的其他工单仍在平台
+	// 上时，恢复按原 id 复用已有行（导入时用 INSERT OR IGNORE）。
+	for _, row := range export.GuestCredentialHolders {
+		if stringValue(row["owner_type"]) == "guest" {
+			continue
+		}
+		refs = append(refs, idRef{"guest_credential_holders", importInt(row, "id"), "访客凭证 ID 已被平台使用"})
+	}
+	guestHolderIDs := guestHolderIDSet(export)
+	for _, row := range export.GuestCredentialDevices {
+		if guestHolderIDs[importInt(row, "credential_holder_id")] {
+			continue
+		}
+		refs = append(refs, idRef{"guest_credential_devices", importInt(row, "id"), "访客设备凭证 ID 已被平台使用"})
 	}
 	for _, item := range export.Drafts {
 		draft, _ := item["draft"].(map[string]any)
@@ -636,6 +739,7 @@ func (s *Service) checkImportReferencesTx(ctx context.Context, tx *sql.Tx,
 	agentIDs := newIntSet()
 	intakeIDs := newIntSet()
 	linkIDs := newIntSet()
+	guestIDs := newIntSet()
 	ticketSeqs := newIntSet()
 	for _, row := range []*map[string]any{&export.Ticket} {
 		memberIDs.addRows(*row, "creator_member_id", "assignee_id")
@@ -669,6 +773,12 @@ func (s *Service) checkImportReferencesTx(ctx context.Context, tx *sql.Tx,
 	}
 	for _, row := range export.TicketReads {
 		memberIDs.addRows(row, "member_id")
+	}
+	for _, row := range export.GuestLinks {
+		guestIDs.add(row["guest_id"])
+	}
+	for _, row := range export.Guests {
+		guestIDs.add(row["merged_into_guest_id"])
 	}
 	for _, row := range export.GuestLinks {
 		memberIDs.addRows(row, "created_by_member_id")
@@ -715,6 +825,19 @@ func (s *Service) checkImportReferencesTx(ctx context.Context, tx *sql.Tx,
 		}
 		if err != nil {
 			return "", fmt.Errorf("检查访客链接引用失败：%w", err)
+		}
+	}
+	for _, id := range guestIDs.values() {
+		if pkgHasGuest(export, id) {
+			continue
+		}
+		var exists int64
+		err := tx.QueryRowContext(ctx, `SELECT 1 FROM guests WHERE id = ?`, id).Scan(&exists)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "引用的访客缺失", nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("检查访客引用失败：%w", err)
 		}
 	}
 	for _, seq := range ticketSeqs.values() {
@@ -832,6 +955,15 @@ func pkgHasLink(export ticketExport, id int64) bool {
 	return false
 }
 
+func pkgHasGuest(export ticketExport, id int64) bool {
+	for _, row := range export.Guests {
+		if importInt(row, "id") == id {
+			return true
+		}
+	}
+	return false
+}
+
 func pkgHasTicket(pkg *parsedImportPackage, seq int64) bool {
 	for _, export := range pkg.Tickets {
 		if importInt(export.Ticket, "seq") == seq {
@@ -866,11 +998,11 @@ var importTableColumns = []struct {
 		"creator_author_name", "brief_attachment_ids"}},
 	{"brief_versions", []string{"ticket_seq", "revision", "title", "brief_md", "fields_json",
 		"attachment_ids", "actor_member_id", "actor_agent_id", "actor_link_id", "actor_link_note",
-		"actor_author_name", "actor_via_agent", "at"}},
+		"actor_guest_name", "actor_author_name", "actor_via_agent", "at"}},
 	{"timeline_events", []string{"ticket_seq", "seq", "change_seq", "type", "actor_member_id",
 		"actor_agent_id", "at", "body_md", "reply_no", "deliver", "revision", "reason",
-		"duplicate_of", "label", "actor_link_id", "actor_link_note", "actor_author_name",
-		"actor_via_agent", "note", "link_expires_at", "assign_from", "assign_to",
+		"duplicate_of", "label", "actor_link_id", "actor_link_note", "actor_guest_name",
+		"actor_author_name", "actor_via_agent", "note", "link_expires_at", "assign_from", "assign_to",
 		"attachment_ids", "collaborator_member_id", "collaborator_name", "actor_system"}},
 	{"attachments", []string{"id", "ticket_seq", "filename", "size", "state", "attached_to",
 		"uploader_member_id", "uploader_agent_id", "uploader_link_id", "uploader_intake_id",
@@ -886,23 +1018,182 @@ var importTableColumns = []struct {
 		"attachment_id", "attachment_ref", "attachment_filename", "first_at", "last_at", "count"}},
 	{"ticket_labels", []string{"ticket_seq", "label"}},
 	{"ticket_collaborators", []string{"ticket_seq", "member_id", "added_at"}},
+	{"guests", []string{"id", "name", "created_by_member_id", "created_by_agent_id",
+		"created_at", "disabled_at", "merged_into_guest_id", "merged_at"}},
+	{"guest_credential_holders", []string{"id", "owner_type", "owner_id", "claimed_at",
+		"claim_name", "access_code_hash", "access_code_failures", "access_code_locked_at", "created_at"}},
 	{"guest_links", []string{"id", "ticket_seq", "key_hash", "note", "expires_at", "revoked_at",
-		"can_edit_brief", "created_by_member_id", "created_by_agent_id", "created_at", "claimed_at",
-		"claim_name", "access_code_hash", "access_code_failures", "access_code_locked_at",
-		"key_ciphertext"}},
-	{"guest_devices", []string{"id", "guest_link_id", "token_hash", "created_at", "entry_method"}},
+		"can_edit_brief", "created_by_member_id", "created_by_agent_id", "created_at",
+		"guest_id", "credential_holder_id", "key_ciphertext"}},
+	{"guest_credential_devices", []string{"id", "credential_holder_id", "token_hash",
+		"created_at", "entry_method"}},
 	{"ticket_reads", []string{"member_id", "ticket_seq", "last_read_seq"}},
 }
 
-func insertImportTicketTx(ctx context.Context, tx *sql.Tx, export ticketExport) error {
+func (s *Service) insertImportTicketTx(ctx context.Context, tx *sql.Tx, export ticketExport) error {
+	needsLegacyHolders := false
+	for _, link := range export.GuestLinks {
+		if importInt(link, "guest_id") == 0 && importInt(link, "credential_holder_id") == 0 {
+			needsLegacyHolders = true
+			break
+		}
+	}
+	if needsLegacyHolders {
+		if err := insertLegacyGuestCredentialsTx(ctx, tx, export); err != nil {
+			return err
+		}
+	}
 	draftRows, draftVersionRows := importDraftRows(export)
 	for _, table := range importTableColumns {
 		rows, err := importRowsForTable(export, table.name, draftRows, draftVersionRows)
 		if err != nil {
 			return err
 		}
-		if err := insertRowsTx(ctx, tx, table.name, table.columns, rows); err != nil {
+		// 访客与访客级持有者跨工单共享：已存在（含本次导入早前工单写入）时复用。
+		ignoreConflict := table.name == "guests" ||
+			(table.name == "guest_credential_holders" && onlyGuestHolders(rows)) ||
+			(table.name == "guest_credential_devices" && onlyGuestHolderDevices(export, rows))
+		if err := insertRowsTx(ctx, tx, table.name, table.columns, rows, ignoreConflict); err != nil {
 			return err
+		}
+		if table.name == "guests" {
+			if err := s.ensureImportedGuestCredentialsTx(ctx, tx, export); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// ensureImportedGuestCredentialsTx 给导入的访客快照补一个未认领的访客级
+// 持有者，并让有主链接指向它。访客已存在时复用平台上的持有者；新访客的
+// 主页密钥按现有“确保主页密钥”规则生成（加密器不可用时保持空值）。
+func (s *Service) ensureImportedGuestCredentialsTx(ctx context.Context, tx *sql.Tx, export ticketExport) error {
+	holders := map[int64]int64{}
+	for _, guest := range export.Guests {
+		guestID := importInt(guest, "id")
+		if guestID == 0 {
+			continue
+		}
+		var holderID int64
+		err := tx.QueryRowContext(ctx, `
+			SELECT id FROM guest_credential_holders
+			WHERE owner_type = 'guest' AND owner_id = ?`, guestID).Scan(&holderID)
+		if errors.Is(err, sql.ErrNoRows) {
+			createdAt := stringValue(guest["created_at"])
+			if err := tx.QueryRowContext(ctx, `
+				INSERT INTO guest_credential_holders
+					(owner_type, owner_id, claimed_at, claim_name, access_code_hash,
+					 access_code_failures, access_code_locked_at, created_at)
+				VALUES ('guest', ?, NULL, NULL, NULL, 0, NULL, ?) RETURNING id`,
+				guestID, createdAt).Scan(&holderID); err != nil {
+				return fmt.Errorf("恢复访客级凭证失败：%w", err)
+			}
+		} else if err != nil {
+			return err
+		}
+		holders[guestID] = holderID
+		if err := s.ensureImportedGuestHomeKeyTx(ctx, tx, guestID); err != nil {
+			return err
+		}
+	}
+	for _, link := range export.GuestLinks {
+		guestID := importInt(link, "guest_id")
+		if guestID == 0 {
+			continue
+		}
+		link["credential_holder_id"] = holders[guestID]
+	}
+	return nil
+}
+
+func (s *Service) ensureImportedGuestHomeKeyTx(ctx context.Context, tx *sql.Tx, guestID int64) error {
+	if s.guestKey == nil {
+		return nil
+	}
+	var disabledAt sql.NullString
+	var mergedAt sql.NullInt64
+	var hash, ciphertext sql.NullString
+	if err := tx.QueryRowContext(ctx, `
+		SELECT disabled_at, merged_into_guest_id, home_key_hash, home_key_ciphertext
+		FROM guests WHERE id = ?`, guestID).
+		Scan(&disabledAt, &mergedAt, &hash, &ciphertext); err != nil {
+		return err
+	}
+	if disabledAt.Valid || mergedAt.Valid || hash.Valid || ciphertext.Valid {
+		return nil
+	}
+	key, err := identity.NewGuestHomeKey()
+	if err != nil {
+		return err
+	}
+	encrypted, err := s.guestKey.Encrypt(key)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE guests SET home_key_hash = ?, home_key_ciphertext = ?
+		WHERE id = ? AND home_key_hash IS NULL`,
+		identity.CredentialHash(key), encrypted, guestID); err != nil {
+		return fmt.Errorf("写入访客主页密钥失败：%w", err)
+	}
+	return nil
+}
+
+func guestHolderIDSet(export ticketExport) map[int64]bool {
+	out := map[int64]bool{}
+	for _, row := range export.GuestCredentialHolders {
+		if stringValue(row["owner_type"]) == "guest" {
+			out[importInt(row, "id")] = true
+		}
+	}
+	return out
+}
+
+func onlyGuestHolderDevices(export ticketExport, rows []map[string]any) bool {
+	guestHolders := guestHolderIDSet(export)
+	for _, row := range rows {
+		if !guestHolders[importInt(row, "credential_holder_id")] {
+			return false
+		}
+	}
+	return true
+}
+
+func onlyGuestHolders(rows []map[string]any) bool {
+	for _, row := range rows {
+		if stringValue(row["owner_type"]) != "guest" {
+			return false
+		}
+	}
+	return true
+}
+
+func insertLegacyGuestCredentialsTx(ctx context.Context, tx *sql.Tx, export ticketExport) error {
+	for _, link := range export.GuestLinks {
+		var holderID int64
+		if err := tx.QueryRowContext(ctx, `
+			INSERT INTO guest_credential_holders
+				(owner_type, owner_id, claimed_at, claim_name, access_code_hash,
+				 access_code_failures, access_code_locked_at, created_at)
+			VALUES ('guest_link', ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+			link["id"], link["claimed_at"], link["claim_name"], link["access_code_hash"],
+			link["access_code_failures"], link["access_code_locked_at"], link["created_at"]).
+			Scan(&holderID); err != nil {
+			return fmt.Errorf("恢复旧格式的访客凭证持有者：%w", err)
+		}
+		link["credential_holder_id"] = holderID
+		for _, device := range export.GuestDevices {
+			if importInt(device, "guest_link_id") != importInt(link, "id") {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO guest_credential_devices
+					(credential_holder_id, token_hash, entry_method, created_at)
+				VALUES (?, ?, ?, ?)`,
+				holderID, device["token_hash"], device["entry_method"], device["created_at"]); err != nil {
+				return fmt.Errorf("恢复旧格式的访客设备凭证：%w", err)
+			}
 		}
 	}
 	return nil
@@ -942,10 +1233,14 @@ func importRowsForTable(export ticketExport, table string, draftRows, draftVersi
 		return export.Labels, nil
 	case "ticket_collaborators":
 		return export.Collaborators, nil
+	case "guests":
+		return export.Guests, nil
+	case "guest_credential_holders":
+		return export.GuestCredentialHolders, nil
 	case "guest_links":
 		return export.GuestLinks, nil
-	case "guest_devices":
-		return export.GuestDevices, nil
+	case "guest_credential_devices":
+		return export.GuestCredentialDevices, nil
 	case "ticket_reads":
 		return export.TicketReads, nil
 	default:
@@ -953,7 +1248,7 @@ func importRowsForTable(export ticketExport, table string, draftRows, draftVersi
 	}
 }
 
-func insertRowsTx(ctx context.Context, tx *sql.Tx, table string, columns []string, rows []map[string]any) error {
+func insertRowsTx(ctx context.Context, tx *sql.Tx, table string, columns []string, rows []map[string]any, ignoreConflict bool) error {
 	for _, row := range rows {
 		args := make([]any, 0, len(columns))
 		for _, column := range columns {
@@ -964,7 +1259,11 @@ func insertRowsTx(ctx context.Context, tx *sql.Tx, table string, columns []strin
 			args = append(args, value)
 		}
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(columns)), ",")
-		if _, err := tx.ExecContext(ctx, `INSERT INTO `+table+` (`+strings.Join(columns, ",")+
+		verb := "INSERT INTO "
+		if ignoreConflict {
+			verb = "INSERT OR IGNORE INTO "
+		}
+		if _, err := tx.ExecContext(ctx, verb+table+` (`+strings.Join(columns, ",")+
 			`) VALUES (`+placeholders+`)`, args...); err != nil {
 			return fmt.Errorf("写入 %s：%w", table, err)
 		}

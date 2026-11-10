@@ -95,8 +95,9 @@ func Test收件箱把访客修订说明算作最后回复(t *testing.T) {
 	if item.Reason != "访客修订了说明" {
 		t.Errorf("reason = %q, 想 访客修订了说明", item.Reason)
 	}
-	if item.Trigger.Type != "guest" || item.Trigger.Name != "王五" {
-		t.Errorf("触发者 = %+v, 想 guest/王五", item.Trigger)
+	// #328：往来对象与触发者显示访客名字（自报署名保留在时间线里）。
+	if item.Trigger.Type != "guest" || item.Trigger.Name != "检验科-王五" {
+		t.Errorf("触发者 = %+v, 想 guest/检验科-王五", item.Trigger)
 	}
 	if item.LastReplyAt == nil || !item.LastReplyAt.Equal(w.s.Clock().Now()) {
 		t.Errorf("last_reply_at = %v, 想 %v", item.LastReplyAt, w.s.Clock().Now())
@@ -148,11 +149,12 @@ func Test收件箱反馈单按访客归组(t *testing.T) {
 	if item == nil {
 		t.Fatal("李工信箱缺少访客补全后的反馈")
 	}
-	if item.Counterpart.Type != "guest" || item.Counterpart.Name == nil || *item.Counterpart.Name != "王五" {
-		t.Errorf("反馈往来对象 = %+v, 想 guest/王五", item.Counterpart)
+	// #328：反馈往来对象与触发者显示访客名字。
+	if item.Counterpart.Type != "guest" || item.Counterpart.Name == nil || *item.Counterpart.Name != "检验科-张三" {
+		t.Errorf("反馈往来对象 = %+v, 想 guest/检验科-张三", item.Counterpart)
 	}
-	if item.Trigger.Type != "guest" || item.Trigger.Name != "王五" {
-		t.Errorf("反馈触发者 = %+v, 想 guest/王五", item.Trigger)
+	if item.Trigger.Type != "guest" || item.Trigger.Name != "检验科-张三" {
+		t.Errorf("反馈触发者 = %+v, 想 guest/检验科-张三", item.Trigger)
 	}
 }
 
@@ -162,7 +164,7 @@ func Test收件箱访客未补全说明时触发者取访客(t *testing.T) {
 	res := w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets", map[string]any{
 		"kind": "report", "title": "等待补充的反馈", "brief_md": "", "labels": []string{"机型:UD-2300"},
 		"assignee":   "李工",
-		"guest_link": map[string]any{"note": "检验科 张三", "valid_days": 7, "can_edit_brief": true},
+		"guest_link": map[string]any{"new_guest_name": "检验科 张三", "note": "检验科 张三", "valid_days": 7, "can_edit_brief": true},
 	}, nil)
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("请人反馈建单状态码 = %d, 想 201", res.StatusCode)

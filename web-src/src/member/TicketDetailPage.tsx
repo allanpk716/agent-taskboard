@@ -9,10 +9,12 @@ import type { MemberTicket } from './memberApi'
 import type { ArchivedTicket, Attachment, DraftView } from '../shared/types'
 import {
   addCollaborator,
+  assignGuestLinkToGuest,
   assignTicket,
   changeLabels,
   closeTicket,
   createGuestLink,
+  copyGuestHomeText,
   copyGuestLinkShareText,
   discardDraft,
   extendGuestLink,
@@ -45,6 +47,8 @@ import { absoluteUrl, authorName, closeReasonText, fmtBeijing, fmtLinkExpiry, fm
 import { Confirm, Modal, copyText, invalidate, nav, toast, useLocationSearch } from './ui'
 import { HandoffDialog, PeerHandoffDialog, type HandoffPeer } from './HandoffDialog'
 import { ResetAccessDialog, type ResetAccessAction, type ResetAccessStart } from './ResetAccessDialog'
+import { GuestPicker, guestSelectionBody, type GuestSelection } from './GuestPicker'
+import { guestLinkStatusText } from './guestLinkStatus'
 import { LabelChips, chipClass, turnLabel } from './TicketsPage'
 import { detailListSource, filtersFromSearch, toQuery, toggleLabelCondition } from './listFilters'
 import { useLayoutTier } from './useLayoutTier'
@@ -423,6 +427,16 @@ async function copyGuestShareTextToClipboard(number: string, id: number) {
   }
 }
 
+async function copyGuestHomeTextToClipboard(guestId: number, guestName?: string) {
+  try {
+    const result = await copyGuestHomeText(guestId)
+    const ok = await copyText(result.share_text)
+    toast(ok ? `✓ ${guestName || '访客'}的主页文案已复制` : '复制失败，请手动选择文字复制')
+  } catch (e) {
+    toast(e instanceof ApiError ? `${e.code}：${e.message}` : '复制访客主页文案失败')
+  }
+}
+
 function useGuestLinkShareActions(
   number: string,
   onResetAccess: (link: GuestLink) => void,
@@ -438,6 +452,14 @@ function useGuestLinkShareActions(
             }}
           >
             复制转发文案
+          </button>
+        )}
+        {canManageLinks && link.guest_id && (
+          <button
+            className="btn sm ghost"
+            onClick={() => void copyGuestHomeTextToClipboard(link.guest_id!, link.guest_name)}
+          >
+            复制主页文案
           </button>
         )}
         {canManageLinks && !dead && !link.share_text_available && (
@@ -473,11 +495,15 @@ function LinksDialog({
   onClose: () => void
 }) {
   const [note, setNote] = useState('')
+  const [guest, setGuest] = useState<GuestSelection | null>(null)
   const [days, setDays] = useState('30')
   const [date, setDate] = useState('') // 「指定日期」写法的到期日（YYYY-MM-DD，管满该日全天）
   const [canEdit, setCanEdit] = useState(false)
   const [created, setCreated] = useState<{ url: string } | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [assigningId, setAssigningId] = useState<number | null>(null)
+  const [assignment, setAssignment] = useState<GuestSelection | null>(null)
+  const [assignErr, setAssignErr] = useState<string | null>(null)
   const [extendDates, setExtendDates] = useState<Record<number, string>>({}) // 每条链接「延期到该日」的日期
   const canManageLinks = ticket.viewer.can?.manage_guest_links !== false
   const shareActions = useGuestLinkShareActions(ticket.number, (link) =>
@@ -486,31 +512,90 @@ function LinksDialog({
 
   async function create() {
     if (!note.trim()) {
-      setErr('note_required：备注必填，写上给谁用的，如「检验科-张三」')
+      setErr('note_required：备注必填，写这条链接的用途，如「请补全说明」')
+      return
+    }
+    if (!guest) {
+      setErr('guest_required：选择一位已有访客，或填写新访客名字')
       return
     }
     try {
+      const guestBody = guestSelectionBody(guest)
       const link =
         days === 'date'
           ? await createGuestLink(ticket.number, {
               note: note.trim(),
               expires_at: date,
               can_edit_brief: canEdit,
+              ...guestBody,
             })
           : await createGuestLink(ticket.number, {
               note: note.trim(),
               valid_days: Number(days),
               can_edit_brief: canEdit,
+              ...guestBody,
             })
       setCreated({ url: link.url })
       setErr(null)
       setNote('')
+      setGuest(null)
       onCreated(link)
       onChanged()
       void reload()
     } catch (e) {
       setErr(e instanceof ApiError ? `${e.code}：${e.message}` : '创建失败，请重试')
     }
+  }
+
+  async function assignLegacy(id: number) {
+    if (!assignment) {
+      setAssignErr('guest_required：选择一位已有访客，或填写新访客名字')
+      return
+    }
+    try {
+      const assigned = await assignGuestLinkToGuest(ticket.number, id, guestSelectionBody(assignment))
+      toast(`✓ 已归到「${assigned.guest_name ?? '访客'}」`)
+      setAssigningId(null)
+      setAssignment(null)
+      setAssignErr(null)
+      onChanged()
+      await reload()
+    } catch (e) {
+      setAssignErr(e instanceof ApiError ? `${e.code}：${e.message}` : '归属失败，请重试')
+    }
+  }
+
+  function renderAssignEntry(link: GuestLink) {
+    if (!canManageLinks || link.guest_id) return null
+    const open = assigningId === link.id
+    return (
+      <>
+        <button
+          className="btn sm ghost"
+          onClick={() => {
+            setAssigningId(open ? null : link.id)
+            setAssignment(null)
+            setAssignErr(null)
+          }}
+        >
+          归到访客
+        </button>{' '}
+        {open && (
+          <div className="assign-guest-box">
+            <GuestPicker value={assignment} onChange={setAssignment} onError={setAssignErr} />
+            {assignErr && <div className="errbox">{assignErr}</div>}
+            <div className="inrow">
+              <button className="btn ghost sm" onClick={() => setAssigningId(null)}>
+                取消
+              </button>
+              <button className="btn sm" onClick={() => void assignLegacy(link.id)}>
+                确认归属
+              </button>
+            </div>
+          </div>
+        )}
+      </>
+    )
   }
 
   return (
@@ -531,27 +616,30 @@ function LinksDialog({
               return (
                 <tr key={g.id}>
                   <td>
-                    {g.note}
+                    {g.guest_name ? (
+                      <b data-guest-name>{g.guest_name}</b>
+                    ) : (
+                      <span className="hint">无主老链接</span>
+                    )}
+                    <div className="mini">{g.note}</div>
                     {g.can_edit_brief && <span className="mini">可填写说明</span>}
                   </td>
                   <td>
                     {fmtLinkExpiry(g.expires_at)}
-                    {g.revoked_at ? ' · 已撤销' : ''}
-                    {!g.revoked_at && linkExpired(g.expires_at) ? ' · 已过期' : ''}
+                    {' · '}
+                    {guestLinkStatusText(g)}
                     <div className="mini">
                       {g.status === 'claimed'
                         ? `已认领 · ${g.claim_name ?? ''} · ${g.claimed_at ? fmtShort(g.claimed_at) : ''} · ${g.device_count ?? 0} 台设备`
-                        : g.status === 'access_code_locked'
-                          ? `已认领 · ${g.claim_name ?? ''} · 输码已锁定`
-                        : g.status === 'revoked' || g.revoked_at
-                          ? '已认领状态不可用'
-                          : '未认领'}
+                        : guestLinkStatusText(g)}
                     </div>
                   </td>
                   <td>
-                    {dead ? (
+                    {dead && (
                       <span className="hint">{g.revoked_at ? '已失效，不能延期' : '已过期，不能延期'}</span>
-                    ) : (
+                    )}{' '}
+                    {renderAssignEntry(g)}
+                    {!dead && (
                       <>
                         {shareActions.renderActions(g, canManageLinks)}{' '}
                         <button
@@ -615,10 +703,11 @@ function LinksDialog({
         </tbody>
       </table>
       <div className="sec-t">创建新链接</div>
-      <div className="inrow">
+      <GuestPicker value={guest} onChange={setGuest} onError={(message) => setErr(message)} />
+      <div className="inrow top-gap">
         <input
           aria-label="备注"
-          placeholder="备注（必填），如：检验科-张三"
+          placeholder="备注（必填），写这条链接的用途，如：请补全说明"
           value={note}
           onChange={(e) => setNote(e.target.value)}
         />
@@ -637,7 +726,9 @@ function LinksDialog({
           <input type="checkbox" checked={canEdit} onChange={(e) => setCanEdit(e.target.checked)} /> 可填写说明
         </label>
       </div>
-      <div className="hint">没有永久有效的选项；链接的创建、撤销和延期都会记入时间线。</div>
+      <div className="hint">
+        人名记在访客上，备注只写用途；没有永久有效的选项；链接的创建、撤销和延期都会记入时间线。
+      </div>
       {err && <div className="errbox">{err}</div>}
       {created && (
         <div className="okbox">

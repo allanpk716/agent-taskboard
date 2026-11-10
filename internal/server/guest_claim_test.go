@@ -284,7 +284,10 @@ func Test成员重置访问码踢出旧设备并解除锁定(t *testing.T) {
 	s.CreateAdmin("陈工", "secret-pass")
 	web := s.Login("陈工", "secret-pass")
 	number := mustCreateTicket(t, s, web, "重置访问码")
-	link := mustCreateGuestLink(t, s, web, number, map[string]any{"note": "检验科-张三"})
+	// 链接级重置访问码只保留给无主老链接（#328）。
+	legacy := s.CreateLegacyGuestLink(t, web, number, map[string]any{"note": "检验科-张三"})
+	link := guestLinkResponse{ID: legacy.ID, URL: legacy.URL, Note: legacy.Note,
+		ExpiresAt: legacy.ExpiresAt, CanEditBrief: legacy.CanEditBrief}
 	key := guestKeyOf(t, link)
 
 	var claimed struct {
@@ -379,7 +382,7 @@ func Test成员重置访问码返回含绝对链接的重置文案(t *testing.T)
 	s.CreateAdmin("陈工", "secret-pass")
 	web := s.Login("陈工", "secret-pass")
 	number := mustCreateTicket(t, s, web, "血球仪 BH-7600CS 开机报错 E203")
-	link := mustCreateGuestLink(t, s, web, number, map[string]any{"note": "检验科-张三"})
+	link := s.CreateLegacyGuestLink(t, web, number, map[string]any{"note": "检验科-张三"})
 	linkKey := strings.TrimPrefix(link.URL, "https://taskboard.example.com/g/")
 
 	var claimed struct {
@@ -478,7 +481,8 @@ func Test访客链接列表显示认领状态且附件下载用设备凭证(t *t
 	for _, r := range records.Records {
 		if r.Action == "download" && r.Attachment.ID == att.ID && r.Actor.Kind == "guest" {
 			found = true
-			if r.Actor.Name != "检验科-张三 · 检验科 张三" || r.Actor.EntryMethod != "device" {
+			// 有主链接以访客名字记录（#328）。
+			if r.Actor.Name != "检验科-张三" || r.Actor.EntryMethod != "device" {
 				t.Errorf("访客下载署名不对：%+v", r.Actor)
 			}
 		}

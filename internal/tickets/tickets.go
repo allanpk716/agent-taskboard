@@ -81,8 +81,11 @@ type Author struct {
 
 	// 访客作者（#32）：经哪条链接操作、链接备注（存当时的原文）、自报署名与
 	// 自报「由 Agent 写成」。成员作者的这些字段为零值。
-	LinkID     int64
-	LinkNote   string
+	LinkID   int64
+	LinkNote string
+	// GuestName 是访客作者所属长期访客的名字快照（写入当时的原文，#328）；
+	// 无主老链接没有这个字段。
+	GuestName  string
 	AuthorName string
 	ViaAgent   bool
 	// System 表示平台自身（如上线迁移）是操作者，不是访客或成员。
@@ -120,9 +123,16 @@ func (a Author) displayName(markDeactivated bool) string {
 		return "系统"
 	}
 	if a.ViaAgent {
-		return a.LinkNote + "（访客）的 Agent（自报）"
+		who := a.GuestName
+		if who == "" {
+			who = a.LinkNote
+		}
+		return who + "（访客）的 Agent（自报）"
 	}
 	name := a.AuthorName
+	if name == "" && a.GuestName != "" {
+		name = a.GuestName
+	}
 	if name == "" {
 		name = "访客"
 	}
@@ -790,7 +800,7 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 		       e.body_md, e.reply_no, e.deliver, e.revision, e.reason, e.duplicate_of, e.label,
 		       e.note, e.link_expires_at, e.attachment_ids, e.assign_from, e.assign_to,
 		       e.collaborator_member_id, e.collaborator_name, e.actor_system,
-		       e.actor_link_id, e.actor_link_note, e.actor_author_name, e.actor_via_agent
+		       e.actor_link_id, e.actor_link_note, e.actor_guest_name, e.actor_author_name, e.actor_via_agent
 		FROM timeline_events e
 		LEFT JOIN members mm ON mm.id = e.actor_member_id
 		LEFT JOIN agent_tokens aa ON aa.id = e.actor_agent_id
@@ -827,6 +837,7 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 			actorSystem            int
 			actorLinkID            sql.NullInt64
 			actorLinkNote          sql.NullString
+			actorGuestName         sql.NullString
 			actorAuthorName        sql.NullString
 			actorViaAgent          int
 		)
@@ -835,7 +846,7 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 			&bodyMD, &replyNo, &deliver, &revision, &reason, &duplicateOf, &label,
 			&note, &linkExpiresAt, &attachmentIDs, &assignFrom, &assignTo,
 			&collaboratorID, &collaboratorName, &actorSystem,
-			&actorLinkID, &actorLinkNote, &actorAuthorName, &actorViaAgent); err != nil {
+			&actorLinkID, &actorLinkNote, &actorGuestName, &actorAuthorName, &actorViaAgent); err != nil {
 			return nil, err
 		}
 		e.Actor = Author{
@@ -847,6 +858,7 @@ func (m *Manager) timeline(ctx context.Context, seq int64) ([]Event, error) {
 			AgentRevoked:      actorAgentRevoked.Valid && actorAgentRevoked.String != "",
 			LinkID:            actorLinkID.Int64,
 			LinkNote:          actorLinkNote.String,
+			GuestName:         actorGuestName.String,
 			AuthorName:        actorAuthorName.String,
 			ViaAgent:          actorViaAgent == 1,
 			System:            actorSystem == 1,
@@ -1153,7 +1165,9 @@ func hasActiveGuestLink(links []GuestLinkInfo, now time.Time) bool {
 }
 
 func activeGuestLink(l GuestLinkInfo, now time.Time) bool {
-	return l.RevokedAt == nil && now.Before(l.ExpiresAt)
+	// 所属访客已停用时，整条链接视同失效（#332）：撤销与有效期字段不改写，
+	// 恢复后按原有效期重新生效。
+	return l.RevokedAt == nil && !l.GuestDisabled && now.Before(l.ExpiresAt)
 }
 
 func hasEditGuestLink(links []GuestLinkInfo) bool {

@@ -19,6 +19,8 @@ import { TicketDetailPage } from './TicketDetailPage'
 import { NewTicketPage } from './NewTicketPage'
 import { CreateDraftPage } from './CreateDraftPage'
 import { ToolsPage } from './ToolsPage'
+import { GuestsPage } from './GuestsPage'
+import { GuestDetailPage } from './GuestDetailPage'
 import { TemplatesPage } from './TemplatesPage'
 import { TemplateEditPage } from './TemplateEditPage'
 import { MePage } from './MePage'
@@ -48,6 +50,10 @@ function pageTitle(route: Route, newTicketTitle: string): string {
       return '建单草稿'
     case 'tools':
       return '工具'
+    case 'guests':
+      return '访客管理'
+    case 'guestDetail':
+      return '访客'
     case 'me':
       return '我的 · 设置'
     case 'templates':
@@ -181,10 +187,12 @@ export function MemberApp() {
   }
 
   const h = route
-  const toolsOn = h.page === 'tools' || h.page === 'templates' || h.page === 'templateEdit'
+  const toolsOn =
+    h.page === 'tools' || h.page === 'templates' || h.page === 'templateEdit' ||
+    h.page === 'guests' || h.page === 'guestDetail'
   const meOn = h.page === 'me' || h.page === 'admin'
   const centered =
-    ['tools', 'me', 'admin', 'new', 'templates', 'templateEdit', 'feedback', 'draft'].includes(h.page)
+    ['tools', 'me', 'admin', 'new', 'templates', 'templateEdit', 'feedback', 'draft', 'guests', 'guestDetail'].includes(h.page)
   const { fromInbox, query: detailQuery } = detailListSource(search)
   const detailReturnTo = fromInbox
     ? `/${detailQuery ? '?' + detailQuery : ''}`
@@ -229,6 +237,8 @@ export function MemberApp() {
       )}
       {route.page === 'draft' && <CreateDraftPage key={navSeq} id={route.id} />}
       {route.page === 'tools' && <ToolsPage key={navSeq} />}
+      {route.page === 'guests' && <GuestsPage key={navSeq} />}
+      {route.page === 'guestDetail' && <GuestDetailPage key={navSeq} guestId={route.id} />}
       {route.page === 'me' && (
         <MePage
           key={navSeq}

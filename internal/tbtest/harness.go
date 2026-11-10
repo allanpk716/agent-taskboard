@@ -412,6 +412,7 @@ func (s *Server) GuestCookieClient(token string) *http.Client {
 // （含只出现一次的完整地址 /g/<密钥>）。造数据辅助，等价于走 HTTP 接口。
 func (s *Server) CreateGuestLink(t testing.TB, c *http.Client, ref string, body map[string]any) GuestLink {
 	s.TB.Helper()
+	body = withDefaultGuest(body)
 	res := s.Do(t, c, http.MethodPost, "/api/v1/tickets/"+ref+"/guest-links", body, nil)
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("创建访客链接失败：状态码 %d", res.StatusCode)
@@ -421,11 +422,66 @@ func (s *Server) CreateGuestLink(t testing.TB, c *http.Client, ref string, body 
 	return link
 }
 
+// CreateLegacyGuestLink 造一条“上线前”的无主访客链接：先走正常接口（拿到
+// 可恢复密钥），再把链接从访客上拆下来，换回自己的 guest_link 凭证持有者。
+// 成员接口自 #328 起建链接必须带访客；无主老链接语义的回归测试用这个快路径。
+func (s *Server) CreateLegacyGuestLink(t testing.TB, c *http.Client, ref string, body map[string]any) GuestLink {
+	t.Helper()
+	link := s.CreateGuestLink(t, c, ref, body)
+	tx, err := s.Store().DB.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	var holder int64
+	if err := tx.QueryRow(`
+		INSERT INTO guest_credential_holders (owner_type, owner_id, access_code_failures, created_at)
+		VALUES ('guest_link', ?, 0, ?) RETURNING id`,
+		link.ID, s.Clock().Now().Format(time.RFC3339Nano)).Scan(&holder); err != nil {
+		t.Fatalf("造无主链接凭证持有者失败：%v", err)
+	}
+	if _, err := tx.Exec(`UPDATE guest_links
+		SET guest_id = NULL, credential_holder_id = ? WHERE id = ?`, holder, link.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(`DELETE FROM guest_credential_holders WHERE owner_type = 'guest' AND owner_id = ?`,
+		body["guest_id"]); err != nil {
+		t.Fatal(err)
+	}
+	if guestID, ok := body["guest_id"].(int64); ok {
+		if _, err := tx.Exec(`DELETE FROM guests WHERE id = ?`, guestID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	return link
+}
+
+// withDefaultGuest 是造数据辅助：#328 起建链接必须带访客；老测试没带
+// guest_id / new_guest_name 时默认按备注名新建一位访客，断言不变。
+func withDefaultGuest(body map[string]any) map[string]any {
+	if body == nil {
+		body = map[string]any{}
+	}
+	if body["guest_id"] == nil && body["new_guest_name"] == nil {
+		if note, ok := body["note"].(string); ok && strings.TrimSpace(note) != "" {
+			body["new_guest_name"] = note
+		} else {
+			body["new_guest_name"] = "默认访客"
+		}
+	}
+	return body
+}
+
 // GuestLink 是访客链接的对外结构（测试侧）。
 type GuestLink struct {
 	ID           int64  `json:"id"`
 	URL          string `json:"url"`
 	Note         string `json:"note"`
+	GuestID      int64  `json:"guest_id"`
+	GuestName    string `json:"guest_name"`
 	ExpiresAt    string `json:"expires_at"`
 	CanEditBrief bool   `json:"can_edit_brief"`
 }

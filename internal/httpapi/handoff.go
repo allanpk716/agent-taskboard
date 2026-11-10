@@ -44,6 +44,9 @@ func (h handoffText) neutralShare(number, title string) string {
 // 页面地址替换后再展示与复制。
 const guestLinkURLPlaceholder = "{GUEST_LINK_URL}"
 
+// guestHomeURLPlaceholder 是主页版访客 Agent 指令里的主页地址占位符。
+const guestHomeURLPlaceholder = "{GUEST_HOME_URL}"
+
 // guestAgentInstruction 生成访客交给其 Agent 的指令：带访客链接，但访问码
 // 只留占位提示，由访客自己私下补给 Agent。
 func (h handoffText) guestAgentInstruction(number, title string) string {

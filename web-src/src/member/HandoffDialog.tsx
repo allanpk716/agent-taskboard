@@ -11,6 +11,7 @@ import {
   fetchAgentTokens,
   type GuestLink,
 } from './memberApi'
+import { GuestPicker, guestSelectionBody, type GuestSelection } from './GuestPicker'
 import { Modal, copyText, nav, toast } from './ui'
 
 export type HandoffMode = 'agent' | 'share'
@@ -141,22 +142,30 @@ function CreateGuestLinkFields({
   const [days, setDays] = useState('30')
   const [date, setDate] = useState('')
   const [canEditBrief, setCanEditBrief] = useState(false)
+  const [guest, setGuest] = useState<GuestSelection | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
   async function create() {
     if (!note.trim()) {
-      setErr('note_required：备注必填，写上给谁用的，如「检验科-张三」')
+      setErr('note_required：备注必填，写这条链接的用途，如「补全质控说明」')
+      return
+    }
+    if (!guest) {
+      setErr('guest_required：选择一位已有访客，或填写新访客名字')
       return
     }
     try {
+      const guestBody = guestSelectionBody(guest)
       const link =
         days === 'date'
           ? await createGuestLink(ticketNumber, {
+              ...guestBody,
               note: note.trim(),
               expires_at: date,
               can_edit_brief: canEditBrief,
             })
           : await createGuestLink(ticketNumber, {
+              ...guestBody,
               note: note.trim(),
               valid_days: Number(days),
               can_edit_brief: canEditBrief,
@@ -173,10 +182,11 @@ function CreateGuestLinkFields({
   return (
     <div className="peer-create">
       <div className="sec-t">新建访客链接</div>
+      <GuestPicker value={guest} onChange={setGuest} onError={setErr} />
       <div className="inrow">
         <input
           aria-label="备注"
-          placeholder="备注（必填），如：检验科-张三"
+          placeholder="备注（必填），如：补全质控说明"
           value={note}
           onChange={(e) => setNote(e.target.value)}
         />

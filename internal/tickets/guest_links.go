@@ -12,13 +12,26 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/guestcredentials"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 )
 
 // 访客链接管理的校验错误；HTTP 层把它们映射成 4xx 错误码。
 var (
 	// ErrNoteRequired 表示创建访客链接时没写备注。
-	ErrNoteRequired = errors.New("访客链接需要备注，如「检验科-张三」")
+	ErrNoteRequired = errors.New("访客链接需要备注，如「补全质控说明」")
+	// ErrGuestRequired 表示创建访客链接时既没带已有访客，也没带新访客名字。
+	ErrGuestRequired = errors.New("创建访客链接需要选择一位已有访客，或填写新访客名字")
+	// ErrGuestBothProvided 表示已有访客与新访客名字同时出现（只能二选一）。
+	ErrGuestBothProvided = errors.New("已有访客与新访客名字只能二选一")
+	// ErrGuestNotFound 表示 guest_id 指向的访客不存在。
+	ErrGuestNotFound = errors.New("没有这位访客")
+	// ErrGuestDisabled 表示访客已停用，主页与名下链接都不可用。
+	ErrGuestDisabled = errors.New("这位访客已停用")
+	// ErrGuestManagementNotAllowed 表示当前成员不能管理这位访客。
+	ErrGuestManagementNotAllowed = errors.New("你不能管理这位访客")
+	// ErrGuestLinkAlreadyAssigned 表示链接已经归属一位访客；改归须走访客合并。
+	ErrGuestLinkAlreadyAssigned = errors.New("这条链接已归属访客，不能再手动归属")
 	// ErrInvalidValidDays 表示 valid_days 不是 7/30/90 之一（或与 expires_at 并存）。
 	ErrInvalidValidDays = errors.New("有效期只能选 7、30 或 90 天，或改用 expires_at 指定日期（二选一）")
 	// ErrInvalidExpiresAt 表示 expires_at 不是合法时间或不晚于现在（没有永久选项）。
@@ -54,6 +67,8 @@ type GuestLinkSpec struct {
 	ValidDays    int        // 0 = 未提供
 	ExpiresAt    *time.Time // 与 ValidDays 互斥；日期字符串已由 HTTP 层解析
 	CanEditBrief bool
+	GuestID      int64  // 选择已有访客（与 NewGuestName 互斥）
+	NewGuestName string // 当场新建访客的名字
 }
 
 // validateCreate 校验并规范化「创建」一条访客链接的输入（与延期不同，创建
@@ -65,7 +80,18 @@ func (spec *GuestLinkSpec) validateCreate(now time.Time) (time.Time, error) {
 	if spec.Note == "" {
 		return time.Time{}, ErrNoteRequired
 	}
-	return spec.validate(now)
+	expiresAt, err := spec.validate(now)
+	if err != nil {
+		return time.Time{}, err
+	}
+	spec.NewGuestName = strings.TrimSpace(spec.NewGuestName)
+	if spec.GuestID == 0 && spec.NewGuestName == "" {
+		return time.Time{}, ErrGuestRequired
+	}
+	if spec.GuestID != 0 && spec.NewGuestName != "" {
+		return time.Time{}, ErrGuestBothProvided
+	}
+	return expiresAt, nil
 }
 
 // validate 校验并算出到期时刻（不检查备注：延期请求不带备注）。
@@ -94,7 +120,11 @@ func (spec GuestLinkSpec) validate(now time.Time) (time.Time, error) {
 type GuestLinkCreated struct {
 	ID           int64
 	Key          string
+	HomeKey      string
 	Note         string
+	GuestID      int64
+	GuestName    string
+	Claimed      bool
 	ExpiresAt    time.Time
 	CanEditBrief bool
 }
@@ -133,6 +163,14 @@ func (m *Manager) createGuestLinkTx(ctx context.Context, tx *sql.Tx, ticketSeq i
 	if err != nil {
 		return nil, err
 	}
+	guestID, guestName, holderID, claimed, err := m.guestForNewLinkTx(ctx, tx, actor, spec, now)
+	if err != nil {
+		return nil, err
+	}
+	home, homeErr := m.ensureGuestHomeKeyTx(ctx, tx, guestID)
+	if homeErr != nil {
+		return nil, homeErr
+	}
 	key, err := identity.NewGuestKey()
 	if err != nil {
 		return nil, err
@@ -147,11 +185,13 @@ func (m *Manager) createGuestLinkTx(ctx context.Context, tx *sql.Tx, ticketSeq i
 	}
 	var id int64
 	if err := tx.QueryRowContext(ctx, `
-		INSERT INTO guest_links (ticket_seq, key_hash, key_ciphertext, note, expires_at, can_edit_brief,
-		                         created_by_member_id, created_by_agent_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO guest_links (ticket_seq, guest_id, credential_holder_id, key_hash, key_ciphertext,
+		                         note, expires_at, can_edit_brief, created_by_member_id,
+		                         created_by_agent_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id`,
-		ticketSeq, identity.CredentialHash(key), keyCiphertext, spec.Note, expiresAt.Format(time.RFC3339Nano),
+		ticketSeq, nullInt(guestID), holderID, identity.CredentialHash(key), keyCiphertext,
+		spec.Note, expiresAt.Format(time.RFC3339Nano),
 		boolToInt(spec.CanEditBrief), actor.MemberID, agentID, now.Format(time.RFC3339Nano),
 	).Scan(&id); err != nil {
 		return nil, fmt.Errorf("写入访客链接失败：%w", err)
@@ -161,8 +201,185 @@ func (m *Manager) createGuestLinkTx(ctx context.Context, tx *sql.Tx, ticketSeq i
 		return nil, err
 	}
 	return &GuestLinkCreated{
-		ID: id, Key: key, Note: spec.Note, ExpiresAt: expiresAt, CanEditBrief: spec.CanEditBrief,
+		ID: id, Key: key, Note: spec.Note, GuestID: guestID, GuestName: guestName,
+		Claimed: claimed, ExpiresAt: expiresAt, CanEditBrief: spec.CanEditBrief,
+		HomeKey: home.Key,
 	}, nil
+}
+
+// AssignGuestLink 把一条上线前的无主老链接手动归到已有访客或新建访客名下。
+// 访客未认领时，链接原有的认领、访问码和设备整体转给访客；访客已认领时，
+// 链接原有凭证作废并改用访客凭证。凭证转移、链接归属和时间线在同一个事务里完成。
+func (m *Manager) AssignGuestLink(ctx context.Context, viewer identity.Viewer, ref string,
+	id int64, spec GuestLinkSpec) (GuestLinkInfo, error) {
+	spec.NewGuestName = strings.TrimSpace(spec.NewGuestName)
+	if spec.GuestID == 0 && spec.NewGuestName == "" {
+		return GuestLinkInfo{}, ErrGuestRequired
+	}
+	if spec.GuestID != 0 && spec.NewGuestName != "" {
+		return GuestLinkInfo{}, ErrGuestBothProvided
+	}
+	full, err := m.ForViewer(ctx, viewer, ref)
+	if err != nil {
+		return GuestLinkInfo{}, err
+	}
+	now := m.clk.Now()
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return GuestLinkInfo{}, err
+	}
+	defer tx.Rollback()
+
+	row, err := m.linkForTicketTx(ctx, tx, full.Seq, id)
+	if err != nil {
+		return GuestLinkInfo{}, err
+	}
+	if row.GuestID != 0 {
+		return GuestLinkInfo{}, ErrGuestLinkAlreadyAssigned
+	}
+	actor := authorOf(viewer)
+	guestID, guestName, guestHolderID, _, err := m.guestForNewLinkTx(ctx, tx, actor, spec, now)
+	if err != nil {
+		return GuestLinkInfo{}, err
+	}
+	if _, err := m.ensureGuestHomeKeyTx(ctx, tx, guestID); err != nil {
+		return GuestLinkInfo{}, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE guest_links SET guest_id = ?, credential_holder_id = ? WHERE id = ?`,
+		guestID, guestHolderID, id); err != nil {
+		return GuestLinkInfo{}, err
+	}
+	if err := assignGuestCredentialsTx(ctx, tx, row.HolderID, guestHolderID, row.ClaimedAt.Valid); err != nil {
+		return GuestLinkInfo{}, err
+	}
+	if err := m.insertAssignmentEvent(ctx, tx, full.Seq, actor, row.Note, guestName, "manual", now); err != nil {
+		return GuestLinkInfo{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return GuestLinkInfo{}, err
+	}
+
+	links, err := m.GuestLinks(ctx, ref)
+	if err != nil {
+		return GuestLinkInfo{}, err
+	}
+	for _, link := range links {
+		if link.ID == id {
+			return link, nil
+		}
+	}
+	return GuestLinkInfo{}, ErrGuestLinkNotFound
+}
+
+// assignGuestCredentialsTx 把无主链接的凭证合并到访客持有者。目标访客已认领时
+// 保留访客凭证并丢弃链接凭证；目标访客未认领且链接已认领时，把链接的认领
+// 状态、访问码、失败计数、锁定和设备全部搬过去。两种情形都会删除链接自己的
+// 持有者，归属后的链接只指向访客持有者。
+func assignGuestCredentialsTx(ctx context.Context, tx *sql.Tx, linkHolderID, guestHolderID int64,
+	linkClaimed bool) error {
+	var guestClaimedAt sql.NullString
+	if err := tx.QueryRowContext(ctx,
+		`SELECT claimed_at FROM guest_credential_holders WHERE id = ?`, guestHolderID).
+		Scan(&guestClaimedAt); err != nil {
+		return err
+	}
+	if !guestClaimedAt.Valid && linkClaimed {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE guest_credential_holders
+			SET claimed_at = (SELECT claimed_at FROM guest_credential_holders WHERE id = ?),
+			    claim_name = (SELECT claim_name FROM guest_credential_holders WHERE id = ?),
+			    access_code_hash = (SELECT access_code_hash FROM guest_credential_holders WHERE id = ?),
+			    access_code_failures = (SELECT access_code_failures FROM guest_credential_holders WHERE id = ?),
+			    access_code_locked_at = (SELECT access_code_locked_at FROM guest_credential_holders WHERE id = ?)
+			WHERE id = ?`,
+			linkHolderID, linkHolderID, linkHolderID, linkHolderID, linkHolderID, guestHolderID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE guest_credential_devices SET credential_holder_id = ?
+			WHERE credential_holder_id = ?`, guestHolderID, linkHolderID); err != nil {
+			return err
+		}
+	} else if guestClaimedAt.Valid {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM guest_credential_devices WHERE credential_holder_id = ?`, linkHolderID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM guest_credential_holders WHERE id = ?`, linkHolderID); err != nil {
+		return err
+	}
+	return nil
+}
+
+// insertAssignmentEvent 写链接归属事件。reason 区分手动归属（manual）与后续
+// 合并访客引起的改归（merge）；assign_to 是目标访客名字快照。
+func (m *Manager) insertAssignmentEvent(ctx context.Context, tx *sql.Tx, ticketSeq int64,
+	actor Author, note, guestName, reason string, at time.Time) error {
+	eventSeq, change, err := m.appendEvent(ctx, tx, ticketSeq, at, actor, "guest_link_assigned")
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE timeline_events SET note = ?, reason = ?, assign_to = ?
+		WHERE ticket_seq = ? AND seq = ?`, note, reason, guestName, ticketSeq, eventSeq); err != nil {
+		return fmt.Errorf("写入 guest_link_assigned 事件的附加字段失败：%w", err)
+	}
+	return touchLastChange(ctx, tx, ticketSeq, change)
+}
+
+// guestForNewLinkTx 解析新链接的归属访客：选择已有访客或当场新建一位，
+// 并返回该访客的凭证持有者。新访客与持有者在调用方事务里一起写入，
+// 保证链接、访客与凭证要么全部成功、要么全部回滚。
+func (m *Manager) guestForNewLinkTx(ctx context.Context, tx *sql.Tx, actor Author,
+	spec GuestLinkSpec, now time.Time) (guestID int64, guestName string, holderID int64, claimed bool, err error) {
+	if spec.GuestID != 0 {
+		var claimedAt sql.NullString
+		var disabledAt sql.NullString
+		if err := tx.QueryRowContext(ctx, `
+			SELECT gu.id, gu.name, h.claimed_at, gu.disabled_at
+			FROM guests gu
+			JOIN guest_credential_holders h ON h.owner_type = 'guest' AND h.owner_id = gu.id
+			WHERE gu.id = ? AND gu.merged_into_guest_id IS NULL`,
+			spec.GuestID).Scan(&guestID, &guestName, &claimedAt, &disabledAt); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return 0, "", 0, false, ErrGuestNotFound
+			}
+			return 0, "", 0, false, err
+		}
+		if disabledAt.Valid {
+			return 0, "", 0, false, ErrGuestDisabled
+		}
+		claimed = claimedAt.Valid
+	} else {
+		var agentID any
+		if actor.AgentID != 0 {
+			agentID = actor.AgentID
+		}
+		if err := tx.QueryRowContext(ctx, `
+			INSERT INTO guests (name, created_by_member_id, created_by_agent_id, created_at)
+			VALUES (?, ?, ?, ?) RETURNING id`,
+			spec.NewGuestName, actor.MemberID, agentID, now.Format(time.RFC3339Nano)).
+			Scan(&guestID); err != nil {
+			return 0, "", 0, false, fmt.Errorf("写入访客失败：%w", err)
+		}
+		guestName = spec.NewGuestName
+	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT id FROM guest_credential_holders WHERE owner_type = 'guest' AND owner_id = ?`, guestID).
+		Scan(&holderID); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return 0, "", 0, false, err
+		}
+		holder, err := guestcredentials.CreateGuestHolder(ctx, tx, guestID, now)
+		if err != nil {
+			return 0, "", 0, false, err
+		}
+		holderID = holder.ID
+	}
+	return guestID, guestName, holderID, claimed, nil
 }
 
 // GuestLinkInfo 是访客链接的列表项：不含明文密钥。keyCiphertext 只在服务端
@@ -170,6 +387,9 @@ func (m *Manager) createGuestLinkTx(ctx context.Context, tx *sql.Tx, ticketSeq i
 type GuestLinkInfo struct {
 	ID                 int64
 	Note               string
+	GuestID            int64
+	GuestName          string
+	GuestDisabled      bool
 	ExpiresAt          time.Time
 	RevokedAt          *time.Time
 	ClaimedAt          *time.Time
@@ -208,14 +428,18 @@ func (m *Manager) GuestLinks(ctx context.Context, ref string) ([]GuestLinkInfo, 
 // 通知和等待方推导因此在同一事务快照上工作。
 func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]GuestLinkInfo, error) {
 	rows, err := q.QueryContext(ctx, `
-		SELECT g.id, g.key_ciphertext, g.note, g.expires_at, g.revoked_at, g.claimed_at, g.claim_name,
-		       g.access_code_locked_at,
+		SELECT g.id, g.key_ciphertext, g.note, g.expires_at, g.revoked_at,
+		       cred.claimed_at, cred.claim_name, cred.access_code_locked_at,
 		       g.can_edit_brief, g.created_at,
+		       g.guest_id, gu.name, gu.disabled_at,
 		       m.id, m.name, a.id, a.name, a.revoked_at,
 		       (SELECT COUNT(*) FROM timeline_events e
 		         WHERE e.actor_link_id = g.id AND e.type != 'guest_link_claimed'),
-		       (SELECT COUNT(*) FROM guest_devices d WHERE d.guest_link_id = g.id)
+		       (SELECT COUNT(*) FROM guest_credential_devices d
+		         WHERE d.credential_holder_id = g.credential_holder_id)
 		FROM guest_links g
+		JOIN guest_credential_holders cred ON cred.id = g.credential_holder_id
+		LEFT JOIN guests gu ON gu.id = g.guest_id
 		LEFT JOIN members m ON m.id = g.created_by_member_id
 		LEFT JOIN agent_tokens a ON a.id = g.created_by_agent_id
 		WHERE g.ticket_seq = ? ORDER BY g.id`, ticketSeq)
@@ -226,26 +450,32 @@ func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]Gue
 	out := []GuestLinkInfo{}
 	for rows.Next() {
 		var (
-			info         GuestLinkInfo
-			expiresAt    string
-			createdAt    string
-			revokedAt    sql.NullString
-			canEdit      int
-			memberID     sql.NullInt64
-			memberName   sql.NullString
-			agentID      sql.NullInt64
-			agentName    sql.NullString
-			agentRevoked sql.NullString
-			claimedAt    sql.NullString
-			claimName    sql.NullString
-			lockedAt     sql.NullString
-			keyCipher    sql.NullString
+			info          GuestLinkInfo
+			expiresAt     string
+			createdAt     string
+			revokedAt     sql.NullString
+			canEdit       int
+			memberID      sql.NullInt64
+			memberName    sql.NullString
+			agentID       sql.NullInt64
+			agentName     sql.NullString
+			agentRevoked  sql.NullString
+			claimedAt     sql.NullString
+			claimName     sql.NullString
+			lockedAt      sql.NullString
+			keyCipher     sql.NullString
+			guestID       sql.NullInt64
+			guestName     sql.NullString
+			guestDisabled sql.NullString
 		)
 		if err := rows.Scan(&info.ID, &keyCipher, &info.Note, &expiresAt, &revokedAt, &claimedAt, &claimName,
-			&lockedAt, &canEdit, &createdAt, &memberID, &memberName, &agentID, &agentName, &agentRevoked,
+			&lockedAt, &canEdit, &createdAt, &guestID, &guestName, &guestDisabled, &memberID, &memberName, &agentID, &agentName, &agentRevoked,
 			&info.UseCount, &info.DeviceCount); err != nil {
 			return nil, err
 		}
+		info.GuestID = guestID.Int64
+		info.GuestName = guestName.String
+		info.GuestDisabled = guestDisabled.Valid
 		if info.ExpiresAt, err = parseTime(expiresAt); err != nil {
 			return nil, err
 		}
@@ -283,6 +513,157 @@ func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]Gue
 		out = append(out, info)
 	}
 	return out, rows.Err()
+}
+
+// GuestInfo 是部门访客名单的列表项。
+type GuestInfo struct {
+	ID                 int64
+	Name               string
+	DisabledAt         *time.Time
+	MergedIntoGuestID  int64
+	MergedAt           *time.Time
+	ClaimedAt          *time.Time
+	ClaimName          string
+	AccessCodeLockedAt *time.Time
+	LinkCount          int
+	CreatedBy          Author
+	CreatedAt          time.Time
+}
+
+// Guests 列出部门访客名单；query 非空时按名字包含匹配（HTTP 层保证只有
+// 成员和成员 Agent 能调用）。按名字排序，成员和 Agent 都能稳定查找。
+func (m *Manager) Guests(ctx context.Context, query string) ([]GuestInfo, error) {
+	query = strings.TrimSpace(query)
+	where := " WHERE gu.merged_into_guest_id IS NULL"
+	args := []any{}
+	if query != "" {
+		where += " AND gu.name LIKE ? ESCAPE '\\'"
+		args = append(args, "%"+escapeLike(query)+"%")
+	}
+	return m.guestsQuery(ctx, where, args)
+}
+
+// guestsQuery 执行访客名单查询；where/args 由调用方拼好（名单搜索与按 id
+// 取详情共用同一份投影与扫描）。
+func (m *Manager) guestsQuery(ctx context.Context, where string, args []any) ([]GuestInfo, error) {
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT gu.id, gu.name, gu.disabled_at, gu.merged_into_guest_id, gu.merged_at,
+		       h.claimed_at, h.claim_name, h.access_code_locked_at,
+		       (SELECT COUNT(*) FROM guest_links l WHERE l.guest_id = gu.id),
+		       gu.created_by_member_id, mm.name, aa.id, aa.name, aa.revoked_at, gu.created_at
+		FROM guests gu
+		JOIN guest_credential_holders h ON h.owner_type = 'guest' AND h.owner_id = gu.id
+		LEFT JOIN members mm ON mm.id = gu.created_by_member_id
+		LEFT JOIN agent_tokens aa ON aa.id = gu.created_by_agent_id`+where+`
+		ORDER BY gu.name, gu.id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []GuestInfo{}
+	for rows.Next() {
+		var (
+			info         GuestInfo
+			disabledAt   sql.NullString
+			mergedInto   sql.NullInt64
+			mergedAt     sql.NullString
+			claimedAt    sql.NullString
+			claimName    sql.NullString
+			lockedAt     sql.NullString
+			memberID     sql.NullInt64
+			memberName   sql.NullString
+			agentID      sql.NullInt64
+			agentName    sql.NullString
+			agentRevoked sql.NullString
+			createdAt    string
+		)
+		if err := rows.Scan(&info.ID, &info.Name, &disabledAt, &mergedInto, &mergedAt,
+			&claimedAt, &claimName, &lockedAt,
+			&info.LinkCount, &memberID, &memberName, &agentID, &agentName, &agentRevoked, &createdAt); err != nil {
+			return nil, err
+		}
+		var err error
+		if info.DisabledAt, err = nullableTime(disabledAt); err != nil {
+			return nil, err
+		}
+		if info.ClaimedAt, err = nullableTime(claimedAt); err != nil {
+			return nil, err
+		}
+		if info.AccessCodeLockedAt, err = nullableTime(lockedAt); err != nil {
+			return nil, err
+		}
+		info.MergedIntoGuestID = mergedInto.Int64
+		if info.MergedAt, err = nullableTime(mergedAt); err != nil {
+			return nil, err
+		}
+		if info.CreatedAt, err = parseTime(createdAt); err != nil {
+			return nil, err
+		}
+		info.ClaimName = claimName.String
+		info.CreatedBy = Author{
+			MemberID: memberID.Int64, MemberName: memberName.String,
+			AgentID: agentID.Int64, AgentName: agentName.String,
+			AgentRevoked: agentRevoked.Valid && agentRevoked.String != "",
+		}
+		out = append(out, info)
+	}
+	return out, rows.Err()
+}
+
+func nullableTime(v sql.NullString) (*time.Time, error) {
+	if !v.Valid {
+		return nil, nil
+	}
+	at, err := parseTime(v.String)
+	if err != nil {
+		return nil, err
+	}
+	return &at, nil
+}
+
+func escapeLike(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+// GuestDefaultLink 返回长期访客最早发出且仍有效的链接，供会话接口沿用
+// “贴一条凭证就能查到工单”的旧用法；完整的名下工单列表属于访客主页（#329）。
+func (m *Manager) GuestDefaultLink(ctx context.Context, guestID int64) (*identity.GuestLink, error) {
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT g.id, g.ticket_seq, g.note, g.expires_at, g.can_edit_brief,
+		       g.guest_id, gu.name, g.credential_holder_id
+		FROM guest_links g
+		JOIN guests gu ON gu.id = g.guest_id
+		WHERE g.guest_id = ? AND g.revoked_at IS NULL AND gu.disabled_at IS NULL
+		ORDER BY g.id`, guestID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	now := m.clk.Now()
+	for rows.Next() {
+		var (
+			link      identity.GuestLink
+			expiresAt string
+			canEdit   int
+			guestName string
+		)
+		if err := rows.Scan(&link.ID, &link.TicketSeq, &link.Note, &expiresAt, &canEdit,
+			&link.GuestID, &guestName, &link.CredentialHolderID); err != nil {
+			return nil, err
+		}
+		expiry, err := time.ParseInLocation(time.RFC3339Nano, expiresAt, clock.Beijing)
+		if err != nil {
+			return nil, err
+		}
+		if !now.Before(expiry) {
+			continue
+		}
+		link.ExpiresAt = expiry
+		link.CanEditBrief = canEdit == 1
+		link.GuestName = guestName
+		return &link, nil
+	}
+	return nil, rows.Err()
 }
 
 // RevokeGuestLink 撤销 ref 工单下的一条访客链接，立即生效，记一条
@@ -366,10 +747,13 @@ func (m *Manager) ExtendGuestLink(ctx context.Context, viewer identity.Viewer, r
 // guestLinkRow 是复制转发文案、换新地址、撤销和延期共用的链接行。
 type guestLinkRow struct {
 	Note          string
+	GuestID       int64
+	GuestName     string
 	ExpiresAt     string
 	RevokedAt     sql.NullString
 	ClaimedAt     sql.NullString
 	KeyCiphertext sql.NullString
+	HolderID      int64
 	ExpiresAtTime time.Time
 }
 
@@ -379,10 +763,18 @@ func (m *Manager) linkForTicketTx(ctx context.Context, q Queryer, ticketSeq, id 
 	var (
 		row guestLinkRow
 	)
+	var guestID sql.NullInt64
+	var guestName sql.NullString
 	err := q.QueryRowContext(ctx, `
-		SELECT note, expires_at, revoked_at, claimed_at, key_ciphertext
-		FROM guest_links WHERE id = ? AND ticket_seq = ?`, id, ticketSeq).
-		Scan(&row.Note, &row.ExpiresAt, &row.RevokedAt, &row.ClaimedAt, &row.KeyCiphertext)
+		SELECT g.note, g.expires_at, g.revoked_at, cred.claimed_at,
+		       g.key_ciphertext, g.credential_holder_id, g.guest_id, gu.name
+		FROM guest_links g
+		JOIN guest_credential_holders cred ON cred.id = g.credential_holder_id
+		LEFT JOIN guests gu ON gu.id = g.guest_id
+		WHERE g.id = ? AND g.ticket_seq = ?`, id, ticketSeq).
+		Scan(&row.Note, &row.ExpiresAt, &row.RevokedAt, &row.ClaimedAt,
+			&row.KeyCiphertext, &row.HolderID, &guestID, &guestName)
+	row.GuestID, row.GuestName = guestID.Int64, guestName.String
 	if errors.Is(err, sql.ErrNoRows) {
 		return guestLinkRow{}, ErrGuestLinkNotFound
 	}

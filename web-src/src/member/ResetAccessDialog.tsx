@@ -1,18 +1,24 @@
-// 工单详情「🔑 重置访问」的分步引导：先选有效链接，再选操作，确认后展示
-// 一次性新访问码与服务端生成的重置文案。结果弹窗单独抽出来，供交接弹窗在
-// 老链接换新地址时复用，保证成员一定能看到同时重置的新访问码。
+// 工单详情「🔑 重置访问」的分步引导：先选有效链接，再在三种重置（重置链接 /
+// 重置访问码 / 重置主页地址）与撤销之间选择，确认后展示一次性结果与新文案。
+// 重置访问码与重置主页地址按访客生效（成员本人网页操作）；无主老链接仍保留
+// 链接级重置访问码。结果弹窗单独抽出来，供交接弹窗复用。
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError } from '../api'
 import { absoluteUrl, linkExpired } from '../shared/format'
 import {
+  previewGuestAccessCodeReset,
   resetGuestAccessCode,
+  resetGuestAccessCodeForGuest,
+  resetGuestHomeKey,
   revokeGuestLink,
   rotateGuestLinkKey,
+  type GuestAccessCodeResetPreview,
   type GuestLink,
 } from './memberApi'
 import { Modal, copyText, toast } from './ui'
+import { guestLinkStatusText } from './guestLinkStatus'
 
-export type ResetAccessAction = 'code' | 'link' | 'revoke'
+export type ResetAccessAction = 'code' | 'link' | 'home' | 'revoke'
 
 export interface ResetAccessStart {
   linkId: number
@@ -23,14 +29,16 @@ export interface ResetAccessStart {
 interface ResetAccessResult {
   action: Exclude<ResetAccessAction, 'revoke'>
   url: string
+  urlLabel: string
   accessCode?: string
   resetText: string
-  expiresAt: string
+  expiresAt?: string
 }
 
 const actionName: Record<ResetAccessAction, string> = {
   code: '重置访问码',
   link: '重置链接',
+  home: '重置主页地址',
   revoke: '撤销链接',
 }
 
@@ -40,11 +48,6 @@ function remainingDays(iso: string): number {
 
 function claimedLink(link: GuestLink): boolean {
   return !!link.claimed_at || link.status === 'claimed' || link.status === 'access_code_locked'
-}
-
-function statusText(link: GuestLink): string {
-  if (claimedLink(link)) return `已认领 · ${link.claim_name ?? ''}`
-  return '未认领'
 }
 
 function expiryDate(iso: string): string {
@@ -87,7 +90,9 @@ export function ResetAccessResultDialog({
   return (
     <Modal title={`${actionName[result.action]}完成`} onClose={onClose} wide>
       <p className="reset-result-sub">
-        {hasCode ? '请立即复制并发给对方；新访问码关闭后不再显示。' : '请立即复制新链接并私发给对方。'}
+        {hasCode
+          ? '请立即复制并发给对方；新访问码关闭后不再显示。'
+          : '请立即复制新地址并私发给对方。'}
       </p>
       <div className="reset-result-grid">
         {hasCode && (
@@ -97,12 +102,16 @@ export function ResetAccessResultDialog({
           </div>
         )}
         <div className="reset-result-box">
-          <div className="reset-result-label">{result.action === 'code' ? '保持不变的链接' : '新链接'}</div>
+          <div className="reset-result-label">{result.urlLabel}</div>
           <div className="reset-result-value" data-testid="reset-access-link">
             {absoluteUrl(result.url)}
           </div>
-          <div className="reset-result-label top-gap-sm">有效期至</div>
-          <div className="reset-result-value">{expiryDate(result.expiresAt)}</div>
+          {result.expiresAt && (
+            <>
+              <div className="reset-result-label top-gap-sm">有效期至</div>
+              <div className="reset-result-value">{expiryDate(result.expiresAt)}</div>
+            </>
+          )}
         </div>
       </div>
       {hasCode && (
@@ -164,6 +173,8 @@ export function ResetAccessDialog({
   )
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<ResetAccessResult | null>(null)
+  const [preview, setPreview] = useState<GuestAccessCodeResetPreview | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
 
   useEffect(() => {
     if (selectedId !== null && activeLinks.some((link) => link.id === selectedId)) return
@@ -187,6 +198,27 @@ export function ResetAccessDialog({
 
   const selected = activeLinks.find((link) => link.id === selectedId) ?? null
   const selectedClaimed = selected ? claimedLink(selected) : false
+  const guestLevelCode = !!selected?.guest_id
+
+  // 访客级重置访问码进入确认步骤前先取影响预览（作废设备数 / 涉及工单数）。
+  useEffect(() => {
+    if (step !== 'confirm' || action !== 'code' || !guestLevelCode || !selected?.guest_id || preview) {
+      return
+    }
+    let cancelled = false
+    setPreviewError(null)
+    previewGuestAccessCodeReset(selected.guest_id)
+      .then((got) => {
+        if (!cancelled) setPreview(got)
+      })
+      .catch((e) => {
+        if (cancelled) return
+        setPreviewError(e instanceof ApiError ? e.message : '影响预览加载失败，请稍后重试')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [step, action, guestLevelCode, selected?.guest_id, preview])
 
   if (result) return <ResetAccessResultDialog result={result} onClose={onClose} />
   if (links === null) {
@@ -215,24 +247,45 @@ export function ResetAccessDialog({
     setBusy(true)
     try {
       if (action === 'code') {
-        const res = await resetGuestAccessCode(ticketNumber, selected.id)
-        setResult({
-          action,
-          url: res.url,
-          accessCode: res.access_code,
-          resetText: absoluteResetText(res.reset_text, res.url),
-          expiresAt: res.expires_at,
-        })
+        if (selected.guest_id) {
+          const res = await resetGuestAccessCodeForGuest(selected.guest_id)
+          setResult({
+            action,
+            url: res.home_url,
+            urlLabel: '访客主页',
+            accessCode: res.access_code,
+            resetText: absoluteResetText(res.reset_text, res.home_url),
+          })
+        } else {
+          const res = await resetGuestAccessCode(ticketNumber, selected.id)
+          setResult({
+            action,
+            url: res.url,
+            urlLabel: '保持不变的链接',
+            accessCode: res.access_code,
+            resetText: absoluteResetText(res.reset_text, res.url),
+            expiresAt: res.expires_at,
+          })
+        }
       } else if (action === 'link') {
         const res = await rotateGuestLinkKey(ticketNumber, selected.id)
         setResult({
           action,
           url: res.url,
-          accessCode: res.access_code,
+          urlLabel: '新链接',
           resetText: absoluteResetText(res.reset_text, res.url),
           expiresAt: res.expires_at,
         })
         onLinkRotated?.(selected.id, absoluteUrl(res.url))
+      } else if (action === 'home') {
+        if (!selected.guest_id) return
+        const res = await resetGuestHomeKey(selected.guest_id)
+        setResult({
+          action,
+          url: res.home_url,
+          urlLabel: '新的主页地址',
+          resetText: absoluteResetText(res.share_text, res.home_url),
+        })
       } else {
         await revokeGuestLink(ticketNumber, selected.id)
         toast('已撤销，对方再打开会看到链接失效页')
@@ -249,20 +302,31 @@ export function ResetAccessDialog({
 
   const warnings =
     action === 'code'
-      ? [
-          '对方所有已登录设备（含对方的 Agent）会立即失效',
-          '链接地址保持不变',
-          '将生成新的 6 位访问码',
-        ]
+      ? guestLevelCode
+        ? [
+            '这位访客的所有已登录设备（主页、名下全部链接与对方的 Agent）会立即失效',
+            '连续输错造成的锁定会解除',
+            '将生成新的 6 位访问码，名下全部工单通用',
+            '链接地址与主页地址保持不变',
+          ]
+        : [
+            '对方所有已登录设备（含对方的 Agent）会立即失效',
+            '链接地址保持不变',
+            '将生成新的 6 位访问码',
+          ]
       : action === 'link'
-        ? selectedClaimed
+        ? [
+            '旧链接地址立即失效，无法再打开',
+            '访问码、已认领设备和备注都保持不变',
+            '将生成这条链接的新地址',
+          ]
+        : action === 'home'
           ? [
-              '旧链接地址立即失效，无法再打开',
-              '旧设备全部失效（含对方的 Agent）',
-              '将生成新链接，并生成新的 6 位访问码',
+              '旧主页地址立即失效，无法再打开',
+              '访问码、已登录设备和名下链接都不受影响',
+              '将生成新的主页地址',
             ]
-          : ['旧链接地址立即失效，无法再打开', '将生成新链接；本条链接尚无访问码']
-        : ['对方再打开会看到链接失效页', '撤销后不能恢复', '其他访客链接不受影响']
+          : ['对方再打开会看到链接失效页', '撤销后不能恢复', '其他访客链接不受影响']
 
   return (
     <Modal title="🔑 重置访问" onClose={onClose} wide>
@@ -298,9 +362,9 @@ export function ResetAccessDialog({
                 onClick={() => setSelectedId(link.id)}
               >
                 <span className="reset-option-title">
-                  <span>{link.note}</span>
+                  <span>{link.guest_name || link.note}</span>
                   <span className={`reset-chip ${claimedLink(link) ? 'claimed' : 'unclaimed'}`}>
-                    {statusText(link)}
+                    {guestLinkStatusText(link)}
                   </span>
                 </span>
                 <span className="reset-meta">
@@ -332,7 +396,10 @@ export function ResetAccessDialog({
       {step === 'action' && selected && (
         <fieldset className="reset-panel">
           <legend className="sr-only">选择重置操作</legend>
-          <p className="reset-lead">已选择「{selected.note}」。请选择适合的处理方式。</p>
+          <p className="reset-lead">
+            已选择{selected.guest_name ? `「${selected.guest_name}」的` : '无主老'}链接「{selected.note}」。
+            请选择适合的处理方式。
+          </p>
           <div className="reset-operation-options">
             <button
               type="button"
@@ -347,9 +414,21 @@ export function ResetAccessDialog({
                 <span className="reset-option-title">
                   <span>重置访问码</span>
                 </span>
-                <span className="reset-fit">适合：对方忘了访问码，或换了设备需要重新登录。</span>
-                <span className="reset-invalidates">会失效：对方所有已登录设备（含对方的 Agent）。</span>
-                <span className="reset-option-note">链接地址保持不变，只生成新的 6 位访问码。</span>
+                <span className="reset-fit">
+                  适合：对方忘了访问码、换了设备，或访问码疑似外泄。
+                </span>
+                <span className="reset-invalidates">
+                  会失效：{guestLevelCode
+                    ? '这位访客在主页和名下全部工单的旧设备（含对方的 Agent）。'
+                    : '对方所有已登录设备（含对方的 Agent）。'}
+                </span>
+                <span className="reset-option-note">
+                  {selectedClaimed
+                    ? guestLevelCode
+                      ? '按访客重置：新码通行名下全部工单，并解除锁定。'
+                      : '链接地址保持不变，只生成新的 6 位访问码。'
+                    : '这条链接还没有被认领，尚没有访问码。'}
+                </span>
               </span>
             </button>
             <button
@@ -365,13 +444,31 @@ export function ResetAccessDialog({
                   <span>重置链接</span>
                 </span>
                 <span className="reset-fit">适合：对方找不到链接，或链接可能被别人拿到。</span>
-                <span className="reset-invalidates">
-                  会失效：{selectedClaimed ? '旧地址、旧设备全部立即失效。' : '旧地址立即失效。'}
-                </span>
+                <span className="reset-invalidates">会失效：这一条链接的旧地址。</span>
                 <span className="reset-option-note">
-                  {selectedClaimed
-                    ? '会生成新地址，并同时重置访问码。'
-                    : '会生成新地址；对方首次打开并认领后才会获得访问码。'}
+                  只换新地址；访问码、已认领设备和备注都保持不变。
+                </span>
+              </span>
+            </button>
+            <button
+              type="button"
+              className={`reset-operation-option${action === 'home' ? ' selected' : ''}`}
+              disabled={!selected.guest_id}
+              aria-pressed={action === 'home'}
+              aria-label="重置主页地址"
+              onClick={() => setAction('home')}
+            >
+              <span className="reset-op-icon">🏠</span>
+              <span className="reset-op-content">
+                <span className="reset-option-title">
+                  <span>重置主页地址</span>
+                </span>
+                <span className="reset-fit">适合：主页地址疑似外泄，或旧地址无法恢复。</span>
+                <span className="reset-invalidates">会失效：这位访客的旧主页地址。</span>
+                <span className="reset-option-note">
+                  {selected.guest_id
+                    ? '只换主页地址；访问码、已认领设备和名下链接都不受影响。'
+                    : '无主老链接没有访客主页，不能重置主页地址。'}
                 </span>
               </span>
             </button>
@@ -397,7 +494,7 @@ export function ResetAccessDialog({
           </div>
           {!selectedClaimed && (
             <div className="warnbox">
-              这条链接还没有被访客认领，尚没有访问码，因此不能只重置访问码。请选择「重置链接」或「撤销链接」。
+              这条链接还没有被访客认领，尚没有访问码，因此不能重置访问码。请选择「重置链接」或「撤销链接」。
             </div>
           )}
           <div className="mrow">
@@ -420,18 +517,40 @@ export function ResetAccessDialog({
           <p className="reset-lead">请核对以下信息。确认后会立即生效，不能撤销。</p>
           <div className="reset-summary">
             <div className="reset-option-title">
-              <span>{selected.note}</span>
+              <span>{selected.guest_name || selected.note}</span>
               <span className={`reset-chip ${selectedClaimed ? 'claimed' : 'unclaimed'}`}>
-                {statusText(selected)}
+                {guestLinkStatusText(selected)}
               </span>
             </div>
             <div className="reset-meta">
               <span className="reset-chip plain">操作：{actionName[action]}</span>
-              <span className="reset-chip plain">工单：{ticketTitle}</span>
-              <span className="reset-chip plain">有效期至 {expiryDate(selected.expires_at)}</span>
+              <span className="reset-chip plain">
+                {action === 'home' || (action === 'code' && guestLevelCode)
+                  ? `访客：${selected.guest_name ?? ''}`
+                  : `工单：${ticketTitle}`}
+              </span>
+              {action !== 'home' && !(action === 'code' && guestLevelCode) && (
+                <span className="reset-chip plain">有效期至 {expiryDate(selected.expires_at)}</span>
+              )}
             </div>
+            {action === 'code' && guestLevelCode && preview && (
+              <div className="reset-meta" data-testid="reset-access-preview">
+                <span className="reset-chip plain">将作废 {preview.device_count} 台设备</span>
+                <span className="reset-chip plain">涉及 {preview.ticket_count} 张工单</span>
+                {preview.access_code_locked && (
+                  <span className="reset-chip plain">当前已锁定，重置后解除</span>
+                )}
+              </div>
+            )}
+            {action === 'code' && guestLevelCode && previewError && (
+              <div className="errbox">{previewError}</div>
+            )}
             <div className="short-link">
-              {action === 'code' ? (knownUrls[selected.id] ?? '/g/••••••') : '将生成新的链接地址'}
+              {action === 'code' && !guestLevelCode
+                ? (knownUrls[selected.id] ?? '/g/••••••')
+                : action === 'link'
+                  ? '将生成新的链接地址'
+                  : '将生成新的主页地址'}
             </div>
           </div>
           <div className="warnbox">
@@ -450,7 +569,7 @@ export function ResetAccessDialog({
             <button
               type="button"
               className={`btn big${action === 'code' ? '' : ' danger'}`}
-              disabled={busy}
+              disabled={busy || (action === 'code' && guestLevelCode && !preview)}
               onClick={() => void submit()}
             >
               {busy ? '正在处理…' : `确认${actionName[action]}`}

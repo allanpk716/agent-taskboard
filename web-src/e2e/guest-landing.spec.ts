@@ -17,14 +17,19 @@ interface Seed {
  *  接口）：默认 Bug 反馈模板；free 为真时是一张不用模板的反馈工单。 */
 async function requestFeedback(
   request: APIRequestContext,
-  opts: { title: string; free?: boolean; note?: string },
+  opts: { title: string; free?: boolean; note?: string; guest?: string },
 ): Promise<Seed> {
   await loginAdmin(request)
   const res = await request.post('/api/v1/tickets', {
     data: {
       title: opts.title,
       labels: [],
-      guest_link: { note: opts.note ?? '检验科-张三', valid_days: 30, can_edit_brief: true },
+      guest_link: {
+        note: opts.note ?? '检验科-张三',
+        new_guest_name: opts.guest ?? '检验科-张三',
+        valid_days: 30,
+        can_edit_brief: true,
+      },
       ...(opts.free ? { kind: 'report', brief_md: '' } : { template: 'bug-report', fields: {} }),
     },
   })
@@ -137,7 +142,7 @@ test.describe('落地页', () => {
     expect(created.status(), `建单失败：${await created.text()}`).toBe(201)
     const number: string = (await created.json()).number
     const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
-      data: { note: '检验科-张三', valid_days: 30, can_edit_brief: false },
+      data: { note: '检验科-张三', new_guest_name: '检验科-张三', valid_days: 30, can_edit_brief: false },
     })
     expect(link.ok(), `创建访客链接失败：${await link.text()}`).toBeTruthy()
     const linkKey = String((await link.json()).url).slice(3)
@@ -155,7 +160,12 @@ test.describe('自由格式', () => {
   test.use({ viewport: { width: 390, height: 844 } })
 
   test('自由格式工单显示「情况说明」组，能上传附件，提交后说明里有内容', async ({ page, request }) => {
-    const seed = await requestFeedback(request, { title: '生化仪结果漂移', free: true, note: '门诊-李四' })
+    const seed = await requestFeedback(request, {
+      title: '生化仪结果漂移',
+      free: true,
+      note: '门诊-李四',
+      guest: '门诊-李四',
+    })
     await openGuestPage(page, request, seed.linkKey)
 
     // 落地页：写一段说明；称呼预填链接备注
@@ -230,8 +240,8 @@ async function runFullUseCase(
   await feedbackEntry.click()
   await page.getByRole('button', { name: /发链接请人填写/ }).click()
   await page.getByRole('button', { name: /^Bug 反馈 反馈/ }).click()
-  await expect(page.getByLabel('请谁填写')).toBeVisible()
-  await page.getByLabel('请谁填写').fill('检验科-张三')
+  await expect(page.getByLabel('新建访客名字')).toBeVisible()
+  await page.getByLabel('新建访客名字').fill('检验科-张三')
   await page.getByLabel('什么事').fill('完整用例：UD-2300 质控报 E-203')
   await page.getByRole('button', { name: '生成链接' }).click()
   const done = page.locator('.donet')
@@ -276,7 +286,7 @@ async function runFullUseCase(
   await page.goto('/')
   const completedCard = page.locator('.tcard', { hasText: number })
   await expect(completedCard).toHaveCount(1)
-  if (mobile) await expect(completedCard).toContainText('访客 检验科 张三 补全了说明')
+  if (mobile) await expect(completedCard).toContainText('访客 检验科-张三 补全了说明')
 
   // 访客对话页：说明卡片有内容，时间线有「修订了说明」事件
   await expect(guest.locator('[data-bubble="brief"]')).toContainText('UD-2300')

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/guestcredentials"
+	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
 	"github.com/allanpk716/agent-taskboard/internal/store"
 	_ "modernc.org/sqlite"
@@ -107,6 +109,70 @@ func Test备份文件命名正确并通过完整性校验(t *testing.T) {
 	}
 	if len(status.Records) != 1 || status.Records[0].Filename != name {
 		t.Fatalf("记录里应有这一条备份：%+v", status.Records)
+	}
+}
+
+func Test备份恢复覆盖访客凭证持有者和设备(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	st, err := store.Open(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := []string{
+		`INSERT INTO members (id, username, name, password_hash, is_admin, created_at)
+		 VALUES (1,'wang','王工','x',1,'2026-11-02T09:00:00+08:00')`,
+		`INSERT INTO tickets (seq, number, kind, title, status, brief_md, creator_member_id,
+		 assignee_id, created_at, last_change)
+		 VALUES (1,'20261102-001','task','备份访客凭证','open','说明',1,1,
+		         '2026-11-02T09:00:00+08:00',1)`,
+		`INSERT INTO guest_links (id, ticket_seq, key_hash, note, expires_at, can_edit_brief,
+		                         created_by_member_id, created_at)
+		 VALUES (1,1,'key-hash','检验科-张三','2099-01-01T00:00:00+08:00',1,1,
+		         '2026-11-02T09:00:00+08:00')`,
+	}
+	for _, query := range seed {
+		if _, err := st.DB.Exec(query); err != nil {
+			t.Fatalf("造备份前数据失败：%v\n%s", err, query)
+		}
+	}
+	holder, err := guestcredentials.CreateLinkHolder(ctx, st.DB, 1, beijing(2026, 11, 2, 9, 0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := guestcredentials.Claim(ctx, st.DB, holder.ID, "张三", beijing(2026, 11, 2, 10, 0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := ops.NewBackups(st.DB, dataDir, ops.BackupOptions{
+		DailyAt: "03:00", KeepDaily: 30, KeepMonthly: 12, KeepPreupdate: 5,
+	},
+		clock.NewFake(beijing(2026, 11, 2, 11, 0, 0)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := b.BackupNow(ctx, ops.KindDaily)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	freshData := t.TempDir()
+	if _, err := ops.Restore(freshData, 0, filepath.Join(dataDir, "backups", record.Filename),
+		beijing(2026, 11, 2, 11, 1, 0)); err != nil {
+		t.Fatalf("恢复备份失败：%v", err)
+	}
+	restored, err := store.Open(freshData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	idm := identity.NewManager(restored.DB, clock.NewFake(beijing(2026, 11, 2, 12, 0, 0)))
+	viewer, err := idm.ViewerFromGuestDevice(ctx, claim.DeviceToken)
+	if err != nil || viewer.GuestLink == nil || viewer.GuestLink.ClaimName != "张三" {
+		t.Fatalf("恢复后的访客设备凭证不可用：viewer=%+v err=%v", viewer, err)
 	}
 }
 
@@ -237,4 +303,143 @@ func read(t *testing.T, path string) string {
 		t.Fatalf("读 %s 失败：%v", path, err)
 	}
 	return string(b)
+}
+
+// 备份恢复覆盖访客本体与访客级凭证：恢复后这台设备仍以同一位长期访客
+// 身份通行其名下链接。
+func Test备份恢复覆盖访客与访客级凭证(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	st, err := store.Open(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := []string{
+		`INSERT INTO members (id, username, name, password_hash, is_admin, created_at)
+		 VALUES (1,'wang','王工','x',1,'2026-11-02T09:00:00+08:00')`,
+		`INSERT INTO tickets (seq, number, kind, title, status, brief_md, creator_member_id,
+		 assignee_id, created_at, last_change)
+		 VALUES (1,'20261102-001','task','备份访客身份','open','说明',1,1,
+		         '2026-11-02T09:00:00+08:00',1)`,
+		`INSERT INTO guests (id, name, created_by_member_id, created_at,
+		                     home_key_hash, home_key_ciphertext)
+		 VALUES (1,'检验科-张三',1,'2026-11-02T09:00:00+08:00',
+		         'home-key-hash','home-key-ciphertext')`,
+		`INSERT INTO guest_links (id, ticket_seq, guest_id, key_hash, note, expires_at,
+		                         can_edit_brief, created_by_member_id, created_at)
+		 VALUES (1,1,1,'key-hash','请补充','2099-01-01T00:00:00+08:00',1,1,
+		         '2026-11-02T09:00:00+08:00')`,
+	}
+	for _, query := range seed {
+		if _, err := st.DB.Exec(query); err != nil {
+			t.Fatalf("造备份前数据失败：%v\n%s", err, query)
+		}
+	}
+	holder, err := guestcredentials.CreateGuestHolder(ctx, st.DB, 1, beijing(2026, 11, 2, 9, 0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB.Exec(`UPDATE guest_links SET credential_holder_id = ? WHERE id = 1`, holder.ID); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := guestcredentials.Claim(ctx, st.DB, holder.ID, "张三", beijing(2026, 11, 2, 10, 0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := ops.NewBackups(st.DB, dataDir, ops.BackupOptions{
+		DailyAt: "03:00", KeepDaily: 30, KeepMonthly: 12, KeepPreupdate: 5,
+	}, clock.NewFake(beijing(2026, 11, 2, 11, 0, 0)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := b.BackupNow(ctx, ops.KindDaily)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	freshData := t.TempDir()
+	if _, err := ops.Restore(freshData, 0, filepath.Join(dataDir, "backups", record.Filename),
+		beijing(2026, 11, 2, 11, 1, 0)); err != nil {
+		t.Fatalf("恢复备份失败：%v", err)
+	}
+	restored, err := store.Open(freshData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	var guestName string
+	if err := restored.DB.QueryRow(`SELECT name FROM guests WHERE id = 1`).Scan(&guestName); err != nil || guestName != "检验科-张三" {
+		t.Fatalf("恢复后的访客 = %q (err=%v)，想 检验科-张三", guestName, err)
+	}
+	var homeHash, homeCipher string
+	if err := restored.DB.QueryRow(
+		`SELECT home_key_hash, home_key_ciphertext FROM guests WHERE id = 1`).
+		Scan(&homeHash, &homeCipher); err != nil || homeHash != "home-key-hash" || homeCipher != "home-key-ciphertext" {
+		t.Fatalf("恢复后的主页密钥 = %q/%q (err=%v)，想原哈希与密文", homeHash, homeCipher, err)
+	}
+	idm := identity.NewManager(restored.DB, clock.NewFake(beijing(2026, 11, 2, 12, 0, 0)))
+	viewer, err := idm.ViewerFromGuestDevice(ctx, claim.DeviceToken)
+	if err != nil || viewer.Guest == nil || viewer.Guest.Name != "检验科-张三" || viewer.Guest.ClaimName != "张三" {
+		t.Fatalf("恢复后的访客级设备凭证不可用：viewer=%+v err=%v", viewer, err)
+	}
+}
+
+// 备份恢复保留“已并入哪位访客、何时并入”的永久状态；合并不可撤回，
+// 不能在恢复后把 B 又当成可选访客。
+func Test备份恢复覆盖访客合并状态(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	st, err := store.Open(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := []string{
+		`INSERT INTO members (id, username, name, password_hash, is_admin, created_at)
+		 VALUES (1,'wang','王工','x',1,'2026-11-02T09:00:00+08:00')`,
+		`INSERT INTO guests (id, name, created_by_member_id, created_at)
+		 VALUES (1,'检验科-张三',1,'2026-11-02T09:00:00+08:00')`,
+		`INSERT INTO guests (id, name, created_by_member_id, created_at,
+		                     merged_into_guest_id, merged_at)
+		 VALUES (2,'检验科-张三（重复）',1,'2026-11-02T09:05:00+08:00',1,
+		         '2026-11-02T10:00:00+08:00')`,
+	}
+	for _, query := range seed {
+		if _, err := st.DB.Exec(query); err != nil {
+			t.Fatalf("造备份前数据失败：%v\n%s", err, query)
+		}
+	}
+	b, err := ops.NewBackups(st.DB, dataDir, ops.BackupOptions{
+		DailyAt: "03:00", KeepDaily: 30, KeepMonthly: 12, KeepPreupdate: 5,
+	}, clock.NewFake(beijing(2026, 11, 2, 11, 0, 0)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := b.BackupNow(ctx, ops.KindDaily)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	freshData := t.TempDir()
+	if _, err := ops.Restore(freshData, 0, filepath.Join(dataDir, "backups", record.Filename),
+		beijing(2026, 11, 2, 11, 1, 0)); err != nil {
+		t.Fatalf("恢复备份失败：%v", err)
+	}
+	restored, err := store.Open(freshData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	var mergedInto int64
+	var mergedAt string
+	if err := restored.DB.QueryRow(
+		`SELECT merged_into_guest_id, merged_at FROM guests WHERE id = 2`).
+		Scan(&mergedInto, &mergedAt); err != nil || mergedInto != 1 ||
+		mergedAt != "2026-11-02T10:00:00+08:00" {
+		t.Fatalf("恢复后的合并状态 = %d/%q (err=%v)，想并入访客 1", mergedInto, mergedAt, err)
+	}
 }

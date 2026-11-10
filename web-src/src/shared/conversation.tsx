@@ -34,12 +34,22 @@ export function eventText(e: TimelineEvent): string {
       return `访客链接「${e.note}」连续输错访问码，输码已锁定`
     case 'guest_access_reset':
       return `重置了访客链接「${e.note}」的访问码`
+    case 'guest_access_code_reset':
+      return `重置了访客「${e.note}」的访问码（名下全部工单生效）`
     case 'guest_link_revoked':
       return `撤销了访客链接「${e.note}」`
     case 'guest_link_extended':
       return `延长了访客链接「${e.note}」${e.expires_at ? `至 ${fmtDateCN(e.expires_at)}` : ''}`
     case 'guest_link_rotated':
       return `更换了访客链接「${e.note}」的地址`
+    case 'guest_link_assigned':
+      return e.reason === 'merge'
+        ? `合并访客后把访客链接「${e.note}」改归到 ${e.to}`
+        : `把访客链接「${e.note}」归到 ${e.to}`
+    case 'guest_disabled':
+      return `停用了访客「${e.to}」，名下链接一并失效`
+    case 'guest_enabled':
+      return `恢复了访客「${e.to}」，名下链接按原有效期重新生效`
     case 'brief_revised':
       return `修订了说明（第 ${e.revision} 版）`
     case 'closed':

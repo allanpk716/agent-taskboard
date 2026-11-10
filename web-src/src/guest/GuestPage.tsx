@@ -16,7 +16,7 @@ import { VersionBanner } from '../shared/VersionBanner'
 import { SlimBanner } from '../shared/widgets'
 import { useVersionCheck } from '../shared/versionCheck'
 import { Modal, copyText } from '../member/ui'
-import type { ArchivedTicket, GuestSession, TicketView } from '../shared/types'
+import type { ArchivedTicket, TicketView } from '../shared/types'
 
 type Mode = 'land' | 'talk' | 'fill'
 
@@ -32,17 +32,21 @@ type Phase =
 function GuestHandoffDialog({
   ticket,
   linkKey,
+  homeKey,
   which,
   onClose,
 }: {
   ticket: TicketView
   linkKey: string
+  homeKey?: string
   which: 'agent' | 'peer'
   onClose: () => void
 }) {
   const [copied, setCopied] = useState(false)
   // 后端只保存链接密钥的哈希，拿不到明文地址；访客网页用当前页面地址拼。
-  const guestLinkURL = `${window.location.origin}/g/${linkKey}`
+  const guestLinkURL = homeKey
+    ? `${window.location.origin}/h/${homeKey}`
+    : `${window.location.origin}/g/${linkKey}`
   const text =
     which === 'agent'
       ? (ticket.guest_agent_instruction ?? '').replaceAll('{GUEST_LINK_URL}', guestLinkURL)
@@ -141,7 +145,15 @@ function LinkInvalidPage({
   )
 }
 
-export function GuestPage({ linkKey }: { linkKey: string }) {
+export function GuestPage({
+  linkKey,
+  ticketApi,
+  fromHome = false,
+}: {
+  linkKey: string
+  ticketApi?: string
+  fromHome?: boolean
+}) {
   const [phase, setPhase] = useState<Phase>({ kind: 'loading' })
   const [expiresAt, setExpiresAt] = useState<string | undefined>()
   // #65：✏ 修改说明进入分组填写页，提交后回到对话；#66：第一次打开且
@@ -158,14 +170,28 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
 
   const load = useCallback(async () => {
     try {
+      if (ticketApi) {
+        const ticket: TicketView = await guestApi(linkKey, ticketApi)
+        setPhase({ kind: 'ready', ticket })
+        if (!decidedRef.current) {
+          decidedRef.current = true
+          const guestRevised = ticket.timeline.some(
+            (e) => e.type === 'brief_revised' && !e.actor.member && !e.actor.agent,
+          )
+          const showLanding = ticket.viewer.can.edit_brief && ticket.status !== 'closed' && !guestRevised
+          setMode(showLanding ? 'land' : 'talk')
+        }
+        return
+      }
+      // #328 起设备凭证是访客级、全站一份：先用链接密钥读这条链接指向哪张工单，
+      // 再凭设备凭证打开（同一位访客的其他链接也都能打开）。
+      const info = await guestRawApi(linkKey, '/api/v1/guest-link')
       if (!guestDeviceToken(linkKey)) {
-        const info = await guestRawApi(linkKey, '/api/v1/guest-link')
         setPhase(info.state === 'unclaimed' ? { kind: 'claim', info } : { kind: 'enter', info })
         return
       }
-      const sess: GuestSession = await guestApi(linkKey, '/api/v1/session')
-      setExpiresAt(sess.viewer.link_expires_at)
-      const ticket: TicketView = await guestApi(linkKey, sess.ticket.api)
+      setExpiresAt(info.valid_until)
+      const ticket: TicketView = await guestApi(linkKey, info.ticket_api)
       setPhase({ kind: 'ready', ticket })
       if (!decidedRef.current) {
         decidedRef.current = true
@@ -192,7 +218,7 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
       // 瞬时网络问题等：提示稍后重试。
       setPhase({ kind: 'invalid', code: 'unreachable' })
     }
-  }, [linkKey])
+  }, [linkKey, ticketApi])
 
   useEffect(() => {
     void load()
@@ -319,6 +345,13 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
     <>
       {banner}
       <main className={`guest-root${closed || !ticket.viewer.can.reply ? ' readonly' : ''}`}>
+        {fromHome && (
+          <div className="guest-handoff-bar" role="region" aria-label="返回主页">
+            <a className="btn sm ghost" href={`/h/${encodeURIComponent(linkKey)}`} data-return-guest-home>
+              ← 返回我的主页
+            </a>
+          </div>
+        )}
         <div className="guest-handoff-bar" role="region" aria-label="Agent 入口">
           <button type="button" className="btn sm ghost" onClick={() => setHandoff('agent')}>
             🤖 复制给我的 Agent
@@ -348,7 +381,13 @@ export function GuestPage({ linkKey }: { linkKey: string }) {
           />
         )}
         {handoff && (
-          <GuestHandoffDialog ticket={ticket} linkKey={linkKey} which={handoff} onClose={() => setHandoff(null)} />
+          <GuestHandoffDialog
+            ticket={ticket}
+            linkKey={linkKey}
+            homeKey={fromHome ? linkKey : undefined}
+            which={handoff}
+            onClose={() => setHandoff(null)}
+          />
         )}
         {versionCheck.serverVersion && (
           <footer className="guest-version">工单板 v{versionCheck.serverVersion}</footer>

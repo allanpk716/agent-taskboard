@@ -4,10 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/guestcredentials"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 )
 
@@ -16,6 +16,8 @@ var (
 	ErrClaimNameRequired = errors.New("认领需要填写你的称呼")
 	// ErrLinkAlreadyClaimed 表示链接已被另一位访客抢先认领。
 	ErrLinkAlreadyClaimed = errors.New("这条链接已被认领")
+	// ErrHomeAlreadyClaimed 表示主页已被另一位访客抢先认领。
+	ErrHomeAlreadyClaimed = errors.New("这个主页已被认领")
 	// ErrLinkNotClaimed 表示链接还没有访客认领。
 	ErrLinkNotClaimed = errors.New("这条链接尚未认领")
 	// ErrAccessCodeRequired 表示凭访问码进入时没有填访问码。
@@ -24,7 +26,19 @@ var (
 	ErrAccessCodeInvalid = errors.New("访问码不正确")
 	// ErrAccessCodeLocked 表示连续输错后访问码已被锁定。
 	ErrAccessCodeLocked = errors.New("访问码已锁定")
+	// ErrGuestAccessCodeGuestLevel 表示有主链接不能单独重置访问码：
+	// 访问码以访客为单位管理。
+	ErrGuestAccessCodeGuestLevel = errors.New("这条链接属于一位访客，访问码按访客为单位管理")
 )
+
+// GuestAccessCodeGuestLevelError 表示有主链接的访问码属于整个访客，不能在
+// 单条链接上重置；GuestID 告诉调用方改用哪位访客的访客级重置接口。
+type GuestAccessCodeGuestLevelError struct {
+	GuestID int64
+}
+
+func (e *GuestAccessCodeGuestLevelError) Error() string { return ErrGuestAccessCodeGuestLevel.Error() }
+func (e *GuestAccessCodeGuestLevelError) Unwrap() error { return ErrGuestAccessCodeGuestLevel }
 
 // GuestClaimResult 是认领成功的输出；DeviceToken 只出现一次。
 type GuestClaimResult struct {
@@ -40,14 +54,6 @@ func (m *Manager) ClaimGuestLink(ctx context.Context, link identity.GuestLink, a
 	if authorName == "" {
 		return GuestClaimResult{}, ErrClaimNameRequired
 	}
-	token, err := identity.NewGuestDeviceKey()
-	if err != nil {
-		return GuestClaimResult{}, err
-	}
-	code, err := identity.NewAccessCode()
-	if err != nil {
-		return GuestClaimResult{}, err
-	}
 	now := m.clk.Now()
 	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -55,27 +61,17 @@ func (m *Manager) ClaimGuestLink(ctx context.Context, link identity.GuestLink, a
 	}
 	defer tx.Rollback()
 
-	res, err := tx.ExecContext(ctx, `
-		UPDATE guest_links SET claimed_at = ?, claim_name = ?, access_code_hash = ?
-		WHERE id = ? AND claimed_at IS NULL`,
-		now.Format(time.RFC3339Nano), authorName, identity.CredentialHash(code), link.ID)
+	claim, err := guestcredentials.Claim(ctx, tx, link.CredentialHolderID, authorName, now)
 	if err != nil {
+		switch {
+		case errors.Is(err, guestcredentials.ErrClaimNameRequired):
+			return GuestClaimResult{}, ErrClaimNameRequired
+		case errors.Is(err, guestcredentials.ErrAlreadyClaimed):
+			return GuestClaimResult{}, ErrLinkAlreadyClaimed
+		}
 		return GuestClaimResult{}, err
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return GuestClaimResult{}, err
-	}
-	if n == 0 {
-		return GuestClaimResult{}, ErrLinkAlreadyClaimed
-	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO guest_devices (guest_link_id, token_hash, entry_method, created_at)
-		VALUES (?, ?, 'device', ?)`,
-		link.ID, identity.CredentialHash(token), now.Format(time.RFC3339Nano)); err != nil {
-		return GuestClaimResult{}, fmt.Errorf("写入访客设备凭证失败：%w", err)
-	}
-	actor := Author{LinkID: link.ID, LinkNote: link.Note, AuthorName: authorName}
+	actor := Author{LinkID: link.ID, LinkNote: link.Note, GuestName: link.GuestName, AuthorName: authorName}
 	eventSeq, change, err := m.appendEvent(ctx, tx, link.TicketSeq, now, actor, "guest_link_claimed")
 	if err != nil {
 		return GuestClaimResult{}, err
@@ -91,113 +87,97 @@ func (m *Manager) ClaimGuestLink(ctx context.Context, link identity.GuestLink, a
 	if err := tx.Commit(); err != nil {
 		return GuestClaimResult{}, err
 	}
-	return GuestClaimResult{DeviceToken: token, AccessCode: code, ClaimedAt: now}, nil
+	return GuestClaimResult{DeviceToken: claim.DeviceToken, AccessCode: claim.AccessCode, ClaimedAt: now}, nil
 }
 
 // EnterGuestLink 校验访问码，签发另一台设备凭证，并清零共享的连续失败计数。
 func (m *Manager) EnterGuestLink(ctx context.Context, link identity.GuestLink, code string) (GuestClaimResult, error) {
-	token, err := identity.NewGuestDeviceKey()
+	now := m.clk.Now()
+	tx, err := m.db.BeginTx(ctx, nil)
 	if err != nil {
 		return GuestClaimResult{}, err
 	}
-	if err := m.verifyGuestAccessCode(ctx, link, code); err != nil {
+	defer tx.Rollback()
+	if _, err := m.verifyGuestAccessCodeTx(ctx, tx, link, code, now); err != nil {
+		_ = tx.Commit()
 		return GuestClaimResult{}, err
 	}
-	now := m.clk.Now()
-	if _, err := m.db.ExecContext(ctx, `
-		INSERT INTO guest_devices (guest_link_id, token_hash, entry_method, created_at)
-		VALUES (?, ?, 'access_code', ?)`,
-		link.ID, identity.CredentialHash(token), now.Format(time.RFC3339Nano)); err != nil {
-		return GuestClaimResult{}, fmt.Errorf("写入访客设备凭证失败：%w", err)
+	token, err := guestcredentials.IssueDevice(ctx, tx, link.CredentialHolderID, "access_code", now)
+	if err != nil {
+		return GuestClaimResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return GuestClaimResult{}, err
 	}
 	return GuestClaimResult{DeviceToken: token, ClaimedAt: now}, nil
 }
 
-// ViewerFromGuestAgentCredential 校验访问码 Bearer 凭证，不签发设备凭证。
-// 每次请求复用浏览器的连续失败计数，并按 access_code 记录进入方式。
+// ViewerFromGuestAgentCredential 校验「链接 + 访问码」Agent 凭证，不签发
+// 设备凭证。即使链接属于长期访客，这张凭证也只作用于这一条链接对应的
+// 工单；失败计数仍由访客级凭证持有者统一累计。
 func (m *Manager) ViewerFromGuestAgentCredential(ctx context.Context, link identity.GuestLink, code string) (identity.Viewer, error) {
-	if err := m.verifyGuestAccessCode(ctx, link, code); err != nil {
+	now := m.clk.Now()
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return identity.Viewer{}, err
+	}
+	defer tx.Rollback()
+	if _, err := m.verifyGuestAccessCodeTx(ctx, tx, link, code, now); err != nil {
+		_ = tx.Commit()
+		return identity.Viewer{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return identity.Viewer{}, err
 	}
 	link.EntryMethod = "access_code"
 	return identity.Viewer{Kind: identity.ViewerGuest, GuestLink: &link}, nil
 }
 
-// verifyGuestAccessCode 在同一事务里完成浏览器与 Agent 共用的访问码校验，
-// 并更新共同的失败计数。
-func (m *Manager) verifyGuestAccessCode(ctx context.Context, link identity.GuestLink, code string) error {
-	code = strings.TrimSpace(code)
-	if code == "" {
-		return ErrAccessCodeRequired
-	}
-	now := m.clk.Now()
-	tx, err := m.db.BeginTx(ctx, nil)
+// verifyGuestAccessCodeTx 在调用方事务里完成浏览器与 Agent 共用的访问码校验，
+// 并更新共同的失败计数；刚好锁定时返回 true，让调用方补业务时间线。
+func (m *Manager) verifyGuestAccessCodeTx(ctx context.Context, tx *sql.Tx,
+	link identity.GuestLink, code string, now time.Time) (bool, error) {
+	becameLocked, err := guestcredentials.VerifyAccessCode(ctx, tx,
+		link.CredentialHolderID, code, now)
 	if err != nil {
-		return err
+		mapped := ticketGuestCredentialError(err)
+		if becameLocked {
+			actor := Author{LinkID: link.ID, LinkNote: link.Note, AuthorName: link.ClaimName}
+			if eventErr := m.insertLinkEvent(ctx, tx, link.TicketSeq, actor,
+				"guest_access_locked", link.Note, "", now); eventErr != nil {
+				return false, eventErr
+			}
+		}
+		return becameLocked, mapped
 	}
-	defer tx.Rollback()
+	if becameLocked {
+		actor := Author{LinkID: link.ID, LinkNote: link.Note, AuthorName: link.ClaimName}
+		if err := m.insertLinkEvent(ctx, tx, link.TicketSeq, actor, "guest_access_locked",
+			link.Note, "", now); err != nil {
+			return false, err
+		}
+	}
+	return becameLocked, nil
+}
 
-	var (
-		hash       *string
-		failures   int
-		lockedNull sql.NullString
-		claimName  string
-	)
-	if err := tx.QueryRowContext(ctx, `
-		SELECT access_code_hash, access_code_failures, access_code_locked_at, claim_name
-		FROM guest_links WHERE id = ?`, link.ID).
-		Scan(&hash, &failures, &lockedNull, &claimName); err != nil {
-		return err
-	}
-	if lockedNull.Valid {
-		return ErrAccessCodeLocked
-	}
-	if hash == nil || identity.CredentialHash(code) != *hash {
-		failures++
-		if failures >= 5 {
-			if _, err := tx.ExecContext(ctx, `
-				UPDATE guest_links SET access_code_failures = ?, access_code_locked_at = ? WHERE id = ?`,
-				failures, now.Format(time.RFC3339Nano), link.ID); err != nil {
-				return err
-			}
-			actor := Author{LinkID: link.ID, LinkNote: link.Note, AuthorName: claimName}
-			if err := m.insertLinkEvent(ctx, tx, link.TicketSeq, actor, "guest_access_locked",
-				link.Note, "", now); err != nil {
-				return err
-			}
-			if err := tx.Commit(); err != nil {
-				return err
-			}
-			return ErrAccessCodeLocked
-		}
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE guest_links SET access_code_failures = ? WHERE id = ?`, failures, link.ID); err != nil {
-			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return err
-		}
+// ticketGuestCredentialError 把凭证模块的访问码错误换成 tickets 层的稳定错误。
+func ticketGuestCredentialError(err error) error {
+	switch {
+	case errors.Is(err, guestcredentials.ErrAccessCodeRequired):
+		return ErrAccessCodeRequired
+	case errors.Is(err, guestcredentials.ErrAccessCodeInvalid):
 		return ErrAccessCodeInvalid
-	}
-
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE guest_links SET access_code_failures = 0 WHERE id = ?`, link.ID); err != nil {
+	case errors.Is(err, guestcredentials.ErrAccessCodeLocked):
+		return ErrAccessCodeLocked
+	default:
 		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	return nil
 }
 
 // ResetGuestAccessCode 让所有已记住设备失效并签发新的访问码，不重新开放链接
 // 给别人认领。返回链接当前状态，供 HTTP 层生成一次性重置文案。
 func (m *Manager) ResetGuestAccessCode(ctx context.Context, viewer identity.Viewer, ref string, id int64) (GuestLinkShare, error) {
 	full, err := m.ForViewer(ctx, viewer, ref)
-	if err != nil {
-		return GuestLinkShare{}, err
-	}
-	code, err := identity.NewAccessCode()
 	if err != nil {
 		return GuestLinkShare{}, err
 	}
@@ -212,6 +192,9 @@ func (m *Manager) ResetGuestAccessCode(ctx context.Context, viewer identity.View
 	if err != nil {
 		return GuestLinkShare{}, err
 	}
+	if row.GuestID != 0 {
+		return GuestLinkShare{}, &GuestAccessCodeGuestLevelError{GuestID: row.GuestID}
+	}
 	if !row.ClaimedAt.Valid {
 		return GuestLinkShare{}, ErrLinkNotClaimed
 	}
@@ -225,13 +208,8 @@ func (m *Manager) ResetGuestAccessCode(ctx context.Context, viewer identity.View
 	if err != nil {
 		return GuestLinkShare{}, ErrGuestShareTextUnavailable
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM guest_devices WHERE guest_link_id = ?`, id); err != nil {
-		return GuestLinkShare{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE guest_links
-		SET access_code_hash = ?, access_code_failures = 0, access_code_locked_at = NULL
-		WHERE id = ?`, identity.CredentialHash(code), id); err != nil {
+	reset, err := guestcredentials.Reset(ctx, tx, row.HolderID, now)
+	if err != nil {
 		return GuestLinkShare{}, err
 	}
 	if err := m.insertLinkEvent(ctx, tx, full.Seq, authorOf(viewer), "guest_access_reset",
@@ -243,7 +221,7 @@ func (m *Manager) ResetGuestAccessCode(ctx context.Context, viewer identity.View
 	}
 	return GuestLinkShare{
 		Key: key, Note: row.Note, Title: full.Title, ExpiresAt: row.ExpiresAtTime,
-		Claimed: true, AccessCode: code,
+		Claimed: true, AccessCode: reset.AccessCode,
 	}, nil
 }
 
@@ -253,7 +231,10 @@ func (m *Manager) GuestLinkStatus(ctx context.Context, link identity.GuestLink) 
 	var nameNull sql.NullString
 	var lockedNull sql.NullString
 	err = m.db.QueryRowContext(ctx,
-		`SELECT claimed_at, claim_name, access_code_locked_at FROM guest_links WHERE id = ?`, link.ID).
+		`SELECT h.claimed_at, h.claim_name, h.access_code_locked_at
+		 FROM guest_credential_holders h
+		 JOIN guest_links g ON g.credential_holder_id = h.id
+		 WHERE g.id = ?`, link.ID).
 		Scan(&claimedNull, &nameNull, &lockedNull)
 	if err != nil {
 		return "", "", nil, err

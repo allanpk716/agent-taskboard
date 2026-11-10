@@ -3,6 +3,7 @@ package tickets
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
@@ -12,7 +13,11 @@ import (
 // GuestLinkShare 是可再次生成转发文案所需的当前链接状态。
 type GuestLinkShare struct {
 	Key        string
+	HomeKey    string
+	HasHome    bool
 	Note       string
+	GuestID    int64
+	GuestName  string
 	Title      string
 	ExpiresAt  time.Time
 	Claimed    bool
@@ -41,15 +46,37 @@ func (m *Manager) RecoverGuestLink(ctx context.Context, viewer identity.Viewer, 
 	if err != nil {
 		return GuestLinkShare{}, ErrGuestShareTextUnavailable
 	}
+	homeKey := ""
+	// 已认领访客只需要知道“已在主页”，不重复暴露主页地址；未认领时才
+	// 附主页，让访客第一次就保存长期入口。
+	if row.GuestID != 0 && !row.ClaimedAt.Valid {
+		home, err := m.GuestHomeShare(ctx, row.GuestID)
+		// 服务端密钥丢失只影响“可重复恢复的密文”：不阻断链接本身的转发
+		// 文案；主页地址待重置主页密钥后恢复（#331）。
+		if err != nil && !errors.Is(err, ErrGuestShareTextUnavailable) &&
+			!errors.Is(err, ErrGuestLinkCipherUnavailable) {
+			return GuestLinkShare{}, err
+		}
+		if err == nil {
+			homeKey = home.Key
+		}
+		// 即使服务端密钥丢失导致主页地址暂时不可恢复，仍要告诉已认领访客
+		// 这张工单已经在访客的主页上；主页地址由 #331 的重置主页恢复。
+		return GuestLinkShare{
+			Key: key, HomeKey: homeKey, HasHome: true, Note: row.Note, GuestID: row.GuestID,
+			GuestName: row.GuestName, Title: full.Title, ExpiresAt: row.ExpiresAtTime,
+			Claimed: row.ClaimedAt.Valid,
+		}, nil
+	}
 	return GuestLinkShare{
-		Key: key, Note: row.Note, Title: full.Title, ExpiresAt: row.ExpiresAtTime, Claimed: row.ClaimedAt.Valid,
+		Key: key, HomeKey: homeKey, HasHome: row.GuestID != 0, Note: row.Note, GuestID: row.GuestID, GuestName: row.GuestName,
+		Title: full.Title, ExpiresAt: row.ExpiresAtTime, Claimed: row.ClaimedAt.Valid,
 	}, nil
 }
 
 // RotateGuestLinkKey 给 ref 工单下的一条有效链接换新密钥，并在同一事务里写
-// guest_link_rotated 事件。已认领的链接同时重置访问码并删除全部设备凭证；
-// 未认领的链接尚无访问码，只换新地址。除地址和访问码外，备注、有效期、
-// 认领状态与「可填写说明」权限都保持不变。
+// guest_link_rotated 事件。重置链接只换单条链接的地址：访问码、设备、备注、
+// 有效期、认领状态与「可填写说明」权限都保持不变（ADR 0019）。
 func (m *Manager) RotateGuestLinkKey(ctx context.Context, viewer identity.Viewer, ref string, id int64) (GuestLinkShare, error) {
 	full, err := m.ForViewer(ctx, viewer, ref)
 	if err != nil {
@@ -81,29 +108,11 @@ func (m *Manager) RotateGuestLinkKey(ctx context.Context, viewer identity.Viewer
 	if !keyCiphertext.Valid {
 		return GuestLinkShare{}, ErrGuestLinkCipherUnavailable
 	}
-	accessCode := ""
-	if row.ClaimedAt.Valid {
-		accessCode, err = identity.NewAccessCode()
-		if err != nil {
-			return GuestLinkShare{}, err
-		}
-	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE guest_links SET key_hash = ?, key_ciphertext = ?
 		WHERE id = ? AND ticket_seq = ?`,
 		identity.CredentialHash(key), keyCiphertext, id, full.Seq); err != nil {
 		return GuestLinkShare{}, err
-	}
-	if row.ClaimedAt.Valid {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM guest_devices WHERE guest_link_id = ?`, id); err != nil {
-			return GuestLinkShare{}, err
-		}
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE guest_links
-			SET access_code_hash = ?, access_code_failures = 0, access_code_locked_at = NULL
-			WHERE id = ?`, identity.CredentialHash(accessCode), id); err != nil {
-			return GuestLinkShare{}, err
-		}
 	}
 	if err := m.insertLinkEvent(ctx, tx, full.Seq, authorOf(viewer), "guest_link_rotated",
 		row.Note, "", now); err != nil {
@@ -113,8 +122,9 @@ func (m *Manager) RotateGuestLinkKey(ctx context.Context, viewer identity.Viewer
 		return GuestLinkShare{}, err
 	}
 	return GuestLinkShare{
-		Key: key, Note: row.Note, Title: full.Title, ExpiresAt: row.ExpiresAtTime,
-		Claimed: row.ClaimedAt.Valid, AccessCode: accessCode,
+		Key: key, HasHome: row.GuestID != 0, Note: row.Note, GuestID: row.GuestID, GuestName: row.GuestName,
+		Title: full.Title, ExpiresAt: row.ExpiresAtTime,
+		Claimed: row.ClaimedAt.Valid,
 	}, nil
 }
 
@@ -131,15 +141,33 @@ func (m *Manager) encryptedGuestLinkKey(key string) (sql.NullString, error) {
 	return sql.NullString{String: ciphertext, Valid: true}, nil
 }
 
+// DisplayName 返回转发与重置文案对访客的称呼：有主链接用访客名字，
+// 无主老链接沿用链接备注。
+func (s GuestLinkShare) DisplayName() string {
+	if s.GuestName != "" {
+		return s.GuestName
+	}
+	return s.Note
+}
+
 // GuestShareText 生成面向访客的转发文案：称呼对方、当前标题、写详细并传
-// 日志照片、同一条链接、免登录与当前有效期；已认领时追加访问码提醒。
-func GuestShareText(note, title, url string, expiresAt time.Time, claimed bool) string {
+// 日志照片、同一条链接、免登录与当前有效期。未认领时附主页地址；已认领时
+// 只提示这张工单已在主页，不再重复暴露主页凭证。
+func GuestShareText(note, title, linkURL, homeURL string, hasHome bool, expiresAt time.Time, claimed bool) string {
 	text := note + "：想请你帮忙反馈「" + title + "」的详细情况。打开这个链接，按提示把情况写具体一些" +
-		"（什么时候、做了什么、看到什么），可以上传日志和照片：" + url +
+		"（什么时候、做了什么、看到什么），可以上传日志和照片：" + linkURL +
 		"。不用登录，有效期至 " + expiresAt.In(clock.Beijing).Format("2006-01-02") +
 		"。链接只归第一位打开并确认的人，请不要转发"
 	if claimed {
-		text += "。换了设备需要输入当初的访问码，忘了请找我重置"
+		if hasHome {
+			text += "。这张工单已加到你的主页。换了设备需要输入当初的访问码，忘了请找我重置"
+		} else {
+			text += "。换了设备需要输入当初的访问码，忘了请找我重置"
+		}
+		return text
+	}
+	if homeURL != "" {
+		text += "。你的主页：" + homeURL + " ，第一次打开任一链接或主页都会认领你的全部工单，访问码只显示一次，请保存"
 	}
 	return text
 }
@@ -153,15 +181,13 @@ func GuestAccessCodeResetText(note, title, url, accessCode string, expiresAt tim
 		"。访问码请勿转发；如果你让 Agent 处理过这张工单，也请把新访问码告诉它。"
 }
 
-// GuestLinkResetText 生成「新链接」的重置文案。已认领链接会同时拿到新访问码；
-// 未认领链接尚无访问码，只提醒第一条链接不要转发。
-func GuestLinkResetText(note, title, url, accessCode string, expiresAt time.Time) string {
-	prefix := note + "：这张工单的链接已更换，旧链接已失效。工单「" + title + "」的链接：" + url
-	if accessCode == "" {
-		return prefix + " 。有效期至 " + expiresAt.In(clock.Beijing).Format("2006-01-02") +
-			"。链接只归第一位打开并确认的人，请不要转发。"
+// GuestLinkResetText 生成「新链接」的重置文案。重置链接不再连带重置访问码：
+// 已认领的链接提醒沿用原访问码；未认领的链接提醒首次认领后才会生成访问码。
+func GuestLinkResetText(note, title, url string, claimed bool, expiresAt time.Time) string {
+	prefix := note + "：这张工单的链接已更换，旧链接已失效。工单「" + title + "」的链接：" + url +
+		" 。有效期至 " + expiresAt.In(clock.Beijing).Format("2006-01-02")
+	if claimed {
+		return prefix + "。访问码保持不变，换设备打开链接时仍输入原来的访问码。"
 	}
-	return prefix + " ，新访问码：" + accessCode + " 。换设备打开链接时输入新访问码即可，有效期至 " +
-		expiresAt.In(clock.Beijing).Format("2006-01-02") +
-		"。访问码请勿转发；如果你让 Agent 处理过这张工单，也请把新访问码告诉它。"
+	return prefix + "。链接只归第一位打开并确认的人，请不要转发。"
 }

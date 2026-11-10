@@ -145,6 +145,7 @@ func (a *API) guestLinkInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"state": state, "inviter": inviter, "note": link.Note,
 		"valid_until": link.ExpiresAt, "visibility_hint": "这张工单只有你和处理人能看到",
+		"guest_name": link.GuestName, "ticket_api": "/api/v1/tickets/" + full.Number,
 	})
 }
 

@@ -5,8 +5,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -18,7 +20,9 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/store"
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
+	_ "modernc.org/sqlite"
 )
 
 type archiveImportInspectionBody struct {
@@ -360,6 +364,11 @@ func Test归档导入完整恢复工单并保留访客链接(t *testing.T) {
 	beforeReplyDrafting := getArchiveRoundtripJSON(t, s, admin, "/api/v1/tickets/"+number+"/drafting/1")
 	beforeBriefDrafting := getArchiveRoundtripJSON(t, s, admin, "/api/v1/tickets/"+number+"/brief-drafting/2")
 	beforeGuestLinks := getArchiveRoundtripJSON(t, s, admin, "/api/v1/tickets/"+number+"/guest-links")
+	var beforeHome map[string]any
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/guests/"+fmt.Sprint(link.GuestID)+"/home-share-text", nil, &beforeHome); res.StatusCode != http.StatusOK {
+		t.Fatalf("归档前复制主页文案状态码 = %d，想 200", res.StatusCode)
+	}
 	beforeAccess := getArchiveRoundtripJSON(t, s, admin, "/api/v1/tickets/"+number+"/access-records")
 	beforeBriefAttachment := downloadArchiveAttachment(t, s, admin, beforeDetail, "现场记录.txt")
 	beforeReplyAttachment := downloadArchiveAttachment(t, s, admin, beforeDetail, "回复日志.txt")
@@ -399,6 +408,11 @@ func Test归档导入完整恢复工单并保留访客链接(t *testing.T) {
 	afterReplyDrafting := getArchiveRoundtripJSON(t, s, admin, "/api/v1/tickets/"+number+"/drafting/1")
 	afterBriefDrafting := getArchiveRoundtripJSON(t, s, admin, "/api/v1/tickets/"+number+"/brief-drafting/2")
 	afterGuestLinks := getArchiveRoundtripJSON(t, s, admin, "/api/v1/tickets/"+number+"/guest-links")
+	var afterHome map[string]any
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/guests/"+fmt.Sprint(link.GuestID)+"/home-share-text", nil, &afterHome); res.StatusCode != http.StatusOK {
+		t.Fatalf("归档导入后复制主页文案状态码 = %d，想 200", res.StatusCode)
+	}
 	afterBriefAttachment := downloadArchiveAttachment(t, s, admin, afterDetail, "现场记录.txt")
 	afterReplyAttachment := downloadArchiveAttachment(t, s, admin, afterDetail, "回复日志.txt")
 
@@ -407,6 +421,7 @@ func Test归档导入完整恢复工单并保留访客链接(t *testing.T) {
 	assertArchiveRoundtripEqual(t, "回复起草过程", beforeReplyDrafting, afterReplyDrafting)
 	assertArchiveRoundtripEqual(t, "说明起草过程", beforeBriefDrafting, afterBriefDrafting)
 	assertArchiveRoundtripEqual(t, "访客链接", beforeGuestLinks, afterGuestLinks)
+	assertArchiveRoundtripEqual(t, "访客主页", beforeHome, afterHome)
 	assertArchiveRoundtripEqual(t, "访问记录", beforeAccess, afterAccess)
 	if string(beforeBriefAttachment) != string(afterBriefAttachment) ||
 		string(beforeReplyAttachment) != string(afterReplyAttachment) {
@@ -442,6 +457,73 @@ func Test归档导入完整恢复工单并保留访客链接(t *testing.T) {
 	if res := s.Do(t, admin, http.MethodPost,
 		"/api/v1/admin/archive/packages/"+second.Name+"/remove", map[string]any{"saved": true}, nil); res.StatusCode != http.StatusOK {
 		t.Fatalf("导入后再次移除状态码 = %d, 想 200", res.StatusCode)
+	}
+}
+
+func Test导入归档包为缺失访客新建未认领凭证(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	setStorageClock(t, s, 2026, time.June, 2)
+	number := mustCreateTicket(t, s, admin, "带长期访客的归档工单")
+	link := s.CreateGuestLink(t, admin, number,
+		map[string]any{"note": "补全说明", "new_guest_name": "检验科-张三", "expires_at": "2027-12-31"})
+	if res := s.Do(t, s.GuestClient(link.Key(t)), http.MethodGet, "/api/v1/session", nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("归档前访客认领状态码 = %d, 想 200", res.StatusCode)
+	}
+	if res := closeTicket(t, s, admin, number, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d, 想 200", res.StatusCode)
+	}
+	s.Clock().Set(time.Date(2026, time.October, 30, 10, 0, 0, 0, clock.Beijing))
+	admin = s.Login("陈工", "secret-pass")
+	var pkg archivePackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/archive/packages",
+		map[string]any{"closed_months": 3, "ticket_numbers": []string{number}}, &pkg); res.StatusCode != http.StatusCreated {
+		t.Fatalf("生成归档包状态码 = %d, 想 201", res.StatusCode)
+	}
+	pkgRes := s.Do(t, admin, http.MethodGet, pkg.DownloadURL, nil, nil)
+	if pkgRes.StatusCode != http.StatusOK {
+		t.Fatalf("下载归档包状态码 = %d, 想 200", pkgRes.StatusCode)
+	}
+	zipBytes, err := io.ReadAll(pkgRes.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	target := tbtest.Start(t)
+	target.CreateAdmin("陈工", "secret-pass")
+	targetAdmin := target.Login("陈工", "secret-pass")
+	targetDB, err := sql.Open("sqlite", store.FileURI(filepath.Join(target.DataDir(), "taskboard.db"))+"?_pragma=busy_timeout(10000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer targetDB.Close()
+	if _, err := targetDB.Exec(`
+		INSERT INTO archived_tickets
+			(seq, number, title, closed_at, archived_at, operator_member_id, package_name)
+		VALUES (1, ?, '带长期访客的归档工单', ?, ?, 1, ?)`,
+		number, "2026-06-02T10:00:00+08:00", "2026-10-30T10:00:00+08:00", pkg.Name); err != nil {
+		t.Fatalf("写入目标库墓碑失败：%v", err)
+	}
+	importRes, imported := importArchive(t, target, targetAdmin, zipBytes, number)
+	if importRes.StatusCode != http.StatusOK || len(imported.Imported) != 1 || len(imported.Rejected) != 0 {
+		body, _ := io.ReadAll(importRes.Body)
+		t.Fatalf("导入结果 = %d/%q/%+v, 想只导入成功", importRes.StatusCode, body, imported)
+	}
+
+	_, detail := fetchGuestDetail(t, target, targetAdmin, link.GuestID)
+	if detail.Guest.Name != "检验科-张三" || detail.Guest.ClaimedAt != nil ||
+		len(detail.Tickets) != 1 || len(detail.Tickets[0].Links) != 1 {
+		t.Fatalf("恢复后的访客详情 = %+v, 想未认领且带链接", detail)
+	}
+	if res := target.Do(t, target.AgentClient(link.Key(t)), http.MethodGet,
+		"/api/v1/guest-link", nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("恢复后的原链接应可重新认领，状态码 = %d, 想 200", res.StatusCode)
+	}
+	var home map[string]any
+	if res := target.Do(t, targetAdmin, http.MethodPost,
+		"/api/v1/guests/"+fmt.Sprint(link.GuestID)+"/home-share-text", nil, &home); res.StatusCode != http.StatusOK {
+		t.Fatalf("恢复后复制访客主页状态码 = %d, 想 200", res.StatusCode)
 	}
 }
 

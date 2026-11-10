@@ -15,6 +15,8 @@ type guestLinkResponse struct {
 	ID           int64   `json:"id"`
 	URL          string  `json:"url"`
 	Note         string  `json:"note"`
+	GuestID      int64   `json:"guest_id"`
+	GuestName    string  `json:"guest_name"`
 	ExpiresAt    string  `json:"expires_at"`
 	RevokedAt    *string `json:"revoked_at"`
 	CanEditBrief bool    `json:"can_edit_brief"`
@@ -29,6 +31,13 @@ func createGuestLink(t testing.TB, s *tbtest.Server, c *http.Client, ref string,
 // mustCreateGuestLink 创建一条访客链接并返回响应结构。
 func mustCreateGuestLink(t testing.TB, s *tbtest.Server, c *http.Client, ref string, body map[string]any) guestLinkResponse {
 	t.Helper()
+	if body["guest_id"] == nil && body["new_guest_name"] == nil {
+		if note, ok := body["note"].(string); ok && strings.TrimSpace(note) != "" {
+			body["new_guest_name"] = note
+		} else {
+			body["new_guest_name"] = "默认访客"
+		}
+	}
 	res := createGuestLink(t, s, c, ref, body)
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("创建访客链接状态码 = %d, 想 201（body=%v）", res.StatusCode, body)
@@ -89,7 +98,8 @@ func Test成员创建访客链接默认三十天并记入时间线(t *testing.T)
 	// 建单、打标签等成员 Agent 也能创建访客链接。
 	_, token := s.IssueAgentToken(t, web, "笔记本")
 	agent := s.AgentClient(token)
-	if res := createGuestLink(t, s, agent, number, map[string]any{"note": "质量部 Agent"}); res.StatusCode != http.StatusCreated {
+	if res := createGuestLink(t, s, agent, number,
+		map[string]any{"note": "质量部 Agent", "new_guest_name": "质量部"}); res.StatusCode != http.StatusCreated {
 		t.Errorf("成员 Agent 创建访客链接状态码 = %d, 想 201", res.StatusCode)
 	}
 
@@ -140,9 +150,9 @@ func Test成员创建访客链接默认三十天并记入时间线(t *testing.T)
 	}
 }
 
-// 访客链接的密钥直接作 Bearer token：GET /api/session 返回链接指向的工单，
-// 访客由此知道该读哪张单（spec 用户故事 84）。
-func Test访客用链接密钥查明指向的工单(t *testing.T) {
+// 访客链接认领后升成长期身份：GET /api/session 返回访客身份与主页信息，
+// 不再假装设备凭证只指向最早一条链接（#329）。
+func Test访客会话返回长期身份与主页信息(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")
 	web := s.Login("陈工", "secret-pass")
@@ -162,9 +172,13 @@ func Test访客用链接密钥查明指向的工单(t *testing.T) {
 				ID   int64
 				Name string
 			} `json:"agent"`
-			LinkNote      string `json:"link_note"`
-			LinkExpiresAt string `json:"link_expires_at"`
-			CanEditBrief  bool   `json:"can_edit_brief"`
+			Guest struct {
+				ID   int64  `json:"id"`
+				Name string `json:"name"`
+			} `json:"guest"`
+			Home struct {
+				API string `json:"api"`
+			} `json:"home"`
 		} `json:"viewer"`
 		Ticket struct {
 			Number string `json:"number"`
@@ -183,20 +197,14 @@ func Test访客用链接密钥查明指向的工单(t *testing.T) {
 	if sess.Viewer.Member != nil || sess.Viewer.Agent != nil {
 		t.Errorf("访客的 viewer 不应带成员或 Agent：%+v", sess.Viewer)
 	}
-	if sess.Viewer.LinkNote != "检验科-张三" {
-		t.Errorf("link_note = %q, 想 检验科-张三", sess.Viewer.LinkNote)
+	if sess.Viewer.Guest.ID != link.GuestID || sess.Viewer.Guest.Name != "检验科-张三" {
+		t.Errorf("viewer.guest = %+v，想链接归属的长期访客", sess.Viewer.Guest)
 	}
-	if want := link.ExpiresAt; sess.Viewer.LinkExpiresAt != want {
-		t.Errorf("link_expires_at = %q, 想 %q", sess.Viewer.LinkExpiresAt, want)
+	if sess.Viewer.Home.API != "/api/v1/guest-home" {
+		t.Errorf("viewer.home.api = %q，想 /api/v1/guest-home", sess.Viewer.Home.API)
 	}
-	if sess.Viewer.CanEditBrief {
-		t.Error("can_edit_brief 应为 false")
-	}
-	if sess.Ticket.Number != number || sess.Ticket.Seq != 1 || sess.Ticket.Title != "BH-7600CS 质控结果偏高" {
-		t.Errorf("链接指向的工单不对：%+v", sess.Ticket)
-	}
-	if sess.Ticket.API != "/api/v1/tickets/"+number {
-		t.Errorf("ticket.api = %q", sess.Ticket.API)
+	if sess.Ticket.Number != "" {
+		t.Errorf("长期访客会话不应回落到单张工单：%+v", sess.Ticket)
 	}
 
 	// 不认识的密钥：401 invalid_token（与 Agent token 同一出口）。
@@ -226,10 +234,17 @@ func Test访客链接过期即时生效(t *testing.T) {
 
 	// 推进 7 天整：valid_days=7 的到期时刻是 2026-10-23 09:00，含该时刻即失效。
 	s.Clock().Advance(7 * 24 * time.Hour)
+	// #328 起访客身份长期存在：全部链接过期后会话仍能确认身份（主页属于
+	// #329），只是不再带工单上下文；工单访问保持 401 link_expired。
+	var sess struct {
+		Ticket any `json:"ticket"`
+	}
+	if res := s.Do(t, guest, http.MethodGet, "/api/v1/session", nil, &sess); res.StatusCode != http.StatusOK || sess.Ticket != nil {
+		t.Fatalf("过期后 GET /session = %d/%v，想 200 且不带工单", res.StatusCode, sess.Ticket)
+	}
 	for name, path := range map[string]string{
-		"session": "/api/v1/session",
-		"读工单":     "/api/v1/tickets/" + number,
-		"时间线":     "/api/v1/tickets/" + number + "/timeline",
+		"读工单": "/api/v1/tickets/" + number,
+		"时间线": "/api/v1/tickets/" + number + "/timeline",
 	} {
 		res := s.Do(t, guest, http.MethodGet, path, nil, nil)
 		if res.StatusCode != http.StatusUnauthorized {
@@ -493,8 +508,8 @@ func Test访客回复记录链接备注与自报信息(t *testing.T) {
 		map[string]any{"body_md": "收到。"}, nil)
 	var third replyBody
 	tbtest.DecodeJSON(t, res, &third)
-	if third.Author != "访客（经「检验科-张三」链接）" {
-		t.Errorf("author = %q, 想 访客（经「检验科-张三」链接）", third.Author)
+	if third.Author != "检验科-张三（经「检验科-张三」链接）" {
+		t.Errorf("author = %q, 想 检验科-张三（经「检验科-张三」链接）", third.Author)
 	}
 
 	// 成员看时间线：访客回复的 actor 结构与成员、成员 Agent 都不同。
@@ -811,14 +826,20 @@ func Test访客链接的撤销延期与列表(t *testing.T) {
 	if res.StatusCode != http.StatusNoContent {
 		t.Fatalf("撤销状态码 = %d, 想 204", res.StatusCode)
 	}
-	res = s.Do(t, guest, http.MethodGet, "/api/v1/session", nil, nil)
-	if res.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("撤销后状态码 = %d, 想 401", res.StatusCode)
+	// #328 起访客身份长期存在：链接撤销后会话仍确认身份、不带工单；
+	// 工单访问保持 401 link_revoked。
+	var sess struct {
+		Ticket any `json:"ticket"`
 	}
+	res = s.Do(t, guest, http.MethodGet, "/api/v1/session", nil, &sess)
+	if res.StatusCode != http.StatusOK || sess.Ticket != nil {
+		t.Fatalf("撤销后 GET /session = %d/%v, 想 200 且不带工单", res.StatusCode, sess.Ticket)
+	}
+	res = s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+number, nil, nil)
 	var got errorBody
 	tbtest.DecodeJSON(t, res, &got)
-	if got.Error.Code != "link_revoked" {
-		t.Errorf("撤销后错误码 = %q, 想 link_revoked", got.Error.Code)
+	if res.StatusCode != http.StatusUnauthorized || got.Error.Code != "link_revoked" {
+		t.Fatalf("撤销后读工单 = %d/%s, 想 401/link_revoked", res.StatusCode, got.Error.Code)
 	}
 	// 再撤销一次：幂等成功，不重复记事件。
 	res = s.Do(t, web, http.MethodDelete,

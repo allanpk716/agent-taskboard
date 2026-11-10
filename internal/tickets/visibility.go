@@ -2,8 +2,11 @@ package tickets
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 )
 
@@ -35,8 +38,37 @@ func (m *Manager) ForViewer(ctx context.Context, viewer identity.Viewer, ref str
 	if err != nil {
 		return Full{}, err
 	}
-	if viewer.Kind == identity.ViewerGuest && viewer.GuestLink.TicketSeq != full.Seq {
-		return Full{}, &GuestLinkScopeError{Seq: full.Seq}
+	if viewer.Kind == identity.ViewerGuest {
+		if viewer.Guest != nil {
+			// 长期访客的作用域是名下未撤销、未过期的链接集合：同一张工单
+			// 有多条有效链接时按权限最大者处理；不在集合内对外仍返回 404。
+			// 解析结果写回 Viewer.GuestLink（同一请求内的共享指针），
+			// 后续读写沿用单条链接上下文的权限与留痕字段。
+			link, statusErr, err := m.guestLinkInScope(ctx, viewer.Guest.ID, full.Seq)
+			if err != nil {
+				return Full{}, err
+			}
+			if statusErr != nil {
+				return Full{}, statusErr
+			}
+			if link == nil {
+				return Full{}, &GuestLinkScopeError{Seq: full.Seq}
+			}
+			if viewer.GuestLink != nil {
+				viewer.GuestLink.ID = link.ID
+				viewer.GuestLink.TicketSeq = link.TicketSeq
+				viewer.GuestLink.Note = link.Note
+				viewer.GuestLink.GuestID = link.GuestID
+				viewer.GuestLink.GuestName = link.GuestName
+				viewer.GuestLink.ExpiresAt = link.ExpiresAt
+				viewer.GuestLink.CanEditBrief = link.CanEditBrief
+				viewer.GuestLink.CredentialHolderID = link.CredentialHolderID
+				viewer.GuestLink.ClaimName = viewer.Guest.ClaimName
+				viewer.GuestLink.EntryMethod = viewer.Guest.EntryMethod
+			}
+		} else if viewer.GuestLink.TicketSeq != full.Seq {
+			return Full{}, &GuestLinkScopeError{Seq: full.Seq}
+		}
 	}
 	if viewer.Kind == identity.ViewerMember {
 		visible, err := m.CanSee(ctx, viewer, full)
@@ -48,6 +80,74 @@ func (m *Manager) ForViewer(ctx context.Context, viewer identity.Viewer, ref str
 		}
 	}
 	return full, nil
+}
+
+// guestLinkInScope 找长期访客在这张工单上的最优有效链接。名下只有已失效
+// 链接时返回对应的链接状态错误（撤销/过期），从未有链接才交给调用方按 404 处理。
+func (m *Manager) guestLinkInScope(ctx context.Context, guestID, ticketSeq int64) (
+	*identity.GuestLink, *identity.LinkStatusError, error) {
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT g.id, g.ticket_seq, g.note, g.expires_at, g.revoked_at, g.can_edit_brief,
+		       g.guest_id, gu.name, g.credential_holder_id
+		FROM guest_links g
+		JOIN guests gu ON gu.id = g.guest_id
+		WHERE g.guest_id = ? AND g.ticket_seq = ? AND gu.disabled_at IS NULL
+		ORDER BY g.can_edit_brief DESC, g.id`, guestID, ticketSeq)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	now := m.clk.Now()
+	var best *identity.GuestLink
+	var dead identity.GuestLink
+	revoked, expired := false, false
+	for rows.Next() {
+		var (
+			link      identity.GuestLink
+			expiresAt string
+			revokedAt sql.NullString
+			canEdit   int
+			guestName string
+		)
+		if err := rows.Scan(&link.ID, &link.TicketSeq, &link.Note, &expiresAt, &revokedAt, &canEdit,
+			&link.GuestID, &guestName, &link.CredentialHolderID); err != nil {
+			return nil, nil, err
+		}
+		expiry, err := time.ParseInLocation(time.RFC3339Nano, expiresAt, clock.Beijing)
+		if err != nil {
+			return nil, nil, err
+		}
+		link.ExpiresAt = expiry
+		link.CanEditBrief = canEdit == 1
+		link.GuestName = guestName
+		if revokedAt.Valid {
+			revoked = true
+			dead = link
+			continue
+		}
+		if !now.Before(expiry) {
+			expired = true
+			dead = link
+			continue
+		}
+		best = &link
+		break
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	if best != nil {
+		return best, nil, nil
+	}
+	if revoked {
+		return nil, &identity.LinkStatusError{Link: dead,
+			Status: identity.GuestLinkRevoked, Err: identity.ErrLinkRevoked}, nil
+	}
+	if expired {
+		return nil, &identity.LinkStatusError{Link: dead,
+			Status: identity.GuestLinkExpired, Err: identity.ErrLinkExpired}, nil
+	}
+	return nil, nil, nil
 }
 
 // CanSee 是成员、成员 Agent 与管理员的统一「能否看到」判断。访客不经过

@@ -61,7 +61,7 @@ test('瘦身标记在列表详情与访客页可见', async ({ page, request }) 
   await expect(placeholder.getByRole('button', { name: '下载' })).toBeDisabled()
 
   const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
-    data: { note: '现场对接', valid_days: 30 },
+    data: { note: '现场对接', new_guest_name: '检验科-张三', valid_days: 30 },
   })
   expect(link.status(), `创建访客链接失败：${await link.text()}`).toBe(201)
   const linkBody = (await link.json()) as { url: string }

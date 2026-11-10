@@ -99,12 +99,17 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/guest-link", a.handleGuestLinkClaim)
 	mux.HandleFunc("/api/v1/guest-links/claim", a.handleGuestLinkClaim)
 	mux.HandleFunc("/api/v1/guest-links/enter", a.handleGuestLinkClaim)
+	mux.HandleFunc("/api/v1/guest-home", a.handleGuestHome)
+	mux.HandleFunc("/api/v1/guest-home/claim", a.handleGuestHomeClaim)
+	mux.HandleFunc("/api/v1/guest-home/enter", a.handleGuestHomeEnter)
 	mux.HandleFunc("/api/v1/me/agent-tokens", a.handleAgentTokens)
 	mux.HandleFunc("/api/v1/me/agent-tokens/", a.handleAgentToken)
 	mux.HandleFunc("/api/v1/me/notices/", a.handleMemberNotice)
 	mux.HandleFunc("/api/v1/me/password", a.handleOwnPassword)
 	mux.HandleFunc("/api/v1/tickets", a.handleTicketsRoot)
 	mux.HandleFunc("/api/v1/tickets/", a.handleTicketRef)
+	mux.HandleFunc("/api/v1/guests", a.handleGuests)
+	mux.HandleFunc("/api/v1/guests/", a.handleGuestsRef)
 	mux.HandleFunc("/api/v1/drafts", a.handleDrafts)
 	mux.HandleFunc("/api/v1/drafts/", a.handleDraft)
 	mux.HandleFunc("/api/v1/inbox", a.handleInbox)
@@ -265,6 +270,14 @@ func (a *API) current(w http.ResponseWriter, r *http.Request) {
 	}
 	view := a.newSessionView(viewer)
 	if viewer.Kind == identity.ViewerGuest {
+		if viewer.Guest != nil {
+			writeJSON(w, http.StatusOK, view)
+			return
+		}
+		if viewer.GuestLink == nil || viewer.GuestLink.TicketSeq == 0 {
+			writeJSON(w, http.StatusOK, view)
+			return
+		}
 		seq := strconv.FormatInt(viewer.GuestLink.TicketSeq, 10)
 		full, err := a.tickets.ByRef(r.Context(), seq)
 		if err != nil {
@@ -369,13 +382,24 @@ type draftsSummaryView struct {
 // viewerView 是 viewer 的对外结构：成员带 member/agent；访客（#32）member 与
 // agent 为 null，另带 link_note / link_expires_at / can_edit_brief。
 type viewerView struct {
-	Kind          string           `json:"kind"`
-	Member        *identity.Member `json:"member"`
-	Agent         *agentView       `json:"agent"`
-	Client        *clientView      `json:"client"`
-	LinkNote      *string          `json:"link_note,omitempty"`
-	LinkExpiresAt *string          `json:"link_expires_at,omitempty"`
-	CanEditBrief  *bool            `json:"can_edit_brief,omitempty"`
+	Guest         *sessionGuestView `json:"guest,omitempty"`
+	Home          *sessionHomeView  `json:"home,omitempty"`
+	Kind          string            `json:"kind"`
+	Member        *identity.Member  `json:"member"`
+	Agent         *agentView        `json:"agent"`
+	Client        *clientView       `json:"client"`
+	LinkNote      *string           `json:"link_note,omitempty"`
+	LinkExpiresAt *string           `json:"link_expires_at,omitempty"`
+	CanEditBrief  *bool             `json:"can_edit_brief,omitempty"`
+}
+
+type sessionGuestView struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+type sessionHomeView struct {
+	API string `json:"api"`
 }
 
 // sessionTicketView 是 GET /api/v1/session 里链接指向的工单（仅访客凭证）。
@@ -399,6 +423,10 @@ type sessionView struct {
 func (a *API) newSessionView(v identity.Viewer) sessionView {
 	vv := viewerView{Kind: string(v.Kind)}
 	if v.Kind == identity.ViewerGuest {
+		if v.Guest != nil {
+			vv.Guest = &sessionGuestView{ID: v.Guest.ID, Name: v.Guest.Name}
+			vv.Home = &sessionHomeView{API: "/api/v1/guest-home"}
+		}
 		note := v.GuestLink.Note
 		expiresAt := v.GuestLink.ExpiresAt.Format(time.RFC3339Nano)
 		canEdit := v.GuestLink.CanEditBrief

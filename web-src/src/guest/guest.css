@@ -886,6 +886,12 @@ button.att {
 .intake-done .btn {
   margin-top: 4px;
 }
+.intake-done .action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
 
 /* 维度下拉框（可按别名搜索） */
 .dim-select {
@@ -1536,4 +1542,49 @@ button.att {
 }
 .cf textarea.big {
   min-height: 170px;
+}
+
+/* 访客主页（#329）：长期入口与名下工单列表。 */
+.guest-home-root {
+  min-height: 100vh;
+  background: #f2f5f8;
+  padding-bottom: 32px;
+}
+.guest-home-card input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #c8d0d9;
+  border-radius: 6px;
+  padding: 10px;
+  font: inherit;
+}
+.guest-home-list {
+  max-width: 688px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+.guest-home-ticket {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #e2e6ec;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
+  color: inherit;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0;
+  padding: 13px 14px;
+  text-decoration: none;
+}
+.guest-home-ticket:hover {
+  border-color: #9dbde8;
+}
+.guest-home-ticket strong {
+  display: block;
+  line-height: 1.45;
+}
+.guest-home-ticket .muted {
+  font-size: 12px;
+  margin-top: 3px;
 }

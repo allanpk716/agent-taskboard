@@ -63,7 +63,7 @@ test('Agent 说明修订草稿按字段确认并保留起草过程', async ({ pa
 
   await loginAdmin(request)
   const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
-    data: { note: '检验科-张三' },
+    data: { note: '检验科-张三', new_guest_name: '检验科-张三' },
   })
   expect(link.status()).toBe(201)
   const key = ((await link.json()) as { url: string }).url.replace('/g/', '')

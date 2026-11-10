@@ -727,6 +727,8 @@ export async function reopenTicket(number: string): Promise<void> {
 export interface GuestLink {
   id: number
   note: string
+  guest_id?: number
+  guest_name?: string
   expires_at: string
   revoked_at?: string | null
   can_edit_brief: boolean
@@ -744,8 +746,55 @@ export interface CreatedGuestLink {
   id: number
   url: string
   note: string
+  guest_id?: number
+  guest_name?: string
   expires_at: string
   can_edit_brief: boolean
+}
+
+export interface GuestSummary {
+  id: number
+  name: string
+  disabled_at?: string
+  merged_into_guest_id?: number
+  merged_at?: string
+  claimed_at?: string
+  claim_name?: string
+  access_code_locked_at?: string
+  link_count: number
+  created_at: string
+}
+
+export interface GuestDetailLink {
+  id: number
+  note: string
+  expires_at: string
+  revoked_at?: string | null
+  can_edit_brief: boolean
+  status: string
+  claim_name?: string
+}
+
+export interface GuestDetailTicket {
+  number: string
+  title: string
+  status: string
+  api: string
+  links: GuestDetailLink[]
+}
+
+export interface GuestDetail {
+  guest: GuestSummary & { created_by?: { member?: { name: string }; agent?: { name: string } | null } }
+  tickets: GuestDetailTicket[]
+}
+
+/** 部门访客名单：按名字包含搜索（#328）。 */
+export async function fetchGuests(query = ''): Promise<GuestSummary[]> {
+  const path = query
+    ? `/api/v1/guests?q=${encodeURIComponent(query)}`
+    : '/api/v1/guests'
+  const body = await api(path)
+  return body.guests as GuestSummary[]
 }
 
 export async function fetchGuestLinks(number: string): Promise<GuestLink[]> {
@@ -755,7 +804,14 @@ export async function fetchGuestLinks(number: string): Promise<GuestLink[]> {
 
 export async function createGuestLink(
   number: string,
-  body: { note: string; valid_days?: number; expires_at?: string; can_edit_brief?: boolean },
+  body: {
+    note: string
+    guest_id?: number
+    new_guest_name?: string
+    valid_days?: number
+    expires_at?: string
+    can_edit_brief?: boolean
+  },
 ): Promise<CreatedGuestLink> {
   return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links`, {
     method: 'POST',
@@ -770,6 +826,36 @@ export async function copyGuestLinkShareText(
   return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}/share-text`, {
     method: 'POST',
   })
+}
+
+/** 复制访客主页文案：地址可重复生成，响应不含访问码。 */
+export async function copyGuestHomeText(
+  guestId: number,
+): Promise<{ home_url: string; share_text: string }> {
+  return api(`/api/v1/guests/${guestId}/home-share-text`, { method: 'POST' })
+}
+
+/** 访客详情：工单与链接已按当前成员可见范围过滤。 */
+export async function fetchGuestDetail(guestId: number): Promise<GuestDetail> {
+  return api(`/api/v1/guests/${guestId}`)
+}
+
+/** 给访客改名：访客建立者、管理员或名下链接管理人可用，成员 Agent 同样可用。 */
+export async function renameGuest(guestId: number, name: string): Promise<{ guest: GuestSummary }> {
+  return api(`/api/v1/guests/${guestId}/rename`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+}
+
+/** 停用访客：主页与名下全部链接一起失效；仅网页成员会话可用。 */
+export async function disableGuest(guestId: number): Promise<void> {
+  await api(`/api/v1/guests/${guestId}/disable`, { method: 'POST' })
+}
+
+/** 恢复已停用的访客：未过期链接按原有效期重新生效。 */
+export async function enableGuest(guestId: number): Promise<void> {
+  await api(`/api/v1/guests/${guestId}/enable`, { method: 'POST' })
 }
 
 export async function rotateGuestLinkKey(
@@ -793,6 +879,7 @@ export async function revokeGuestLink(number: string, id: number): Promise<void>
   await api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}`, { method: 'DELETE' })
 }
 
+/** 无主老链接的链接级重置访问码：有主链接请改用访客级接口。 */
 export async function resetGuestAccessCode(
   number: string,
   id: number,
@@ -804,6 +891,92 @@ export async function resetGuestAccessCode(
 }> {
   return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}/reset-access-code`, {
     method: 'POST',
+  })
+}
+
+export interface GuestAccessCodeResetPreview {
+  guest_id: number
+  guest_name: string
+  device_count: number
+  ticket_count: number
+  access_code_locked: boolean
+}
+
+/** 访客级重置访问码的影响预览：将作废的设备数与涉及的工单数。 */
+export async function previewGuestAccessCodeReset(
+  guestId: number,
+): Promise<GuestAccessCodeResetPreview> {
+  return api(`/api/v1/guests/${guestId}/reset-access-code/preview`)
+}
+
+/** 访客级重置访问码：作废名下全部设备并清除锁定；新码只返回一次。 */
+export async function resetGuestAccessCodeForGuest(
+  guestId: number,
+): Promise<{
+  guest_id: number
+  access_code: string
+  home_url: string
+  reset_text: string
+}> {
+  return api(`/api/v1/guests/${guestId}/reset-access-code`, {
+    method: 'POST',
+    idempotencyKey: crypto.randomUUID(),
+  })
+}
+
+/** 重置访客主页地址：旧主页地址失效，访问码与设备不变。 */
+export async function resetGuestHomeKey(
+  guestId: number,
+): Promise<{ guest_id: number; home_url: string; share_text: string }> {
+  return api(`/api/v1/guests/${guestId}/reset-home-key`, {
+    method: 'POST',
+    idempotencyKey: crypto.randomUUID(),
+  })
+}
+
+export interface GuestMergePreview {
+  source_guest_id: number
+  source_guest_name: string
+  target_guest_id: number
+  target_guest_name: string
+  link_count: number
+  device_count: number
+}
+
+/** 合并重复访客的影响预览：B 将改归多少条链接、作废多少台设备。 */
+export async function previewGuestMerge(
+  sourceGuestId: number,
+  targetGuestId: number,
+): Promise<GuestMergePreview> {
+  return api(`/api/v1/guests/${sourceGuestId}/merge-into/${targetGuestId}/preview`)
+}
+
+/** 合并重复访客：不可撤回；仅网页成员本人可操作。 */
+export async function mergeGuest(
+  sourceGuestId: number,
+  targetGuestId: number,
+): Promise<{
+  source_guest_id: number
+  target_guest_id: number
+  link_count: number
+  device_count: number
+}> {
+  return api(`/api/v1/guests/${sourceGuestId}/merge-into`, {
+    method: 'POST',
+    body: JSON.stringify({ target_guest_id: targetGuestId }),
+    idempotencyKey: crypto.randomUUID(),
+  })
+}
+
+/** 把上线前的无主老链接归到已有访客或新建访客名下。 */
+export async function assignGuestLinkToGuest(
+  number: string,
+  id: number,
+  body: { guest_id?: number; new_guest_name?: string },
+): Promise<GuestLink> {
+  return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}/assign-guest`, {
+    method: 'POST',
+    body: JSON.stringify(body),
   })
 }
 

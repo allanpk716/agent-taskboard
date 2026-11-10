@@ -215,14 +215,14 @@ func Test建单草稿保留指定访客链接到期日(t *testing.T) {
 	var accepted draftAcceptedBody
 	s.Do(t, agent, http.MethodPost, "/api/v1/tickets", map[string]any{
 		"title": "建单草稿访客链接", "brief_md": "说明", "labels": []string{"机型:UD-2300"},
-		"guest_link": map[string]any{"note": "检验科-张三", "can_edit_brief": true},
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三", "note": "检验科-张三", "can_edit_brief": true},
 	}, &accepted)
 	var updated draftBody
 	s.Do(t, web, http.MethodPut, "/api/v1/drafts/"+accepted.Draft.ID, map[string]any{
 		"base_version": 1,
 		"request": map[string]any{
 			"title": "建单草稿访客链接", "brief_md": "说明", "labels": []string{"机型:UD-2300"},
-			"guest_link": map[string]any{"note": "检验科-张三", "expires_at": "2999-01-01", "can_edit_brief": true},
+			"guest_link": map[string]any{"new_guest_name": "检验科-张三", "note": "检验科-张三", "expires_at": "2999-01-01", "can_edit_brief": true},
 		},
 	}, &updated)
 

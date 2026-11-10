@@ -45,11 +45,16 @@ func newViewerAccessFixture(t *testing.T) viewerAccessFixture {
 			(1, 4, '2026-10-20T09:02:00+08:00'),
 			(2, 2, '2026-10-20T09:02:00+08:00')`,
 		`INSERT INTO guest_links (id, ticket_seq, key_hash, note, expires_at, can_edit_brief,
-			claimed_at, claim_name, created_by_member_id, created_at) VALUES
+			created_by_member_id, created_at) VALUES
 			(1, 1, 'one', '开启链接', '2999-01-01T00:00:00+08:00', 1,
-			 '2026-10-20T10:00:00+08:00', '张三', 1, '2026-10-20T09:03:00+08:00'),
+			 1, '2026-10-20T09:03:00+08:00'),
 			(2, 2, 'two', '关闭链接', '2999-01-01T00:00:00+08:00', 1,
-			 '2026-10-20T10:00:00+08:00', '李四', 1, '2026-10-20T09:03:00+08:00')`,
+			 1, '2026-10-20T09:03:00+08:00')`,
+		`INSERT INTO guest_credential_holders
+		 (id, owner_type, owner_id, claimed_at, claim_name, access_code_failures, created_at)
+		 VALUES (1,'guest_link',1,'2026-10-20T10:00:00+08:00','张三',0,'2026-10-20T09:03:00+08:00'),
+		        (2,'guest_link',2,'2026-10-20T10:00:00+08:00','李四',0,'2026-10-20T09:03:00+08:00')`,
+		`UPDATE guest_links SET credential_holder_id = id`,
 		`INSERT INTO timeline_events (ticket_seq, seq, change_seq, type, actor_member_id, at) VALUES
 			(1, 1, 1, 'created', 1, '2026-10-20T09:00:00+08:00'),
 			(1, 2, 2, 'assigned', 1, '2026-10-20T09:00:00+08:00'),

@@ -51,6 +51,7 @@ type Viewer struct {
 	Agent     *Agent     // 凭证是 Agent token 时非 nil；本人（网页会话）为 nil
 	Client    *Client    // 凭证是客户端凭证时非 nil
 	GuestLink *GuestLink // 凭证是访客链接密钥时非 nil（#32）
+	Guest     *Guest     // 凭证是长期访客的设备/访问码凭证时非 nil（#328）
 }
 
 // IsWebSession 报告 v 是否为成员本人在网页会话下的操作。

@@ -488,7 +488,7 @@ func Test访客旧链接命中墓碑返回已归档(t *testing.T) {
 
 	setStorageClock(t, s, 2026, time.June, 2)
 	number := mustCreateTicket(t, s, admin, "访客旧链接")
-	link := s.CreateGuestLink(t, admin, number, map[string]any{"note": "现场", "valid_days": 90})
+	link := s.CreateLegacyGuestLink(t, admin, number, map[string]any{"note": "现场", "valid_days": 90})
 	rawGuest := s.AgentClient(link.Key(t))
 	claimedGuest := s.GuestClient(link.Key(t))
 	if res := s.Do(t, claimedGuest, http.MethodGet, "/api/v1/tickets/"+number, nil, nil); res.StatusCode != http.StatusOK {
@@ -523,5 +523,53 @@ func Test访客旧链接命中墓碑返回已归档(t *testing.T) {
 	if res.StatusCode != http.StatusGone || got.Error.Code != "ticket_archived" ||
 		got.Error.ArchivedTicket.Number != number {
 		t.Fatalf("旧链接读取认领信息 = %d/%+v, 想 410 ticket_archived 和墓碑", res.StatusCode, got)
+	}
+}
+
+// 完整归档移除一位访客名下的一张工单时，访客本体与其设备凭证保留：
+// 这位访客在其它工单上的链接换设备后仍可用，也不需要重新认领。
+func Test归档移除一张工单保留访客设备通行其它工单(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+
+	setStorageClock(t, s, 2026, time.June, 2)
+	oldNumber := mustCreateTicket(t, s, admin, "要归档的工单")
+	oldLink := s.CreateGuestLink(t, admin, oldNumber,
+		map[string]any{"note": "第一次", "new_guest_name": "检验科-张三", "valid_days": 90})
+	claim := claimGuestLink(t, s, oldLink.Key(t), "检验科 张三")
+	if res := closeTicket(t, s, admin, oldNumber, closeBody{Reason: "done"}); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d, 想 200", res.StatusCode)
+	}
+	s.Clock().Set(time.Date(2026, time.October, 30, 10, 0, 0, 0, clock.Beijing))
+	admin = s.Login("陈工", "secret-pass")
+	kept := mustCreateTicket(t, s, admin, "访客的另一张工单")
+	list := listGuestLinks(t, s, admin, oldNumber)
+	s.CreateGuestLink(t, admin, kept,
+		map[string]any{"note": "第二次", "guest_id": list.Links[0].GuestID, "valid_days": 90})
+
+	var pkg archivePackageBody
+	if res := s.Do(t, admin, http.MethodPost, "/api/v1/admin/archive/packages",
+		map[string]any{"closed_months": 3, "ticket_numbers": []string{oldNumber}}, &pkg); res.StatusCode != http.StatusCreated {
+		t.Fatalf("生成归档包状态码 = %d, 想 201", res.StatusCode)
+	}
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/admin/archive/packages/"+pkg.Name+"/remove", map[string]any{"saved": true}, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("移除归档包状态码 = %d, 想 200", res.StatusCode)
+	}
+
+	guest := s.AgentClient(claim.DeviceToken)
+	if res := s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+kept, nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("归档另一张工单后访客设备应仍可信，状态码 = %d, 想 200", res.StatusCode)
+	}
+	var after struct {
+		Guests []struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		} `json:"guests"`
+	}
+	if res := s.Do(t, admin, http.MethodGet, "/api/v1/guests", nil, &after); res.StatusCode != http.StatusOK ||
+		len(after.Guests) != 1 || after.Guests[0].Name != "检验科-张三" {
+		t.Fatalf("归档移除后访客名单 = %d/%+v, 想保留检验科-张三", res.StatusCode, after.Guests)
 	}
 }

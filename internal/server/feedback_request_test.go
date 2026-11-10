@@ -48,7 +48,7 @@ func Test请人反馈建单同时生成访客链接(t *testing.T) {
 		"fields":   map[string]string{},
 		"labels":   []string{},
 		"assignee": "李工",
-		"guest_link": map[string]any{
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三",
 			"note":           "检验科-张三",
 			"can_edit_brief": true,
 		},
@@ -147,7 +147,7 @@ func Test用请人反馈的链接能读工单并修订说明(t *testing.T) {
 	res := createWithGuestLink(t, s, web, map[string]any{
 		"kind":  "report",
 		"title": "生化仪打印异常",
-		"guest_link": map[string]any{
+		"guest_link": map[string]any{"new_guest_name": "检验科-李四",
 			"note":           "检验科-李四",
 			"can_edit_brief": true,
 		},
@@ -208,7 +208,7 @@ func Test请人反馈能用任务模板建单(t *testing.T) {
 		"title":    "整理质控规则对照表",
 		"fields":   map[string]string{},
 		"labels":   []string{},
-		"guest_link": map[string]any{
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三",
 			"note":           "检验科-张三",
 			"can_edit_brief": true,
 		},
@@ -238,7 +238,7 @@ func Test说明的最后修订者随修订人变化(t *testing.T) {
 	res := createWithGuestLink(t, s, web, map[string]any{
 		"kind":  "report",
 		"title": "生化仪打印异常",
-		"guest_link": map[string]any{
+		"guest_link": map[string]any{"new_guest_name": "检验科-王工",
 			"note":           "检验科-王工",
 			"can_edit_brief": true,
 		},
@@ -306,14 +306,14 @@ func Test免维度标签只限带可填写说明权限的链接(t *testing.T) {
 	}{
 		"带链接但无可填写说明权限": {map[string]any{
 			"kind": "report", "title": "x", "labels": []string{},
-			"guest_link": map[string]any{"note": "检验科-张三", "can_edit_brief": false},
+			"guest_link": map[string]any{"new_guest_name": "检验科-张三", "note": "检验科-张三", "can_edit_brief": false},
 		}, "dimension_label_required"},
 		"不带链接": {map[string]any{
 			"kind": "report", "title": "x", "labels": []string{},
 		}, "dimension_label_required"},
 		"带链接可填写但标签非法": {map[string]any{
 			"kind": "report", "title": "x", "labels": []string{"机型:BH-730"},
-			"guest_link": map[string]any{"note": "检验科-张三", "can_edit_brief": true},
+			"guest_link": map[string]any{"new_guest_name": "检验科-张三", "note": "检验科-张三", "can_edit_brief": true},
 		}, "unknown_label_value"},
 	} {
 		res := createWithGuestLink(t, s, web, tc.body)
@@ -331,7 +331,7 @@ func Test免维度标签只限带可填写说明权限的链接(t *testing.T) {
 	// 对照：带 can_edit_brief 权限、没有维度标签 → 201。
 	res := createWithGuestLink(t, s, web, map[string]any{
 		"kind": "report", "title": "免维度的建单", "labels": []string{},
-		"guest_link": map[string]any{"note": "检验科-张三", "can_edit_brief": true},
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三", "note": "检验科-张三", "can_edit_brief": true},
 	})
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("带 can_edit_brief 权限应免维度标签，状态码 = %d, 想 201", res.StatusCode)
@@ -378,7 +378,7 @@ func Test带链接建单校验失败返回422且不留下工单(t *testing.T) {
 	// 补上合法请求后，第一张工单从 001 开始（编号没有因失败的请求跳号）。
 	res := createWithGuestLink(t, s, web, map[string]any{
 		"kind": "report", "title": "补上的第一张", "labels": []string{},
-		"guest_link": map[string]any{"note": "检验科-张三", "valid_days": 7, "can_edit_brief": true},
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三", "note": "检验科-张三", "valid_days": 7, "can_edit_brief": true},
 	})
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("补上的建单状态码 = %d, 想 201", res.StatusCode)
@@ -403,7 +403,7 @@ func Test请人反馈建单的幂等重放只有一张工单一条链接(t *test
 	key := map[string]string{"Idempotency-Key": "feedback-once"}
 	body := map[string]any{
 		"kind": "report", "title": "网络抖动也只建一张", "labels": []string{},
-		"guest_link": map[string]any{"note": "检验科-张三", "can_edit_brief": true},
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三", "note": "检验科-张三", "can_edit_brief": true},
 	}
 	first := s.DoWithHeaders(t, web, http.MethodPost, "/api/v1/tickets", key, body, nil)
 	if first.StatusCode != http.StatusCreated {
@@ -456,7 +456,7 @@ func Test请人反馈链接在配置publicUrl时是绝对地址(t *testing.T) {
 
 	res := createWithGuestLink(t, s, web, map[string]any{
 		"kind": "report", "title": "绝对地址的链接", "labels": []string{},
-		"guest_link": map[string]any{"note": "检验科-张三", "can_edit_brief": true},
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三", "note": "检验科-张三", "can_edit_brief": true},
 	})
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("建单状态码 = %d", res.StatusCode)

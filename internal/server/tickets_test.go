@@ -307,6 +307,7 @@ type authorBody struct {
 		Name string `json:"name"`
 	} `json:"agent"`
 	LinkNote   *string `json:"link_note"`
+	GuestName  *string `json:"guest_name"`
 	AuthorName *string `json:"author_name"`
 	ViaAgent   *bool   `json:"via_agent"`
 }

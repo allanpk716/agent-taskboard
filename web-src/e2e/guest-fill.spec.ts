@@ -37,7 +37,7 @@ async function seedFillTicket(
   expect(created.status(), `建单失败：${await created.text()}`).toBe(201)
   const number: string = (await created.json()).number
   const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
-    data: { note: '检验科-张三', valid_days: 30, can_edit_brief: true },
+    data: { note: '检验科-张三', new_guest_name: '检验科-张三', valid_days: 30, can_edit_brief: true },
   })
   expect(link.status(), `创建访客链接失败：${await link.text()}`).toBe(201)
   return { number, linkKey: String((await link.json()).url).slice(3) }
@@ -456,7 +456,7 @@ async function seedUngroupedTicket(request: APIRequestContext): Promise<FillSeed
   expect(created.status(), `建单失败：${await created.text()}`).toBe(201)
   const number: string = (await created.json()).number
   const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
-    data: { note: '门诊-李四', valid_days: 30, can_edit_brief: true },
+    data: { note: '门诊-李四', new_guest_name: '门诊-李四', valid_days: 30, can_edit_brief: true },
   })
   expect(link.status(), `创建访客链接失败：${await link.text()}`).toBe(201)
   return { number, linkKey: String((await link.json()).url).slice(3) }
@@ -475,7 +475,7 @@ async function seedFreeTicket(request: APIRequestContext): Promise<FillSeed> {
   expect(created.status(), `建自由格式工单失败：${await created.text()}`).toBe(201)
   const number: string = (await created.json()).number
   const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
-    data: { note: '产线-王工', valid_days: 30, can_edit_brief: true },
+    data: { note: '产线-王工', new_guest_name: '产线-王工', valid_days: 30, can_edit_brief: true },
   })
   expect(link.status(), `创建访客链接失败：${await link.text()}`).toBe(201)
   return { number, linkKey: String((await link.json()).url).slice(3) }
@@ -683,7 +683,7 @@ test.describe('桌面视口', () => {
     expect(created.status(), `建单失败：${await created.text()}`).toBe(201)
     const number: string = (await created.json()).number
     const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
-      data: { note: '检验科-张三', valid_days: 30, can_edit_brief: true },
+      data: { note: '检验科-张三', new_guest_name: '检验科-张三', valid_days: 30, can_edit_brief: true },
     })
     expect(link.status(), `创建访客链接失败：${await link.text()}`).toBe(201)
     const linkKey = String((await link.json()).url).slice(3)

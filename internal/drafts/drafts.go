@@ -76,6 +76,8 @@ type CreateGuestLinkRequest struct {
 	ValidDays    int    `json:"valid_days"`
 	ExpiresAt    string `json:"expires_at"`
 	CanEditBrief bool   `json:"can_edit_brief"`
+	GuestID      int64  `json:"guest_id"`
+	NewGuestName string `json:"new_guest_name"`
 }
 
 // UnmarshalJSON 让建单草稿 PUT 与建单接口使用同一成员引用规则：assignee 可写
@@ -617,7 +619,8 @@ func createInputOf(req CreateRequest, viewer identity.Viewer) tickets.CreateInpu
 	}
 	if req.GuestLink != nil {
 		g := req.GuestLink
-		spec := tickets.GuestLinkSpec{Note: g.Note, ValidDays: g.ValidDays, CanEditBrief: g.CanEditBrief}
+		spec := tickets.GuestLinkSpec{Note: g.Note, ValidDays: g.ValidDays, CanEditBrief: g.CanEditBrief,
+			GuestID: g.GuestID, NewGuestName: g.NewGuestName}
 		if g.ExpiresAt != "" {
 			t, err := time.ParseInLocation("2006-01-02", g.ExpiresAt, clock.Beijing)
 			if err == nil {

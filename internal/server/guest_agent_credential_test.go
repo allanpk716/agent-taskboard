@@ -71,6 +71,43 @@ func Test访客Agent用链接密钥加访问码访问工单(t *testing.T) {
 	}
 }
 
+func Test有主链接Agent凭证只能访问那张工单(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	ticketA := mustCreateTicket(t, s, web, "链接A")
+	ticketB := mustCreateTicket(t, s, web, "链接B")
+	linkA := mustCreateGuestLink(t, s, web, ticketA,
+		map[string]any{"note": "第一次联系", "new_guest_name": "检验科-张三"})
+	linkB := mustCreateGuestLink(t, s, web, ticketB,
+		map[string]any{"note": "第二次联系", "guest_id": linkA.GuestID})
+	if linkA.GuestID == 0 || linkB.GuestID != linkA.GuestID {
+		t.Fatalf("两条链接应同属一位访客：A=%d B=%d", linkA.GuestID, linkB.GuestID)
+	}
+
+	keyA := guestKeyOf(t, linkA)
+	var claimed struct {
+		AccessCode string `json:"access_code"`
+	}
+	res := s.Do(t, s.AgentClient(keyA), http.MethodPost, "/api/v1/guest-links/claim",
+		map[string]string{"author_name": "检验科 张三"}, &claimed)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("认领链接A状态码 = %d, 想 201", res.StatusCode)
+	}
+	agent := s.AgentClient(keyA + ":" + claimed.AccessCode)
+
+	if res := s.Do(t, agent, http.MethodGet, "/api/v1/tickets/"+ticketA, nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("链接A凭证访问本工单状态码 = %d, 想 200", res.StatusCode)
+	}
+	if res := s.Do(t, agent, http.MethodGet, "/api/v1/tickets/"+ticketB, nil, nil); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("链接A凭证访问同访客链接B状态码 = %d, 想 404", res.StatusCode)
+	}
+	if res := s.Do(t, agent, http.MethodPost, "/api/v1/tickets/"+ticketB+"/replies",
+		map[string]string{"body_md": "不应能回复"}, nil); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("链接A凭证回复同访客链接B状态码 = %d, 想 404", res.StatusCode)
+	}
+}
+
 func Test访客Agent访问码错误与浏览器共用锁定计数(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")

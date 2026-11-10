@@ -98,9 +98,16 @@ type ticketExport struct {
 	AccessRecords []map[string]any `json:"access_records"`
 	Labels        []map[string]any `json:"labels"`
 	Collaborators []map[string]any `json:"collaborators"`
-	GuestLinks    []map[string]any `json:"guest_links"`
-	GuestDevices  []map[string]any `json:"guest_devices"`
-	TicketReads   []map[string]any `json:"ticket_reads"`
+	// GuestLinks/GuestDevices 是 v1 归档格式的兼容投影。当前导出同时带
+	// guest_credential_holders/guest_credential_devices；恢复时以后者为准。
+	GuestLinks []map[string]any `json:"guest_links"`
+	// Guests 是本工单链接涉及的访客快照（#328）：完整归档移除工单时导出，
+	// 恢复时原样带回；访客本体不随工单删除。
+	Guests                 []map[string]any `json:"guests"`
+	GuestDevices           []map[string]any `json:"guest_devices"`
+	GuestCredentialHolders []map[string]any `json:"guest_credential_holders"`
+	GuestCredentialDevices []map[string]any `json:"guest_credential_devices"`
+	TicketReads            []map[string]any `json:"ticket_reads"`
 }
 
 // Generate 生成归档包：先完整写出 zip 并原子 rename，成功后才在一个事务里
@@ -460,7 +467,7 @@ func exportTicket(ctx context.Context, q archiveQueryer, summary TicketSummary) 
 	if out.BriefVersions, err = queryObjects(ctx, q, `
 		SELECT ticket_seq, revision, title, brief_md, fields_json, attachment_ids,
 		       actor_member_id, actor_agent_id, actor_link_id, actor_link_note,
-		       actor_author_name, actor_via_agent, at
+		       actor_guest_name, actor_author_name, actor_via_agent, at
 		FROM brief_versions WHERE ticket_seq = ? ORDER BY revision`, summary.Seq); err != nil {
 		return out, err
 	}
@@ -500,7 +507,16 @@ func exportTicket(ctx context.Context, q archiveQueryer, summary TicketSummary) 
 		return out, err
 	}
 	if out.GuestLinks, err = queryObjects(ctx, q, guestLinkColumns+`
-		FROM guest_links WHERE ticket_seq = ? ORDER BY id`, summary.Seq); err != nil {
+		WHERE g.ticket_seq = ? ORDER BY g.id`, summary.Seq); err != nil {
+		return out, err
+	}
+	if out.Guests, err = exportGuests(ctx, q, out.GuestLinks); err != nil {
+		return out, err
+	}
+	if out.GuestCredentialHolders, err = guestCredentialHolders(ctx, q, out.GuestLinks); err != nil {
+		return out, err
+	}
+	if out.GuestCredentialDevices, err = guestCredentialDevices(ctx, q, out.GuestCredentialHolders); err != nil {
 		return out, err
 	}
 	if out.TicketReads, err = queryObjects(ctx, q, `
@@ -597,7 +613,7 @@ func normalizeSQLValue(value any) any {
 
 const timelineColumns = `SELECT ticket_seq, seq, change_seq, type, actor_member_id, actor_agent_id, at,
 	       body_md, reply_no, deliver, revision, reason, duplicate_of, label, actor_link_id,
-	       actor_link_note, actor_author_name, actor_via_agent, note, link_expires_at,
+	       actor_link_note, actor_guest_name, actor_author_name, actor_via_agent, note, link_expires_at,
 	       assign_from, assign_to, attachment_ids, collaborator_member_id, collaborator_name,
 	       actor_system`
 
@@ -621,9 +637,17 @@ const accessRecordColumns = `SELECT id, ticket_seq, actor_kind, actor_name, acto
 	       actor_agent_id, actor_link_id, actor_link_note, entry_method, action, attachment_id,
 	       attachment_ref, attachment_filename, first_at, last_at, count`
 
-const guestLinkColumns = `SELECT id, ticket_seq, key_hash, note, expires_at, revoked_at,
-	       can_edit_brief, created_by_member_id, created_by_agent_id, created_at, claimed_at,
-	       claim_name, access_code_hash, access_code_failures, access_code_locked_at, key_ciphertext`
+const guestLinkColumns = `SELECT g.id, g.ticket_seq, g.key_hash, g.note, g.expires_at, g.revoked_at,
+		       g.can_edit_brief, g.created_by_member_id, g.created_by_agent_id, g.created_at, g.guest_id,
+		       CASE WHEN g.guest_id IS NULL THEN h.claimed_at ELSE NULL END AS claimed_at,
+		       CASE WHEN g.guest_id IS NULL THEN h.claim_name ELSE NULL END AS claim_name,
+		       CASE WHEN g.guest_id IS NULL THEN h.access_code_hash ELSE NULL END AS access_code_hash,
+		       CASE WHEN g.guest_id IS NULL THEN h.access_code_failures ELSE NULL END AS access_code_failures,
+		       CASE WHEN g.guest_id IS NULL THEN h.access_code_locked_at ELSE NULL END AS access_code_locked_at,
+		       g.key_ciphertext,
+		       CASE WHEN g.guest_id IS NULL THEN g.credential_holder_id ELSE NULL END AS credential_holder_id
+		FROM guest_links g
+		JOIN guest_credential_holders h ON h.id = g.credential_holder_id`
 
 const draftColumns = `SELECT id, kind, status, ticket_seq, member_id, request_json, version,
 	       base_timeline_seq, member_edited, created_at, updated_at, sent_at, sent_timeline_seq`
@@ -632,17 +656,80 @@ const draftVersionColumns = `SELECT draft_id, version, request_json, author_memb
 	       author_agent_id, at`
 
 func guestDevices(ctx context.Context, q archiveQueryer, links []map[string]any) ([]map[string]any, error) {
+	// v1 兼容投影只带无主老链接自己的设备。有主链接的设备属于整个访客，
+	// 不随单张工单的归档包带出。
 	ids := make([]any, 0, len(links))
 	for _, link := range links {
+		if guestID, _ := link["guest_id"].(int64); guestID != 0 {
+			continue
+		}
+		id, _ := link["credential_holder_id"].(int64)
+		if id != 0 {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return []map[string]any{}, nil
+	}
+	return queryObjects(ctx, q, `SELECT d.id, h.owner_id AS guest_link_id,
+		d.token_hash, d.created_at, d.entry_method
+		FROM guest_credential_devices d
+		JOIN guest_credential_holders h ON h.id = d.credential_holder_id
+		WHERE h.id IN (`+store.Placeholders(len(ids))+`)
+		ORDER BY h.owner_id, d.id`, ids...)
+}
+
+// exportGuests 导出本工单链接涉及的长期访客快照。完整归档移除工单时，
+// 归档包带上这些快照以便恢复；平台上的访客本体不会被删除。
+func exportGuests(ctx context.Context, q archiveQueryer, links []map[string]any) ([]map[string]any, error) {
+	ids := make([]any, 0, len(links))
+	for _, link := range links {
+		id, _ := link["guest_id"].(int64)
+		if id != 0 {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return []map[string]any{}, nil
+	}
+	return queryObjects(ctx, q, `SELECT id, name, created_by_member_id, created_by_agent_id,
+		created_at, disabled_at,
+		merged_into_guest_id, merged_at
+		FROM guests WHERE id IN (`+store.Placeholders(len(ids))+`)
+		ORDER BY id`, ids...)
+}
+
+func guestCredentialHolders(ctx context.Context, q archiveQueryer, links []map[string]any) ([]map[string]any, error) {
+	linkIDs := make([]any, 0, len(links))
+	for _, link := range links {
+		if guestID, _ := link["guest_id"].(int64); guestID != 0 {
+			continue
+		}
 		id, _ := link["id"].(int64)
+		linkIDs = append(linkIDs, id)
+	}
+	if len(linkIDs) == 0 {
+		return []map[string]any{}, nil
+	}
+	return queryObjects(ctx, q, `SELECT id, owner_type, owner_id, claimed_at, claim_name,
+		access_code_hash, access_code_failures, access_code_locked_at, created_at
+		FROM guest_credential_holders
+		WHERE owner_type = 'guest_link' AND owner_id IN (`+store.Placeholders(len(linkIDs))+`)
+		ORDER BY owner_type, owner_id, id`, linkIDs...)
+}
+
+func guestCredentialDevices(ctx context.Context, q archiveQueryer, holders []map[string]any) ([]map[string]any, error) {
+	ids := make([]any, 0, len(holders))
+	for _, holder := range holders {
+		id, _ := holder["id"].(int64)
 		ids = append(ids, id)
 	}
 	if len(ids) == 0 {
 		return []map[string]any{}, nil
 	}
-	return queryObjects(ctx, q, `SELECT id, guest_link_id, token_hash, created_at, entry_method
-		FROM guest_devices WHERE guest_link_id IN (`+store.Placeholders(len(ids))+`)
-		ORDER BY guest_link_id, id`, ids...)
+	return queryObjects(ctx, q, `SELECT id, credential_holder_id, token_hash, created_at, entry_method
+		FROM guest_credential_devices WHERE credential_holder_id IN (`+store.Placeholders(len(ids))+`)
+		ORDER BY credential_holder_id, id`, ids...)
 }
 
 type packagedAttachment struct {
@@ -744,7 +831,7 @@ func markdownOf(summary TicketSummary, export ticketExport, atts []packagedAttac
 		fmt.Fprintf(&b, "- %v · %s · %s\n", event["type"], stringValue(event["at"]), timelineDetail(event))
 	}
 	b.WriteString("\n## 起草过程\n\n见 `ticket.json` 的 `drafts` 字段。\n")
-	b.WriteString("\n## 访问记录与访客链接\n\n见 `ticket.json` 的 `access_records`、`guest_links`、`guest_devices` 字段。\n")
+	b.WriteString("\n## 访问记录与访客链接\n\n见 `ticket.json` 的 `access_records`、`guest_links`、`guest_credential_holders`、`guest_credential_devices` 字段。\n")
 	return b.String()
 }
 

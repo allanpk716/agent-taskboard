@@ -78,7 +78,7 @@ async function seed(request: APIRequestContext) {
   })
   expect(reply.status(), `发回复失败：${await reply.text()}`).toBe(201)
   const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
-    data: { note: '检验科-张三', valid_days: 30, can_edit_brief: false },
+    data: { note: '检验科-张三', new_guest_name: '检验科-张三', valid_days: 30, can_edit_brief: false },
   })
   expect(link.status(), `创建访客链接失败：${await link.text()}`).toBe(201)
   const linkKey = String((await link.json()).url).slice(3)

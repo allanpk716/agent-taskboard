@@ -87,14 +87,17 @@ type archiveManifestBody struct {
 }
 
 type archiveStructuredTicketBody struct {
-	Replies       []map[string]any `json:"replies"`
-	Attachments   []map[string]any `json:"attachments"`
-	Timeline      []map[string]any `json:"timeline"`
-	AccessRecords []map[string]any `json:"access_records"`
-	Collaborators []map[string]any `json:"collaborators"`
-	GuestLinks    []map[string]any `json:"guest_links"`
-	GuestDevices  []map[string]any `json:"guest_devices"`
-	TicketReads   []map[string]any `json:"ticket_reads"`
+	Guests                 []map[string]any `json:"guests"`
+	Replies                []map[string]any `json:"replies"`
+	Attachments            []map[string]any `json:"attachments"`
+	Timeline               []map[string]any `json:"timeline"`
+	AccessRecords          []map[string]any `json:"access_records"`
+	Collaborators          []map[string]any `json:"collaborators"`
+	GuestLinks             []map[string]any `json:"guest_links"`
+	GuestDevices           []map[string]any `json:"guest_devices"`
+	GuestCredentialHolders []map[string]any `json:"guest_credential_holders"`
+	GuestCredentialDevices []map[string]any `json:"guest_credential_devices"`
+	TicketReads            []map[string]any `json:"ticket_reads"`
 }
 
 type adminOperationBody struct {
@@ -240,13 +243,17 @@ func Test生成归档包可下载且校验和与Markdown有效(t *testing.T) {
 	}); res.StatusCode != http.StatusOK {
 		t.Fatalf("挂说明附件状态码 = %d, 想 200", res.StatusCode)
 	}
-	link := s.CreateGuestLink(t, admin, number, map[string]any{"note": "现场确认", "valid_days": 90})
+	link := s.CreateGuestLink(t, admin, number, map[string]any{"note": "现场确认", "new_guest_name": "检验科-张三", "valid_days": 90})
 	if link.URL == "" {
 		t.Fatal("创建访客链接失败")
 	}
 	guest := s.GuestClient(link.Key(t))
 	if res := s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+number, nil, nil); res.StatusCode != http.StatusOK {
 		t.Fatalf("访客认领后访问状态码 = %d, 想 200", res.StatusCode)
+	}
+	if res := s.Do(t, guest, http.MethodPost, "/api/v1/tickets/"+number+"/replies",
+		map[string]string{"body_md": "现场已看过。", "author_name": "检验科 张三"}, nil); res.StatusCode != http.StatusCreated {
+		t.Fatalf("访客回复状态码 = %d, 想 201", res.StatusCode)
 	}
 	if res := addCollaborator(t, s, admin, number, "王工"); res.StatusCode != http.StatusCreated {
 		t.Fatalf("加入协作者状态码 = %d, 想 201", res.StatusCode)
@@ -327,7 +334,8 @@ func Test生成归档包可下载且校验和与Markdown有效(t *testing.T) {
 		t.Fatalf("结构化工单 JSON 无效：%v", err)
 	}
 	for _, key := range []string{"ticket", "brief_versions", "replies", "attachments", "timeline",
-		"drafts", "access_records", "labels", "collaborators", "guest_links", "guest_devices", "ticket_reads"} {
+		"drafts", "access_records", "labels", "collaborators", "guest_links", "guests", "guest_devices",
+		"guest_credential_holders", "guest_credential_devices", "ticket_reads"} {
 		if _, ok := rawStructured[key]; !ok {
 			t.Errorf("结构化工单 JSON 缺少 %s", key)
 		}
@@ -336,12 +344,15 @@ func Test生成归档包可下载且校验和与Markdown有效(t *testing.T) {
 	if err := json.Unmarshal(files["tickets/"+number+"/ticket.json"], &structured); err != nil {
 		t.Fatalf("结构化工单 JSON 无效：%v", err)
 	}
-	if len(structured.Replies) != 1 || len(structured.Attachments) != 1 ||
+	if len(structured.Replies) != 2 || len(structured.Attachments) != 1 ||
 		len(structured.Collaborators) != 1 || len(structured.GuestLinks) != 1 ||
-		len(structured.GuestDevices) != 1 || len(structured.TicketReads) != 1 {
-		t.Fatalf("结构化工单关联数据不完整：replies=%d attachments=%d collaborators=%d guest_links=%d guest_devices=%d ticket_reads=%d",
+		len(structured.GuestDevices) != 0 || len(structured.GuestCredentialHolders) != 0 ||
+		len(structured.GuestCredentialDevices) != 0 || len(structured.TicketReads) != 1 {
+		t.Fatalf("结构化工单关联数据不完整：replies=%d attachments=%d collaborators=%d guest_links=%d guest_devices=%d holders=%d credential_devices=%d ticket_reads=%d",
 			len(structured.Replies), len(structured.Attachments), len(structured.Collaborators),
-			len(structured.GuestLinks), len(structured.GuestDevices), len(structured.TicketReads))
+			len(structured.GuestLinks), len(structured.GuestDevices),
+			len(structured.GuestCredentialHolders), len(structured.GuestCredentialDevices),
+			len(structured.TicketReads))
 	}
 	for _, key := range []string{"id", "ticket_seq", "key_hash", "note", "expires_at", "revoked_at",
 		"can_edit_brief", "created_by_member_id", "created_by_agent_id", "created_at", "claimed_at",
@@ -350,10 +361,36 @@ func Test生成归档包可下载且校验和与Markdown有效(t *testing.T) {
 			t.Errorf("导出的访客链接缺少恢复列 %s：%+v", key, structured.GuestLinks[0])
 		}
 	}
-	for _, key := range []string{"id", "guest_link_id", "token_hash", "created_at", "entry_method"} {
-		if _, ok := structured.GuestDevices[0][key]; !ok {
-			t.Errorf("导出的访客设备缺少恢复列 %s：%+v", key, structured.GuestDevices[0])
+	for _, key := range []string{"claimed_at", "claim_name", "access_code_hash",
+		"access_code_failures", "access_code_locked_at", "credential_holder_id"} {
+		if structured.GuestLinks[0][key] != nil {
+			t.Errorf("有主链接不应带出访客级长期凭证列 %s：%+v", key, structured.GuestLinks[0])
 		}
+	}
+	if len(structured.Guests) != 1 || structured.Guests[0]["name"] != "检验科-张三" {
+		t.Fatalf("归档包缺少相关访客快照：%+v", structured.Guests)
+	}
+	for _, key := range []string{"merged_into_guest_id", "merged_at"} {
+		if _, ok := structured.Guests[0][key]; !ok {
+			t.Errorf("导出的访客快照缺少恢复列 %s：%+v", key, structured.Guests[0])
+		}
+	}
+	for _, key := range []string{"home_key_hash", "home_key_ciphertext"} {
+		if _, ok := structured.Guests[0][key]; ok {
+			t.Errorf("访客快照不应带出长期主页密钥列 %s：%+v", key, structured.Guests[0])
+		}
+	}
+	if structured.GuestLinks[0]["guest_id"] == nil {
+		t.Fatalf("导出的访客链接缺少所属访客：%+v", structured.GuestLinks[0])
+	}
+	foundGuestReply := false
+	for _, ev := range structured.Timeline {
+		if ev["type"] == "reply" && ev["actor_guest_name"] == "检验科-张三" {
+			foundGuestReply = true
+		}
+	}
+	if !foundGuestReply {
+		t.Fatalf("时间线导出缺少访客名字快照：%+v", structured.Timeline)
 	}
 	markdownTarget := "attachments/" + log.ID + "/%E6%9C%8D%E5%8A%A1%E6%97%A5%E5%BF%97.txt"
 	zipPath := "tickets/" + number + "/attachments/" + log.ID + "/服务日志.txt"

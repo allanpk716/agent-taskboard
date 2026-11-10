@@ -24,7 +24,7 @@ func Test再次复制新访客链接得到同一条可打开链接(t *testing.T)
 		"title":    "UD-2300 质控时报警 E-203",
 		"fields":   map[string]string{},
 		"labels":   []string{},
-		"guest_link": map[string]any{
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三",
 			"note":           "检验科-张三",
 			"can_edit_brief": true,
 		},
@@ -88,7 +88,7 @@ func Test再次复制转发文案按当前标题和有效期生成(t *testing.T)
 		"title":    "UD-2300 报警",
 		"fields":   map[string]string{},
 		"labels":   []string{},
-		"guest_link": map[string]any{
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三",
 			"note":           "检验科-张三",
 			"can_edit_brief": true,
 		},
@@ -207,7 +207,7 @@ func Test无服务端加密密钥时单建访客链接仍成功并按老链接�
 	number := mustCreateTicket(t, s, web, "无服务端加密密钥也能建链接")
 
 	res := s.Do(t, web, http.MethodPost, "/api/v1/tickets/"+number+"/guest-links",
-		map[string]any{"note": "检验科-张三"}, nil)
+		map[string]any{"note": "检验科-张三", "new_guest_name": "检验科-张三"}, nil)
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("无服务端加密密钥时创建访客链接状态码 = %d, 想 201", res.StatusCode)
 	}
@@ -269,7 +269,7 @@ func Test无服务端加密密钥时发链接请人填写仍成功(t *testing.T)
 		"title":    "无加密密钥的请人填写",
 		"fields":   map[string]string{},
 		"labels":   []string{},
-		"guest_link": map[string]any{
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三",
 			"note":           "检验科-张三",
 			"can_edit_brief": true,
 		},
@@ -463,14 +463,16 @@ func Test老链接不能直接复制但不影响访问(t *testing.T) {
 	}
 }
 
-func Test老访客链接换新地址同时重置访问码并记入时间线(t *testing.T) {
+func Test重置链接只换地址且访问码与设备照旧可用(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")
 	web := s.Login("陈工", "secret-pass")
 	number := mustCreateTicket(t, s, web, "老链接换新地址")
-	link := mustCreateGuestLink(t, s, web, number, map[string]any{
+	legacy := s.CreateLegacyGuestLink(t, web, number, map[string]any{
 		"note": "检验科-张三", "can_edit_brief": true,
 	})
+	link := guestLinkResponse{ID: legacy.ID, URL: legacy.URL, Note: legacy.Note,
+		ExpiresAt: legacy.ExpiresAt, CanEditBrief: legacy.CanEditBrief}
 
 	var claim struct {
 		DeviceToken string `json:"device_token"`
@@ -513,8 +515,8 @@ func Test老访客链接换新地址同时重置访问码并记入时间线(t *t
 	if rotated.URL == link.URL || !strings.HasPrefix(rotated.URL, "/g/tbg_") {
 		t.Fatalf("应换成一个新地址：old %q, new %q", link.URL, rotated.URL)
 	}
-	if rotated.AccessCode == claim.AccessCode || !regexp.MustCompile(`^\d{6}$`).MatchString(rotated.AccessCode) {
-		t.Fatalf("应返回新的 6 位访问码：old %q, new %q", claim.AccessCode, rotated.AccessCode)
+	if rotated.AccessCode != "" {
+		t.Fatalf("重置链接不应返回访问码：%q", rotated.AccessCode)
 	}
 	if !strings.Contains(rotated.ShareText, rotated.URL) ||
 		!strings.Contains(rotated.ShareText, "换了设备需要输入当初的访问码") {
@@ -522,9 +524,8 @@ func Test老访客链接换新地址同时重置访问码并记入时间线(t *t
 	}
 	if !strings.Contains(rotated.ResetText, "链接已更换，旧链接已失效") ||
 		!strings.Contains(rotated.ResetText, rotated.URL) ||
-		!strings.Contains(rotated.ResetText, rotated.AccessCode) ||
-		!strings.Contains(rotated.ResetText, "也请把新访问码告诉它") {
-		t.Errorf("重置文案应包含新链接、新访问码与 Agent 提醒：%q", rotated.ResetText)
+		!strings.Contains(rotated.ResetText, "访问码保持不变") {
+		t.Errorf("重置文案应说明新链接与访问码不变：%q", rotated.ResetText)
 	}
 
 	res = s.DoWithHeaders(t, web, http.MethodPost, rotatePath, idem, nil, nil)
@@ -535,21 +536,38 @@ func Test老访客链接换新地址同时重置访问码并记入时间线(t *t
 	if res := s.Do(t, s.AgentClient(guestKeyOf(t, link)), http.MethodGet, "/api/v1/guest-link", nil, nil); res.StatusCode != http.StatusUnauthorized {
 		t.Errorf("旧地址应立即失效：状态码 = %d, 想 401", res.StatusCode)
 	}
-	if res := s.Do(t, s.AgentClient(claim.DeviceToken), http.MethodGet, "/api/v1/session", nil, nil); res.StatusCode != http.StatusUnauthorized {
-		t.Errorf("旧设备应立即失效：状态码 = %d, 想 401", res.StatusCode)
-	}
 	newKey := strings.TrimPrefix(rotated.URL, "/g/")
+	// 重置链接不动凭证：原设备仍可信，访问码哈希与锁定状态也原样保留。
+	if res := s.Do(t, s.AgentClient(claim.DeviceToken), http.MethodGet, "/api/v1/session", nil, nil); res.StatusCode != http.StatusOK {
+		t.Errorf("重置链接后原设备应仍可信：状态码 = %d, 想 200", res.StatusCode)
+	}
 	if res := s.Do(t, s.AgentClient(newKey), http.MethodPost, "/api/v1/guest-links/enter",
-		map[string]string{"access_code": claim.AccessCode}, nil); res.StatusCode != http.StatusUnauthorized {
-		t.Errorf("旧访问码应失效：状态码 = %d, 想 401", res.StatusCode)
+		map[string]string{"access_code": claim.AccessCode}, nil); res.StatusCode != http.StatusForbidden {
+		t.Errorf("重置链接不应清除锁定：状态码 = %d, 想 403", res.StatusCode)
+	}
+
+	// 无主老链接仍保留链接级重置访问码：由它作废设备、换新码并解除锁定。
+	var reset struct {
+		AccessCode string `json:"access_code"`
+	}
+	res = s.Do(t, web, http.MethodPost,
+		"/api/v1/tickets/"+number+"/guest-links/"+strconv.FormatInt(link.ID, 10)+"/reset-access-code", nil, &reset)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("链接级重置访问码状态码 = %d, 想 200", res.StatusCode)
+	}
+	if reset.AccessCode == claim.AccessCode || !regexp.MustCompile(`^\d{6}$`).MatchString(reset.AccessCode) {
+		t.Fatalf("应返回新的 6 位访问码：old %q, new %q", claim.AccessCode, reset.AccessCode)
+	}
+	if res := s.Do(t, s.AgentClient(claim.DeviceToken), http.MethodGet, "/api/v1/session", nil, nil); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("链接级重置访问码后旧设备应失效：状态码 = %d, 想 401", res.StatusCode)
 	}
 	var renewed struct {
 		DeviceToken string `json:"device_token"`
 	}
 	res = s.Do(t, s.AgentClient(newKey), http.MethodPost, "/api/v1/guest-links/enter",
-		map[string]string{"access_code": rotated.AccessCode}, &renewed)
+		map[string]string{"access_code": reset.AccessCode}, &renewed)
 	if res.StatusCode != http.StatusCreated {
-		t.Fatalf("新访问码应能进入：状态码 = %d, 想 201", res.StatusCode)
+		t.Fatalf("新访问码应能进入且锁定应清除：状态码 = %d, 想 201", res.StatusCode)
 	}
 
 	var list struct {
@@ -588,12 +606,16 @@ func Test老访客链接换新地址同时重置访问码并记入时间线(t *t
 	var after ticketResponseBody
 	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number, nil, &after)
 	var event *timelineEventBody
+	foundReset := false
 	for i := range after.Timeline {
-		if after.Timeline[i].Type == "guest_link_rotated" {
+		switch after.Timeline[i].Type {
+		case "guest_link_rotated":
 			if event != nil {
 				t.Fatalf("guest_link_rotated 事件有多条")
 			}
 			event = &after.Timeline[i]
+		case "guest_access_reset":
+			foundReset = true
 		}
 	}
 	if event == nil {
@@ -602,16 +624,22 @@ func Test老访客链接换新地址同时重置访问码并记入时间线(t *t
 	if event.Note != link.Note || event.Change <= before.Timeline[len(before.Timeline)-1].Change {
 		t.Errorf("换新地址事件应带备注并推进全局变更序号：%+v", event)
 	}
+	if !foundReset {
+		t.Fatal("链接级重置访问码应记 guest_access_reset 事件")
+	}
 	var guestView ticketResponseBody
 	s.Do(t, s.AgentClient(renewed.DeviceToken), http.MethodGet, "/api/v1/tickets/"+number, nil, &guestView)
-	found := false
+	foundRotate, foundAccessReset := false, false
 	for _, ev := range guestView.Timeline {
-		if ev.Type == "guest_link_rotated" {
-			found = true
+		switch ev.Type {
+		case "guest_link_rotated":
+			foundRotate = true
+		case "guest_access_reset":
+			foundAccessReset = true
 		}
 	}
-	if !found {
-		t.Error("访客时间线也应看到换新地址事件")
+	if !foundRotate || !foundAccessReset {
+		t.Error("访客时间线也应看到换新地址与重置访问码事件")
 	}
 }
 
@@ -841,7 +869,7 @@ func Test配置public_url时再次复制用绝对链接(t *testing.T) {
 		"title":    "绝对地址",
 		"fields":   map[string]string{},
 		"labels":   []string{},
-		"guest_link": map[string]any{
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三",
 			"note":           "检验科-张三",
 			"can_edit_brief": true,
 		},
