@@ -323,6 +323,74 @@ func Test停用恢复访客凭证失效与轮次回指派人(t *testing.T) {
 	}
 }
 
+// 已停用的访客不能再被新链接或老链接归属选中，避免成员误以为链接可用。
+func Test已停用访客不能建链接或归属老链接(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	ticketA := mustCreateTicket(t, s, admin, "建立访客")
+	link := mustCreateGuestLink(t, s, admin, ticketA,
+		map[string]any{"note": "第一次联系", "new_guest_name": "检验科-张三"})
+	if res := setGuestDisabled(t, s, admin, link.GuestID, "disable"); res.StatusCode != http.StatusNoContent {
+		t.Fatalf("停用访客状态码 = %d, 想 204", res.StatusCode)
+	}
+
+	ticketB := mustCreateTicket(t, s, admin, "再建链接")
+	res := s.Do(t, admin, http.MethodPost, "/api/v1/tickets/"+ticketB+"/guest-links",
+		map[string]any{"note": "第二次联系", "guest_id": link.GuestID}, nil)
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("给停用访客建链接状态码 = %d, 想 409", res.StatusCode)
+	}
+	var got errorBody
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "guest_disabled" {
+		t.Fatalf("给停用访客建链接错误码 = %q, 想 guest_disabled", got.Error.Code)
+	}
+
+	ticketC := mustCreateTicket(t, s, admin, "老链接归属")
+	legacy := s.CreateLegacyGuestLink(t, admin, ticketC, map[string]any{"note": "上线前的联系"})
+	res = s.Do(t, admin, http.MethodPost,
+		"/api/v1/tickets/"+ticketC+"/guest-links/"+itoa(legacy.ID)+"/assign-guest",
+		map[string]any{"guest_id": link.GuestID}, nil)
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("老链接归属停用访客状态码 = %d, 想 409", res.StatusCode)
+	}
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "guest_disabled" {
+		t.Fatalf("老链接归属停用访客错误码 = %q, 想 guest_disabled", got.Error.Code)
+	}
+}
+
+// 已并入的访客是历史身份，不能变更停用状态。
+func Test已并入访客不能停用或恢复(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	ticketA := mustCreateTicket(t, s, admin, "来源访客")
+	source := mustCreateGuestLink(t, s, admin, ticketA,
+		map[string]any{"note": "第一次联系", "new_guest_name": "检验科-张三"})
+	ticketB := mustCreateTicket(t, s, admin, "目标访客")
+	target := mustCreateGuestLink(t, s, admin, ticketB,
+		map[string]any{"note": "第二次联系", "new_guest_name": "检验科-李四"})
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/guests/"+strconv.FormatInt(source.GuestID, 10)+"/merge-into",
+		map[string]any{"target_guest_id": target.GuestID}, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("合并访客状态码 = %d, 想 200", res.StatusCode)
+	}
+
+	for _, action := range []string{"disable", "enable"} {
+		res := setGuestDisabled(t, s, admin, source.GuestID, action)
+		if res.StatusCode != http.StatusConflict {
+			t.Fatalf("已并入访客 %s 状态码 = %d, 想 409", action, res.StatusCode)
+		}
+		var got errorBody
+		tbtest.DecodeJSON(t, res, &got)
+		if got.Error.Code != "guest_already_merged" {
+			t.Fatalf("已并入访客 %s 错误码 = %q, 想 guest_already_merged", action, got.Error.Code)
+		}
+	}
+}
+
 // mustCreateTicketAssignedTo 建一张指派给指定成员的工单并返回编号。
 func mustCreateTicketAssignedTo(t testing.TB, s *tbtest.Server, c *http.Client, title, assignee string) string {
 	t.Helper()

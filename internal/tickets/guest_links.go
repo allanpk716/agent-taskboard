@@ -337,16 +337,24 @@ func (m *Manager) guestForNewLinkTx(ctx context.Context, tx *sql.Tx, actor Autho
 	spec GuestLinkSpec, now time.Time) (guestID int64, guestName string, holderID int64, claimed bool, err error) {
 	if spec.GuestID != 0 {
 		var claimedAt sql.NullString
+		var disabledAt sql.NullString
+		var mergedInto sql.NullInt64
 		if err := tx.QueryRowContext(ctx, `
-			SELECT gu.id, gu.name, h.claimed_at
+			SELECT gu.id, gu.name, h.claimed_at, gu.disabled_at, gu.merged_into_guest_id
 			FROM guests gu
 			JOIN guest_credential_holders h ON h.owner_type = 'guest' AND h.owner_id = gu.id
-			WHERE gu.id = ? AND gu.merged_into_guest_id IS NULL`,
-			spec.GuestID).Scan(&guestID, &guestName, &claimedAt); err != nil {
+			WHERE gu.id = ?`,
+			spec.GuestID).Scan(&guestID, &guestName, &claimedAt, &disabledAt, &mergedInto); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return 0, "", 0, false, ErrGuestNotFound
 			}
 			return 0, "", 0, false, err
+		}
+		if mergedInto.Valid {
+			return 0, "", 0, false, ErrGuestAlreadyMerged
+		}
+		if disabledAt.Valid {
+			return 0, "", 0, false, ErrGuestDisabled
 		}
 		claimed = claimedAt.Valid
 	} else {

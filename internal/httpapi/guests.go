@@ -222,6 +222,9 @@ func (a *API) setGuestDisabled(w http.ResponseWriter, r *http.Request, id int64,
 	switch {
 	case errors.Is(err, tickets.ErrGuestNotFound):
 		WriteError(w, http.StatusNotFound, CodeGuestNotFound, "没有这位访客", "")
+	case errors.Is(err, tickets.ErrGuestAlreadyMerged):
+		WriteError(w, http.StatusConflict, CodeGuestAlreadyMerged, err.Error(),
+			"已并入的访客保留为历史身份，不能停用或恢复")
 	case errors.Is(err, tickets.ErrGuestAlreadyDisabled):
 		WriteError(w, http.StatusConflict, CodeGuestAlreadyDisabled, err.Error(), "访客已停用，无需重复停用")
 	case errors.Is(err, tickets.ErrGuestNotDisabled):

@@ -145,14 +145,21 @@ func (m *Manager) setGuestDisabled(ctx context.Context, viewer identity.Viewer, 
 	defer tx.Rollback()
 
 	var disabledAt sql.NullString
+	var mergedInto sql.NullInt64
 	var guestName string
 	if err := tx.QueryRowContext(ctx,
-		`SELECT name, disabled_at FROM guests WHERE id = ?`, guestID).
-		Scan(&guestName, &disabledAt); err != nil {
+		`SELECT name, disabled_at, merged_into_guest_id FROM guests WHERE id = ?`, guestID).
+		Scan(&guestName, &disabledAt, &mergedInto); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrGuestNotFound
 		}
 		return err
+	}
+	if mergedInto.Valid {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		return ErrGuestAlreadyMerged
 	}
 	eventType := "guest_enabled"
 	var newDisabled any

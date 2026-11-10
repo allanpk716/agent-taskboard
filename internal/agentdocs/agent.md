@@ -45,6 +45,8 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
   读 `GET {{BASE}}/api/v1/guests?q=<名字>` 在部门访客名单里按名字搜索，找到就用
   `guest_id` 选这位已有访客；名单里没有才用 `new_guest_name` 当场新建一位。
   两者都不带会返回 `422 guest_required`，同时带会返回 `422 guest_required`（只能二选一）。
+  停用或已并入的访客不能作为目标；前者返回 `409 guest_disabled`，后者返回
+  `409 guest_already_merged`，请改选合并后的访客或询问主人是否先恢复。
 - 建链接：`POST {{BASE}}/api/v1/tickets/<工单编号>/guest-links`，请求体带
   `{"note": "这条链接的用途", "guest_id": <已有访客id>, "valid_days": 30}`；
   新建访客时把 `guest_id` 换成 `"new_guest_name": "检验科-张三"`。备注只写这条链接的
