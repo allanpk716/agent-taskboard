@@ -13,6 +13,7 @@ import {
   changeLabels,
   closeTicket,
   createGuestLink,
+  copyGuestHomeText,
   copyGuestLinkShareText,
   discardDraft,
   extendGuestLink,
@@ -424,6 +425,16 @@ async function copyGuestShareTextToClipboard(number: string, id: number) {
   }
 }
 
+async function copyGuestHomeTextToClipboard(guestId: number, guestName?: string) {
+  try {
+    const result = await copyGuestHomeText(guestId)
+    const ok = await copyText(result.share_text)
+    toast(ok ? `✓ ${guestName || '访客'}的主页文案已复制` : '复制失败，请手动选择文字复制')
+  } catch (e) {
+    toast(e instanceof ApiError ? `${e.code}：${e.message}` : '复制访客主页文案失败')
+  }
+}
+
 function useGuestLinkShareActions(
   number: string,
   onResetAccess: (link: GuestLink) => void,
@@ -439,6 +450,14 @@ function useGuestLinkShareActions(
             }}
           >
             复制转发文案
+          </button>
+        )}
+        {canManageLinks && link.guest_id && (
+          <button
+            className="btn sm ghost"
+            onClick={() => void copyGuestHomeTextToClipboard(link.guest_id!, link.guest_name)}
+          >
+            复制主页文案
           </button>
         )}
         {canManageLinks && !dead && !link.share_text_available && (

@@ -802,6 +802,13 @@ export async function copyGuestLinkShareText(
   })
 }
 
+/** 复制访客主页文案：地址可重复生成，响应不含访问码。 */
+export async function copyGuestHomeText(
+  guestId: number,
+): Promise<{ home_url: string; share_text: string }> {
+  return api(`/api/v1/guests/${guestId}/home-share-text`, { method: 'POST' })
+}
+
 export async function rotateGuestLinkKey(
   number: string,
   id: number,
