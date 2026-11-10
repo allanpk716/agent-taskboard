@@ -639,8 +639,13 @@ const accessRecordColumns = `SELECT id, ticket_seq, actor_kind, actor_name, acto
 
 const guestLinkColumns = `SELECT g.id, g.ticket_seq, g.key_hash, g.note, g.expires_at, g.revoked_at,
 		       g.can_edit_brief, g.created_by_member_id, g.created_by_agent_id, g.created_at, g.guest_id,
-		       h.claimed_at, h.claim_name, h.access_code_hash, h.access_code_failures,
-		       h.access_code_locked_at, g.key_ciphertext, g.credential_holder_id
+		       CASE WHEN g.guest_id IS NULL THEN h.claimed_at ELSE NULL END AS claimed_at,
+		       CASE WHEN g.guest_id IS NULL THEN h.claim_name ELSE NULL END AS claim_name,
+		       CASE WHEN g.guest_id IS NULL THEN h.access_code_hash ELSE NULL END AS access_code_hash,
+		       CASE WHEN g.guest_id IS NULL THEN h.access_code_failures ELSE NULL END AS access_code_failures,
+		       CASE WHEN g.guest_id IS NULL THEN h.access_code_locked_at ELSE NULL END AS access_code_locked_at,
+		       g.key_ciphertext,
+		       CASE WHEN g.guest_id IS NULL THEN g.credential_holder_id ELSE NULL END AS credential_holder_id
 		FROM guest_links g
 		JOIN guest_credential_holders h ON h.id = g.credential_holder_id`
 
@@ -651,10 +656,13 @@ const draftVersionColumns = `SELECT draft_id, version, request_json, author_memb
 	       author_agent_id, at`
 
 func guestDevices(ctx context.Context, q archiveQueryer, links []map[string]any) ([]map[string]any, error) {
-	// v1 兼容投影：无主链接按链接持有者对齐；有主链接的设备属于整个访客，
-	// 按链接当前指向的持有者投影（恢复以 guest_credential_devices 为准）。
+	// v1 兼容投影只带无主老链接自己的设备。有主链接的设备属于整个访客，
+	// 不随单张工单的归档包带出。
 	ids := make([]any, 0, len(links))
 	for _, link := range links {
+		if guestID, _ := link["guest_id"].(int64); guestID != 0 {
+			continue
+		}
 		id, _ := link["credential_holder_id"].(int64)
 		if id != 0 {
 			ids = append(ids, id)
@@ -685,7 +693,7 @@ func exportGuests(ctx context.Context, q archiveQueryer, links []map[string]any)
 		return []map[string]any{}, nil
 	}
 	return queryObjects(ctx, q, `SELECT id, name, created_by_member_id, created_by_agent_id,
-		created_at, disabled_at, home_key_hash, home_key_ciphertext,
+		created_at, disabled_at,
 		merged_into_guest_id, merged_at
 		FROM guests WHERE id IN (`+store.Placeholders(len(ids))+`)
 		ORDER BY id`, ids...)
@@ -693,27 +701,21 @@ func exportGuests(ctx context.Context, q archiveQueryer, links []map[string]any)
 
 func guestCredentialHolders(ctx context.Context, q archiveQueryer, links []map[string]any) ([]map[string]any, error) {
 	linkIDs := make([]any, 0, len(links))
-	guestIDs := make([]any, 0, len(links))
 	for _, link := range links {
+		if guestID, _ := link["guest_id"].(int64); guestID != 0 {
+			continue
+		}
 		id, _ := link["id"].(int64)
 		linkIDs = append(linkIDs, id)
-		if guestID, _ := link["guest_id"].(int64); guestID != 0 {
-			guestIDs = append(guestIDs, guestID)
-		}
 	}
 	if len(linkIDs) == 0 {
 		return []map[string]any{}, nil
 	}
-	query := `SELECT id, owner_type, owner_id, claimed_at, claim_name,
+	return queryObjects(ctx, q, `SELECT id, owner_type, owner_id, claimed_at, claim_name,
 		access_code_hash, access_code_failures, access_code_locked_at, created_at
 		FROM guest_credential_holders
-		WHERE owner_type = 'guest_link' AND owner_id IN (` + store.Placeholders(len(linkIDs)) + `)`
-	args := linkIDs
-	if len(guestIDs) > 0 {
-		query += ` OR owner_type = 'guest' AND owner_id IN (` + store.Placeholders(len(guestIDs)) + `)`
-		args = append(args, guestIDs...)
-	}
-	return queryObjects(ctx, q, query+` ORDER BY owner_type, owner_id, id`, args...)
+		WHERE owner_type = 'guest_link' AND owner_id IN (`+store.Placeholders(len(linkIDs))+`)
+		ORDER BY owner_type, owner_id, id`, linkIDs...)
 }
 
 func guestCredentialDevices(ctx context.Context, q archiveQueryer, holders []map[string]any) ([]map[string]any, error) {

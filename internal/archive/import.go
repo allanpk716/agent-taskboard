@@ -32,6 +32,13 @@ var (
 const maxArchiveJSONBytes int64 = 16 << 20
 const maxArchiveUncompressedBytes int64 = 4 << 30
 
+// guestLinkCipher 加密访客主页密钥；与工单层使用同一实现，但不引入领域依赖。
+type guestLinkCipher interface {
+	Encrypt(string) (string, error)
+	Decrypt(string) (string, error)
+	CanDecrypt(string) bool
+}
+
 // ImportTicket 是检查归档包时的一张候选工单。
 type ImportTicket struct {
 	Seq             int64
@@ -162,7 +169,7 @@ func (s *Service) Import(ctx context.Context, readerAt io.ReaderAt, size int64,
 			s.removeImportFiles(ctx, written)
 			return ImportResult{}, err
 		}
-		if err := insertImportTicketTx(ctx, tx, parsed.Tickets[meta.Number]); err != nil {
+		if err := s.insertImportTicketTx(ctx, tx, parsed.Tickets[meta.Number]); err != nil {
 			s.removeImportFiles(ctx, written)
 			return ImportResult{}, fmt.Errorf("恢复工单 %s 失败：%w", meta.Number, err)
 		}
@@ -536,6 +543,7 @@ func normalizeImportTicket(export *ticketExport) {
 		}
 		export.Guests[i] = row
 	}
+	sanitizeGuestLongTermCredentials(export)
 	for i, row := range export.Attachments {
 		if _, ok := row["slim_removed_at"]; !ok {
 			row["slim_removed_at"] = nil
@@ -544,6 +552,51 @@ func normalizeImportTicket(export *ticketExport) {
 			row["slim_package_name"] = ""
 		}
 		export.Attachments[i] = row
+	}
+}
+
+// sanitizeGuestLongTermCredentials 阻止单张工单的归档包恢复或带出访客级
+// 长期凭证。老格式包里已有这些列时也在这里丢弃；有主链接导入时重新生成
+// 未认领凭证。
+func sanitizeGuestLongTermCredentials(export *ticketExport) {
+	for _, guest := range export.Guests {
+		delete(guest, "home_key_hash")
+		delete(guest, "home_key_ciphertext")
+	}
+	guestHolders := map[int64]bool{}
+	hadGuestHolders := false
+	holders := make([]map[string]any, 0, len(export.GuestCredentialHolders))
+	for _, holder := range export.GuestCredentialHolders {
+		if stringValue(holder["owner_type"]) == "guest" {
+			guestHolders[importInt(holder, "id")] = true
+			hadGuestHolders = true
+			continue
+		}
+		holders = append(holders, holder)
+	}
+	export.GuestCredentialHolders = holders
+
+	for _, link := range export.GuestLinks {
+		if importInt(link, "guest_id") == 0 {
+			continue
+		}
+		for _, key := range []string{"claimed_at", "claim_name", "access_code_hash",
+			"access_code_failures", "access_code_locked_at", "credential_holder_id"} {
+			link[key] = nil
+		}
+	}
+	devices := make([]map[string]any, 0, len(export.GuestCredentialDevices))
+	for _, device := range export.GuestCredentialDevices {
+		if guestHolders[importInt(device, "credential_holder_id")] {
+			continue
+		}
+		devices = append(devices, device)
+	}
+	export.GuestCredentialDevices = devices
+	if hadGuestHolders {
+		// #335 后的 v1 投影把访客级设备错标在 guest_link_id 下；新结构
+		// 中的链接设备已经保留，旧投影整体不作为恢复依据。
+		export.GuestDevices = []map[string]any{}
 	}
 }
 
@@ -966,8 +1019,7 @@ var importTableColumns = []struct {
 	{"ticket_labels", []string{"ticket_seq", "label"}},
 	{"ticket_collaborators", []string{"ticket_seq", "member_id", "added_at"}},
 	{"guests", []string{"id", "name", "created_by_member_id", "created_by_agent_id",
-		"created_at", "disabled_at", "home_key_hash", "home_key_ciphertext",
-		"merged_into_guest_id", "merged_at"}},
+		"created_at", "disabled_at", "merged_into_guest_id", "merged_at"}},
 	{"guest_credential_holders", []string{"id", "owner_type", "owner_id", "claimed_at",
 		"claim_name", "access_code_hash", "access_code_failures", "access_code_locked_at", "created_at"}},
 	{"guest_links", []string{"id", "ticket_seq", "key_hash", "note", "expires_at", "revoked_at",
@@ -978,8 +1030,15 @@ var importTableColumns = []struct {
 	{"ticket_reads", []string{"member_id", "ticket_seq", "last_read_seq"}},
 }
 
-func insertImportTicketTx(ctx context.Context, tx *sql.Tx, export ticketExport) error {
-	if len(export.GuestLinks) > 0 && len(export.GuestCredentialHolders) == 0 {
+func (s *Service) insertImportTicketTx(ctx context.Context, tx *sql.Tx, export ticketExport) error {
+	needsLegacyHolders := false
+	for _, link := range export.GuestLinks {
+		if importInt(link, "guest_id") == 0 && importInt(link, "credential_holder_id") == 0 {
+			needsLegacyHolders = true
+			break
+		}
+	}
+	if needsLegacyHolders {
 		if err := insertLegacyGuestCredentialsTx(ctx, tx, export); err != nil {
 			return err
 		}
@@ -997,6 +1056,86 @@ func insertImportTicketTx(ctx context.Context, tx *sql.Tx, export ticketExport) 
 		if err := insertRowsTx(ctx, tx, table.name, table.columns, rows, ignoreConflict); err != nil {
 			return err
 		}
+		if table.name == "guests" {
+			if err := s.ensureImportedGuestCredentialsTx(ctx, tx, export); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// ensureImportedGuestCredentialsTx 给导入的访客快照补一个未认领的访客级
+// 持有者，并让有主链接指向它。访客已存在时复用平台上的持有者；新访客的
+// 主页密钥按现有“确保主页密钥”规则生成（加密器不可用时保持空值）。
+func (s *Service) ensureImportedGuestCredentialsTx(ctx context.Context, tx *sql.Tx, export ticketExport) error {
+	holders := map[int64]int64{}
+	for _, guest := range export.Guests {
+		guestID := importInt(guest, "id")
+		if guestID == 0 {
+			continue
+		}
+		var holderID int64
+		err := tx.QueryRowContext(ctx, `
+			SELECT id FROM guest_credential_holders
+			WHERE owner_type = 'guest' AND owner_id = ?`, guestID).Scan(&holderID)
+		if errors.Is(err, sql.ErrNoRows) {
+			createdAt := stringValue(guest["created_at"])
+			if err := tx.QueryRowContext(ctx, `
+				INSERT INTO guest_credential_holders
+					(owner_type, owner_id, claimed_at, claim_name, access_code_hash,
+					 access_code_failures, access_code_locked_at, created_at)
+				VALUES ('guest', ?, NULL, NULL, NULL, 0, NULL, ?) RETURNING id`,
+				guestID, createdAt).Scan(&holderID); err != nil {
+				return fmt.Errorf("恢复访客级凭证失败：%w", err)
+			}
+		} else if err != nil {
+			return err
+		}
+		holders[guestID] = holderID
+		if err := s.ensureImportedGuestHomeKeyTx(ctx, tx, guestID); err != nil {
+			return err
+		}
+	}
+	for _, link := range export.GuestLinks {
+		guestID := importInt(link, "guest_id")
+		if guestID == 0 {
+			continue
+		}
+		link["credential_holder_id"] = holders[guestID]
+	}
+	return nil
+}
+
+func (s *Service) ensureImportedGuestHomeKeyTx(ctx context.Context, tx *sql.Tx, guestID int64) error {
+	if s.guestKey == nil {
+		return nil
+	}
+	var disabledAt sql.NullString
+	var mergedAt sql.NullInt64
+	var hash, ciphertext sql.NullString
+	if err := tx.QueryRowContext(ctx, `
+		SELECT disabled_at, merged_into_guest_id, home_key_hash, home_key_ciphertext
+		FROM guests WHERE id = ?`, guestID).
+		Scan(&disabledAt, &mergedAt, &hash, &ciphertext); err != nil {
+		return err
+	}
+	if disabledAt.Valid || mergedAt.Valid || hash.Valid || ciphertext.Valid {
+		return nil
+	}
+	key, err := identity.NewGuestHomeKey()
+	if err != nil {
+		return err
+	}
+	encrypted, err := s.guestKey.Encrypt(key)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE guests SET home_key_hash = ?, home_key_ciphertext = ?
+		WHERE id = ? AND home_key_hash IS NULL`,
+		identity.CredentialHash(key), encrypted, guestID); err != nil {
+		return fmt.Errorf("写入访客主页密钥失败：%w", err)
 	}
 	return nil
 }
