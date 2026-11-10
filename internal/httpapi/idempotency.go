@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/allanpk716/agent-taskboard/internal/idempotency"
+	"github.com/allanpk716/agent-taskboard/internal/identity"
 )
 
 // IdempotencyKeyHeader 是幂等请求头。
@@ -72,15 +73,20 @@ func (a *API) withIdempotency(w http.ResponseWriter, r *http.Request, next func(
 // 按入口区分：intake:<slug>——不同入口互不共享，同入口内所有匿名提交者共用
 // 一个范围（评审修正：避免所有匿名请求共享同一个 "anonymous" 指纹）。
 func credentialFingerprint(r *http.Request) string {
-	// 入口提交是匿名端点；Bearer tbgd_ 只用来识别本机访客，不改变幂等范围。
-	if slug, ok := intakeSlugFromPath(r.URL.Path); ok {
-		return "intake:" + slug
-	}
 	if token, ok := bearerToken(r); ok {
+		// 入口提交是匿名端点；tbgd_ 只用来识别本机访客，不改变幂等范围。
+		if identity.IsGuestDeviceKey(token) {
+			if slug, ok := intakeSlugFromPath(r.URL.Path); ok {
+				return "intake:" + slug
+			}
+		}
 		return hashCredential(token)
 	}
 	if c, err := r.Cookie(SessionCookieName); err == nil && c.Value != "" {
 		return hashCredential(c.Value)
+	}
+	if slug, ok := intakeSlugFromPath(r.URL.Path); ok {
+		return "intake:" + slug
 	}
 	return "anonymous"
 }
