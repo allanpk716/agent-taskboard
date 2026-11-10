@@ -18,7 +18,7 @@ var (
 	// ErrGuestNameRequired 表示改名时没有给出新的访客名字。
 	ErrGuestNameRequired = errors.New("访客名字不能为空")
 	// ErrGuestAlreadyDisabled 表示访客已经处于停用状态。
-	ErrGuestAlreadyDisabled = errors.New("这位访客已停用")
+	ErrGuestAlreadyDisabled = errors.New("这位访客已经是停用状态")
 	// ErrGuestNotDisabled 表示访客当前是正常状态，无需恢复。
 	ErrGuestNotDisabled = errors.New("这位访客没有停用")
 )
@@ -145,14 +145,21 @@ func (m *Manager) setGuestDisabled(ctx context.Context, viewer identity.Viewer, 
 	defer tx.Rollback()
 
 	var disabledAt sql.NullString
+	var mergedInto sql.NullInt64
 	var guestName string
 	if err := tx.QueryRowContext(ctx,
-		`SELECT name, disabled_at FROM guests WHERE id = ?`, guestID).
-		Scan(&guestName, &disabledAt); err != nil {
+		`SELECT name, disabled_at, merged_into_guest_id FROM guests WHERE id = ?`, guestID).
+		Scan(&guestName, &disabledAt, &mergedInto); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrGuestNotFound
 		}
 		return err
+	}
+	if mergedInto.Valid {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		return ErrGuestAlreadyMerged
 	}
 	eventType := "guest_enabled"
 	var newDisabled any

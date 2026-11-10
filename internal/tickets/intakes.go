@@ -455,7 +455,7 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 		return SubmissionResult{}, fmt.Errorf("写入工单失败：%w", err)
 	}
 
-	// 提交者对应一位长期访客：新设备当场新建；设备已认领某位访客时复用她。
+	// 提交者对应一位长期访客：新设备当场新建；设备已认领某位访客时复用这位访客。
 	guestID, guestName, holderID, home, recognized, err := m.intakeGuestTx(ctx, tx, intake, in, authorName, now)
 	if err != nil {
 		return SubmissionResult{}, err
@@ -548,7 +548,7 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 }
 
 // intakeGuestTx 为本次入口提交确定长期访客。新设备新建一位名字取自报署名的
-// 访客，并确保她有主页密钥；已认领设备复用访客的逻辑由后续分支接入。
+// 访客，并确保这位访客有主页密钥；已认领设备复用访客的逻辑由后续分支接入。
 func (m *Manager) intakeGuestTx(ctx context.Context, tx *sql.Tx, intake Intake,
 	in SubmissionInput, authorName string, now time.Time) (guestID int64, guestName string,
 	holderID int64, home GuestHomeShare, recognized bool, err error) {

@@ -99,6 +99,7 @@ type Service struct {
 	mirror     *attachments.BackupMirror
 	atts       *attachments.Manager
 	objects    attachments.ObjectStorage
+	guestKey   guestLinkCipher
 	generateMu sync.Mutex
 }
 
@@ -108,6 +109,9 @@ func NewService(db *sql.DB, dataDir, backupDir string, atts *attachments.Manager
 	return &Service{db: db, clk: c, dataDir: dataDir,
 		backupDir: backupDir, mirror: attachments.NewBackupMirror(backupDir), atts: atts, objects: objects}
 }
+
+// SetGuestLinkCipher 设置导入访客快照时生成主页密钥用的服务端加密器。
+func (s *Service) SetGuestLinkCipher(c guestLinkCipher) { s.guestKey = c }
 
 func (s *Service) stageDir() string { return filepath.Join(s.dataDir, "archive-packages") }
 

@@ -61,7 +61,7 @@ func (m *Manager) RecoverGuestLink(ctx context.Context, viewer identity.Viewer, 
 			homeKey = home.Key
 		}
 		// 即使服务端密钥丢失导致主页地址暂时不可恢复，仍要告诉已认领访客
-		// 这张工单已经在他的主页上；主页地址由 #331 的重置主页恢复。
+		// 这张工单已经在访客的主页上；主页地址由 #331 的重置主页恢复。
 		return GuestLinkShare{
 			Key: key, HomeKey: homeKey, HasHome: true, Note: row.Note, GuestID: row.GuestID,
 			GuestName: row.GuestName, Title: full.Title, ExpiresAt: row.ExpiresAtTime,

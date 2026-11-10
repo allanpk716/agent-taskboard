@@ -346,8 +346,8 @@ func Test生成归档包可下载且校验和与Markdown有效(t *testing.T) {
 	}
 	if len(structured.Replies) != 2 || len(structured.Attachments) != 1 ||
 		len(structured.Collaborators) != 1 || len(structured.GuestLinks) != 1 ||
-		len(structured.GuestDevices) != 1 || len(structured.GuestCredentialHolders) != 1 ||
-		len(structured.GuestCredentialDevices) != 1 || len(structured.TicketReads) != 1 {
+		len(structured.GuestDevices) != 0 || len(structured.GuestCredentialHolders) != 0 ||
+		len(structured.GuestCredentialDevices) != 0 || len(structured.TicketReads) != 1 {
 		t.Fatalf("结构化工单关联数据不完整：replies=%d attachments=%d collaborators=%d guest_links=%d guest_devices=%d holders=%d credential_devices=%d ticket_reads=%d",
 			len(structured.Replies), len(structured.Attachments), len(structured.Collaborators),
 			len(structured.GuestLinks), len(structured.GuestDevices),
@@ -361,17 +361,24 @@ func Test生成归档包可下载且校验和与Markdown有效(t *testing.T) {
 			t.Errorf("导出的访客链接缺少恢复列 %s：%+v", key, structured.GuestLinks[0])
 		}
 	}
+	for _, key := range []string{"claimed_at", "claim_name", "access_code_hash",
+		"access_code_failures", "access_code_locked_at", "credential_holder_id"} {
+		if structured.GuestLinks[0][key] != nil {
+			t.Errorf("有主链接不应带出访客级长期凭证列 %s：%+v", key, structured.GuestLinks[0])
+		}
+	}
 	if len(structured.Guests) != 1 || structured.Guests[0]["name"] != "检验科-张三" {
 		t.Fatalf("归档包缺少相关访客快照：%+v", structured.Guests)
 	}
-	for _, key := range []string{"home_key_hash", "home_key_ciphertext",
-		"merged_into_guest_id", "merged_at"} {
+	for _, key := range []string{"merged_into_guest_id", "merged_at"} {
 		if _, ok := structured.Guests[0][key]; !ok {
 			t.Errorf("导出的访客快照缺少恢复列 %s：%+v", key, structured.Guests[0])
 		}
 	}
-	if structured.GuestCredentialHolders[0]["owner_type"] != "guest" {
-		t.Fatalf("有主链接的凭证持有者应为访客：%+v", structured.GuestCredentialHolders[0])
+	for _, key := range []string{"home_key_hash", "home_key_ciphertext"} {
+		if _, ok := structured.Guests[0][key]; ok {
+			t.Errorf("访客快照不应带出长期主页密钥列 %s：%+v", key, structured.Guests[0])
+		}
 	}
 	if structured.GuestLinks[0]["guest_id"] == nil {
 		t.Fatalf("导出的访客链接缺少所属访客：%+v", structured.GuestLinks[0])
@@ -384,22 +391,6 @@ func Test生成归档包可下载且校验和与Markdown有效(t *testing.T) {
 	}
 	if !foundGuestReply {
 		t.Fatalf("时间线导出缺少访客名字快照：%+v", structured.Timeline)
-	}
-	for _, key := range []string{"id", "guest_link_id", "token_hash", "created_at", "entry_method"} {
-		if _, ok := structured.GuestDevices[0][key]; !ok {
-			t.Errorf("导出的访客设备缺少恢复列 %s：%+v", key, structured.GuestDevices[0])
-		}
-	}
-	for _, key := range []string{"id", "owner_type", "owner_id", "claimed_at", "claim_name",
-		"access_code_hash", "access_code_failures", "access_code_locked_at", "created_at"} {
-		if _, ok := structured.GuestCredentialHolders[0][key]; !ok {
-			t.Errorf("导出的访客凭证持有者缺少恢复列 %s：%+v", key, structured.GuestCredentialHolders[0])
-		}
-	}
-	for _, key := range []string{"id", "credential_holder_id", "token_hash", "created_at", "entry_method"} {
-		if _, ok := structured.GuestCredentialDevices[0][key]; !ok {
-			t.Errorf("导出的访客设备凭证缺少恢复列 %s：%+v", key, structured.GuestCredentialDevices[0])
-		}
 	}
 	markdownTarget := "attachments/" + log.ID + "/%E6%9C%8D%E5%8A%A1%E6%97%A5%E5%BF%97.txt"
 	zipPath := "tickets/" + number + "/attachments/" + log.ID + "/服务日志.txt"

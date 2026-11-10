@@ -147,7 +147,7 @@ function CreateGuestLinkFields({
 
   async function create() {
     if (!note.trim()) {
-      setErr('note_required：备注必填，写上给谁用的，如「检验科-张三」')
+      setErr('note_required：备注必填，写这条链接的用途，如「补全质控说明」')
       return
     }
     if (!guest) {
@@ -186,7 +186,7 @@ function CreateGuestLinkFields({
       <div className="inrow">
         <input
           aria-label="备注"
-          placeholder="备注（必填），如：检验科-张三"
+          placeholder="备注（必填），如：补全质控说明"
           value={note}
           onChange={(e) => setNote(e.target.value)}
         />

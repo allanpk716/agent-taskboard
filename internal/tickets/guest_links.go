@@ -19,7 +19,7 @@ import (
 // 访客链接管理的校验错误；HTTP 层把它们映射成 4xx 错误码。
 var (
 	// ErrNoteRequired 表示创建访客链接时没写备注。
-	ErrNoteRequired = errors.New("访客链接需要备注，如「检验科-张三」")
+	ErrNoteRequired = errors.New("访客链接需要备注，如「补全质控说明」")
 	// ErrGuestRequired 表示创建访客链接时既没带已有访客，也没带新访客名字。
 	ErrGuestRequired = errors.New("创建访客链接需要选择一位已有访客，或填写新访客名字")
 	// ErrGuestBothProvided 表示已有访客与新访客名字同时出现（只能二选一）。
@@ -337,16 +337,20 @@ func (m *Manager) guestForNewLinkTx(ctx context.Context, tx *sql.Tx, actor Autho
 	spec GuestLinkSpec, now time.Time) (guestID int64, guestName string, holderID int64, claimed bool, err error) {
 	if spec.GuestID != 0 {
 		var claimedAt sql.NullString
+		var disabledAt sql.NullString
 		if err := tx.QueryRowContext(ctx, `
-			SELECT gu.id, gu.name, h.claimed_at
+			SELECT gu.id, gu.name, h.claimed_at, gu.disabled_at
 			FROM guests gu
 			JOIN guest_credential_holders h ON h.owner_type = 'guest' AND h.owner_id = gu.id
 			WHERE gu.id = ? AND gu.merged_into_guest_id IS NULL`,
-			spec.GuestID).Scan(&guestID, &guestName, &claimedAt); err != nil {
+			spec.GuestID).Scan(&guestID, &guestName, &claimedAt, &disabledAt); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return 0, "", 0, false, ErrGuestNotFound
 			}
 			return 0, "", 0, false, err
+		}
+		if disabledAt.Valid {
+			return 0, "", 0, false, ErrGuestDisabled
 		}
 		claimed = claimedAt.Valid
 	} else {
