@@ -122,6 +122,7 @@ const (
 	CodeGuestMergeSelf             = "guest_merge_self"              // 合并目标和来源相同（409）
 	CodeGuestAlreadyMerged         = "guest_already_merged"          // 来源访客已并入别人（409）
 	CodeGuestMergeTargetMerged     = "guest_merge_target_merged"     // 目标访客已并入别人（409）
+	CodeGuestMergeTargetDisabled   = "guest_merge_target_disabled"   // 目标访客已停用（409）
 	CodeLinkCannotEditBrief        = "link_cannot_edit_brief"        // 链接没有「可填写说明」权限
 	CodeTicketClosed               = "ticket_closed"                 // 工单已关闭，访客链接只读；成员回复草稿保存/发出同样使用
 

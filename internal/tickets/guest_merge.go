@@ -19,6 +19,8 @@ var (
 	ErrGuestAlreadyMerged = errors.New("这位访客已并入另一位访客，不能再操作")
 	// ErrGuestMergeTargetMerged 表示目标访客自身已经并入别人。
 	ErrGuestMergeTargetMerged = errors.New("目标访客已并入另一位访客，不能再接收链接")
+	// ErrGuestMergeTargetDisabled 表示目标访客已停用，不能接收来源访客的链接。
+	ErrGuestMergeTargetDisabled = errors.New("目标访客已停用，先恢复后再合并")
 )
 
 // GuestMergePreview 是成员确认合并前看到的影响面。
@@ -240,7 +242,7 @@ func validateGuestMerge(source, target guestMergeState) error {
 		return ErrGuestMergeTargetMerged
 	}
 	if target.Disabled {
-		return ErrGuestDisabled
+		return ErrGuestMergeTargetDisabled
 	}
 	return nil
 }

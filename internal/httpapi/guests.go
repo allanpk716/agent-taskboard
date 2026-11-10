@@ -378,8 +378,8 @@ func (a *API) writeGuestMergeError(w http.ResponseWriter, err error) bool {
 		WriteError(w, http.StatusConflict, CodeGuestAlreadyMerged, err.Error(), "合并不能撤回")
 	case errors.Is(err, tickets.ErrGuestMergeTargetMerged):
 		WriteError(w, http.StatusConflict, CodeGuestMergeTargetMerged, err.Error(), "")
-	case errors.Is(err, tickets.ErrGuestDisabled):
-		WriteError(w, http.StatusConflict, CodeGuestAlreadyDisabled, "目标访客已停用，先恢复后再合并", "")
+	case errors.Is(err, tickets.ErrGuestMergeTargetDisabled):
+		WriteError(w, http.StatusConflict, CodeGuestMergeTargetDisabled, err.Error(), "先恢复目标访客，再执行合并")
 	case errors.Is(err, tickets.ErrGuestManagementNotAllowed):
 		WriteError(w, http.StatusForbidden, CodeGuestManagementNotAllowed, err.Error(),
 			"只有访客建立者、管理员或名下链接的管理人，且须同时能管理两位访客")

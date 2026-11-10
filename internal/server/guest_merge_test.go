@@ -137,9 +137,99 @@ func Test合并访客后链接改归且B凭证全部失效(t *testing.T) {
 	}
 }
 
+// 合并只由能同时管理 A、B 的网页成员本人执行；非法目标一律拒绝，
+// 已并入的访客既不能作为来源，也不能作为目标。
+func Test合并访客拒绝Agent非法目标与权限边界(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	s.CreateMember("王工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	outside := s.Login("王工", "secret-pass")
+	first := mustCreateTicket(t, s, admin, "合并目标检查A")
+	second := mustCreateTicket(t, s, admin, "合并目标检查B")
+	third := mustCreateTicket(t, s, admin, "合并目标检查C")
+	a := mustCreateGuestLink(t, s, admin, first,
+		map[string]any{"note": "A", "new_guest_name": "重复A"})
+	b := mustCreateGuestLink(t, s, admin, second,
+		map[string]any{"note": "B", "new_guest_name": "重复B"})
+	c := mustCreateGuestLink(t, s, admin, third,
+		map[string]any{"note": "C", "new_guest_name": "重复C"})
+	_, token := s.IssueAgentToken(t, admin, "助手")
+	agent := s.AgentClient(token)
+	mergeURL := func(source int64) string {
+		return "/api/v1/guests/" + strconv.FormatInt(source, 10) + "/merge-into"
+	}
+
+	previewPath := mergeURL(b.GuestID) + "/" + strconv.FormatInt(a.GuestID, 10) + "/preview"
+	res := s.Do(t, agent, http.MethodGet, previewPath, nil, nil)
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("成员 Agent 读取合并预览状态码 = %d，想 403", res.StatusCode)
+	}
+	assertErrorCode(t, res, "web_session_required")
+	res = s.Do(t, agent, http.MethodPost, mergeURL(b.GuestID),
+		map[string]int64{"target_guest_id": a.GuestID}, nil)
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("成员 Agent 合并访客状态码 = %d，想 403", res.StatusCode)
+	}
+	assertErrorCode(t, res, "web_session_required")
+
+	res = s.Do(t, admin, http.MethodPost, mergeURL(b.GuestID),
+		map[string]int64{"target_guest_id": b.GuestID}, nil)
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("合并到自己状态码 = %d，想 409", res.StatusCode)
+	}
+	assertErrorCode(t, res, "guest_merge_self")
+
+	res = s.Do(t, outside, http.MethodPost, mergeURL(b.GuestID),
+		map[string]int64{"target_guest_id": a.GuestID}, nil)
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("无关成员合并状态码 = %d，想 403", res.StatusCode)
+	}
+	assertErrorCode(t, res, "guest_management_not_allowed")
+
+	if res := setGuestDisabled(t, s, admin, a.GuestID, "disable"); res.StatusCode != http.StatusNoContent {
+		t.Fatalf("停用目标访客状态码 = %d，想 204", res.StatusCode)
+	}
+	res = s.Do(t, admin, http.MethodPost, mergeURL(b.GuestID),
+		map[string]int64{"target_guest_id": a.GuestID}, nil)
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("合并到已停用访客状态码 = %d，想 409", res.StatusCode)
+	}
+	assertErrorCode(t, res, "guest_merge_target_disabled")
+	if res := setGuestDisabled(t, s, admin, a.GuestID, "enable"); res.StatusCode != http.StatusNoContent {
+		t.Fatalf("恢复目标访客状态码 = %d，想 204", res.StatusCode)
+	}
+
+	if res := s.Do(t, admin, http.MethodPost, mergeURL(b.GuestID),
+		map[string]int64{"target_guest_id": a.GuestID}, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("合法合并状态码 = %d，想 200", res.StatusCode)
+	}
+	res = s.Do(t, admin, http.MethodPost, mergeURL(c.GuestID),
+		map[string]int64{"target_guest_id": b.GuestID}, nil)
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("合并到已并入访客状态码 = %d，想 409", res.StatusCode)
+	}
+	assertErrorCode(t, res, "guest_merge_target_merged")
+	res = s.Do(t, admin, http.MethodPost, mergeURL(b.GuestID),
+		map[string]int64{"target_guest_id": c.GuestID}, nil)
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("再次合并已并入访客状态码 = %d，想 409", res.StatusCode)
+	}
+	assertErrorCode(t, res, "guest_already_merged")
+}
+
 func trimGuestHomeKey(url string) string {
 	if len(url) >= 3 && url[:3] == "/h/" {
 		return url[3:]
 	}
 	return url
+}
+
+func assertErrorCode(t testing.TB, res *http.Response, code string) {
+	t.Helper()
+	var got errorBody
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != code {
+		t.Fatalf("错误码 = %q，想 %q（message=%q）", got.Error.Code, code, got.Error.Message)
+	}
 }
