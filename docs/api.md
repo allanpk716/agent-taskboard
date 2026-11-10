@@ -957,15 +957,18 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 | `GET /api/v1/tickets/{id}/guest-links` | 列表（可见范围内的成员；**不回显密钥**，每项带 `share_text_available`）。 |
 | `DELETE /api/v1/tickets/{id}/guest-links/{链接id}` | 撤销（立即生效，幂等 204）。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/extend` | 延期：`{"valid_days"|"expires_at"}`（二选一，必填其一）。 |
-| `POST /api/v1/tickets/{id}/guest-links/{链接id}/reset-access-code` | 重置访问码（仅无主老链接）：作废旧设备与新码，成功返回一次 `{access_code, url, reset_text, expires_at}`；有主链接返回 409 `guest_access_code_guest_level`，访问码按访客为单位管理。 |
+| `POST /api/v1/tickets/{id}/guest-links/{链接id}/reset-access-code` | 链接级重置访问码（仅无主老链接）：作废旧设备与新码，成功返回一次 `{access_code, url, reset_text, expires_at}`；有主链接返回 409 `guest_access_code_guest_level`，hint 指向访客级接口 `POST /api/v1/guests/{访客id}/reset-access-code`。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/share-text` | 再次复制同一条有效链接的转发文案，成功 `{share_text}`；响应带 `Cache-Control: no-store`。 |
-| `POST /api/v1/tickets/{id}/guest-links/{链接id}/rotate-key` | 重置链接（一般用于老链接，也可用于疑似外泄），成功 `{url, share_text, reset_text, expires_at, access_code?}`；旧地址立即失效。有主链接只换单条链接的地址，访问码与设备不变；无主老链接沿用旧语义：已认领时同时重置访问码并作废旧设备，`access_code` 一次性返回。响应带 `Cache-Control: no-store`，支持 `Idempotency-Key`。 |
+| `POST /api/v1/tickets/{id}/guest-links/{链接id}/rotate-key` | 重置链接（一般用于老链接，也可用于疑似外泄），成功 `{url, share_text, reset_text, expires_at}`；只换这一条链接的地址，旧地址立即失效，访问码、设备、备注与认领状态都不变（有主、无主链接语义一致）。响应带 `Cache-Control: no-store`，支持 `Idempotency-Key`。 |
 | `POST /api/v1/tickets/{id}/guest-links/{链接id}/assign-guest` | 把无主老链接手动归到访客：`{"guest_id"}` 或 `{"new_guest_name"}` 二选一；成功返回归属后的链接视图，写 `guest_link_assigned` 事件，不发通知。 |
 | `GET /api/v1/guests?q=<名字>` | 部门访客名单（成员与成员 Agent；访客 403 `members_only`）：按名字包含搜索，按名字排序；每项 `{id, name, claimed_at?, claim_name?, access_code_locked_at?, link_count, created_by, created_at}`。 |
 | `GET /api/v1/guest-link` | 用 `tbg_` 密钥读取认领页信息：邀请人、备注、有效期、可见范围提示；未认领时不返回工单内容。 |
 | `POST /api/v1/guest-links/claim` | 用 `tbg_` 密钥认领：`{"author_name"}`；成功返回一次 `device_token` 和 6 位 `access_code`，并写 `guest_link_claimed` 事件。有主链接的认领作用于整个访客。 |
 | `POST /api/v1/guest-links/enter` | 用 `tbg_` 密钥凭访问码进入：`{"access_code"}`；成功返回一次新 `device_token`；有主链接签发的设备对这位访客名下全部链接可信。 |
 | `POST /api/v1/guests/{访客id}/home-share-text` | 复制访客主页文案（访客建立者、管理员或名下链接管理人，含成员 Agent）：成功 `{home_url, share_text}`；`home_url` 是 `/h/tbh_…`，可重复生成，文案不含访问码；无关成员 403 `guest_management_not_allowed`。 |
+| `GET /api/v1/guests/{访客id}/reset-access-code/preview` | 重置访问码影响预览（仅成员本人网页会话）：`{guest_id, guest_name, device_count, ticket_count, access_code_locked}`；`device_count` 是将作废的设备数，`ticket_count` 是名下涉及工单数（同一工单多条链接只算一次）。 |
+| `POST /api/v1/guests/{访客id}/reset-access-code` | 访客级重置访问码（仅成员本人网页会话）：作废该访客主页与名下全部链接的设备、清除输错锁定、生成新 6 位码，成功一次性返回 `{guest_id, access_code, home_url, reset_text}`；重置文案含称呼、当前主页地址、新访问码与「勿转发 / Agent 改用新码」提醒。名下每张工单写 `guest_access_code_reset` 事件。支持 `Idempotency-Key`，响应带 `Cache-Control: no-store`。 |
+| `POST /api/v1/guests/{访客id}/reset-home-key` | 重置主页地址（仅成员本人网页会话）：旧主页地址立即失效，成功返回 `{guest_id, home_url, share_text}`（新主页地址与可复制的主页文案，不含访问码）；访问码、设备与名下链接不变，不写工单时间线。支持 `Idempotency-Key`，响应带 `Cache-Control: no-store`。 |
 | `GET /api/v1/guest-home` | 主页信息与列表：未认领主页密钥只返回 `{state, guest_name, guest_agent_instruction}`；设备凭证或 `tbh_` Agent 凭证返回 `{state:"claimed", guest_name, tickets, guest_agent_instruction}`。 |
 | `POST /api/v1/guest-home/claim` | 用 `tbh_` 主页密钥认领整个访客：`{"author_name"}`；成功一次性返回 `device_token` 与 6 位 `access_code`。 |
 | `POST /api/v1/guest-home/enter` | 用 `tbh_` 主页密钥凭访问码进入：`{"access_code"}`；成功返回一次新 `device_token`。 |
@@ -1006,11 +1009,11 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   （或成员 Agent），`at` 为归属时刻，`note` 是链接备注快照，`to` 是目标访客名字快照，
   `reason` 当前为 `manual`（访客合并引起的改归保留 `merge`），不生成通知。
 - `POST …/rotate-key` 给同一条链接写入新的哈希与加密密钥并返回新的
-  `{url, share_text, reset_text, expires_at, access_code?}`；旧地址立即失效。
-  已认领链接同时删除全部设备凭证、重置访问码并在响应里一次性返回 `access_code`；
-  未认领链接尚无访问码，字段省略。`share_text` 保持常规转发文案语义，成员和前端应复制
-  `reset_text`（按新链接、新访问码、当前标题与有效期生成）。备注、认领状态、有效期与
-  「可填写说明」权限保持不变。一般只在 `share_text_available` 为 false 时
+  `{url, share_text, reset_text, expires_at}`；只换这一条链接的地址，旧地址立即失效。
+  访问码、设备凭证、备注、认领状态、有效期与「可填写说明」权限都保持不变；
+  已认领链接的重置文案会提醒访问码不变（ADR 0019 拆分三种重置）。
+  `share_text` 保持常规转发文案语义，成员和前端应复制 `reset_text`。
+  一般只在 `share_text_available` 为 false 时
   使用（老链接或服务端加密密钥丢失）；链接疑似外泄时也可以换地址，但无论哪种情况都应先和成员确认。
   只限可见范围内、有 `manage_guest_links`
   能力的成员凭证（访客 403 `members_only`）；已撤销或已过期返回 409
@@ -1022,13 +1025,25 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 - 访问码是认领时生成的 6 位数字，只在认领响应里出现一次，库里只存哈希。浏览器换设备
   用链接密钥调用 `enter`；后续访客 Agent 的 Bearer 凭证也复用同一个哈希校验和连续输错计数。
   连续第 5 次输错即锁定并写 `guest_access_locked` 事件，已登录设备不受影响。
-- 成员重置访问码会删除这条链接的全部 `tbgd_` 设备凭证、生成新 6 位码并解除锁定；
-  链接不会重新开放认领。新码只在重置响应里出现一次，并写 `guest_access_reset` 事件。
+- 链接级重置访问码只保留给无主老链接：删除这条链接的全部 `tbgd_` 设备凭证、生成新
+  6 位码并解除锁定，链接不会重新开放认领；新码只在重置响应里出现一次，并写
+  `guest_access_reset` 事件。有主链接返回 409 `guest_access_code_guest_level`，
+  改用访客级 `POST /api/v1/guests/{访客id}/reset-access-code`。
+- 访客级重置访问码作废主页与名下全部链接的设备并清除锁定，只接受成员本人的网页会话
+  （成员 Agent 403 `web_session_required`，访客 403 `members_only`）；提交前可用
+  `GET /api/v1/guests/{访客id}/reset-access-code/preview` 查看将作废的设备数与涉及
+  工单数。成功响应一次性返回 `{access_code, home_url, reset_text}`；未认领访客返回
+  409 `guest_not_claimed`，主页密钥不可恢复时返回 409 `share_text_unavailable`
+  （先重置主页地址再重置访问码）。名下每张工单写 `guest_access_code_reset` 事件。
+- 重置主页地址同样只接受成员本人的网页会话：旧 `tbh_` 主页地址立即失效，新地址与
+  主页文案一次性返回（不含访问码）；访问码、设备与名下链接不受影响，也不写工单时间线。
 - 创建、撤销、换新地址、延期各记一条时间线事件（`guest_link_created` /
   `guest_link_revoked` / `guest_link_rotated` / `guest_link_extended`，都带 `note`；
   延期另带新 `expires_at`），归属记 `guest_link_assigned`（带 `note`、目标访客
   `to` 与 `reason: manual`），访问码锁定与重置分别记
-  `guest_access_locked` / `guest_access_reset`，并推进全局变更序号。
+  `guest_access_locked` / `guest_access_reset`，访客级访问码重置在名下每张工单记
+  `guest_access_code_reset`（带访客名字快照 `note`），并推进全局变更序号；
+  主页地址重置不写工单时间线。
   这些事件对访客也可见（访客看不到的只有标签事件）。
 - 撤销立即生效：之后用这条密钥的任何请求 401 `link_revoked`。已撤销的再撤销是
   幂等 204，不重复记事件。
