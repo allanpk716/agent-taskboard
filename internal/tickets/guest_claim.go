@@ -110,8 +110,9 @@ func (m *Manager) EnterGuestLink(ctx context.Context, link identity.GuestLink, c
 	return GuestClaimResult{DeviceToken: token, ClaimedAt: now}, nil
 }
 
-// ViewerFromGuestAgentCredential 校验访问码 Bearer 凭证，不签发设备凭证。
-// 每次请求复用浏览器的连续失败计数，并按 access_code 记录进入方式。
+// ViewerFromGuestAgentCredential 校验「链接 + 访问码」Agent 凭证，不签发
+// 设备凭证。即使链接属于长期访客，这张凭证也只作用于这一条链接对应的
+// 工单；失败计数仍由访客级凭证持有者统一累计。
 func (m *Manager) ViewerFromGuestAgentCredential(ctx context.Context, link identity.GuestLink, code string) (identity.Viewer, error) {
 	now := m.clk.Now()
 	tx, err := m.db.BeginTx(ctx, nil)
@@ -127,12 +128,6 @@ func (m *Manager) ViewerFromGuestAgentCredential(ctx context.Context, link ident
 		return identity.Viewer{}, err
 	}
 	link.EntryMethod = "access_code"
-	if link.GuestID != 0 {
-		return identity.Viewer{Kind: identity.ViewerGuest, Guest: &identity.Guest{
-			ID: link.GuestID, Name: link.GuestName, ClaimName: link.ClaimName,
-			EntryMethod: "access_code", CredentialHolderID: link.CredentialHolderID,
-		}, GuestLink: &link}, nil
-	}
 	return identity.Viewer{Kind: identity.ViewerGuest, GuestLink: &link}, nil
 }
 
