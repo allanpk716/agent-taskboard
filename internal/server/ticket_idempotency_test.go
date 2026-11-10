@@ -176,13 +176,13 @@ func Test建访客链接改派加别名加维度支持幂等键(t *testing.T) {
 	// 建访客链接：重放返回同一条链接（只出现一次的 /g/<密钥>）。
 	lkey := map[string]string{"Idempotency-Key": "link-once"}
 	l1 := s.DoWithHeaders(t, web, http.MethodPost, "/api/v1/tickets/"+number+"/guest-links",
-		lkey, map[string]any{"note": "检验科-张三", "valid_days": 7}, nil)
+		lkey, map[string]any{"note": "检验科-张三", "new_guest_name": "检验科-张三", "valid_days": 7}, nil)
 	if l1.StatusCode != http.StatusCreated {
 		t.Fatalf("建访客链接状态码 = %d, 想 201", l1.StatusCode)
 	}
 	l1Body := readAll(t, l1)
 	l2 := s.DoWithHeaders(t, web, http.MethodPost, "/api/v1/tickets/"+number+"/guest-links",
-		lkey, map[string]any{"note": "检验科-张三", "valid_days": 7}, nil)
+		lkey, map[string]any{"note": "检验科-张三", "new_guest_name": "检验科-张三", "valid_days": 7}, nil)
 	if l2.StatusCode != http.StatusCreated || string(l1Body) != string(readAll(t, l2)) {
 		t.Fatalf("重放建访客链接没有返回首次结果：%d vs %d", l1.StatusCode, l2.StatusCode)
 	}

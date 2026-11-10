@@ -74,8 +74,21 @@ type GuestLink struct {
 	ID                 int64
 	TicketSeq          int64
 	Note               string
+	GuestID            int64
+	GuestName          string
 	ExpiresAt          time.Time
 	CanEditBrief       bool
+	ClaimName          string
+	EntryMethod        string
+	CredentialHolderID int64
+}
+
+// Guest 是部门级、长期存在的访客身份（#328）。凭设备凭证解析出访客时，
+// 可用链接集合是“该访客名下未撤销、未过期的链接”；按工单判权由
+// tickets.ForViewer 完成并把结果写回 Viewer.GuestLink。
+type Guest struct {
+	ID                 int64
+	Name               string
 	ClaimName          string
 	EntryMethod        string
 	CredentialHolderID int64
@@ -137,37 +150,40 @@ func (m *Manager) ViewerFromGuestKey(ctx context.Context, key string) (Viewer, e
 		expiresAt string
 		revokedAt sql.NullString
 		claimedAt sql.NullString
+		guestID   sql.NullInt64
+		guestName sql.NullString
 		holderID  int64
 		canEdit   int
 	)
 	err := m.db.QueryRowContext(ctx, `
 		SELECT g.id, g.ticket_seq, g.note, g.expires_at, g.revoked_at,
-		       g.credential_holder_id, g.can_edit_brief, h.claimed_at
+		       g.credential_holder_id, g.can_edit_brief, h.claimed_at, g.guest_id, gu.name
 		FROM guest_links g
 		JOIN guest_credential_holders h ON h.id = g.credential_holder_id
+		LEFT JOIN guests gu ON gu.id = g.guest_id
 		WHERE g.key_hash = ?`, hashToken(key)).
-		Scan(&id, &ticketSeq, &note, &expiresAt, &revokedAt, &holderID, &canEdit, &claimedAt)
+		Scan(&id, &ticketSeq, &note, &expiresAt, &revokedAt, &holderID, &canEdit, &claimedAt, &guestID, &guestName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Viewer{}, ErrInvalidCredentials
 	}
 	if err != nil {
 		return Viewer{}, err
 	}
-	if revokedAt.Valid {
-		return Viewer{}, &LinkStatusError{Link: GuestLink{ID: id, TicketSeq: ticketSeq, Note: note}, Status: GuestLinkRevoked, Err: ErrLinkRevoked}
-	}
 	expiry, err := time.ParseInLocation(time.RFC3339Nano, expiresAt, clock.Beijing)
 	if err != nil {
 		return Viewer{}, err
 	}
+	if revokedAt.Valid {
+		return Viewer{}, &LinkStatusError{Link: guestLinkIdentity(id, ticketSeq, note, guestID, guestName, expiry, canEdit == 1, holderID), Status: GuestLinkRevoked, Err: ErrLinkRevoked}
+	}
 	if !m.clock.Now().Before(expiry) {
-		return Viewer{}, &LinkStatusError{Link: GuestLink{ID: id, TicketSeq: ticketSeq, Note: note}, Status: GuestLinkExpired, Err: ErrLinkExpired}
+		return Viewer{}, &LinkStatusError{Link: guestLinkIdentity(id, ticketSeq, note, guestID, guestName, expiry, canEdit == 1, holderID), Status: GuestLinkExpired, Err: ErrLinkExpired}
 	}
 	if !claimedAt.Valid {
-		return Viewer{}, &LinkStatusError{Link: GuestLink{ID: id, TicketSeq: ticketSeq, Note: note}, Status: GuestLinkUnclaimed, Err: ErrLinkUnclaimed}
+		return Viewer{}, &LinkStatusError{Link: guestLinkIdentity(id, ticketSeq, note, guestID, guestName, expiry, canEdit == 1, holderID), Status: GuestLinkUnclaimed, Err: ErrLinkUnclaimed}
 	}
 	return Viewer{}, &LinkStatusError{
-		Link:   GuestLink{ID: id, TicketSeq: ticketSeq, Note: note, ExpiresAt: expiry, CanEditBrief: canEdit == 1},
+		Link:   guestLinkIdentity(id, ticketSeq, note, guestID, guestName, expiry, canEdit == 1, holderID),
 		Status: GuestLinkClaimed, Err: ErrLinkClaimed,
 	}
 }
@@ -182,17 +198,20 @@ func (m *Manager) GuestLinkForKey(ctx context.Context, key string) (GuestLink, e
 		revokedAt sql.NullString
 		claimedAt sql.NullString
 		claimName sql.NullString
+		guestID   sql.NullInt64
+		guestName sql.NullString
 		holderID  int64
 		canEdit   int
 	)
 	err := m.db.QueryRowContext(ctx, `
 		SELECT g.id, g.ticket_seq, g.note, g.expires_at, g.revoked_at,
 		       g.credential_holder_id, g.can_edit_brief,
-		       h.claimed_at, h.claim_name
+		       h.claimed_at, h.claim_name, g.guest_id, gu.name
 		FROM guest_links g
 		JOIN guest_credential_holders h ON h.id = g.credential_holder_id
+		LEFT JOIN guests gu ON gu.id = g.guest_id
 		WHERE g.key_hash = ?`, hashToken(key)).
-		Scan(&id, &ticketSeq, &note, &expiresAt, &revokedAt, &holderID, &canEdit, &claimedAt, &claimName)
+		Scan(&id, &ticketSeq, &note, &expiresAt, &revokedAt, &holderID, &canEdit, &claimedAt, &claimName, &guestID, &guestName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return GuestLink{}, ErrInvalidCredentials
 	}
@@ -203,7 +222,8 @@ func (m *Manager) GuestLinkForKey(ctx context.Context, key string) (GuestLink, e
 	if err != nil {
 		return GuestLink{}, err
 	}
-	link := GuestLink{ID: id, TicketSeq: ticketSeq, Note: note, ExpiresAt: expiry,
+	link := GuestLink{ID: id, TicketSeq: ticketSeq, Note: note,
+		GuestID: guestID.Int64, GuestName: guestName.String, ExpiresAt: expiry,
 		CanEditBrief: canEdit == 1, ClaimName: claimName.String, CredentialHolderID: holderID}
 	if revokedAt.Valid {
 		return link, &LinkStatusError{Link: link, Status: GuestLinkRevoked, Err: ErrLinkRevoked}
@@ -226,6 +246,16 @@ func (m *Manager) ViewerFromGuestDevice(ctx context.Context, token string) (View
 	if err != nil {
 		return Viewer{}, err
 	}
+	if resolved.OwnerType == guestcredentials.OwnerTypeGuest {
+		if resolved.Guest == nil || resolved.Guest.Disabled {
+			return Viewer{}, ErrInvalidCredentials
+		}
+		return Viewer{Kind: ViewerGuest, Guest: &Guest{
+			ID: resolved.Guest.ID, Name: resolved.Guest.Name,
+			ClaimName: resolved.ClaimName, EntryMethod: resolved.EntryMethod,
+			CredentialHolderID: resolved.HolderID,
+		}, GuestLink: &GuestLink{}}, nil
+	}
 	if resolved.OwnerType != guestcredentials.OwnerTypeGuestLink || resolved.Link == nil {
 		return Viewer{}, ErrInvalidCredentials
 	}
@@ -242,4 +272,11 @@ func (m *Manager) ViewerFromGuestDevice(ctx context.Context, token string) (View
 	}
 	link.CanEditBrief = source.CanEditBrief
 	return Viewer{Kind: ViewerGuest, GuestLink: &link}, nil
+}
+
+func guestLinkIdentity(id, ticketSeq int64, note string, guestID sql.NullInt64, guestName sql.NullString,
+	expiry time.Time, canEdit bool, holderID int64) GuestLink {
+	return GuestLink{ID: id, TicketSeq: ticketSeq, Note: note,
+		GuestID: guestID.Int64, GuestName: guestName.String, ExpiresAt: expiry,
+		CanEditBrief: canEdit, CredentialHolderID: holderID}
 }

@@ -105,6 +105,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/me/password", a.handleOwnPassword)
 	mux.HandleFunc("/api/v1/tickets", a.handleTicketsRoot)
 	mux.HandleFunc("/api/v1/tickets/", a.handleTicketRef)
+	mux.HandleFunc("/api/v1/guests", a.handleGuests)
 	mux.HandleFunc("/api/v1/drafts", a.handleDrafts)
 	mux.HandleFunc("/api/v1/drafts/", a.handleDraft)
 	mux.HandleFunc("/api/v1/inbox", a.handleInbox)
@@ -265,6 +266,24 @@ func (a *API) current(w http.ResponseWriter, r *http.Request) {
 	}
 	view := a.newSessionView(viewer)
 	if viewer.Kind == identity.ViewerGuest {
+		if viewer.Guest != nil {
+			// 长期访客的设备凭证不指向单条链接：会话沿用“最早一条有效链接”
+			// 指向的工单保持旧用法；名下没有有效链接时只返回访客身份。
+			link, err := a.tickets.GuestDefaultLink(r.Context(), viewer.Guest.ID)
+			if err != nil {
+				panic(err)
+			}
+			if link == nil {
+				writeJSON(w, http.StatusOK, view)
+				return
+			}
+			viewer.GuestLink = link
+			view = a.newSessionView(viewer)
+		}
+		if viewer.GuestLink == nil || viewer.GuestLink.TicketSeq == 0 {
+			writeJSON(w, http.StatusOK, view)
+			return
+		}
 		seq := strconv.FormatInt(viewer.GuestLink.TicketSeq, 10)
 		full, err := a.tickets.ByRef(r.Context(), seq)
 		if err != nil {

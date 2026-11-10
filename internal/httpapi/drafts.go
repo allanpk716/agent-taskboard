@@ -177,7 +177,7 @@ func (a *API) sendDraft(w http.ResponseWriter, r *http.Request, id string) {
 					ExpiresAt:    link.ExpiresAt.Format(time.RFC3339Nano),
 					CanEditBrief: link.CanEditBrief,
 				},
-				ShareText: tickets.GuestShareText(link.Note, full.Title, url, link.ExpiresAt, false),
+				ShareText: tickets.GuestShareText(linkDisplayName(link.GuestName, link.Note), full.Title, url, link.ExpiresAt, false),
 			}
 		}
 		writeJSON(w, http.StatusCreated, struct {

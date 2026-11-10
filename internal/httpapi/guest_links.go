@@ -24,6 +24,8 @@ type guestLinkRequest struct {
 	ValidDays    *int   `json:"valid_days"`
 	ExpiresAt    string `json:"expires_at"`
 	CanEditBrief bool   `json:"can_edit_brief"`
+	GuestID      int64  `json:"guest_id"`
+	NewGuestName string `json:"new_guest_name"`
 }
 
 // rotateGuestLinkResponse 是换新地址的一次性响应。已认领链接的 access_code
@@ -51,6 +53,8 @@ type guestLinkBase struct {
 	ID           int64  `json:"id"`
 	URL          string `json:"url,omitempty"` // 仅创建响应：/g/<密钥>，只出现一次
 	Note         string `json:"note"`
+	GuestID      int64  `json:"guest_id,omitempty"`
+	GuestName    string `json:"guest_name,omitempty"`
 	ExpiresAt    string `json:"expires_at"`
 	CanEditBrief bool   `json:"can_edit_brief"`
 	UseCount     int    `json:"use_count"`
@@ -164,7 +168,7 @@ func (a *API) copyGuestShareText(w http.ResponseWriter, r *http.Request, ref str
 	}
 	url := a.absURL("/g/" + link.Key)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"share_text": tickets.GuestShareText(link.Note, link.Title, url, link.ExpiresAt, link.Claimed),
+		"share_text": tickets.GuestShareText(link.DisplayName(), link.Title, url, link.ExpiresAt, link.Claimed),
 	})
 }
 
@@ -187,8 +191,8 @@ func (a *API) rotateGuestLinkKey(w http.ResponseWriter, r *http.Request, ref str
 		url := a.absURL("/g/" + link.Key)
 		writeJSON(w, http.StatusOK, rotateGuestLinkResponse{
 			URL:        url,
-			ShareText:  tickets.GuestShareText(link.Note, link.Title, url, link.ExpiresAt, link.Claimed),
-			ResetText:  tickets.GuestLinkResetText(link.Note, link.Title, url, link.AccessCode, link.ExpiresAt),
+			ShareText:  tickets.GuestShareText(link.DisplayName(), link.Title, url, link.ExpiresAt, link.Claimed),
+			ResetText:  tickets.GuestLinkResetText(link.DisplayName(), link.Title, url, link.AccessCode, link.ExpiresAt),
 			AccessCode: link.AccessCode,
 			ExpiresAt:  link.ExpiresAt.Format(time.RFC3339Nano),
 		})
@@ -209,6 +213,9 @@ func (a *API) resetGuestAccessCode(w http.ResponseWriter, r *http.Request, ref s
 		switch {
 		case errors.Is(err, tickets.ErrGuestLinkNotFound):
 			a.writeTicketError(w, r, ref, err)
+		case errors.Is(err, tickets.ErrGuestAccessCodeGuestLevel):
+			WriteError(w, http.StatusConflict, CodeGuestAccessCodeGuestLevel, err.Error(),
+				"有主访客链接的访问码属于这位访客的全部工单，请对这位访客重置访问码")
 		case errors.Is(err, tickets.ErrLinkNotClaimed):
 			WriteError(w, http.StatusConflict, CodeLinkUnclaimed, "这条链接尚未认领，不需要重置访问码", "等待访客认领后再重置")
 		case errors.Is(err, tickets.ErrGuestLinkCipherUnavailable):
@@ -225,7 +232,7 @@ func (a *API) resetGuestAccessCode(w http.ResponseWriter, r *http.Request, ref s
 	writeJSON(w, http.StatusOK, resetGuestAccessCodeResponse{
 		AccessCode: link.AccessCode,
 		URL:        url,
-		ResetText:  tickets.GuestAccessCodeResetText(link.Note, link.Title, url, link.AccessCode, link.ExpiresAt),
+		ResetText:  tickets.GuestAccessCodeResetText(link.DisplayName(), link.Title, url, link.AccessCode, link.ExpiresAt),
 		ExpiresAt:  link.ExpiresAt.Format(time.RFC3339Nano),
 	})
 }
@@ -250,12 +257,17 @@ func (a *API) createGuestLink(w http.ResponseWriter, r *http.Request, ref string
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
 		link, err := a.tickets.CreateGuestLink(r.Context(), viewer, ref, spec)
 		if err != nil {
+			if isGuestSelectionError(err) {
+				writeGuestSelectionError(w, err)
+				return
+			}
 			a.writeTicketError(w, r, ref, err)
 			return
 		}
 		writeJSON(w, http.StatusCreated, guestLinkView{
 			guestLinkBase: guestLinkBase{
 				ID: link.ID, URL: a.absURL("/g/" + link.Key), Note: link.Note,
+				GuestID: link.GuestID, GuestName: link.GuestName,
 				ExpiresAt: link.ExpiresAt.Format(time.RFC3339Nano), CanEditBrief: link.CanEditBrief,
 				UseCount: 0,
 			},
@@ -348,6 +360,8 @@ func newGuestLinkView(l tickets.GuestLinkInfo) guestLinkView {
 		v.RevokedAt = &t
 	}
 	v.Status = string(identity.GuestLinkStatusOf(l.RevokedAt, l.AccessCodeLockedAt, l.ClaimedAt))
+	v.GuestID = l.GuestID
+	v.GuestName = l.GuestName
 	if l.ClaimedAt != nil {
 		t := l.ClaimedAt.Format(time.RFC3339Nano)
 		v.ClaimedAt = &t
@@ -363,7 +377,8 @@ func newGuestLinkView(l tickets.GuestLinkInfo) guestLinkView {
 // 「到 12-01 为止」要管满 12-01 一整天，评审 P2-8）。
 // 语义校验（天数枚举、必须晚于现在）留给工单模块。
 func parseGuestLinkSpec(w http.ResponseWriter, req guestLinkRequest) (tickets.GuestLinkSpec, bool) {
-	spec := tickets.GuestLinkSpec{Note: req.Note, CanEditBrief: req.CanEditBrief}
+	spec := tickets.GuestLinkSpec{Note: req.Note, CanEditBrief: req.CanEditBrief,
+		GuestID: req.GuestID, NewGuestName: req.NewGuestName}
 	if req.ValidDays != nil {
 		if *req.ValidDays == 0 {
 			WriteError(w, http.StatusUnprocessableEntity, CodeInvalidValidDays,
@@ -380,6 +395,30 @@ func parseGuestLinkSpec(w http.ResponseWriter, req guestLinkRequest) (tickets.Gu
 		spec.ExpiresAt = &t
 	}
 	return spec, true
+}
+
+func isGuestSelectionError(err error) bool {
+	return errors.Is(err, tickets.ErrGuestRequired) ||
+		errors.Is(err, tickets.ErrGuestBothProvided) ||
+		errors.Is(err, tickets.ErrGuestNotFound)
+}
+
+func writeGuestSelectionError(w http.ResponseWriter, err error) {
+	code := CodeGuestRequired
+	hint := "带 guest_id 选择已有访客（名单见 GET /api/v1/guests），或带 new_guest_name 当场新建一位"
+	if errors.Is(err, tickets.ErrGuestNotFound) {
+		code = CodeGuestNotFound
+		hint = "guest_id 必须是 GET /api/v1/guests 返回的访客 id；新建访客改用 new_guest_name"
+	}
+	WriteError(w, http.StatusUnprocessableEntity, code, err.Error(), hint)
+}
+
+// linkDisplayName 是创建响应里转发文案对访客的称呼：有主链接用访客名字。
+func linkDisplayName(guestName, note string) string {
+	if guestName != "" {
+		return guestName
+	}
+	return note
 }
 
 // parseExpiresAt 把日期（YYYY-MM-DD，按北京时间次日 00:00——日期写的

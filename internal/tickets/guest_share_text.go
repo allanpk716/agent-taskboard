@@ -14,6 +14,8 @@ import (
 type GuestLinkShare struct {
 	Key        string
 	Note       string
+	GuestID    int64
+	GuestName  string
 	Title      string
 	ExpiresAt  time.Time
 	Claimed    bool
@@ -43,7 +45,8 @@ func (m *Manager) RecoverGuestLink(ctx context.Context, viewer identity.Viewer, 
 		return GuestLinkShare{}, ErrGuestShareTextUnavailable
 	}
 	return GuestLinkShare{
-		Key: key, Note: row.Note, Title: full.Title, ExpiresAt: row.ExpiresAtTime, Claimed: row.ClaimedAt.Valid,
+		Key: key, Note: row.Note, GuestID: row.GuestID, GuestName: row.GuestName,
+		Title: full.Title, ExpiresAt: row.ExpiresAtTime, Claimed: row.ClaimedAt.Valid,
 	}, nil
 }
 
@@ -83,13 +86,16 @@ func (m *Manager) RotateGuestLinkKey(ctx context.Context, viewer identity.Viewer
 		return GuestLinkShare{}, ErrGuestLinkCipherUnavailable
 	}
 	accessCode := ""
+	// 有主链接的访问码属于整个访客：重置链接只换单条链接的地址，访问码、
+	// 设备、备注与认领状态都不变（ADR 0019）。无主老链接沿用旧语义。
+	resetCredential := row.ClaimedAt.Valid && row.GuestID == 0
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE guest_links SET key_hash = ?, key_ciphertext = ?
 		WHERE id = ? AND ticket_seq = ?`,
 		identity.CredentialHash(key), keyCiphertext, id, full.Seq); err != nil {
 		return GuestLinkShare{}, err
 	}
-	if row.ClaimedAt.Valid {
+	if resetCredential {
 		reset, err := guestcredentials.Reset(ctx, tx, row.HolderID, now)
 		if err != nil {
 			return GuestLinkShare{}, err
@@ -104,7 +110,8 @@ func (m *Manager) RotateGuestLinkKey(ctx context.Context, viewer identity.Viewer
 		return GuestLinkShare{}, err
 	}
 	return GuestLinkShare{
-		Key: key, Note: row.Note, Title: full.Title, ExpiresAt: row.ExpiresAtTime,
+		Key: key, Note: row.Note, GuestID: row.GuestID, GuestName: row.GuestName,
+		Title: full.Title, ExpiresAt: row.ExpiresAtTime,
 		Claimed: row.ClaimedAt.Valid, AccessCode: accessCode,
 	}, nil
 }
@@ -120,6 +127,15 @@ func (m *Manager) encryptedGuestLinkKey(key string) (sql.NullString, error) {
 		return sql.NullString{}, err
 	}
 	return sql.NullString{String: ciphertext, Valid: true}, nil
+}
+
+// DisplayName 返回转发与重置文案对访客的称呼：有主链接用访客名字，
+// 无主老链接沿用链接备注。
+func (s GuestLinkShare) DisplayName() string {
+	if s.GuestName != "" {
+		return s.GuestName
+	}
+	return s.Note
 }
 
 // GuestShareText 生成面向访客的转发文案：称呼对方、当前标题、写详细并传

@@ -78,6 +78,14 @@ type Link struct {
 	CanEditBrief bool
 }
 
+// Guest 是按设备解析长期访客时带出的访客身份。停用等管理状态属于
+// 访客本体（#332）；这里只带身份解析与作用域判定需要的字段。
+type Guest struct {
+	ID       int64
+	Name     string
+	Disabled bool
+}
+
 // ResolvedDevice 是一台已信任设备解析出的凭证持有者。
 type ResolvedDevice struct {
 	HolderID    int64
@@ -86,6 +94,7 @@ type ResolvedDevice struct {
 	ClaimName   string
 	EntryMethod string
 	Link        *Link
+	Guest       *Guest
 }
 
 // CredentialHash 与平台其他 Bearer 凭证一样使用 SHA-256。
@@ -128,6 +137,21 @@ func CreateLinkHolder(ctx context.Context, q Executor, linkID int64, now time.Ti
 		return Holder{}, fmt.Errorf("绑定访客凭证持有者失败：%w", err)
 	}
 	return Holder{ID: id, OwnerType: OwnerTypeGuestLink, OwnerID: linkID}, nil
+}
+
+// CreateGuestHolder 给一位长期访客建立凭证持有者。调用方负责在同一事务里
+// 写入访客本体；这里只建立“一位访客一份访问码与设备集合”的凭证结构。
+func CreateGuestHolder(ctx context.Context, q Executor, guestID int64, now time.Time) (Holder, error) {
+	var id int64
+	err := q.QueryRowContext(ctx, `
+		INSERT INTO guest_credential_holders
+			(owner_type, owner_id, access_code_failures, created_at)
+		VALUES ('guest', ?, 0, ?) RETURNING id`,
+		guestID, formatTime(now)).Scan(&id)
+	if err != nil {
+		return Holder{}, fmt.Errorf("写入访客凭证持有者失败：%w", err)
+	}
+	return Holder{ID: id, OwnerType: OwnerTypeGuest, OwnerID: guestID}, nil
 }
 
 // Claim 原子完成第一次认领：写入自报称呼、生成访问码并签发第一台设备。
@@ -248,25 +272,32 @@ func ResolveDevice(ctx context.Context, q Executor, token string) (ResolvedDevic
 		out         ResolvedDevice
 		ownerType   string
 		claimedNull sql.NullString
+		claimName   sql.NullString
 		linkID      sql.NullInt64
 		ticketSeq   sql.NullInt64
 		note        sql.NullString
 		expiresAt   sql.NullString
 		revokedAt   sql.NullString
 		canEdit     sql.NullInt64
+		guestID     sql.NullInt64
+		guestName   sql.NullString
+		guestOffAt  sql.NullString
 	)
 	err := q.QueryRowContext(ctx, `
 		SELECT h.id, h.owner_type, h.owner_id, h.claim_name,
 		       d.entry_method, h.claimed_at,
-		       l.id, l.ticket_seq, l.note, l.expires_at, l.revoked_at, l.can_edit_brief
+		       l.id, l.ticket_seq, l.note, l.expires_at, l.revoked_at, l.can_edit_brief,
+		       gu.id, gu.name, gu.disabled_at
 		FROM guest_credential_devices d
 		JOIN guest_credential_holders h ON h.id = d.credential_holder_id
 		LEFT JOIN guest_links l
 		  ON h.owner_type = 'guest_link' AND h.owner_id = l.id
+		LEFT JOIN guests gu
+		  ON h.owner_type = 'guest' AND h.owner_id = gu.id
 		WHERE d.token_hash = ?`, CredentialHash(token)).
-		Scan(&out.HolderID, &ownerType, &out.OwnerID, &out.ClaimName,
+		Scan(&out.HolderID, &ownerType, &out.OwnerID, &claimName,
 			&out.EntryMethod, &claimedNull, &linkID, &ticketSeq, &note,
-			&expiresAt, &revokedAt, &canEdit)
+			&expiresAt, &revokedAt, &canEdit, &guestID, &guestName, &guestOffAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ResolvedDevice{}, ErrDeviceNotFound
 	}
@@ -274,6 +305,11 @@ func ResolveDevice(ctx context.Context, q Executor, token string) (ResolvedDevic
 		return ResolvedDevice{}, err
 	}
 	out.OwnerType = OwnerType(ownerType)
+	out.ClaimName = claimName.String
+	if guestID.Valid {
+		out.Guest = &Guest{ID: guestID.Int64, Name: guestName.String,
+			Disabled: guestOffAt.Valid && guestOffAt.String != ""}
+	}
 	if linkID.Valid {
 		expiry, err := time.ParseInLocation(time.RFC3339Nano, expiresAt.String, clock.Beijing)
 		if err != nil {

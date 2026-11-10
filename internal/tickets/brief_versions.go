@@ -45,11 +45,12 @@ func (m *Manager) insertBriefVersionTx(ctx context.Context, tx *sql.Tx, t Ticket
 		INSERT INTO brief_versions (
 		    ticket_seq, revision, title, brief_md, fields_json, attachment_ids,
 		    actor_member_id, actor_agent_id, actor_link_id, actor_link_note,
-		    actor_author_name, actor_via_agent, at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    actor_guest_name, actor_author_name, actor_via_agent, at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.Seq, t.BriefRevision, t.Title, t.BriefMD, fieldsJSON, attachmentIDs,
 		nullInt(a.MemberID), nullInt(a.AgentID), nullInt(a.LinkID), nullStr(a.LinkNote),
-		nullStr(a.AuthorName), boolToInt(a.ViaAgent), at.Format(time.RFC3339Nano))
+		nullStr(a.GuestName), nullStr(a.AuthorName), boolToInt(a.ViaAgent),
+		at.Format(time.RFC3339Nano))
 	if err != nil {
 		return fmt.Errorf("写入说明版本失败：%w", err)
 	}
@@ -60,7 +61,7 @@ func (m *Manager) BriefVersions(ctx context.Context, seq int64) ([]BriefVersion,
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT v.revision, v.title, v.brief_md, v.fields_json, v.attachment_ids,
 		       v.actor_member_id, mm.name, v.actor_agent_id, aa.name,
-		       v.actor_link_id, v.actor_link_note, v.actor_author_name,
+		       v.actor_link_id, v.actor_link_note, v.actor_guest_name, v.actor_author_name,
 		       v.actor_via_agent, v.at
 		FROM brief_versions v
 		LEFT JOIN members mm ON mm.id = v.actor_member_id
@@ -85,7 +86,7 @@ func (m *Manager) BriefVersion(ctx context.Context, seq, revision int64) (BriefV
 	row := m.db.QueryRowContext(ctx, `
 		SELECT v.revision, v.title, v.brief_md, v.fields_json, v.attachment_ids,
 		       v.actor_member_id, mm.name, v.actor_agent_id, aa.name,
-		       v.actor_link_id, v.actor_link_note, v.actor_author_name,
+		       v.actor_link_id, v.actor_link_note, v.actor_guest_name, v.actor_author_name,
 		       v.actor_via_agent, v.at
 		FROM brief_versions v
 		LEFT JOIN members mm ON mm.id = v.actor_member_id
@@ -140,13 +141,14 @@ func scanBriefVersion(row briefVersionScanner) (BriefVersion, error) {
 		agentName  sql.NullString
 		linkID     sql.NullInt64
 		linkNote   sql.NullString
+		guestName  sql.NullString
 		authorName sql.NullString
 		viaAgent   int
 		at         string
 	)
 	if err := row.Scan(&v.Revision, &v.Title, &v.BriefMD, &fieldsJSON, &attsJSON,
 		&memberID, &memberName, &agentID, &agentName,
-		&linkID, &linkNote, &authorName, &viaAgent, &at); err != nil {
+		&linkID, &linkNote, &guestName, &authorName, &viaAgent, &at); err != nil {
 		return BriefVersion{}, err
 	}
 	if fieldsJSON.Valid && fieldsJSON.String != "" {
@@ -166,6 +168,7 @@ func scanBriefVersion(row briefVersionScanner) (BriefVersion, error) {
 	v.Author.AgentName = agentName.String
 	v.Author.LinkID = linkID.Int64
 	v.Author.LinkNote = linkNote.String
+	v.Author.GuestName = guestName.String
 	v.Author.AuthorName = authorName.String
 	v.Author.ViaAgent = viaAgent == 1
 	var err error

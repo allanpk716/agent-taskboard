@@ -35,7 +35,7 @@ func TestRequiredAgent建单草稿不占编号且通知指向预览页(t *testin
 	res := s.Do(t, agent, http.MethodPost, "/api/v1/tickets", map[string]any{
 		"title": "Agent 起草的建单", "brief_md": "请先确认这份草稿。",
 		"labels": []string{"机型:UD-2300"}, "assignee": "李工",
-		"guest_link": map[string]any{"note": "检验科-张三", "can_edit_brief": true},
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三", "note": "检验科-张三", "can_edit_brief": true},
 	}, &accepted)
 	if res.StatusCode != http.StatusAccepted {
 		t.Fatalf("Agent 建单状态码 = %d/%+v, 想 202", res.StatusCode, accepted)
@@ -76,7 +76,7 @@ func Test模板建单草稿带必填警告(t *testing.T) {
 	var accepted draftAcceptedBody
 	res := s.Do(t, agent, http.MethodPost, "/api/v1/tickets", map[string]any{
 		"template": "bug-report", "title": "模板建单草稿", "fields": map[string]string{},
-		"guest_link": map[string]any{"note": "检验科-张三", "can_edit_brief": true},
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三", "note": "检验科-张三", "can_edit_brief": true},
 	}, &accepted)
 	if res.StatusCode != http.StatusAccepted {
 		t.Fatalf("模板建单草稿状态码 = %d/%+v, 想 202", res.StatusCode, accepted)
@@ -114,7 +114,7 @@ func Test成员修改建单草稿后发出并只在响应拿到访客链接(t *t
 		"request": map[string]any{
 			"title": "建单草稿发出", "brief_md": "成员确认的说明。",
 			"labels": []string{"机型:UD-2300", "机型:US-1680"}, "assignee": "李工",
-			"guest_link": map[string]any{"note": "检验科-张三", "can_edit_brief": true},
+			"guest_link": map[string]any{"new_guest_name": "检验科-张三", "note": "检验科-张三", "can_edit_brief": true},
 		},
 	}, &updated)
 	if res.StatusCode != http.StatusOK || updated.Version != 2 {
@@ -181,7 +181,7 @@ func Test丢弃建单草稿不留工单且他人不可见(t *testing.T) {
 	var accepted draftAcceptedBody
 	res := s.Do(t, agent, http.MethodPost, "/api/v1/tickets", map[string]any{
 		"title": "会被丢弃的建单草稿", "labels": []string{"机型:UD-2300"},
-		"guest_link": map[string]any{"note": "检验科-张三"},
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三", "note": "检验科-张三"},
 	}, &accepted)
 	if res.StatusCode != http.StatusAccepted {
 		t.Fatalf("Agent 建单草稿状态码 = %d, 想 202", res.StatusCode)

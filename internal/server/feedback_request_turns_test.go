@@ -14,7 +14,7 @@ func createFeedbackRequest(t testing.TB, w *handoffWorld, title, assignee string
 	t.Helper()
 	body := map[string]any{
 		"kind": "report", "title": title, "brief_md": "", "labels": []string{"机型:UD-2300"},
-		"guest_link": map[string]any{"note": "检验科-张三", "can_edit_brief": true},
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三", "note": "检验科-张三", "can_edit_brief": true},
 	}
 	if assignee != "" {
 		body["assignee"] = assignee
@@ -94,7 +94,7 @@ func Test访客链接过期未补全时无通知地轮到指派人(t *testing.T)
 	res := w.s.Do(t, w.webWang, http.MethodPost, "/api/v1/tickets", map[string]any{
 		"kind": "report", "title": "UD-2300 质控结果偏高",
 		"brief_md": "", "labels": []string{"机型:UD-2300"}, "assignee": "李工",
-		"guest_link": map[string]any{"note": "检验科-张三", "valid_days": 7, "can_edit_brief": true},
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三", "note": "检验科-张三", "valid_days": 7, "can_edit_brief": true},
 	}, nil)
 	if res.StatusCode != http.StatusCreated {
 		var got errorBody

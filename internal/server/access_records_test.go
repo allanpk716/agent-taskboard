@@ -131,8 +131,10 @@ func Test附件下载每次单独记录并写明附件与访问者(t *testing.T)
 	if len(downloads) != 5 {
 		t.Fatalf("下载记录有 %d 条, 想 5： %+v", len(downloads), downloads)
 	}
+	// #328 起这条链接属于长期访客「检验科-张三」，下载署名以访客名字记录；
+	// 无主老链接「备注 · 自报称呼」的口径由 guest_identity_test 覆盖。
 	wantActors := []string{"member", "agent", "guest", "guest", "admin"}
-	wantNames := []string{"王工", "王工 的 Agent · 笔记本", "检验科-张三 · 检验科 张三", "检验科-张三 · 检验科 张三", "陈工"}
+	wantNames := []string{"王工", "王工 的 Agent · 笔记本", "检验科-张三", "检验科-张三", "陈工"}
 	for i, r := range downloads {
 		if r.Actor.Kind != wantActors[i] || r.Actor.Name != wantNames[i] {
 			t.Errorf("第 %d 条署名 = %+v, 想 %s/%s", i, r.Actor, wantActors[i], wantNames[i])

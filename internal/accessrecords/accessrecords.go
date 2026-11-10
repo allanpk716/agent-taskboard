@@ -57,9 +57,15 @@ func NewManager(db *sql.DB, c clock.Clock) *Manager {
 
 func actorOf(v identity.Viewer) (kind, name string, memberID, agentID, linkID int64, note, entry string) {
 	if v.Kind == identity.ViewerGuest {
-		name := v.GuestLink.Note
-		if v.GuestLink.ClaimName != "" {
-			name += " · " + v.GuestLink.ClaimName
+		// 有主链接以访客名字记录（#328）；无主老链接沿用备注 + 自报称呼。
+		var name string
+		if v.Guest != nil && v.Guest.Name != "" {
+			name = v.Guest.Name
+		} else {
+			name = v.GuestLink.Note
+			if v.GuestLink.ClaimName != "" {
+				name += " · " + v.GuestLink.ClaimName
+			}
 		}
 		entry := v.GuestLink.EntryMethod
 		if entry == "" {

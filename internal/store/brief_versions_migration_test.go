@@ -26,10 +26,12 @@ func Test迁移回填说明当前版本且重启不重复(t *testing.T) {
 	}
 	entries, _ := os.ReadDir("migrations")
 	names := []string{}
+	// 构造“brief_versions 尚未建立”的旧库：跳过 0028 及依赖该表的后续迁移。
 	for _, e := range entries {
-		if !strings.HasPrefix(e.Name(), "0028_") {
-			names = append(names, e.Name())
+		if strings.HasPrefix(e.Name(), "0028_") || strings.HasPrefix(e.Name(), "0048_") {
+			continue
 		}
+		names = append(names, e.Name())
 	}
 	sort.Strings(names)
 	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {

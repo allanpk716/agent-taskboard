@@ -130,7 +130,7 @@ func Test提需求模板能建任务并支持访客链接(t *testing.T) {
 		"title":    "请检验科补充 Q3 规则需求",
 		"fields":   map[string]string{},
 		"labels":   []string{},
-		"guest_link": map[string]any{
+		"guest_link": map[string]any{"new_guest_name": "检验科-张三",
 			"note":           "检验科-张三",
 			"can_edit_brief": true,
 		},
