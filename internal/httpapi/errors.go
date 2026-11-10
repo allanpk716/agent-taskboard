@@ -112,6 +112,7 @@ const (
 	CodeShareTextUnavailable       = "share_text_unavailable"        // 老访客链接没有可恢复密钥，不能直接复制转发文案
 	CodeGuestLinkCipherUnavailable = "guest_link_cipher_unavailable" // 服务端加密密钥写不出来（503），新建链接/换新地址暂不可用
 	CodeGuestAccessCodeGuestLevel  = "guest_access_code_guest_level" // 有主链接的访问码按访客为单位管理，不能单独重置
+	CodeGuestLinkAlreadyAssigned   = "guest_link_already_assigned"   // 链接已归属访客，不能再次手动归属
 	CodeLinkCannotEditBrief        = "link_cannot_edit_brief"        // 链接没有「可填写说明」权限
 	CodeTicketClosed               = "ticket_closed"                 // 工单已关闭，访客链接只读；成员回复草稿保存/发出同样使用
 
