@@ -175,9 +175,24 @@ func Test未认领老链接归给已认领访客后沿用访客凭证(t *testing
 func Test归属访客请求校验与已归属冲突(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")
+	s.CreateMember("李工", "li-pass-123")
 	web := s.Login("陈工", "secret-pass")
+	_, token := s.IssueAgentToken(t, web, "笔记本")
+	agent := s.AgentClient(token)
 	number := mustCreateTicket(t, s, web, "老链接归属校验")
 	legacy := s.CreateLegacyGuestLink(t, web, number, map[string]any{"note": "上线前的联系"})
+	li := s.Login("李工", "li-pass-123")
+	res := s.Do(t, li, http.MethodPost,
+		"/api/v1/tickets/"+number+"/guest-links/"+itoa(legacy.ID)+"/assign-guest",
+		map[string]any{"new_guest_name": "检验科-张三"}, nil)
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("不可见成员归属状态码 = %d，想 404", res.StatusCode)
+	}
+	var invisible errorBody
+	tbtest.DecodeJSON(t, res, &invisible)
+	if invisible.Error.Code != "ticket_not_found" {
+		t.Fatalf("不可见成员归属错误码 = %q，想 ticket_not_found", invisible.Error.Code)
+	}
 
 	for name, body := range map[string]map[string]any{
 		"都不带": {},
@@ -185,7 +200,7 @@ func Test归属访客请求校验与已归属冲突(t *testing.T) {
 		"空白":  {"new_guest_name": "  "},
 		"不存在": {"guest_id": 999999},
 	} {
-		res := s.Do(t, web, http.MethodPost,
+		res = s.Do(t, web, http.MethodPost,
 			"/api/v1/tickets/"+number+"/guest-links/"+itoa(legacy.ID)+"/assign-guest", body, nil)
 		if res.StatusCode != http.StatusUnprocessableEntity {
 			t.Errorf("[%s] 状态码 = %d，想 422", name, res.StatusCode)
@@ -205,14 +220,14 @@ func Test归属访客请求校验与已归属冲突(t *testing.T) {
 	legacyKey := guestLinkResponse{ID: legacy.ID, URL: legacy.URL}
 	guestClaim := claimGuestLink(t, s, guestKeyOf(t, legacyKey), "检验科 张三")
 	guest := s.AgentClient(guestClaim.DeviceToken)
-	res := s.Do(t, guest, http.MethodPost,
+	res = s.Do(t, guest, http.MethodPost,
 		"/api/v1/tickets/"+number+"/guest-links/"+itoa(legacy.ID)+"/assign-guest",
 		map[string]any{"new_guest_name": "检验科-张三"}, nil)
 	if res.StatusCode != http.StatusForbidden {
 		t.Fatalf("访客操作归属状态码 = %d，想 403", res.StatusCode)
 	}
 
-	res, assigned := assignGuestLink(t, s, web, number, legacy.ID,
+	res, assigned := assignGuestLink(t, s, agent, number, legacy.ID,
 		map[string]any{"new_guest_name": "检验科-张三"})
 	if res.StatusCode != http.StatusOK || assigned.GuestName != "检验科-张三" {
 		t.Fatalf("新建访客并归属 = %d/%+v，想 200/检验科-张三", res.StatusCode, assigned)
