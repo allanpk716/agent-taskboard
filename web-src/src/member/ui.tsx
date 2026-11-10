@@ -36,6 +36,9 @@ export function parseRoute(pathname: string): Route {
   if (pathname === '/tickets') return { page: 'tickets' }
   if (pathname === '/drafts') return { page: 'drafts' }
   if (pathname === '/new') return { page: 'new' }
+  // 先选访客再建单的向导（#340）：/tickets/new 是成员给访客发新工单的入口，
+  // 与旧地址 /feedback 同页；?guest=<id> 带入访客并跳过第一步。
+  if (pathname === '/tickets/new') return { page: 'feedback' }
   if (pathname === '/feedback') return { page: 'feedback' }
   if (pathname === '/tools') return { page: 'tools' }
   if (pathname === '/me') return { page: 'me' }

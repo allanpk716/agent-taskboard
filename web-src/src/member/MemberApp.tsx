@@ -33,6 +33,13 @@ import { useLayoutTier } from './useLayoutTier'
 import { VersionBanner } from '../shared/VersionBanner'
 import { useVersionCheck, versionFooterText } from '../shared/versionCheck'
 
+/** /tickets/new?guest=<id>（#340）：访客详情或新建访客结果页带入选客。 */
+function guestParam(search: string): number | undefined {
+  const raw = new URLSearchParams(search).get('guest')
+  const id = raw ? Number(raw) : 0
+  return Number.isInteger(id) && id > 0 ? id : undefined
+}
+
 function pageTitle(route: Route, newTicketTitle: string): string {
   switch (route.page) {
     case 'inbox':
@@ -235,6 +242,7 @@ export function MemberApp() {
           key={navSeq}
           me={me}
           initialFiller={route.page === 'feedback' ? 'guest' : 'self'}
+          initialGuestId={route.page === 'feedback' ? guestParam(search) : undefined}
           onPhaseTitleChange={setNewTicketTitle}
         />
       )}

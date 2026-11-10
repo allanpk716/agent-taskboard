@@ -6,39 +6,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { ApiError } from '../api'
 import { fmtShort } from '../shared/format'
 import { fetchGuests, type GuestSummary } from './memberApi'
+import { Avatar, guestDept, guestShortName } from './guestDisplay'
 import { nav } from './ui'
-
-/** 部门 = 名字里第一个“-”前面的部分；没有“-”的归“未分组”。 */
-function guestDept(name: string): string {
-  const i = name.indexOf('-')
-  return i > 0 ? name.slice(0, i) : '未分组'
-}
-
-/** 名字展示：通讯录行用全名；最近联系横排用“-”后的短名。 */
-function guestShortName(name: string): string {
-  const i = name.indexOf('-')
-  return i >= 0 && i < name.length - 1 ? name.slice(i + 1) : name
-}
-
-const AVATAR_COLORS = 5
-
-function avatarClass(name: string): string {
-  let hash = 0
-  for (const ch of name) hash = (hash * 31 + ch.codePointAt(0)!) % 997
-  return `gav-c${hash % AVATAR_COLORS}`
-}
-
-function avatarInitial(name: string): string {
-  return [...guestShortName(name)][0] ?? '?'
-}
-
-function Avatar({ guest, size }: { guest: GuestSummary; size: 'sm' | 'md' }) {
-  return (
-    <span className={`guest-avatar ${size} ${avatarClass(guest.name)}`} aria-hidden="true">
-      {avatarInitial(guest.name)}
-    </span>
-  )
-}
 
 function guestStatusBadges(g: GuestSummary) {
   return (
@@ -178,7 +147,7 @@ export function GuestsPage() {
         </>
       )}
 
-      {/* 浮动「＋」（#345）：新建访客页由 #339 接上；给访客发新工单走现有建单页。 */}
+      {/* 浮动「＋」（#345）：新建访客页由 #339 接上；给访客发新工单进 #340 向导。 */}
       <button
         type="button"
         className="guest-fab"
@@ -210,10 +179,10 @@ export function GuestsPage() {
             </a>
             <a
               className="guest-fab-action"
-              href="/feedback"
+              href="/tickets/new"
               onClick={(e) => {
                 e.preventDefault()
-                nav('/feedback')
+                nav('/tickets/new')
               }}
             >
               <span className="guest-fab-icon" aria-hidden="true">

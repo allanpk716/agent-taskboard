@@ -67,10 +67,12 @@ test('PC 成员页不继承登录卡片', async ({ page }) => {
   await expectPlainMain(page)
 
   await page.goto('/feedback')
-  await expect(page.getByRole('heading', { name: '选一个模板' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '选访客' })).toBeVisible()
   await expectPlainMain(page)
+  await page.getByLabel('新建访客名字').fill('检验科-张三')
+  await page.getByRole('button', { name: '新建并继续' }).click()
   await page.locator('.tplpick').first().click()
-  await expect(page.getByLabel('新建访客名字')).toBeVisible()
+  await expect(page.getByLabel('什么事')).toBeVisible()
   await expectPlainMain(page)
 })
 
@@ -163,6 +165,8 @@ test('反馈模板返回链接与建单返回样式一致', async ({ page }) => 
     }
   })
   await page.goto('/feedback')
+  await page.getByLabel('新建访客名字').fill('检验科-张三')
+  await page.getByRole('button', { name: '新建并继续' }).click()
   await page.locator('.tplpick').first().click()
   await expect(page.getByRole('link', { name: '← 换一个模板' })).toBeVisible()
 

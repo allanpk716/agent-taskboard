@@ -82,6 +82,16 @@ export function NewGuestPage() {
               </button>
               <a
                 className="btn ghost"
+                href={`/tickets/new?guest=${created.id}`}
+                onClick={(e) => {
+                  e.preventDefault()
+                  nav(`/tickets/new?guest=${created.id}`)
+                }}
+              >
+                给 TA 发新工单
+              </a>
+              <a
+                className="btn ghost"
                 href={`/guests/${created.id}`}
                 onClick={(e) => {
                   e.preventDefault()
