@@ -423,20 +423,26 @@ func Test无主老链接留痕仍显示链接备注(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")
 	web := s.Login("陈工", "secret-pass")
-	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
-	submitted := submitToIntake(t, s, "bug", map[string]any{
-		"title": "入口老链接", "fields": bugFields(), "author_name": "赵六",
-	})
-	guest := s.AgentClient(submitted.DeviceToken)
-	if got := s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+submitted.Ticket.Number, nil, nil); got.StatusCode != http.StatusOK {
+	number := mustCreateTicket(t, s, web, "入口老链接")
+	legacy := s.CreateLegacyGuestLink(t, web, number, map[string]any{"note": "反馈入口「部门 Bug 反馈」提交人"})
+	var claimed struct {
+		DeviceToken string `json:"device_token"`
+	}
+	res := s.Do(t, s.AgentClient(legacy.Key(t)), http.MethodPost, "/api/v1/guest-links/claim",
+		map[string]string{"author_name": "赵六"}, &claimed)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("认领无主老链接状态码 = %d, 想 201", res.StatusCode)
+	}
+	guest := s.AgentClient(claimed.DeviceToken)
+	if got := s.Do(t, guest, http.MethodGet, "/api/v1/tickets/"+number, nil, nil); got.StatusCode != http.StatusOK {
 		t.Fatalf("老链接读取工单状态码 = %d，想 200", got.StatusCode)
 	}
-	if res := reply(t, s, guest, submitted.Ticket.Number, "这是老链接的回复"); res.StatusCode != http.StatusCreated {
+	if res := reply(t, s, guest, number, "这是老链接的回复"); res.StatusCode != http.StatusCreated {
 		t.Fatalf("老链接回复状态码 = %d，想 201", res.StatusCode)
 	}
 
 	var view ticketResponseBody
-	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+submitted.Ticket.Number, nil, &view)
+	s.Do(t, web, http.MethodGet, "/api/v1/tickets/"+number, nil, &view)
 	for _, ev := range view.Timeline {
 		if ev.Type != "reply" || ev.Actor.Member != nil {
 			continue
@@ -444,19 +450,19 @@ func Test无主老链接留痕仍显示链接备注(t *testing.T) {
 		if ev.Actor.GuestName != nil && *ev.Actor.GuestName != "" {
 			t.Errorf("无主链接不应有访客名字快照：%+v", ev.Actor)
 		}
-		if ev.Actor.LinkNote == nil || *ev.Actor.LinkNote != submitted.GuestLink.Note {
+		if ev.Actor.LinkNote == nil || *ev.Actor.LinkNote != legacy.Note {
 			t.Errorf("无主链接应保留备注快照：%+v", ev.Actor)
 		}
 	}
-	records := readAccessRecords(t, s, web, submitted.Ticket.Number)
+	records := readAccessRecords(t, s, web, number)
 	found := false
 	for _, r := range records.Records {
 		if r.Action != "view" || r.Actor.Kind != "guest" {
 			continue
 		}
 		found = true
-		if r.Actor.Name != submitted.GuestLink.Note+" · 赵六" {
-			t.Errorf("老链接访问记录署名 = %q，想 %q", r.Actor.Name, submitted.GuestLink.Note+" · 赵六")
+		if r.Actor.Name != legacy.Note+" · 赵六" {
+			t.Errorf("老链接访问记录署名 = %q，想 %q", r.Actor.Name, legacy.Note+" · 赵六")
 		}
 	}
 	if !found {

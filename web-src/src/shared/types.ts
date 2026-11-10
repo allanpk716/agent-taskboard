@@ -274,8 +274,11 @@ export interface IntakeView {
 export interface IntakeSubmitResult {
   ticket: { number: string; seq: number; title: string; url: string }
   guest_link: { url: string; note: string; expires_at: string; can_edit_brief: boolean }
-  device_token: string
-  access_code: string
+  guest?: { id: number; name: string }
+  home_url?: string
+  device_token?: string
+  access_code?: string
+  claimed_at?: string
   department_contact: string
   next: string
 }

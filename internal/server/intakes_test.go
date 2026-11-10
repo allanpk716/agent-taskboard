@@ -1,10 +1,12 @@
 package server_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
 )
@@ -46,6 +48,11 @@ type intakeSubmitBody struct {
 		ExpiresAt    string `json:"expires_at"`
 		CanEditBrief bool   `json:"can_edit_brief"`
 	} `json:"guest_link"`
+	Guest struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	} `json:"guest"`
+	HomeURL           string `json:"home_url"`
 	DeviceToken       string `json:"device_token"`
 	AccessCode        string `json:"access_code"`
 	DepartmentContact string `json:"department_contact"`
@@ -298,6 +305,245 @@ func Test入口提交成功即认领并返回访问码(t *testing.T) {
 	tbtest.DecodeJSON(t, res, &err)
 	if err.Error.Code != "link_claimed" {
 		t.Fatalf("单凭链接错误码 = %q, 想 link_claimed", err.Error.Code)
+	}
+}
+
+// 新设备第一次走反馈入口：新建一位长期访客，一次性交给主页地址、链接、
+// 设备凭证和访问码；凭主页地址加访问码能重新进入主页。
+func Test新设备经入口新建访客并可凭主页进入(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+
+	submitted := submitToIntake(t, s, "bug", map[string]any{
+		"title":       "第一次从入口提交",
+		"fields":      bugFields(),
+		"author_name": "检验科 张三",
+	})
+	if submitted.Guest.ID == 0 || submitted.Guest.Name != "检验科 张三" {
+		t.Fatalf("新建访客 = %+v, 想“检验科 张三”", submitted.Guest)
+	}
+	if !strings.HasPrefix(submitted.HomeURL, "/h/tbh_") {
+		t.Fatalf("主页地址 = %q, 想形如 /h/tbh_…", submitted.HomeURL)
+	}
+	if submitted.DeviceToken == "" || submitted.AccessCode == "" {
+		t.Fatalf("新设备应拿到设备凭证和访问码：%+v", submitted)
+	}
+
+	var guests struct {
+		Guests []struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		} `json:"guests"`
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/guests", nil, &guests)
+	if len(guests.Guests) != 1 || guests.Guests[0].Name != "检验科 张三" {
+		t.Fatalf("访客名单 = %+v, 想 1 位“检验科 张三”", guests.Guests)
+	}
+
+	homeKey := submitted.HomeURL[strings.LastIndex(submitted.HomeURL, "/h/")+len("/h/"):]
+	var entered struct {
+		DeviceToken string `json:"device_token"`
+	}
+	res := s.Do(t, s.AgentClient(homeKey), http.MethodPost, "/api/v1/guest-home/enter",
+		map[string]string{"access_code": submitted.AccessCode}, &entered)
+	if res.StatusCode != http.StatusCreated || entered.DeviceToken == "" {
+		t.Fatalf("凭主页地址和访问码进入 = %d/%+v, 想 201 且有设备凭证", res.StatusCode, entered)
+	}
+	var home struct {
+		State   string `json:"state"`
+		Tickets []struct {
+			Number string `json:"number"`
+		} `json:"tickets"`
+	}
+	res = s.Do(t, s.GuestCookieClient(entered.DeviceToken), http.MethodGet, "/api/v1/guest-home", nil, &home)
+	if res.StatusCode != http.StatusOK || home.State != "claimed" || len(home.Tickets) != 1 ||
+		home.Tickets[0].Number != submitted.Ticket.Number {
+		t.Fatalf("重新进入后的主页 = %d/%+v, 想包含新反馈 %s", res.StatusCode, home, submitted.Ticket.Number)
+	}
+}
+
+// 同一台已认领设备再次走反馈入口：新反馈归原访客，链接视为已认领；
+// 不再产生新访客、设备凭证或访问码，原访问码仍可进入主页。
+func Test已认领设备再次经入口提交复用访客(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+
+	first := submitToIntake(t, s, "bug", map[string]any{
+		"title":       "第一张反馈",
+		"fields":      bugFields(),
+		"author_name": "检验科 张三",
+	})
+	client := s.GuestCookieClient(first.DeviceToken)
+	res := s.Do(t, client, http.MethodPost, "/api/v1/intakes/bug/tickets", map[string]any{
+		"title":       "第二张反馈",
+		"fields":      bugFields(),
+		"author_name": "张三",
+	}, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("同一设备再次提交状态码 = %d, 想 201", res.StatusCode)
+	}
+	var second intakeSubmitBody
+	tbtest.DecodeJSON(t, res, &second)
+	if second.Guest.ID != first.Guest.ID || second.Guest.Name != first.Guest.Name {
+		t.Fatalf("第二次提交访客 = %+v, 想复用 %+v", second.Guest, first.Guest)
+	}
+	if second.DeviceToken != "" || second.AccessCode != "" {
+		t.Fatalf("已识别访客不应得到新凭证或访问码：%+v", second)
+	}
+	if second.HomeURL != first.HomeURL {
+		t.Fatalf("主页地址应保持稳定：%q / %q", first.HomeURL, second.HomeURL)
+	}
+
+	var guests struct {
+		Guests []struct {
+			ID int64 `json:"id"`
+		} `json:"guests"`
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/guests", nil, &guests)
+	if len(guests.Guests) != 1 {
+		t.Fatalf("访客数量 = %d, 想 1", len(guests.Guests))
+	}
+
+	key := second.GuestLink.URL[strings.LastIndex(second.GuestLink.URL, "/g/")+len("/g/"):]
+	if got := s.Do(t, s.AgentClient(key), http.MethodGet,
+		"/api/v1/tickets/"+second.Ticket.Number, nil, nil); got.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("单凭新链接读工单状态码 = %d, 想 401（已视为认领）", got.StatusCode)
+	}
+	homeKey := first.HomeURL[strings.LastIndex(first.HomeURL, "/h/")+len("/h/"):]
+	var entered struct {
+		DeviceToken string `json:"device_token"`
+	}
+	res = s.Do(t, s.AgentClient(homeKey), http.MethodPost, "/api/v1/guest-home/enter",
+		map[string]string{"access_code": first.AccessCode}, &entered)
+	if res.StatusCode != http.StatusCreated || entered.DeviceToken == "" {
+		t.Fatalf("原访问码进入主页 = %d/%+v, 想 201 且有设备凭证", res.StatusCode, entered)
+	}
+	var home struct {
+		Tickets []struct {
+			Number string `json:"number"`
+		} `json:"tickets"`
+	}
+	res = s.Do(t, s.GuestCookieClient(entered.DeviceToken), http.MethodGet, "/api/v1/guest-home", nil, &home)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("读取主页状态码 = %d, 想 200", res.StatusCode)
+	}
+	foundFirst, foundSecond := false, false
+	for _, item := range home.Tickets {
+		foundFirst = foundFirst || item.Number == first.Ticket.Number
+		foundSecond = foundSecond || item.Number == second.Ticket.Number
+	}
+	if !foundFirst || !foundSecond {
+		t.Fatalf("主页应包含两张反馈：%+v", home.Tickets)
+	}
+}
+
+// 设备属于已停用访客时不能复用她；入口按新设备处理，新建访客并重新给凭证。
+func Test设备属于已停用访客时入口按新访客处理(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+
+	first := submitToIntake(t, s, "bug", map[string]any{
+		"title":       "停用前的反馈",
+		"fields":      bugFields(),
+		"author_name": "检验科 张三",
+	})
+	if _, err := s.Store().DB.Exec(`UPDATE guests SET disabled_at = ? WHERE id = ?`,
+		s.Clock().Now().Format(time.RFC3339Nano), first.Guest.ID); err != nil {
+		t.Fatalf("构造已停用访客失败：%v", err)
+	}
+
+	client := s.GuestCookieClient(first.DeviceToken)
+	res := s.Do(t, client, http.MethodPost, "/api/v1/intakes/bug/tickets", map[string]any{
+		"title":       "停用后的反馈",
+		"fields":      bugFields(),
+		"author_name": "检验科 李四",
+	}, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("停用访客的设备提交状态码 = %d, 想 201", res.StatusCode)
+	}
+	var second intakeSubmitBody
+	tbtest.DecodeJSON(t, res, &second)
+	if second.Guest.ID == first.Guest.ID || second.Guest.Name != "检验科 李四" {
+		t.Fatalf("停用后提交访客 = %+v, 想新建“检验科 李四”", second.Guest)
+	}
+	if second.DeviceToken == "" || second.AccessCode == "" || second.HomeURL == "" {
+		t.Fatalf("停用后应按新访客给凭证和主页：%+v", second)
+	}
+
+	var guests struct {
+		Guests []struct {
+			ID int64 `json:"id"`
+		} `json:"guests"`
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/guests", nil, &guests)
+	if len(guests.Guests) != 2 {
+		t.Fatalf("访客数量 = %d, 想 2", len(guests.Guests))
+	}
+}
+
+// Agent 拿到入口响应里的设备凭证后，也可以在同一设备语义下继续提交。
+func Test入口按响应设备凭证识别访客(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+
+	first := submitToIntake(t, s, "bug", map[string]any{
+		"title":       "Agent 第一次提交",
+		"fields":      bugFields(),
+		"author_name": "检验科 张三",
+	})
+	var second intakeSubmitBody
+	res := s.Do(t, s.AgentClient(first.DeviceToken), http.MethodPost, "/api/v1/intakes/bug/tickets", map[string]any{
+		"title":       "Agent 第二次提交",
+		"fields":      bugFields(),
+		"author_name": "张三",
+	}, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("带设备凭证提交状态码 = %d, 想 201", res.StatusCode)
+	}
+	tbtest.DecodeJSON(t, res, &second)
+	if second.Guest.ID != first.Guest.ID || second.DeviceToken != "" || second.AccessCode != "" {
+		t.Fatalf("带设备凭证的提交结果 = %+v, 想复用访客且不给新凭证", second)
+	}
+}
+
+// 入口幂等范围仍按入口划分：首次匿名提交后，Agent 带着拿到的设备凭证重放
+// 同一个 Idempotency-Key，也必须得到首次响应，而不是再建一张工单。
+func Test入口幂等重放不因设备凭证改变范围(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+
+	headers := map[string]string{"Idempotency-Key": "agent-retry"}
+	body := map[string]any{"title": "Agent 重试", "fields": bugFields(), "author_name": "检验科 张三"}
+	first := s.DoWithHeaders(t, s.NewClient(), http.MethodPost, "/api/v1/intakes/bug/tickets", headers, body, nil)
+	if first.StatusCode != http.StatusCreated {
+		t.Fatalf("首次提交状态码 = %d, 想 201", first.StatusCode)
+	}
+	firstBody := readAll(t, first)
+	var submitted intakeSubmitBody
+	if err := json.Unmarshal(firstBody, &submitted); err != nil {
+		t.Fatalf("解析首次响应失败：%v", err)
+	}
+
+	replay := s.DoWithHeaders(t, s.AgentClient(submitted.DeviceToken), http.MethodPost,
+		"/api/v1/intakes/bug/tickets", headers, body, nil)
+	if replay.StatusCode != http.StatusCreated {
+		t.Fatalf("带设备凭证重放状态码 = %d, 想 201", replay.StatusCode)
+	}
+	if got := readAll(t, replay); string(got) != string(firstBody) {
+		t.Fatalf("重放应逐字节返回首次结果：\n%s\n%s", firstBody, got)
+	}
+	if got := s.Do(t, web, http.MethodGet, "/api/v1/tickets/2", nil, nil); got.StatusCode != http.StatusNotFound {
+		t.Fatalf("重放不应再建单（/tickets/2 = %d, 想 404）", got.StatusCode)
 	}
 }
 
