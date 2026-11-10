@@ -99,6 +99,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/guest-link", a.handleGuestLinkClaim)
 	mux.HandleFunc("/api/v1/guest-links/claim", a.handleGuestLinkClaim)
 	mux.HandleFunc("/api/v1/guest-links/enter", a.handleGuestLinkClaim)
+	mux.HandleFunc("/api/v1/guest-links/unassigned", a.listUnassignedGuestLinks)
 	mux.HandleFunc("/api/v1/guest-home", a.handleGuestHome)
 	mux.HandleFunc("/api/v1/guest-home/claim", a.handleGuestHomeClaim)
 	mux.HandleFunc("/api/v1/guest-home/enter", a.handleGuestHomeEnter)

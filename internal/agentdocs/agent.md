@@ -65,6 +65,21 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
   老链接自己的访问码和设备作废；未认领老链接直接沿用访客状态。操作会写
   `guest_link_assigned` 时间线事件（`reason` 为 `manual`），不发通知；已归属链接返回
   409 `guest_link_already_assigned`，不要尝试重复归属。
+- 主人让你把多条上线前的无主老工单归给同一位访客时，先用
+  `GET {{BASE}}/api/v1/guest-links/unassigned?q=<搜索词>&name=<访客名字>` 取候选；
+  该列表只含你主人可见、未撤销、未过期、尚未归属的链接，`possible_person=true`
+  表示名字相近（只是推荐，不要自动勾选）。确认一批后先用
+  `GET {{BASE}}/api/v1/guests/<guest_id>/assign-links/preview?link_ids=1,2` 看影响，
+  再带 `Idempotency-Key` 调 `POST {{BASE}}/api/v1/guests/<guest_id>/assign-links`，
+  请求体 `{"link_ids":[1,2]}`。
+- 批量归属的当前规则：目标访客已认领时保留 TA 的访问码，被归入链接原来的访问码和
+  设备作废；目标访客未认领且所选链接都未认领时，访客保持未认领。这两种成功路径都
+  不能带 `access_code`，否则 422 `access_code_choice_not_allowed`。目标访客未认领而
+  所选里有已认领链接时，本版本一律 422 `access_code_choice_required`，告诉主人这项
+  选择稍后在网页开放；不要伪造或猜测访问码。`link_ids` 为空、含非正数或重复 id 返回
+  422 `invalid_link_ids`；任一链接不可见 404 `guest_link_not_found`，已归属
+  409 `guest_link_already_assigned`，已撤销或过期 422 `guest_link_not_assignable`。
+  整批原子完成：任一失败时其他链接不会变化。
 
 ## 访客详情与改名
 

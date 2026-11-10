@@ -3,6 +3,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -94,6 +95,8 @@ func (a *API) createGuest(w http.ResponseWriter, r *http.Request, viewer identit
 //	POST /api/v1/guests/{id}/reset-home-key             重置主页地址（仅网页成员）
 //	GET  /api/v1/guests/{b}/merge-into/{a}/preview      合并影响预览（仅网页成员）
 //	POST /api/v1/guests/{b}/merge-into                   合并访客（仅网页成员）
+//	GET  /api/v1/guests/{id}/assign-links/preview        批量归属影响预览（成员与成员 Agent）
+//	POST /api/v1/guests/{id}/assign-links                批量归属老链接（成员与成员 Agent）
 func (a *API) handleGuestsRef(w http.ResponseWriter, r *http.Request) {
 	rest := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if (len(rest) < 5 || len(rest) > 7) && len(rest) != 4 ||
@@ -139,6 +142,10 @@ func (a *API) handleGuestsRef(w http.ResponseWriter, r *http.Request) {
 		a.resetGuestAccessCodeForGuest(w, r, id)
 	case action == "reset-home-key" && len(rest) == 5 && r.Method == http.MethodPost:
 		a.resetGuestHomeKey(w, r, id)
+	case action == "assign-links" && preview && r.Method == http.MethodGet:
+		a.previewGuestLinkAssignment(w, r, id)
+	case action == "assign-links" && len(rest) == 5 && r.Method == http.MethodPost:
+		a.assignGuestLinks(w, r, id)
 	case action == "rename" && len(rest) == 5 && r.Method == http.MethodPost:
 		a.renameGuest(w, r, id)
 	case action == "disable" && len(rest) == 5 && r.Method == http.MethodPost:
@@ -154,6 +161,7 @@ func (a *API) handleGuestsRef(w http.ResponseWriter, r *http.Request) {
 				"POST /api/v1/guests/{id}/reset-access-code、"+
 				"POST /api/v1/guests/{id}/reset-home-key、POST /api/v1/guests/{id}/rename、"+
 				"POST /api/v1/guests/{id}/disable、POST /api/v1/guests/{id}/enable、"+
+				"GET /api/v1/guests/{id}/assign-links/preview、POST /api/v1/guests/{id}/assign-links、"+
 				"POST /api/v1/guests/{b_id}/merge-into")
 	}
 }
@@ -366,6 +374,163 @@ func (a *API) resetGuestHomeKey(w http.ResponseWriter, r *http.Request, id int64
 			"share_text": tickets.GuestHomeShareText(share.GuestName, a.absURL(path)),
 		})
 	})
+}
+
+type assignGuestLinksRequest struct {
+	LinkIDs    []int64         `json:"link_ids"`
+	AccessCode json.RawMessage `json:"access_code"`
+}
+
+// previewGuestLinkAssignment 处理 GET /api/v1/guests/{id}/assign-links/preview。
+func (a *API) previewGuestLinkAssignment(w http.ResponseWriter, r *http.Request, id int64) {
+	w.Header().Set("Cache-Control", "no-store")
+	viewer, ok := a.memberFromRequestFor(w, r, "访客不能归属部门的老访客链接")
+	if !ok {
+		return
+	}
+	ids, ok := parseAssignLinkIDsQuery(w, r)
+	if !ok {
+		return
+	}
+	preview, err := a.tickets.GuestLinkAssignmentPreview(r.Context(), viewer, id, ids)
+	if !a.writeGuestLinkAssignmentError(w, err, false) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"guest_id": preview.GuestID, "guest_name": preview.GuestName,
+		"guest_claimed": preview.GuestClaimed, "link_count": preview.LinkCount,
+		"ticket_count": preview.TicketCount, "claimed_link_count": preview.ClaimedLinkCount,
+		"device_count": preview.DeviceCount, "access_code_action": preview.AccessCodeAction,
+		"source_link_ids": preview.SourceLinkIDs,
+	})
+}
+
+// assignGuestLinks 处理 POST /api/v1/guests/{id}/assign-links。
+func (a *API) assignGuestLinks(w http.ResponseWriter, r *http.Request, id int64) {
+	w.Header().Set("Cache-Control", "no-store")
+	viewer, ok := a.memberFromRequestFor(w, r, "访客不能归属部门的老访客链接")
+	if !ok {
+		return
+	}
+	var req assignGuestLinksRequest
+	if !decodeJSON(w, r, &req,
+		`{"link_ids":[1,2], "access_code": {"source_link_id":1} 或 "generate"}`) {
+		return
+	}
+	choice, ok := parseGuestAccessCodeChoice(w, req.AccessCode)
+	if !ok {
+		return
+	}
+	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
+		result, err := a.tickets.AssignGuestLinks(r.Context(), viewer, id, req.LinkIDs, choice)
+		if !a.writeGuestLinkAssignmentError(w, err, true) {
+			return
+		}
+		links := make([]map[string]any, 0, len(result.Links))
+		for _, link := range result.Links {
+			links = append(links, map[string]any{
+				"id": link.ID, "ticket_number": link.TicketNumber, "ticket_title": link.TicketTitle,
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"guest_id": result.GuestID, "guest_name": result.GuestName,
+			"link_count": result.LinkCount, "ticket_count": result.TicketCount,
+			"access_code_action": result.AccessCodeAction, "links": links,
+		})
+	})
+}
+
+func parseAssignLinkIDsQuery(w http.ResponseWriter, r *http.Request) ([]int64, bool) {
+	query := r.URL.Query()
+	if apiErr := rejectUnknownParams(query, []string{"link_ids"}, ""); apiErr != nil {
+		writeAPIError(w, apiErr)
+		return nil, false
+	}
+	raw := strings.TrimSpace(query.Get("link_ids"))
+	if raw == "" {
+		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidGuestLinkIDs,
+			tickets.ErrInvalidGuestLinkIDs.Error(), "link_ids=1,2；空数组不能提交")
+		return nil, false
+	}
+	parts := strings.Split(raw, ",")
+	ids := make([]int64, 0, len(parts))
+	seen := make(map[int64]bool, len(parts))
+	for _, part := range parts {
+		id, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64)
+		if err != nil || id <= 0 {
+			WriteError(w, http.StatusUnprocessableEntity, CodeInvalidGuestLinkIDs,
+				tickets.ErrInvalidGuestLinkIDs.Error(), "link_ids 必须是逗号分隔的正整数，如 link_ids=1,2")
+			return nil, false
+		}
+		if seen[id] {
+			WriteError(w, http.StatusUnprocessableEntity, CodeInvalidGuestLinkIDs,
+				tickets.ErrInvalidGuestLinkIDs.Error(), "link_ids 里的 id 不能重复")
+			return nil, false
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	return ids, true
+}
+
+func parseGuestAccessCodeChoice(w http.ResponseWriter, raw json.RawMessage) (tickets.GuestAccessCodeChoice, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return tickets.GuestAccessCodeChoice{}, true
+	}
+	var generate string
+	if err := json.Unmarshal(raw, &generate); err == nil {
+		if generate == "generate" {
+			return tickets.GuestAccessCodeChoice{Provided: true, Generate: true}, true
+		}
+	}
+	var source struct {
+		SourceLinkID int64 `json:"source_link_id"`
+	}
+	if err := json.Unmarshal(raw, &source); err == nil && source.SourceLinkID > 0 {
+		return tickets.GuestAccessCodeChoice{Provided: true, SourceLinkID: source.SourceLinkID}, true
+	}
+	WriteError(w, http.StatusUnprocessableEntity, CodeInvalidAccessCodeChoice,
+		"access_code 只能省略，或取 {source_link_id: 链接id} / \"generate\"",
+		"本票的两种可成功路径都应省略 access_code")
+	return tickets.GuestAccessCodeChoice{}, false
+}
+
+func (a *API) writeGuestLinkAssignmentError(w http.ResponseWriter, err error, submit bool) bool {
+	var notAssignable *tickets.GuestLinkNotAssignableError
+	switch {
+	case errors.Is(err, tickets.ErrGuestNotFound):
+		WriteError(w, http.StatusNotFound, CodeGuestNotFound, "没有这位访客", "")
+	case errors.Is(err, tickets.ErrGuestDisabled):
+		WriteError(w, http.StatusUnprocessableEntity, CodeGuestDisabled, err.Error(), "先恢复访客，再归属老链接")
+	case errors.Is(err, tickets.ErrGuestAlreadyMerged):
+		WriteError(w, http.StatusConflict, CodeGuestAlreadyMerged, err.Error(), "")
+	case errors.Is(err, tickets.ErrInvalidGuestLinkIDs):
+		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidGuestLinkIDs, err.Error(),
+			"link_ids 必须是非空、不重复的正整数数组")
+	case errors.Is(err, tickets.ErrGuestLinkNotFound):
+		WriteError(w, http.StatusNotFound, CodeGuestLinkNotFound, "没有这条可归属的访客链接",
+			"重新读取 GET /api/v1/guest-links/unassigned，只选择调用者可见的无主老链接")
+	case errors.Is(err, tickets.ErrGuestLinkAlreadyAssigned):
+		WriteError(w, http.StatusConflict, CodeGuestLinkAlreadyAssigned, err.Error(),
+			"这条链接已有归属；需要改归时等访客合并功能处理")
+	case errors.As(err, &notAssignable):
+		WriteError(w, http.StatusUnprocessableEntity, CodeGuestLinkNotAssignable, err.Error(),
+			"批量归属前重新读取 GET /api/v1/guest-links/unassigned")
+	case errors.Is(err, tickets.ErrGuestAccessCodeChoiceNotAllowed):
+		WriteError(w, http.StatusUnprocessableEntity, CodeAccessCodeChoiceNotAllowed, err.Error(),
+			"已认领访客保留现有访问码；所选链接都未认领时访客保持未认领，都应省略 access_code")
+	case errors.Is(err, tickets.ErrGuestAccessCodeChoiceRequired):
+		hint := "所选链接里有已认领链接，需要选择沿用哪条访问码或生成新码"
+		if submit {
+			hint += "；该选择在下一张票开放，本版本请先只归已认领访客或全未认领链接"
+		}
+		WriteError(w, http.StatusUnprocessableEntity, CodeAccessCodeChoiceRequired, err.Error(), hint)
+	case err == nil:
+		return true
+	default:
+		panic(err)
+	}
+	return false
 }
 
 func (a *API) previewGuestMerge(w http.ResponseWriter, r *http.Request, sourceID, targetID int64) {

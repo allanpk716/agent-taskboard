@@ -22,6 +22,7 @@ import { ToolsPage } from './ToolsPage'
 import { GuestsPage } from './GuestsPage'
 import { GuestDetailPage } from './GuestDetailPage'
 import { NewGuestPage } from './NewGuestPage'
+import { GuestAssignLinksPage } from './GuestAssignLinksPage'
 import { TemplatesPage } from './TemplatesPage'
 import { TemplateEditPage } from './TemplateEditPage'
 import { MePage } from './MePage'
@@ -64,6 +65,8 @@ function pageTitle(route: Route, newTicketTitle: string): string {
       return '新建访客'
     case 'guestDetail':
       return '访客'
+    case 'guestAssign':
+      return '把老工单归到访客'
     case 'me':
       return '我的 · 设置'
     case 'templates':
@@ -199,13 +202,27 @@ export function MemberApp() {
   const h = route
   const toolsOn = h.page === 'tools' || h.page === 'templates' || h.page === 'templateEdit'
   // 访客入口提到一级（#345）：手机上在「工单」标签内做「工单｜访客」分段，
-  // 电脑侧边栏加一级「访客」入口；guestNew/guestDetail 是访客的子页，也归访客。
-  const guestsOn = h.page === 'guests' || h.page === 'guestNew' || h.page === 'guestDetail'
+  // 电脑侧边栏加一级「访客」入口；guestNew/guestDetail/guestAssign 都是访客子页。
+  const guestsOn =
+    h.page === 'guests' || h.page === 'guestNew' || h.page === 'guestDetail' || h.page === 'guestAssign'
   const ticketsOn = h.page === 'tickets' || guestsOn
   const showMainSegment = h.page === 'tickets' || h.page === 'guests'
   const meOn = h.page === 'me' || h.page === 'admin'
   const centered =
-    ['tools', 'me', 'admin', 'new', 'templates', 'templateEdit', 'feedback', 'draft', 'guests', 'guestNew', 'guestDetail'].includes(h.page)
+    [
+      'tools',
+      'me',
+      'admin',
+      'new',
+      'templates',
+      'templateEdit',
+      'feedback',
+      'draft',
+      'guests',
+      'guestNew',
+      'guestDetail',
+      'guestAssign',
+    ].includes(h.page)
   const { fromInbox, query: detailQuery } = detailListSource(search)
   const detailReturnTo = fromInbox
     ? `/${detailQuery ? '?' + detailQuery : ''}`
@@ -254,6 +271,7 @@ export function MemberApp() {
       {route.page === 'guests' && <GuestsPage key={navSeq} />}
       {route.page === 'guestNew' && <NewGuestPage key={navSeq} />}
       {route.page === 'guestDetail' && <GuestDetailPage key={navSeq} guestId={route.id} />}
+      {route.page === 'guestAssign' && <GuestAssignLinksPage key={navSeq} guestId={route.id} />}
       {route.page === 'me' && (
         <MePage
           key={navSeq}

@@ -8,9 +8,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/guestcredentials"
@@ -47,7 +49,23 @@ var (
 	ErrGuestLinkCipherUnavailable = errors.New("访客链接加密密钥不可用，暂不能直接复制或换新地址")
 	// ErrGuestShareTextUnavailable 表示老链接没有可恢复的密钥，不能直接复制转发文案。
 	ErrGuestShareTextUnavailable = errors.New("这是老访客链接，平台没有保存可恢复的密钥")
+	// ErrInvalidGuestLinkIDs 表示批量归属没有给链接 id、给了非正数或重复 id。
+	ErrInvalidGuestLinkIDs = errors.New("link_ids 必须是非空、不重复的正整数数组")
+	// ErrGuestAccessCodeChoiceNotAllowed 表示当前批量归属情形不接受访问码选项。
+	ErrGuestAccessCodeChoiceNotAllowed = errors.New("这种归属情形不用选择访问码")
+	// ErrGuestAccessCodeChoiceRequired 表示本票尚未开放未认领访客的访问码选择。
+	ErrGuestAccessCodeChoiceRequired = errors.New("访客未认领且所选链接里有已认领链接，需要选择访问码处理方式")
 )
+
+// GuestLinkNotAssignableError 表示批量归属选中了已撤销或已过期的链接。
+type GuestLinkNotAssignableError struct{ Reason string }
+
+func (e *GuestLinkNotAssignableError) Error() string {
+	if e.Reason == "revoked" {
+		return "所选访客链接已被撤销，不能归属"
+	}
+	return "所选访客链接已过期，不能归属"
+}
 
 // LinkNotExtendableError 是对已撤销或已过期的链接延期（409）。
 type LinkNotExtendableError struct {
@@ -1016,4 +1034,418 @@ func nullStr(s string) any {
 		return nil
 	}
 	return s
+}
+
+// UnassignedGuestLink 是成员视角的一条无主老链接；LastUsedAt 来自访问记录。
+type UnassignedGuestLink struct {
+	ID             int64
+	TicketSeq      int64
+	TicketNumber   string
+	TicketTitle    string
+	Note           string
+	ExpiresAt      string
+	Claimed        bool
+	ClaimName      string
+	LastUsedAt     *string
+	PossiblePerson bool
+}
+
+// UnassignedGuestLinks 列出 viewer 可见、未撤销未过期且尚未归属访客的老链接。
+// query 匹配工单编号、标题、备注和自报称呼；name 非空时按简单相近规则把
+// “可能是这个人”的链接排前并打标。
+func (m *Manager) UnassignedGuestLinks(ctx context.Context, viewer identity.Viewer,
+	query, name string) ([]UnassignedGuestLink, error) {
+	visible, err := m.VisibleSeqs(ctx, viewer)
+	if err != nil {
+		return nil, err
+	}
+	visibleSet := make(map[int64]bool, len(visible))
+	for _, seq := range visible {
+		visibleSet[seq] = true
+	}
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT g.id, g.ticket_seq, t.number, t.title, g.note, g.expires_at,
+		       h.claimed_at, h.claim_name,
+		       (SELECT MAX(r.last_at) FROM access_records r
+		         WHERE r.actor_link_id = g.id AND r.action IN ('view', 'download'))
+		FROM guest_links g
+		JOIN tickets t ON t.seq = g.ticket_seq
+		JOIN guest_credential_holders h ON h.id = g.credential_holder_id
+		WHERE g.guest_id IS NULL AND g.revoked_at IS NULL
+		ORDER BY g.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	now := m.clk.Now()
+	query = normalizeGuestName(query)
+	name = normalizeGuestName(name)
+	out := []UnassignedGuestLink{}
+	for rows.Next() {
+		var (
+			item       UnassignedGuestLink
+			claimedAt  sql.NullString
+			claimName  sql.NullString
+			lastUsedAt sql.NullString
+		)
+		if err := rows.Scan(&item.ID, &item.TicketSeq, &item.TicketNumber, &item.TicketTitle,
+			&item.Note, &item.ExpiresAt, &claimedAt, &claimName, &lastUsedAt); err != nil {
+			return nil, err
+		}
+		if !visibleSet[item.TicketSeq] {
+			continue
+		}
+		expiry, err := parseTime(item.ExpiresAt)
+		if err != nil {
+			return nil, err
+		}
+		if !now.Before(expiry) {
+			continue
+		}
+		item.Claimed = claimedAt.Valid
+		item.ClaimName = claimName.String
+		if lastUsedAt.Valid {
+			item.LastUsedAt = &lastUsedAt.String
+		}
+		if query != "" && !unassignedLinkMatches(item, query) {
+			continue
+		}
+		item.PossiblePerson = name != "" && guestNameSimilar(name, item.Note, item.ClaimName)
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sortUnassignedGuestLinks(out)
+	return out, nil
+}
+
+func unassignedLinkMatches(item UnassignedGuestLink, query string) bool {
+	for _, text := range []string{item.TicketNumber, item.TicketTitle, item.Note, item.ClaimName} {
+		if strings.Contains(normalizeGuestName(text), query) {
+			return true
+		}
+	}
+	return false
+}
+
+func sortUnassignedGuestLinks(items []UnassignedGuestLink) {
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].PossiblePerson != items[j].PossiblePerson {
+			return items[i].PossiblePerson
+		}
+		if lastUsed(items, i) != lastUsed(items, j) {
+			return lastUsed(items, i) > lastUsed(items, j)
+		}
+		return items[i].ID > items[j].ID
+	})
+}
+
+func lastUsed(items []UnassignedGuestLink, i int) string {
+	if items[i].LastUsedAt == nil {
+		return ""
+	}
+	return *items[i].LastUsedAt
+}
+
+// guestNameSimilar 使用规格拍板的简单规则：去掉“部门-”前缀后，目标姓名与
+// 备注或自报称呼互相包含，或首字（姓氏）相同。
+func guestNameSimilar(target string, candidates ...string) bool {
+	target = stripDepartmentPrefix(target)
+	if target == "" {
+		return false
+	}
+	for _, candidate := range candidates {
+		candidate = stripDepartmentPrefix(normalizeGuestName(candidate))
+		if candidate == "" {
+			continue
+		}
+		if strings.Contains(target, candidate) || strings.Contains(candidate, target) {
+			return true
+		}
+		if utf8.RuneCountInString(target) > 0 && utf8.RuneCountInString(candidate) > 0 {
+			targetRunes := []rune(target)
+			candidateRunes := []rune(candidate)
+			if targetRunes[0] == candidateRunes[0] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func normalizeGuestName(s string) string {
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
+}
+
+func stripDepartmentPrefix(s string) string {
+	if before, after, found := strings.Cut(s, "-"); found && strings.TrimSpace(before) != "" {
+		return strings.TrimSpace(after)
+	}
+	return strings.TrimSpace(s)
+}
+
+// GuestAccessCodeChoice 是 #341 为 #342 预留的访问码选项形状：当前两种
+// 可成功路径都必须是未提供；#342 再实现 source_link_id 与 generate。
+type GuestAccessCodeChoice struct {
+	Provided     bool
+	Generate     bool
+	SourceLinkID int64
+}
+
+// AssignableGuestLinkPreview 描述一次批量归属的影响，不改变任何数据。
+type AssignableGuestLinkPreview struct {
+	GuestID          int64
+	GuestName        string
+	GuestClaimed     bool
+	LinkCount        int
+	TicketCount      int
+	ClaimedLinkCount int
+	DeviceCount      int
+	AccessCodeAction string
+	SourceLinkIDs    []int64
+}
+
+// AssignGuestLinksResult 是批量归属成功后的汇总；每条链接还在各自工单上
+// 留一条 guest_link_assigned 时间线事件。
+type AssignGuestLinksResult struct {
+	GuestID          int64
+	GuestName        string
+	LinkCount        int
+	TicketCount      int
+	AccessCodeAction string
+	Links            []AssignedGuestLinkSummary
+}
+
+// AssignedGuestLinkSummary 是批量归属响应里的链接摘要。
+type AssignedGuestLinkSummary struct {
+	ID           int64
+	TicketNumber string
+	TicketTitle  string
+}
+
+type assignableGuestLink struct {
+	ID           int64
+	TicketSeq    int64
+	TicketNumber string
+	TicketTitle  string
+	Note         string
+	HolderID     int64
+	GuestID      int64
+	ExpiresAt    time.Time
+	Revoked      bool
+	Claimed      bool
+	DeviceCount  int
+}
+
+func validateGuestLinkIDs(ids []int64) error {
+	if len(ids) == 0 {
+		return ErrInvalidGuestLinkIDs
+	}
+	seen := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		if id <= 0 || seen[id] {
+			return ErrInvalidGuestLinkIDs
+		}
+		seen[id] = true
+	}
+	return nil
+}
+
+// GuestLinkAssignmentPreview 返回把 ids 归给 guestID 前的影响。校验规则与
+// POST 相同；只有“需要选访问码”是预览可返回的状态，提交端在 #341 仍拒绝。
+func (m *Manager) GuestLinkAssignmentPreview(ctx context.Context, viewer identity.Viewer,
+	guestID int64, ids []int64) (AssignableGuestLinkPreview, error) {
+	if err := validateGuestLinkIDs(ids); err != nil {
+		return AssignableGuestLinkPreview{}, err
+	}
+	visible, err := m.VisibleSeqs(ctx, viewer)
+	if err != nil {
+		return AssignableGuestLinkPreview{}, err
+	}
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AssignableGuestLinkPreview{}, err
+	}
+	defer tx.Rollback()
+
+	actor := authorOf(viewer)
+	targetGuestID, guestName, guestHolderID, guestClaimed, err := m.guestForNewLinkTx(ctx, tx, actor,
+		GuestLinkSpec{GuestID: guestID}, m.clk.Now())
+	if err != nil {
+		return AssignableGuestLinkPreview{}, err
+	}
+	_ = guestHolderID
+	links, err := m.assignableGuestLinksTx(ctx, tx, visible, ids, m.clk.Now())
+	if err != nil {
+		return AssignableGuestLinkPreview{}, err
+	}
+	return assignmentPreview(targetGuestID, guestName, guestClaimed, links), nil
+}
+
+// AssignGuestLinks 把一批无主老链接归到 guestID。凭证处理复用单条归属：
+// 已认领访客保留自己的凭证，老链接凭证删除；未认领访客归入全未认领链接后
+// 仍保持未认领。所有校验、改归属和时间线事件都在一个事务里完成。
+func (m *Manager) AssignGuestLinks(ctx context.Context, viewer identity.Viewer, guestID int64,
+	ids []int64, choice GuestAccessCodeChoice) (AssignGuestLinksResult, error) {
+	if err := validateGuestLinkIDs(ids); err != nil {
+		return AssignGuestLinksResult{}, err
+	}
+	visible, err := m.VisibleSeqs(ctx, viewer)
+	if err != nil {
+		return AssignGuestLinksResult{}, err
+	}
+	now := m.clk.Now()
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return AssignGuestLinksResult{}, err
+	}
+	defer tx.Rollback()
+
+	actor := authorOf(viewer)
+	targetGuestID, guestName, guestHolderID, guestClaimed, err := m.guestForNewLinkTx(ctx, tx, actor,
+		GuestLinkSpec{GuestID: guestID}, now)
+	if err != nil {
+		return AssignGuestLinksResult{}, err
+	}
+	links, err := m.assignableGuestLinksTx(ctx, tx, visible, ids, now)
+	if err != nil {
+		return AssignGuestLinksResult{}, err
+	}
+	preview := assignmentPreview(targetGuestID, guestName, guestClaimed, links)
+	if choice.Provided && (preview.AccessCodeAction == "keep_guest" || preview.AccessCodeAction == "remain_unclaimed") {
+		return AssignGuestLinksResult{}, ErrGuestAccessCodeChoiceNotAllowed
+	}
+	if preview.AccessCodeAction == "choice_required" {
+		return AssignGuestLinksResult{}, ErrGuestAccessCodeChoiceRequired
+	}
+	if _, err := m.ensureGuestHomeKeyTx(ctx, tx, targetGuestID); err != nil {
+		return AssignGuestLinksResult{}, err
+	}
+	for _, link := range links {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE guest_links SET guest_id = ?, credential_holder_id = ? WHERE id = ?`,
+			targetGuestID, guestHolderID, link.ID); err != nil {
+			return AssignGuestLinksResult{}, err
+		}
+		if err := assignGuestCredentialsTx(ctx, tx, link.HolderID, guestHolderID, link.Claimed); err != nil {
+			return AssignGuestLinksResult{}, err
+		}
+		if err := m.insertAssignmentEvent(ctx, tx, link.TicketSeq, actor,
+			link.Note, guestName, "manual", now); err != nil {
+			return AssignGuestLinksResult{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return AssignGuestLinksResult{}, err
+	}
+	result := AssignGuestLinksResult{
+		GuestID: targetGuestID, GuestName: guestName, LinkCount: preview.LinkCount,
+		TicketCount: preview.TicketCount, AccessCodeAction: preview.AccessCodeAction,
+		Links: make([]AssignedGuestLinkSummary, 0, len(links)),
+	}
+	for _, link := range links {
+		result.Links = append(result.Links, AssignedGuestLinkSummary{
+			ID: link.ID, TicketNumber: link.TicketNumber, TicketTitle: link.TicketTitle,
+		})
+	}
+	return result, nil
+}
+
+func (m *Manager) assignableGuestLinksTx(ctx context.Context, tx *sql.Tx,
+	visible []int64, ids []int64, now time.Time) ([]assignableGuestLink, error) {
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT g.id, g.ticket_seq, t.number, t.title, g.note, g.expires_at,
+		       g.revoked_at, h.claimed_at, g.guest_id, g.credential_holder_id,
+		       (SELECT COUNT(*) FROM guest_credential_devices d
+		         WHERE d.credential_holder_id = g.credential_holder_id)
+		FROM guest_links g
+		JOIN tickets t ON t.seq = g.ticket_seq
+		JOIN guest_credential_holders h ON h.id = g.credential_holder_id
+		WHERE g.id IN (`+strings.Join(placeholders, ",")+`)
+		ORDER BY g.id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	links := make([]assignableGuestLink, 0, len(ids))
+	for rows.Next() {
+		var (
+			link      assignableGuestLink
+			expiresAt string
+			revokedAt sql.NullString
+			claimedAt sql.NullString
+			guestID   sql.NullInt64
+		)
+		if err := rows.Scan(&link.ID, &link.TicketSeq, &link.TicketNumber, &link.TicketTitle,
+			&link.Note, &expiresAt, &revokedAt, &claimedAt, &guestID,
+			&link.HolderID, &link.DeviceCount); err != nil {
+			return nil, err
+		}
+		if link.ExpiresAt, err = parseTime(expiresAt); err != nil {
+			return nil, err
+		}
+		link.GuestID = guestID.Int64
+		link.Revoked = revokedAt.Valid
+		link.Claimed = claimedAt.Valid
+		links = append(links, link)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(links) != len(ids) {
+		return nil, ErrGuestLinkNotFound
+	}
+	visibleSet := make(map[int64]bool, len(visible))
+	for _, seq := range visible {
+		visibleSet[seq] = true
+	}
+	for _, link := range links {
+		if !visibleSet[link.TicketSeq] {
+			return nil, ErrGuestLinkNotFound
+		}
+		if link.GuestID != 0 {
+			return nil, ErrGuestLinkAlreadyAssigned
+		}
+		if link.Revoked {
+			return nil, &GuestLinkNotAssignableError{Reason: "revoked"}
+		}
+		if !now.Before(link.ExpiresAt) {
+			return nil, &GuestLinkNotAssignableError{Reason: "expired"}
+		}
+	}
+	return links, nil
+}
+
+func assignmentPreview(guestID int64, guestName string, guestClaimed bool,
+	links []assignableGuestLink) AssignableGuestLinkPreview {
+	preview := AssignableGuestLinkPreview{
+		GuestID: guestID, GuestName: guestName, GuestClaimed: guestClaimed,
+		LinkCount: len(links), SourceLinkIDs: []int64{},
+		AccessCodeAction: "remain_unclaimed",
+	}
+	tickets := map[int64]bool{}
+	for _, link := range links {
+		tickets[link.TicketSeq] = true
+		preview.DeviceCount += link.DeviceCount
+		if link.Claimed {
+			preview.ClaimedLinkCount++
+			preview.SourceLinkIDs = append(preview.SourceLinkIDs, link.ID)
+		}
+	}
+	preview.TicketCount = len(tickets)
+	if guestClaimed {
+		preview.AccessCodeAction = "keep_guest"
+		preview.SourceLinkIDs = []int64{}
+	} else if preview.ClaimedLinkCount > 0 {
+		preview.AccessCodeAction = "choice_required"
+	}
+	return preview
 }
