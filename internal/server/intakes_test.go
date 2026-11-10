@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"regexp"
 	"strings"
@@ -483,6 +484,66 @@ func Test设备属于已停用访客时入口按新访客处理(t *testing.T) {
 	s.Do(t, web, http.MethodGet, "/api/v1/guests", nil, &guests)
 	if len(guests.Guests) != 2 {
 		t.Fatalf("访客数量 = %d, 想 2", len(guests.Guests))
+	}
+}
+
+// Agent 拿到入口响应里的设备凭证后，也可以在同一设备语义下继续提交。
+func Test入口按响应设备凭证识别访客(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+
+	first := submitToIntake(t, s, "bug", map[string]any{
+		"title":       "Agent 第一次提交",
+		"fields":      bugFields(),
+		"author_name": "检验科 张三",
+	})
+	var second intakeSubmitBody
+	res := s.Do(t, s.AgentClient(first.DeviceToken), http.MethodPost, "/api/v1/intakes/bug/tickets", map[string]any{
+		"title":       "Agent 第二次提交",
+		"fields":      bugFields(),
+		"author_name": "张三",
+	}, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("带设备凭证提交状态码 = %d, 想 201", res.StatusCode)
+	}
+	tbtest.DecodeJSON(t, res, &second)
+	if second.Guest.ID != first.Guest.ID || second.DeviceToken != "" || second.AccessCode != "" {
+		t.Fatalf("带设备凭证的提交结果 = %+v, 想复用访客且不给新凭证", second)
+	}
+}
+
+// 入口幂等范围仍按入口划分：首次匿名提交后，Agent 带着拿到的设备凭证重放
+// 同一个 Idempotency-Key，也必须得到首次响应，而不是再建一张工单。
+func Test入口幂等重放不因设备凭证改变范围(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+
+	headers := map[string]string{"Idempotency-Key": "agent-retry"}
+	body := map[string]any{"title": "Agent 重试", "fields": bugFields(), "author_name": "检验科 张三"}
+	first := s.DoWithHeaders(t, s.NewClient(), http.MethodPost, "/api/v1/intakes/bug/tickets", headers, body, nil)
+	if first.StatusCode != http.StatusCreated {
+		t.Fatalf("首次提交状态码 = %d, 想 201", first.StatusCode)
+	}
+	firstBody := readAll(t, first)
+	var submitted intakeSubmitBody
+	if err := json.Unmarshal(firstBody, &submitted); err != nil {
+		t.Fatalf("解析首次响应失败：%v", err)
+	}
+
+	replay := s.DoWithHeaders(t, s.AgentClient(submitted.DeviceToken), http.MethodPost,
+		"/api/v1/intakes/bug/tickets", headers, body, nil)
+	if replay.StatusCode != http.StatusCreated {
+		t.Fatalf("带设备凭证重放状态码 = %d, 想 201", replay.StatusCode)
+	}
+	if got := readAll(t, replay); string(got) != string(firstBody) {
+		t.Fatalf("重放应逐字节返回首次结果：\n%s\n%s", firstBody, got)
+	}
+	if got := s.Do(t, web, http.MethodGet, "/api/v1/tickets/2", nil, nil); got.StatusCode != http.StatusNotFound {
+		t.Fatalf("重放不应再建单（/tickets/2 = %d, 想 404）", got.StatusCode)
 	}
 }
 

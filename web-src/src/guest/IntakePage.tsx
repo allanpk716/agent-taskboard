@@ -109,7 +109,7 @@ export function IntakePage({ slug }: { slug: string }) {
         headers: { 'Idempotency-Key': idemKeyRef.current },
         body: JSON.stringify({ title: t.trim(), fields: out, author_name: a.trim() }),
       })
-      saveGuestDeviceToken(result.guest_link.url.slice(3), result.device_token)
+      if (result.device_token) saveGuestDeviceToken(result.guest_link.url.slice(3), result.device_token)
       pendingRef.current = false
       idemKeyRef.current = undefined
       doneRef.current = true
@@ -303,7 +303,10 @@ export function IntakePage({ slug }: { slug: string }) {
     )
   }
   if (phase.kind === 'done') {
-    const url = absoluteUrl(phase.result.guest_link.url)
+    const result = phase.result
+    const url = absoluteUrl(result.guest_link.url)
+    const homeUrl = result.home_url ? absoluteUrl(result.home_url) : ''
+    const recognizedGuest = !result.access_code
     return (
       <>
         {banner}
@@ -312,27 +315,65 @@ export function IntakePage({ slug }: { slug: string }) {
             <div style={{ fontSize: 42 }}>✅</div>
             <h2>已提交，编号 {phase.result.ticket.number}</h2>
             <p>
-              这是你的专属链接，<b>请收藏或保存</b>，之后在这里查看回复、补充信息：
+              {recognizedGuest
+                ? `已识别为访客「${result.guest?.name ?? '你'}」。这条反馈的专属链接如下：`
+                : `已为「${result.guest?.name ?? '你'}」建立访客身份。这是这张反馈的专属链接：`}
             </p>
             <div className="linkbox">{url}</div>
-            <div className="linkbox mono" data-access-code>
-              {phase.result.access_code}
+            {homeUrl && (
+              <>
+                <p>
+                  你的访客主页地址如下，<b>请收藏或保存</b>；以后的新反馈也会列在那里：
+                </p>
+                <div className="linkbox">{homeUrl}</div>
+              </>
+            )}
+            {recognizedGuest ? (
+              <p className="muted">
+                这台设备已认领这位访客，本次不再显示新的访问码；换设备时仍使用原来保存的访问码。
+              </p>
+            ) : (
+              <>
+                <div className="linkbox mono" data-access-code>
+                  {result.access_code}
+                </div>
+                <p>
+                  <b>访问码只显示这一次</b>，请截图或记下来；丢失访问码请联系本部门：
+                  {result.department_contact || '请联系给你入口地址的部门'}
+                </p>
+              </>
+            )}
+            <div className="action-row">
+              <button type="button" className="btn" onClick={() => void navigator.clipboard?.writeText(url)}>
+                复制链接
+              </button>
+              {homeUrl && (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => void navigator.clipboard?.writeText(homeUrl)}
+                >
+                  复制主页
+                </button>
+              )}
             </div>
             <p>
-              <b>访问码只显示这一次</b>，请截图或记下来；丢失访问码请联系本部门：
-              {phase.result.department_contact || '请联系给你入口地址的部门'}
-            </p>
-            <button type="button" className="btn" onClick={() => void navigator.clipboard?.writeText(url)}>
-              复制链接
-            </button>
-            <p>
-              <a className="att-link" href={phase.result.guest_link.url}>
+              <a className="att-link" href={result.guest_link.url}>
                 打开这条反馈
               </a>
+              {homeUrl && (
+                <>
+                  {' '}
+                  ·{' '}
+                  <a className="att-link" href={result.home_url}>
+                    打开我的主页
+                  </a>
+                </>
+              )}
             </p>
             <p className="muted" style={{ fontSize: 13 }}>
               部门回复后，轮到你时页面顶部会显示「现在轮到你回复」。链接{' '}
-              {fmtDateCN(phase.result.guest_link.expires_at)}到期。
+              {fmtDateCN(result.guest_link.expires_at)}到期。
             </p>
           </div>
         </main>

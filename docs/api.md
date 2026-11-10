@@ -1206,11 +1206,17 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   - 提交**不要求**维度标签（GLOSSARY：入口提交是「至少一个维度标签」的唯一例外）；
     模板预设标签与维度字段选中的值自动打上。
   - 成功 `201`：`{ticket: {number, seq, title, url}, guest_link: {url, note, expires_at,
-    can_edit_brief: true}, device_token, access_code, claimed_at, department_contact, next}`；
+    can_edit_brief: true}, guest: {id, name}, home_url, device_token?, access_code?,
+    claimed_at?, department_contact, next}`；
     `guest_link.url` 是 `/g/<密钥>`（配置了 `[server] public_url` 时为绝对地址，评审 P2-7）。
-    链接在本次提交时即以 `author_name` 认领：浏览器同时收到 `tb_guest_device`
-    HttpOnly cookie，Agent 可用响应里的 `tbgd_` 设备凭证。访问码是 6 位数字，只在这一个
-    响应里出现一次；`department_contact` 供丢失访问码时联系本部门。
+    请求可带浏览器 `tb_guest_device` cookie，Agent 也可在 Bearer 里带以前拿到的
+    `tbgd_` 设备凭证。设备属于未停用的长期访客时，平台复用这位访客：新链接归她并
+    视为已认领，响应给新的 `guest_link.url` 与稳定 `home_url`，不给新的
+    `device_token` / `access_code` / `claimed_at`。否则（包括设备属于已停用访客）新建
+    `guest`（名字取 `author_name`）：链接在本次提交时即认领，浏览器同时收到
+    `tb_guest_device` HttpOnly cookie，Agent 可用响应里的 `tbgd_` 设备凭证；`home_url`
+    是 `/h/tbh_…`，访问码是 6 位数字，二者和设备凭证都只在这个响应里出现一次。
+    `department_contact` 供丢失访问码时联系本部门。
     工单类型由模板决定（恒为 `report`）；编号与序号的分配同建单。
   - 字段值中的 `att:` 引用会在建单事务里认领为「说明」附件，说明从第 1 版就带
     附件，不产生说明修订事件。只有 `uploader_intake_id` 等于本入口、

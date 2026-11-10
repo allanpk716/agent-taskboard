@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/tickets"
 )
 
@@ -310,6 +311,9 @@ func (a *API) submitToIntake(w http.ResponseWriter, r *http.Request, slug string
 		if cookie, err := r.Cookie(GuestDeviceCookieName); err == nil {
 			deviceToken = cookie.Value
 		}
+		if token, ok := bearerToken(r); ok && identity.IsGuestDeviceKey(token) {
+			deviceToken = token
+		}
 		in, err := a.tickets.ActiveIntakeBySlug(r.Context(), slug)
 		if err != nil {
 			a.writeIntakesError(w, r, err)
@@ -337,7 +341,11 @@ func (a *API) submitToIntake(w http.ResponseWriter, r *http.Request, slug string
 				Number: result.Ticket.Number, Seq: result.Ticket.Seq,
 				Title: result.Ticket.Title, URL: "/t/" + result.Ticket.Number,
 			},
-			Next: "之后用这条访客链接查看这张反馈、补充说明和回复；请收藏链接（也可以把它交给你的 Agent 作 Bearer token）",
+		}
+		if result.RecognizedGuest {
+			view.Next = "这台设备已识别为原访客；这张反馈已加入你的主页，链接也视为已认领，不再发放新的访问码"
+		} else {
+			view.Next = "之后用主页或这条链接查看这张反馈、补充说明和回复；访问码只显示这一次，设备凭证可交给你的 Agent 作 Bearer token"
 		}
 		view.GuestLink.URL = a.absURL("/g/" + result.LinkKey)
 		view.GuestLink.Note = result.LinkNote
