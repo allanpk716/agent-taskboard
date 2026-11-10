@@ -1011,7 +1011,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   已停用返回 409 `guest_disabled`，已并入返回 409 `guest_already_merged`。
   目标访客未认领而老链接已认领时，老链接的认领状态、访问码、失败计数、锁定状态和设备
   在同一事务里转给访客；目标访客已认领时，老链接自己的访问码与设备作废，改用访客凭证；
-  老链接未认领时直接归入并沿用访客当前状态。归属后这条链接不再有自己的凭证持有者。
+  老链接未认领时直接归入并沿用访客当前状态。归属后这条链接不再有自己的访问码和设备。
   已归属链接再归返回 409 `guest_link_already_assigned`（后续由访客合并处理改归）。
   成功返回列表项同构的链接视图。时间线写 `guest_link_assigned`，`actor` 是操作成员
   （或成员 Agent），`at` 为归属时刻，`note` 是链接备注快照，`to` 是目标访客名字快照，
@@ -1243,7 +1243,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
     claimed_at?, department_contact, next}`；
     `guest_link.url` 是 `/g/<密钥>`（配置了 `[server] public_url` 时为绝对地址，评审 P2-7）。
     请求可带浏览器 `tb_guest_device` cookie，Agent 也可在 Bearer 里带以前拿到的
-    `tbgd_` 设备凭证。设备属于未停用的长期访客时，平台复用这位访客：新链接归她并
+    `tbgd_` 设备凭证。设备属于未停用的长期访客时，平台复用这位访客：新链接归这位访客并
     视为已认领，响应给新的 `guest_link.url` 与稳定 `home_url`，不给新的
     `device_token` / `access_code` / `claimed_at`。否则（包括设备属于已停用访客）新建
     `guest`（名字取 `author_name`）：链接在本次提交时即认领，浏览器同时收到

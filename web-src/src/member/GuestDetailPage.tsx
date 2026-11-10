@@ -21,6 +21,7 @@ import {
   type GuestSummary,
 } from './memberApi'
 import { ResetAccessResultDialog } from './ResetAccessDialog'
+import { guestLinkStatusText } from './guestLinkStatus'
 import { Confirm, Modal, copyText, nav, toast } from './ui'
 import { absoluteUrl, fmtDateCN } from '../shared/format'
 
@@ -385,7 +386,9 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
                 {t.links.map((l) => (
                   <span className="hint" key={l.id}>
                     「{l.note}」{l.can_edit_brief ? ' · 可填写说明' : ''}
-                    {l.revoked_at ? ' · 已撤销' : ` · 到 ${fmtDateCN(l.expires_at)}`}
+                    {' · '}
+                    {guestLinkStatusText(l)}
+                    {!l.revoked_at ? ` · 到 ${fmtDateCN(l.expires_at)}` : ''}
                   </span>
                 ))}
               </div>
@@ -397,7 +400,7 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
       {confirmDisable && (
         <Confirm
           title="停用这位访客？"
-          body={`停用后「${guest.name}」的访客主页和名下全部链接一起失效，需要他补全说明的工单会回到指派人。各链接的撤销与有效期字段不改写；恢复后未过期的链接按原有效期重新生效。`}
+          body={`停用后「${guest.name}」的访客主页和名下全部链接一起失效，需要这位访客补全说明的工单会回到指派人。各链接的撤销与有效期字段不改写；恢复后未过期的链接按原有效期重新生效。`}
           yesLabel="停用"
           onYes={() => void toggleDisabled(false)}
           onCancel={() => setConfirmDisable(false)}

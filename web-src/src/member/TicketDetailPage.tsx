@@ -48,6 +48,7 @@ import { Confirm, Modal, copyText, invalidate, nav, toast, useLocationSearch } f
 import { HandoffDialog, PeerHandoffDialog, type HandoffPeer } from './HandoffDialog'
 import { ResetAccessDialog, type ResetAccessAction, type ResetAccessStart } from './ResetAccessDialog'
 import { GuestPicker, guestSelectionBody, type GuestSelection } from './GuestPicker'
+import { guestLinkStatusText } from './guestLinkStatus'
 import { LabelChips, chipClass, turnLabel } from './TicketsPage'
 import { detailListSource, filtersFromSearch, toQuery, toggleLabelCondition } from './listFilters'
 import { useLayoutTier } from './useLayoutTier'
@@ -625,16 +626,12 @@ function LinksDialog({
                   </td>
                   <td>
                     {fmtLinkExpiry(g.expires_at)}
-                    {g.revoked_at ? ' · 已撤销' : ''}
-                    {!g.revoked_at && linkExpired(g.expires_at) ? ' · 已过期' : ''}
+                    {' · '}
+                    {guestLinkStatusText(g)}
                     <div className="mini">
                       {g.status === 'claimed'
                         ? `已认领 · ${g.claim_name ?? ''} · ${g.claimed_at ? fmtShort(g.claimed_at) : ''} · ${g.device_count ?? 0} 台设备`
-                        : g.status === 'access_code_locked'
-                          ? `已认领 · ${g.claim_name ?? ''} · 输码已锁定`
-                        : g.status === 'revoked' || g.revoked_at
-                          ? '已认领状态不可用'
-                          : '未认领'}
+                        : guestLinkStatusText(g)}
                     </div>
                   </td>
                   <td>

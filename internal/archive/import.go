@@ -378,12 +378,12 @@ func validateImportTicket(meta manifestTicket, export ticketExport) error {
 		holderIDs.add(row["id"])
 		ownerType, _ := row["owner_type"].(string)
 		if ownerType == "guest_link" && !linkIDs.items[importInt(row, "owner_id")] {
-			return fmt.Errorf("%s 的访客凭证持有者关联到缺失链接", meta.Number)
+			return fmt.Errorf("%s 的访客链接凭证关联缺失", meta.Number)
 		}
 	}
 	for _, row := range export.GuestCredentialDevices {
 		if !holderIDs.items[importInt(row, "credential_holder_id")] {
-			return fmt.Errorf("%s 的访客设备关联到缺失凭证持有者", meta.Number)
+			return fmt.Errorf("%s 的访客设备关联缺失", meta.Number)
 		}
 	}
 	var attachmentBytes int64
@@ -704,7 +704,7 @@ func (s *Service) checkImportIDsTx(ctx context.Context, tx *sql.Tx, export ticke
 		if stringValue(row["owner_type"]) == "guest" {
 			continue
 		}
-		refs = append(refs, idRef{"guest_credential_holders", importInt(row, "id"), "访客凭证持有者 ID 已被平台使用"})
+		refs = append(refs, idRef{"guest_credential_holders", importInt(row, "id"), "访客凭证 ID 已被平台使用"})
 	}
 	guestHolderIDs := guestHolderIDSet(export)
 	for _, row := range export.GuestCredentialDevices {

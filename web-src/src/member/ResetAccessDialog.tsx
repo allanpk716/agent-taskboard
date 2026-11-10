@@ -16,6 +16,7 @@ import {
   type GuestLink,
 } from './memberApi'
 import { Modal, copyText, toast } from './ui'
+import { guestLinkStatusText } from './guestLinkStatus'
 
 export type ResetAccessAction = 'code' | 'link' | 'home' | 'revoke'
 
@@ -47,11 +48,6 @@ function remainingDays(iso: string): number {
 
 function claimedLink(link: GuestLink): boolean {
   return !!link.claimed_at || link.status === 'claimed' || link.status === 'access_code_locked'
-}
-
-function statusText(link: GuestLink): string {
-  if (claimedLink(link)) return `已认领 · ${link.claim_name ?? ''}`
-  return '未认领'
 }
 
 function expiryDate(iso: string): string {
@@ -368,7 +364,7 @@ export function ResetAccessDialog({
                 <span className="reset-option-title">
                   <span>{link.guest_name || link.note}</span>
                   <span className={`reset-chip ${claimedLink(link) ? 'claimed' : 'unclaimed'}`}>
-                    {statusText(link)}
+                    {guestLinkStatusText(link)}
                   </span>
                 </span>
                 <span className="reset-meta">
@@ -523,7 +519,7 @@ export function ResetAccessDialog({
             <div className="reset-option-title">
               <span>{selected.guest_name || selected.note}</span>
               <span className={`reset-chip ${selectedClaimed ? 'claimed' : 'unclaimed'}`}>
-                {statusText(selected)}
+                {guestLinkStatusText(selected)}
               </span>
             </div>
             <div className="reset-meta">
