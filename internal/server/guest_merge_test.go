@@ -46,6 +46,8 @@ func Test合并访客后链接改归且B凭证全部失效(t *testing.T) {
 	if res := reply(t, s, bDevice, bTicket, "合并前的历史回复"); res.StatusCode != http.StatusCreated {
 		t.Fatalf("合并前访客B回复状态码 = %d，想 201", res.StatusCode)
 	}
+	var beforeMergeNotices notificationsBody
+	s.Do(t, web, http.MethodGet, "/api/v1/notifications", nil, &beforeMergeNotices)
 
 	mergeBase := "/api/v1/guests/" + strconv.FormatInt(bLink.GuestID, 10) +
 		"/merge-into/" + strconv.FormatInt(aLink.GuestID, 10)
@@ -69,6 +71,11 @@ func Test合并访客后链接改归且B凭证全部失效(t *testing.T) {
 	if merged.SourceGuestID != bLink.GuestID || merged.TargetGuestID != aLink.GuestID ||
 		merged.LinkCount != 1 || merged.DeviceCount != 1 {
 		t.Fatalf("合并结果 = %+v，想返回 B 一条链接一台设备已处理", merged)
+	}
+	var afterMergeNotices notificationsBody
+	s.Do(t, web, http.MethodGet, "/api/v1/notifications", nil, &afterMergeNotices)
+	if len(afterMergeNotices.Items) != len(beforeMergeNotices.Items) {
+		t.Fatalf("合并访客不应发通知：%+v", afterMergeNotices.Items)
 	}
 
 	if res := s.Do(t, aDevice, http.MethodGet, "/api/v1/tickets/"+bTicket, nil, nil); res.StatusCode != http.StatusOK {
@@ -108,6 +115,16 @@ func Test合并访客后链接改归且B凭证全部失效(t *testing.T) {
 		map[string]any{"note": "不能再选 B", "guest_id": bLink.GuestID}); res.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("选择已并入访客建链接状态码 = %d，想 422", res.StatusCode)
 	}
+	legacyTicket := mustCreateTicket(t, s, web, "合并后的老链接")
+	legacy := s.CreateLegacyGuestLink(t, web, legacyTicket,
+		map[string]any{"note": "上线前的联系"})
+	res = s.Do(t, web, http.MethodPost,
+		"/api/v1/tickets/"+legacyTicket+"/guest-links/"+strconv.FormatInt(legacy.ID, 10)+"/assign-guest",
+		map[string]int64{"guest_id": bLink.GuestID}, nil)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("选择已并入访客归属老链接状态码 = %d，想 422", res.StatusCode)
+	}
+	assertErrorCode(t, res, "guest_not_found")
 
 	if res := reply(t, s, aDevice, bTicket, "合并后的新回复"); res.StatusCode != http.StatusCreated {
 		t.Fatalf("A 的设备在原 B 工单回复状态码 = %d，想 201", res.StatusCode)
