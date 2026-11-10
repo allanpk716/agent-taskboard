@@ -762,6 +762,7 @@ export interface GuestSummary {
   claim_name?: string
   access_code_locked_at?: string
   link_count: number
+  device_count: number
   created_at: string
 }
 
@@ -779,6 +780,8 @@ export interface GuestDetailTicket {
   number: string
   title: string
   status: string
+  waiting_on_guest: boolean
+  waiting_reason: string
   api: string
   links: GuestDetailLink[]
 }

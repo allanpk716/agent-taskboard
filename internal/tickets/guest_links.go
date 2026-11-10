@@ -526,6 +526,7 @@ type GuestInfo struct {
 	ClaimName          string
 	AccessCodeLockedAt *time.Time
 	LinkCount          int
+	DeviceCount        int
 	CreatedBy          Author
 	CreatedAt          time.Time
 }
@@ -550,6 +551,7 @@ func (m *Manager) guestsQuery(ctx context.Context, where string, args []any) ([]
 		SELECT gu.id, gu.name, gu.disabled_at, gu.merged_into_guest_id, gu.merged_at,
 		       h.claimed_at, h.claim_name, h.access_code_locked_at,
 		       (SELECT COUNT(*) FROM guest_links l WHERE l.guest_id = gu.id),
+		       (SELECT COUNT(*) FROM guest_credential_devices d WHERE d.credential_holder_id = h.id),
 		       gu.created_by_member_id, mm.name, aa.id, aa.name, aa.revoked_at, gu.created_at
 		FROM guests gu
 		JOIN guest_credential_holders h ON h.owner_type = 'guest' AND h.owner_id = gu.id
@@ -579,7 +581,7 @@ func (m *Manager) guestsQuery(ctx context.Context, where string, args []any) ([]
 		)
 		if err := rows.Scan(&info.ID, &info.Name, &disabledAt, &mergedInto, &mergedAt,
 			&claimedAt, &claimName, &lockedAt,
-			&info.LinkCount, &memberID, &memberName, &agentID, &agentName, &agentRevoked, &createdAt); err != nil {
+			&info.LinkCount, &info.DeviceCount, &memberID, &memberName, &agentID, &agentName, &agentRevoked, &createdAt); err != nil {
 			return nil, err
 		}
 		var err error
