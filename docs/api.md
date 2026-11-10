@@ -22,6 +22,8 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
   2. **成员 Agent**：`Authorization: Bearer <Agent token>`，token 由 `POST /api/v1/me/agent-tokens` 签发（前缀 `tbag_`）。ADR 0003：用 token 的操作一律署名为「某成员 的 Agent · 名字」，永远不算本人。
   3. **桌面客户端**：`Authorization: Bearer <客户端凭证>`（前缀 `tbc_`）。权限边界是 `client_scope`：只能调用通知接口、`GET /session`，以及撤销自己的 `DELETE /me/clients/self`；它不署名、不代表成员操作工单。
   4. **访客**：访客是部门级、长期存在的身份（#328），链接密钥（前缀 `tbg_`）只用于读取认领/输码页信息、执行认领和凭访问码进入；浏览器成功后使用同源设备凭证（Bearer 前缀 `tbgd_`，同时收到 HttpOnly cookie `tb_guest_device`）。访客 Agent 后续请求用组合凭证 `Authorization: Bearer tbg_<链接密钥>:<访问码>`。认领或输码作用于整个访客身份：这台设备对这位访客名下全部未撤销、未过期的链接可信，之后成员新加的链接也直接可信；换设备时在任一链接输一次访问码即可。
+  `tbg_<链接密钥>:<访问码>` 只作用于这条链接所在的那一张工单；主页组合凭证
+  `tbh_<主页密钥>:<访问码>` 才覆盖这位访客名下的全部有效工单。
 - 请求同时带 Bearer 和 cookie 时按 Bearer 解析，且解析失败不回退到 cookie：凭证坏了应当报错（401），而不是悄悄当作本人。Bearer 先按客户端凭证、成员 Agent token、访客设备凭证、`tbg_…:…` 访客 Agent 组合凭证、访客链接密钥的顺序解析。
 - 401 错误码：`unauthenticated`（未登录/会话过期）、`invalid_token`（Agent token 或访客链接密钥未知）、`link_revoked`（访客链接已撤销）、`link_expired`（访客链接已过期）。访客链接的撤销与过期即时生效：每个请求都实时查库（密钥只存哈希）。
 - 撤销 Agent token 立即生效：每次请求都实时查库校验（token 只存哈希，无状态 JWT 不可用）。
