@@ -167,8 +167,13 @@ func (a *API) copyGuestShareText(w http.ResponseWriter, r *http.Request, ref str
 		return
 	}
 	url := a.absURL("/g/" + link.Key)
+	homeURL := ""
+	if link.HomeKey != "" {
+		homeURL = a.absURL("/h/" + link.HomeKey)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"share_text": tickets.GuestShareText(link.DisplayName(), link.Title, url, link.ExpiresAt, link.Claimed),
+		"share_text": tickets.GuestShareText(link.DisplayName(), link.Title, url,
+			homeURL, link.HasHome, link.ExpiresAt, link.Claimed),
 	})
 }
 
@@ -190,8 +195,9 @@ func (a *API) rotateGuestLinkKey(w http.ResponseWriter, r *http.Request, ref str
 		}
 		url := a.absURL("/g/" + link.Key)
 		writeJSON(w, http.StatusOK, rotateGuestLinkResponse{
-			URL:        url,
-			ShareText:  tickets.GuestShareText(link.DisplayName(), link.Title, url, link.ExpiresAt, link.Claimed),
+			URL: url,
+			ShareText: tickets.GuestShareText(link.DisplayName(), link.Title, url,
+				"", link.HasHome, link.ExpiresAt, link.Claimed),
 			ResetText:  tickets.GuestLinkResetText(link.DisplayName(), link.Title, url, link.AccessCode, link.ExpiresAt),
 			AccessCode: link.AccessCode,
 			ExpiresAt:  link.ExpiresAt.Format(time.RFC3339Nano),

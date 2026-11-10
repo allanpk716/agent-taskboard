@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -34,7 +33,8 @@ func Test迁移保留老访客链接的设备凭证访问码和锁定状态(t *t
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if strings.HasPrefix(name, "0047_") || strings.HasPrefix(name, "0048_") {
+		var version int
+		if _, err := fmt.Sscanf(name, "%d_", &version); err != nil || version >= 47 {
 			continue
 		}
 		body, err := os.ReadFile(filepath.Join("migrations", name))
@@ -44,7 +44,6 @@ func Test迁移保留老访客链接的设备凭证访问码和锁定状态(t *t
 		if _, err := db.Exec(string(body)); err != nil {
 			t.Fatalf("执行旧迁移 %s 失败：%v", name, err)
 		}
-		var version int
 		if _, err := fmt.Sscanf(name, "%d_", &version); err != nil {
 			t.Fatal(err)
 		}

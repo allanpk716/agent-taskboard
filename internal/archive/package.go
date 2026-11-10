@@ -685,7 +685,8 @@ func exportGuests(ctx context.Context, q archiveQueryer, links []map[string]any)
 		return []map[string]any{}, nil
 	}
 	return queryObjects(ctx, q, `SELECT id, name, created_by_member_id, created_by_agent_id,
-		created_at, disabled_at FROM guests WHERE id IN (`+store.Placeholders(len(ids))+`)
+		created_at, disabled_at, home_key_hash, home_key_ciphertext
+		FROM guests WHERE id IN (`+store.Placeholders(len(ids))+`)
 		ORDER BY id`, ids...)
 }
 

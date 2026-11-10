@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -360,6 +361,11 @@ func Test归档导入完整恢复工单并保留访客链接(t *testing.T) {
 	beforeReplyDrafting := getArchiveRoundtripJSON(t, s, admin, "/api/v1/tickets/"+number+"/drafting/1")
 	beforeBriefDrafting := getArchiveRoundtripJSON(t, s, admin, "/api/v1/tickets/"+number+"/brief-drafting/2")
 	beforeGuestLinks := getArchiveRoundtripJSON(t, s, admin, "/api/v1/tickets/"+number+"/guest-links")
+	var beforeHome map[string]any
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/guests/"+fmt.Sprint(link.GuestID)+"/home-share-text", nil, &beforeHome); res.StatusCode != http.StatusOK {
+		t.Fatalf("归档前复制主页文案状态码 = %d，想 200", res.StatusCode)
+	}
 	beforeAccess := getArchiveRoundtripJSON(t, s, admin, "/api/v1/tickets/"+number+"/access-records")
 	beforeBriefAttachment := downloadArchiveAttachment(t, s, admin, beforeDetail, "现场记录.txt")
 	beforeReplyAttachment := downloadArchiveAttachment(t, s, admin, beforeDetail, "回复日志.txt")
@@ -399,6 +405,11 @@ func Test归档导入完整恢复工单并保留访客链接(t *testing.T) {
 	afterReplyDrafting := getArchiveRoundtripJSON(t, s, admin, "/api/v1/tickets/"+number+"/drafting/1")
 	afterBriefDrafting := getArchiveRoundtripJSON(t, s, admin, "/api/v1/tickets/"+number+"/brief-drafting/2")
 	afterGuestLinks := getArchiveRoundtripJSON(t, s, admin, "/api/v1/tickets/"+number+"/guest-links")
+	var afterHome map[string]any
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/guests/"+fmt.Sprint(link.GuestID)+"/home-share-text", nil, &afterHome); res.StatusCode != http.StatusOK {
+		t.Fatalf("归档导入后复制主页文案状态码 = %d，想 200", res.StatusCode)
+	}
 	afterBriefAttachment := downloadArchiveAttachment(t, s, admin, afterDetail, "现场记录.txt")
 	afterReplyAttachment := downloadArchiveAttachment(t, s, admin, afterDetail, "回复日志.txt")
 
@@ -407,6 +418,7 @@ func Test归档导入完整恢复工单并保留访客链接(t *testing.T) {
 	assertArchiveRoundtripEqual(t, "回复起草过程", beforeReplyDrafting, afterReplyDrafting)
 	assertArchiveRoundtripEqual(t, "说明起草过程", beforeBriefDrafting, afterBriefDrafting)
 	assertArchiveRoundtripEqual(t, "访客链接", beforeGuestLinks, afterGuestLinks)
+	assertArchiveRoundtripEqual(t, "访客主页", beforeHome, afterHome)
 	assertArchiveRoundtripEqual(t, "访问记录", beforeAccess, afterAccess)
 	if string(beforeBriefAttachment) != string(afterBriefAttachment) ||
 		string(beforeReplyAttachment) != string(afterReplyAttachment) {

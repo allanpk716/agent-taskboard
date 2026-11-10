@@ -15,6 +15,8 @@ type guestLinkResponse struct {
 	ID           int64   `json:"id"`
 	URL          string  `json:"url"`
 	Note         string  `json:"note"`
+	GuestID      int64   `json:"guest_id"`
+	GuestName    string  `json:"guest_name"`
 	ExpiresAt    string  `json:"expires_at"`
 	RevokedAt    *string `json:"revoked_at"`
 	CanEditBrief bool    `json:"can_edit_brief"`
@@ -148,9 +150,9 @@ func Test成员创建访客链接默认三十天并记入时间线(t *testing.T)
 	}
 }
 
-// 访客链接的密钥直接作 Bearer token：GET /api/session 返回链接指向的工单，
-// 访客由此知道该读哪张单（spec 用户故事 84）。
-func Test访客用链接密钥查明指向的工单(t *testing.T) {
+// 访客链接认领后升成长期身份：GET /api/session 返回访客身份与主页信息，
+// 不再假装设备凭证只指向最早一条链接（#329）。
+func Test访客会话返回长期身份与主页信息(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("陈工", "secret-pass")
 	web := s.Login("陈工", "secret-pass")
@@ -170,9 +172,13 @@ func Test访客用链接密钥查明指向的工单(t *testing.T) {
 				ID   int64
 				Name string
 			} `json:"agent"`
-			LinkNote      string `json:"link_note"`
-			LinkExpiresAt string `json:"link_expires_at"`
-			CanEditBrief  bool   `json:"can_edit_brief"`
+			Guest struct {
+				ID   int64  `json:"id"`
+				Name string `json:"name"`
+			} `json:"guest"`
+			Home struct {
+				API string `json:"api"`
+			} `json:"home"`
 		} `json:"viewer"`
 		Ticket struct {
 			Number string `json:"number"`
@@ -191,20 +197,14 @@ func Test访客用链接密钥查明指向的工单(t *testing.T) {
 	if sess.Viewer.Member != nil || sess.Viewer.Agent != nil {
 		t.Errorf("访客的 viewer 不应带成员或 Agent：%+v", sess.Viewer)
 	}
-	if sess.Viewer.LinkNote != "检验科-张三" {
-		t.Errorf("link_note = %q, 想 检验科-张三", sess.Viewer.LinkNote)
+	if sess.Viewer.Guest.ID != link.GuestID || sess.Viewer.Guest.Name != "检验科-张三" {
+		t.Errorf("viewer.guest = %+v，想链接归属的长期访客", sess.Viewer.Guest)
 	}
-	if want := link.ExpiresAt; sess.Viewer.LinkExpiresAt != want {
-		t.Errorf("link_expires_at = %q, 想 %q", sess.Viewer.LinkExpiresAt, want)
+	if sess.Viewer.Home.API != "/api/v1/guest-home" {
+		t.Errorf("viewer.home.api = %q，想 /api/v1/guest-home", sess.Viewer.Home.API)
 	}
-	if sess.Viewer.CanEditBrief {
-		t.Error("can_edit_brief 应为 false")
-	}
-	if sess.Ticket.Number != number || sess.Ticket.Seq != 1 || sess.Ticket.Title != "BH-7600CS 质控结果偏高" {
-		t.Errorf("链接指向的工单不对：%+v", sess.Ticket)
-	}
-	if sess.Ticket.API != "/api/v1/tickets/"+number {
-		t.Errorf("ticket.api = %q", sess.Ticket.API)
+	if sess.Ticket.Number != "" {
+		t.Errorf("长期访客会话不应回落到单张工单：%+v", sess.Ticket)
 	}
 
 	// 不认识的密钥：401 invalid_token（与 Agent token 同一出口）。

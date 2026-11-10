@@ -13,8 +13,12 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/guestcredentials"
 )
 
-// guestKeyPrefix 让访客链接密钥一眼可辨（与 Agent token 的 tbag_ 区分）。
-const guestKeyPrefix = "tbg_"
+// guestKeyPrefix / guestHomeKeyPrefix 让单条链接与主页密钥一眼可辨
+// （与 Agent token 的 tbag_ 区分）。
+const (
+	guestKeyPrefix     = "tbg_"
+	guestHomeKeyPrefix = "tbh_"
+)
 
 // 访客链接凭证状态错误；HTTP 层把它们映射成 401 link_revoked / link_expired。
 var (
@@ -26,6 +30,8 @@ var (
 	ErrLinkUnclaimed = errors.New("访客链接尚未认领")
 	// ErrLinkClaimed 表示访客链接已被第一位访客认领，链接密钥本身不再可访问。
 	ErrLinkClaimed = errors.New("访客链接已被认领")
+	// ErrHomeClaimed 表示访客主页已被认领，主页密钥本身不再可访问。
+	ErrHomeClaimed = errors.New("访客主页已被认领")
 )
 
 // LinkStatusError 携带被拒访客链接的身份信息，访问记录需要在返回 401 前取它。
@@ -68,6 +74,16 @@ func GuestLinkStatusOf(revokedAt, lockedAt, claimedAt *time.Time) GuestLinkStatu
 func (e *LinkStatusError) Error() string { return e.Err.Error() }
 func (e *LinkStatusError) Unwrap() error { return e.Err }
 
+// HomeStatusError 携带被拒主页的身份信息，HTTP 层据此返回认领或访问码状态。
+type HomeStatusError struct {
+	Home   GuestHome
+	Status GuestLinkStatus
+	Err    error
+}
+
+func (e *HomeStatusError) Error() string { return e.Err.Error() }
+func (e *HomeStatusError) Unwrap() error { return e.Err }
+
 // GuestLink 是凭证解析后的访客链接身份（Viewer.GuestLink）：
 // 备注链接创建者写；到期时刻与「可填写说明」权限决定访客能做什么。
 type GuestLink struct {
@@ -94,6 +110,15 @@ type Guest struct {
 	CredentialHolderID int64
 }
 
+// GuestHome 是主页密钥解析出的长期访客身份；主页本身没有有效期，
+// 状态只由访客停用与凭证认领决定。
+type GuestHome struct {
+	ID                 int64
+	Name               string
+	CredentialHolderID int64
+	ClaimName          string
+}
+
 // NewGuestKey 生成一条访客链接的密钥（明文）。明文只在创建响应里出现一次，
 // 库里只存哈希。
 func NewGuestKey() (string, error) {
@@ -102,6 +127,16 @@ func NewGuestKey() (string, error) {
 		return "", err
 	}
 	return guestKeyPrefix + base64URLEncode(buf), nil
+}
+
+// NewGuestHomeKey 生成一位访客的主页密钥（明文）。成员复制主页文案时服务端
+// 保存哈希与密文；明文可随文案重复还原，但只发给访客本人。
+func NewGuestHomeKey() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := randRead(buf); err != nil {
+		return "", err
+	}
+	return guestHomeKeyPrefix + base64URLEncode(buf), nil
 }
 
 // NewGuestDeviceKey 生成一台已认领设备的凭证明文，只在认领响应里出现一次。
@@ -117,22 +152,28 @@ func NewAccessCode() (string, error) {
 // IsGuestDeviceKey 用于凭证解析前的分派。
 func IsGuestDeviceKey(token string) bool { return strings.HasPrefix(token, "tbgd_") }
 
+// IsGuestHomeKey 用于认领接口在设备凭证与主页密钥之间分派。
+func IsGuestHomeKey(token string) bool { return strings.HasPrefix(token, guestHomeKeyPrefix) }
+
 // GuestAgentCredential 是访客 Agent 的 Bearer 凭证写法：链接密钥与访问码用冒号相连。
 type GuestAgentCredential struct {
 	Key        string
 	AccessCode string
+	Home       bool
 }
 
-// ParseGuestAgentCredential 识别 tbg_<密钥>:<访问码>；两者本身都不含冒号。
+// ParseGuestAgentCredential 识别 tbg_<链接密钥>:<访问码> 或
+// tbh_<主页密钥>:<访问码>；密钥与访问码本身都不含冒号。
 func ParseGuestAgentCredential(token string) (GuestAgentCredential, bool) {
-	if !strings.HasPrefix(token, guestKeyPrefix) {
+	home := strings.HasPrefix(token, guestHomeKeyPrefix)
+	if !home && !strings.HasPrefix(token, guestKeyPrefix) {
 		return GuestAgentCredential{}, false
 	}
 	key, code, ok := strings.Cut(token, ":")
 	if !ok || key == "" || code == "" {
 		return GuestAgentCredential{}, false
 	}
-	return GuestAgentCredential{Key: key, AccessCode: code}, true
+	return GuestAgentCredential{Key: key, AccessCode: code, Home: home}, true
 }
 
 // CredentialHash 返回凭证（Agent token 或访客链接密钥）的存储哈希。
@@ -235,6 +276,58 @@ func (m *Manager) GuestLinkForKey(ctx context.Context, key string) (GuestLink, e
 		return link, &LinkStatusError{Link: link, Status: GuestLinkClaimed, Err: ErrLinkClaimed}
 	}
 	return link, nil
+}
+
+// GuestHomeForKey 服务主页认领接口：主页密钥只在未认领时可作为入口；
+// 已认领后浏览器使用设备凭证，Agent 使用「主页密钥:访问码」。
+func (m *Manager) GuestHomeForKey(ctx context.Context, key string) (GuestHome, error) {
+	var (
+		home       GuestHome
+		disabledAt sql.NullString
+		claimedAt  sql.NullString
+		claimName  sql.NullString
+		lockedAt   sql.NullString
+	)
+	err := m.db.QueryRowContext(ctx, `
+		SELECT gu.id, gu.name, gu.disabled_at, h.id, h.claimed_at, h.claim_name, h.access_code_locked_at
+		FROM guests gu
+		JOIN guest_credential_holders h ON h.owner_type = 'guest' AND h.owner_id = gu.id
+		WHERE gu.home_key_hash = ?`, CredentialHash(key)).
+		Scan(&home.ID, &home.Name, &disabledAt, &home.CredentialHolderID, &claimedAt, &claimName, &lockedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return GuestHome{}, ErrInvalidCredentials
+	}
+	if err != nil {
+		return GuestHome{}, err
+	}
+	if disabledAt.Valid {
+		return GuestHome{}, ErrInvalidCredentials
+	}
+	home.ClaimName = claimName.String
+	var claimed *time.Time
+	if claimedAt.Valid {
+		at, err := time.ParseInLocation(time.RFC3339Nano, claimedAt.String, clock.Beijing)
+		if err != nil {
+			return GuestHome{}, err
+		}
+		claimed = &at
+	}
+	var locked *time.Time
+	if lockedAt.Valid {
+		at, err := time.ParseInLocation(time.RFC3339Nano, lockedAt.String, clock.Beijing)
+		if err != nil {
+			return GuestHome{}, err
+		}
+		locked = &at
+	}
+	switch GuestLinkStatusOf(nil, locked, claimed) {
+	case GuestLinkAccessLocked:
+		return home, &HomeStatusError{Home: home, Status: GuestLinkAccessLocked, Err: guestcredentials.ErrAccessCodeLocked}
+	case GuestLinkClaimed:
+		return home, &HomeStatusError{Home: home, Status: GuestLinkClaimed, Err: ErrHomeClaimed}
+	default:
+		return home, nil
+	}
 }
 
 // ViewerFromGuestDevice 解析浏览器记住的设备凭证。

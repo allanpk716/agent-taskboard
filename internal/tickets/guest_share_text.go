@@ -3,6 +3,7 @@ package tickets
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
@@ -13,6 +14,8 @@ import (
 // GuestLinkShare 是可再次生成转发文案所需的当前链接状态。
 type GuestLinkShare struct {
 	Key        string
+	HomeKey    string
+	HasHome    bool
 	Note       string
 	GuestID    int64
 	GuestName  string
@@ -44,8 +47,30 @@ func (m *Manager) RecoverGuestLink(ctx context.Context, viewer identity.Viewer, 
 	if err != nil {
 		return GuestLinkShare{}, ErrGuestShareTextUnavailable
 	}
+	homeKey := ""
+	// 已认领访客只需要知道“已在主页”，不重复暴露主页地址；未认领时才
+	// 附主页，让访客第一次就保存长期入口。
+	if row.GuestID != 0 && !row.ClaimedAt.Valid {
+		home, err := m.GuestHomeShare(ctx, row.GuestID)
+		// 服务端密钥丢失只影响“可重复恢复的密文”：不阻断链接本身的转发
+		// 文案；主页地址待重置主页密钥后恢复（#331）。
+		if err != nil && !errors.Is(err, ErrGuestShareTextUnavailable) &&
+			!errors.Is(err, ErrGuestLinkCipherUnavailable) {
+			return GuestLinkShare{}, err
+		}
+		if err == nil {
+			homeKey = home.Key
+		}
+		// 即使服务端密钥丢失导致主页地址暂时不可恢复，仍要告诉已认领访客
+		// 这张工单已经在他的主页上；主页地址由 #331 的重置主页恢复。
+		return GuestLinkShare{
+			Key: key, HomeKey: homeKey, HasHome: true, Note: row.Note, GuestID: row.GuestID,
+			GuestName: row.GuestName, Title: full.Title, ExpiresAt: row.ExpiresAtTime,
+			Claimed: row.ClaimedAt.Valid,
+		}, nil
+	}
 	return GuestLinkShare{
-		Key: key, Note: row.Note, GuestID: row.GuestID, GuestName: row.GuestName,
+		Key: key, HomeKey: homeKey, HasHome: row.GuestID != 0, Note: row.Note, GuestID: row.GuestID, GuestName: row.GuestName,
 		Title: full.Title, ExpiresAt: row.ExpiresAtTime, Claimed: row.ClaimedAt.Valid,
 	}, nil
 }
@@ -110,7 +135,7 @@ func (m *Manager) RotateGuestLinkKey(ctx context.Context, viewer identity.Viewer
 		return GuestLinkShare{}, err
 	}
 	return GuestLinkShare{
-		Key: key, Note: row.Note, GuestID: row.GuestID, GuestName: row.GuestName,
+		Key: key, HasHome: row.GuestID != 0, Note: row.Note, GuestID: row.GuestID, GuestName: row.GuestName,
 		Title: full.Title, ExpiresAt: row.ExpiresAtTime,
 		Claimed: row.ClaimedAt.Valid, AccessCode: accessCode,
 	}, nil
@@ -139,14 +164,23 @@ func (s GuestLinkShare) DisplayName() string {
 }
 
 // GuestShareText 生成面向访客的转发文案：称呼对方、当前标题、写详细并传
-// 日志照片、同一条链接、免登录与当前有效期；已认领时追加访问码提醒。
-func GuestShareText(note, title, url string, expiresAt time.Time, claimed bool) string {
+// 日志照片、同一条链接、免登录与当前有效期。未认领时附主页地址；已认领时
+// 只提示这张工单已在主页，不再重复暴露主页凭证。
+func GuestShareText(note, title, linkURL, homeURL string, hasHome bool, expiresAt time.Time, claimed bool) string {
 	text := note + "：想请你帮忙反馈「" + title + "」的详细情况。打开这个链接，按提示把情况写具体一些" +
-		"（什么时候、做了什么、看到什么），可以上传日志和照片：" + url +
+		"（什么时候、做了什么、看到什么），可以上传日志和照片：" + linkURL +
 		"。不用登录，有效期至 " + expiresAt.In(clock.Beijing).Format("2006-01-02") +
 		"。链接只归第一位打开并确认的人，请不要转发"
 	if claimed {
-		text += "。换了设备需要输入当初的访问码，忘了请找我重置"
+		if hasHome {
+			text += "。这张工单已加到你的主页。换了设备需要输入当初的访问码，忘了请找我重置"
+		} else {
+			text += "。换了设备需要输入当初的访问码，忘了请找我重置"
+		}
+		return text
+	}
+	if homeURL != "" {
+		text += "。你的主页：" + homeURL + " ，第一次打开任一链接或主页都会认领你的全部工单，访问码只显示一次，请保存"
 	}
 	return text
 }

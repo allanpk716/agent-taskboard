@@ -480,6 +480,8 @@ type GuestLink struct {
 	ID           int64  `json:"id"`
 	URL          string `json:"url"`
 	Note         string `json:"note"`
+	GuestID      int64  `json:"guest_id"`
+	GuestName    string `json:"guest_name"`
 	ExpiresAt    string `json:"expires_at"`
 	CanEditBrief bool   `json:"can_edit_brief"`
 }

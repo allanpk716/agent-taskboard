@@ -321,8 +321,10 @@ func Test备份恢复覆盖访客与访客级凭证(t *testing.T) {
 		 assignee_id, created_at, last_change)
 		 VALUES (1,'20261102-001','task','备份访客身份','open','说明',1,1,
 		         '2026-11-02T09:00:00+08:00',1)`,
-		`INSERT INTO guests (id, name, created_by_member_id, created_at)
-		 VALUES (1,'检验科-张三',1,'2026-11-02T09:00:00+08:00')`,
+		`INSERT INTO guests (id, name, created_by_member_id, created_at,
+		                     home_key_hash, home_key_ciphertext)
+		 VALUES (1,'检验科-张三',1,'2026-11-02T09:00:00+08:00',
+		         'home-key-hash','home-key-ciphertext')`,
 		`INSERT INTO guest_links (id, ticket_seq, guest_id, key_hash, note, expires_at,
 		                         can_edit_brief, created_by_member_id, created_at)
 		 VALUES (1,1,1,'key-hash','请补充','2099-01-01T00:00:00+08:00',1,1,
@@ -371,6 +373,12 @@ func Test备份恢复覆盖访客与访客级凭证(t *testing.T) {
 	var guestName string
 	if err := restored.DB.QueryRow(`SELECT name FROM guests WHERE id = 1`).Scan(&guestName); err != nil || guestName != "检验科-张三" {
 		t.Fatalf("恢复后的访客 = %q (err=%v)，想 检验科-张三", guestName, err)
+	}
+	var homeHash, homeCipher string
+	if err := restored.DB.QueryRow(
+		`SELECT home_key_hash, home_key_ciphertext FROM guests WHERE id = 1`).
+		Scan(&homeHash, &homeCipher); err != nil || homeHash != "home-key-hash" || homeCipher != "home-key-ciphertext" {
+		t.Fatalf("恢复后的主页密钥 = %q/%q (err=%v)，想原哈希与密文", homeHash, homeCipher, err)
 	}
 	idm := identity.NewManager(restored.DB, clock.NewFake(beijing(2026, 11, 2, 12, 0, 0)))
 	viewer, err := idm.ViewerFromGuestDevice(ctx, claim.DeviceToken)
