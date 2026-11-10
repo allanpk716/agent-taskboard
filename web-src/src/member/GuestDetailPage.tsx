@@ -9,6 +9,7 @@ import {
   enableGuest,
   fetchGuestDetail,
   fetchGuests,
+  fetchUnassignedGuestLinks,
   mergeGuest,
   previewGuestMerge,
   previewGuestAccessCodeReset,
@@ -19,6 +20,7 @@ import {
   type GuestDetail,
   type GuestMergePreview,
   type GuestSummary,
+  type UnassignedGuestLink,
 } from './memberApi'
 import { ResetAccessResultDialog } from './ResetAccessDialog'
 import { guestLinkStatusText } from './guestLinkStatus'
@@ -54,6 +56,7 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
     accessCode?: string
     resetText: string
   } | null>(null)
+  const [possibleLinks, setPossibleLinks] = useState<UnassignedGuestLink[]>([])
 
   const refresh = useCallback(() => {
     fetchGuestDetail(id)
@@ -64,6 +67,25 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  // 工单标签只提示名字相近且当前成员可见的无主老链接；推荐不自动归属。
+  useEffect(() => {
+    if (!detail || detail.guest.disabled_at || detail.guest.merged_at) {
+      setPossibleLinks([])
+      return
+    }
+    let alive = true
+    fetchUnassignedGuestLinks({ name: detail.guest.name })
+      .then((links) => {
+        if (alive) setPossibleLinks(links.filter((link) => link.possible_person))
+      })
+      .catch(() => {
+        if (alive) setPossibleLinks([])
+      })
+    return () => {
+      alive = false
+    }
+  }, [detail])
 
   // 打开重置访问码确认时先取影响预览（作废设备数 / 涉及工单数）。
   useEffect(() => {
@@ -331,6 +353,21 @@ export function GuestDetailPage({ guestId }: { guestId: string }) {
 
       {tab === 'tickets' && (
         <div className="mcard" role="tabpanel" data-testid="guest-panel-tickets">
+          {possibleLinks.length > 0 && (
+            <div className="guest-possible-links" data-testid="guest-possible-links">
+              <span>
+                还有 {possibleLinks.length} 条老工单可能是 TA 的 →{' '}
+              </span>
+              <button className="btn ghost" onClick={() => nav(`/guests/${id}/assign`)}>
+                归进来
+              </button>
+            </div>
+          )}
+          <div className="actrow guest-import-old">
+            <button className="btn ghost" onClick={() => nav(`/guests/${id}/assign`)}>
+              把以前的工单归进来
+            </button>
+          </div>
           <div className="sec-t" style={{ marginTop: 0 }}>
             名下工单{' '}
             <span className="hint">

@@ -15,6 +15,7 @@ export type Route =
   | { page: 'tools' }
   | { page: 'guests' }
   | { page: 'guestDetail'; id: string }
+  | { page: 'guestAssign'; id: string }
   | { page: 'me' }
   | { page: 'templates' }
   | { page: 'templateEdit'; key: string }
@@ -26,8 +27,12 @@ export function parseRoute(pathname: string): Route {
     return { page: 'draft', id: decodeURIComponent(pathname.slice('/drafts/'.length)) }
   if (pathname.startsWith('/templates/'))
     return { page: 'templateEdit', key: decodeURIComponent(pathname.slice('/templates/'.length)) }
-  if (pathname.startsWith('/guests/'))
-    return { page: 'guestDetail', id: decodeURIComponent(pathname.slice('/guests/'.length)) }
+  if (pathname.startsWith('/guests/')) {
+    const rest = pathname.slice('/guests/'.length).split('/')
+    if (rest.length === 2 && rest[1] === 'assign' && rest[0])
+      return { page: 'guestAssign', id: decodeURIComponent(rest[0]) }
+    if (rest.length === 1 && rest[0]) return { page: 'guestDetail', id: decodeURIComponent(rest[0]) }
+  }
   if (pathname === '/guests') return { page: 'guests' }
   if (pathname === '/templates') return { page: 'templates' }
   if (pathname === '/tickets') return { page: 'tickets' }
