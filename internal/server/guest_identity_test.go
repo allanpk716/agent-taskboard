@@ -131,9 +131,36 @@ func Test成员与Agent能列出并搜索部门访客名单(t *testing.T) {
 		}
 	}
 
+	// 成员 Agent 建链接时也能按 guest_id 选已有访客。
+	var guestID int64
+	if l := listGuestLinks(t, s, web, number); len(l.Links) > 0 {
+		guestID = l.Links[0].GuestID
+	}
+	if guestID == 0 {
+		t.Fatal("测试缺少已建访客")
+	}
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	res := s.Do(t, agent, http.MethodPost, "/api/v1/tickets/"+number+"/guest-links",
+		map[string]any{"note": "Agent 选已有访客", "guest_id": guestID}, &created)
+	if res.StatusCode != http.StatusCreated || created.ID == 0 {
+		t.Fatalf("成员 Agent 按访客 id 建链接 = %d/%+d，想 201", res.StatusCode, created.ID)
+	}
+	agentLinks := listGuestLinks(t, s, agent, number)
+	found := false
+	for _, l := range agentLinks.Links {
+		if l.ID == created.ID && l.GuestName == "检验科-张三" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("成员 Agent 建的链接未归属所选访客：%+v", agentLinks.Links)
+	}
+
 	guest := s.GuestClient(guestKeyOf(t, mustCreateGuestLink(t, s, web, number,
 		map[string]any{"note": "访客自查", "new_guest_name": "检验科-李四"})))
-	res := s.Do(t, guest, http.MethodGet, "/api/v1/guests", nil, nil)
+	res = s.Do(t, guest, http.MethodGet, "/api/v1/guests", nil, nil)
 	if res.StatusCode != http.StatusForbidden {
 		t.Fatalf("访客读取名单状态码 = %d，想 403", res.StatusCode)
 	}
