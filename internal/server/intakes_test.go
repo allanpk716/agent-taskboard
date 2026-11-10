@@ -362,6 +362,83 @@ func Test新设备经入口新建访客并可凭主页进入(t *testing.T) {
 	}
 }
 
+// 同一台已认领设备再次走反馈入口：新反馈归原访客，链接视为已认领；
+// 不再产生新访客、设备凭证或访问码，原访问码仍可进入主页。
+func Test已认领设备再次经入口提交复用访客(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+	createIntake(t, s, web, map[string]any{"slug": "bug", "name": "部门 Bug 反馈", "template": "bug-report"})
+
+	first := submitToIntake(t, s, "bug", map[string]any{
+		"title":       "第一张反馈",
+		"fields":      bugFields(),
+		"author_name": "检验科 张三",
+	})
+	client := s.GuestCookieClient(first.DeviceToken)
+	res := s.Do(t, client, http.MethodPost, "/api/v1/intakes/bug/tickets", map[string]any{
+		"title":       "第二张反馈",
+		"fields":      bugFields(),
+		"author_name": "张三",
+	}, nil)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("同一设备再次提交状态码 = %d, 想 201", res.StatusCode)
+	}
+	var second intakeSubmitBody
+	tbtest.DecodeJSON(t, res, &second)
+	if second.Guest.ID != first.Guest.ID || second.Guest.Name != first.Guest.Name {
+		t.Fatalf("第二次提交访客 = %+v, 想复用 %+v", second.Guest, first.Guest)
+	}
+	if second.DeviceToken != "" || second.AccessCode != "" {
+		t.Fatalf("已识别访客不应得到新凭证或访问码：%+v", second)
+	}
+	if second.HomeURL != first.HomeURL {
+		t.Fatalf("主页地址应保持稳定：%q / %q", first.HomeURL, second.HomeURL)
+	}
+
+	var guests struct {
+		Guests []struct {
+			ID int64 `json:"id"`
+		} `json:"guests"`
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/guests", nil, &guests)
+	if len(guests.Guests) != 1 {
+		t.Fatalf("访客数量 = %d, 想 1", len(guests.Guests))
+	}
+
+	key := second.GuestLink.URL[strings.LastIndex(second.GuestLink.URL, "/g/")+len("/g/"):]
+	if got := s.Do(t, s.AgentClient(key), http.MethodGet,
+		"/api/v1/tickets/"+second.Ticket.Number, nil, nil); got.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("单凭新链接读工单状态码 = %d, 想 401（已视为认领）", got.StatusCode)
+	}
+	homeKey := first.HomeURL[strings.LastIndex(first.HomeURL, "/h/")+len("/h/"):]
+	var entered struct {
+		DeviceToken string `json:"device_token"`
+	}
+	res = s.Do(t, s.AgentClient(homeKey), http.MethodPost, "/api/v1/guest-home/enter",
+		map[string]string{"access_code": first.AccessCode}, &entered)
+	if res.StatusCode != http.StatusCreated || entered.DeviceToken == "" {
+		t.Fatalf("原访问码进入主页 = %d/%+v, 想 201 且有设备凭证", res.StatusCode, entered)
+	}
+	var home struct {
+		Tickets []struct {
+			Number string `json:"number"`
+		} `json:"tickets"`
+	}
+	res = s.Do(t, s.GuestCookieClient(entered.DeviceToken), http.MethodGet, "/api/v1/guest-home", nil, &home)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("读取主页状态码 = %d, 想 200", res.StatusCode)
+	}
+	foundFirst, foundSecond := false, false
+	for _, item := range home.Tickets {
+		foundFirst = foundFirst || item.Number == first.Ticket.Number
+		foundSecond = foundSecond || item.Number == second.Ticket.Number
+	}
+	if !foundFirst || !foundSecond {
+		t.Fatalf("主页应包含两张反馈：%+v", home.Tickets)
+	}
+}
+
 // 成员创建反馈入口（绑定反馈类型的模板）；匿名打开入口拿到最新版模板与
 // 维度候选值；不存在的入口 404 intake_not_found；管理入口只对成员开放。
 func Test成员创建反馈入口匿名读到模板与维度候选值(t *testing.T) {

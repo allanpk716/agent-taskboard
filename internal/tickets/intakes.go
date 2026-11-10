@@ -324,6 +324,7 @@ type SubmissionResult struct {
 	GuestID           int64
 	GuestName         string
 	HomeKey           string
+	RecognizedGuest   bool
 	ExpiresAt         time.Time
 	DeviceToken       string
 	AccessCode        string
@@ -455,7 +456,7 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	}
 
 	// 提交者对应一位长期访客：新设备当场新建；设备已认领某位访客时复用她。
-	guestID, guestName, holderID, home, err := m.intakeGuestTx(ctx, tx, intake, in, authorName, now)
+	guestID, guestName, holderID, home, recognized, err := m.intakeGuestTx(ctx, tx, intake, in, authorName, now)
 	if err != nil {
 		return SubmissionResult{}, err
 	}
@@ -525,21 +526,23 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	result := SubmissionResult{
 		Ticket:  t,
 		LinkKey: key, LinkID: linkID, LinkNote: note,
-		GuestID: guestID, GuestName: guestName, HomeKey: home.Key,
+		GuestID: guestID, GuestName: guestName, HomeKey: home.Key, RecognizedGuest: recognized,
 		ExpiresAt: now.Add(30 * 24 * time.Hour),
 	}
-	claim, err := m.ClaimGuestLink(ctx, identity.GuestLink{
-		ID: linkID, TicketSeq: t.Seq, Note: note,
-		GuestID: guestID, GuestName: guestName,
-		ExpiresAt: result.ExpiresAt, CanEditBrief: true,
-		CredentialHolderID: holderID,
-	}, authorName)
-	if err != nil {
-		return SubmissionResult{}, err
+	if !result.RecognizedGuest {
+		claim, err := m.ClaimGuestLink(ctx, identity.GuestLink{
+			ID: linkID, TicketSeq: t.Seq, Note: note,
+			GuestID: guestID, GuestName: guestName,
+			ExpiresAt: result.ExpiresAt, CanEditBrief: true,
+			CredentialHolderID: holderID,
+		}, authorName)
+		if err != nil {
+			return SubmissionResult{}, err
+		}
+		result.DeviceToken = claim.DeviceToken
+		result.AccessCode = claim.AccessCode
+		result.ClaimedAt = claim.ClaimedAt
 	}
-	result.DeviceToken = claim.DeviceToken
-	result.AccessCode = claim.AccessCode
-	result.ClaimedAt = claim.ClaimedAt
 	result.DepartmentContact = intake.DepartmentContact
 	return result, nil
 }
@@ -548,7 +551,20 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 // 访客，并确保她有主页密钥；已认领设备复用访客的逻辑由后续分支接入。
 func (m *Manager) intakeGuestTx(ctx context.Context, tx *sql.Tx, intake Intake,
 	in SubmissionInput, authorName string, now time.Time) (guestID int64, guestName string,
-	holderID int64, home GuestHomeShare, err error) {
+	holderID int64, home GuestHomeShare, recognized bool, err error) {
+	if in.DeviceToken != "" {
+		resolved, resolveErr := guestcredentials.ResolveDevice(ctx, tx, in.DeviceToken)
+		if resolveErr != nil && !errors.Is(resolveErr, guestcredentials.ErrDeviceNotFound) {
+			return 0, "", 0, GuestHomeShare{}, false, resolveErr
+		}
+		if resolveErr == nil && resolved.OwnerType == guestcredentials.OwnerTypeGuest && resolved.Guest != nil {
+			home, homeErr := m.ensureGuestHomeKeyTx(ctx, tx, resolved.Guest.ID)
+			if homeErr != nil {
+				return 0, "", 0, GuestHomeShare{}, false, homeErr
+			}
+			return resolved.Guest.ID, resolved.Guest.Name, resolved.HolderID, home, true, nil
+		}
+	}
 	var agentID any
 	if intake.CreatedBy.AgentID != 0 {
 		agentID = intake.CreatedBy.AgentID
@@ -558,18 +574,18 @@ func (m *Manager) intakeGuestTx(ctx context.Context, tx *sql.Tx, intake Intake,
 		VALUES (?, ?, ?, ?) RETURNING id`,
 		authorName, intake.CreatedBy.MemberID, agentID, now.Format(time.RFC3339Nano)).
 		Scan(&guestID); err != nil {
-		return 0, "", 0, GuestHomeShare{}, fmt.Errorf("写入入口提交的访客失败：%w", err)
+		return 0, "", 0, GuestHomeShare{}, false, fmt.Errorf("写入入口提交的访客失败：%w", err)
 	}
 	guestName = authorName
 	holder, err := guestcredentials.CreateGuestHolder(ctx, tx, guestID, now)
 	if err != nil {
-		return 0, "", 0, GuestHomeShare{}, err
+		return 0, "", 0, GuestHomeShare{}, false, err
 	}
 	home, err = m.ensureGuestHomeKeyTx(ctx, tx, guestID)
 	if err != nil {
-		return 0, "", 0, GuestHomeShare{}, err
+		return 0, "", 0, GuestHomeShare{}, false, err
 	}
-	return guestID, guestName, holder.ID, home, nil
+	return guestID, guestName, holder.ID, home, false, nil
 }
 
 // reserveIntakeDailyTx 在建单事务里预留一个每日提交名额；达到上限时返回暂停错误。
