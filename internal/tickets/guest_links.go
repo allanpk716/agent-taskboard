@@ -533,6 +533,12 @@ func (m *Manager) Guests(ctx context.Context, query string) ([]GuestInfo, error)
 		where = " WHERE gu.name LIKE ? ESCAPE '\\'"
 		args = append(args, "%"+escapeLike(query)+"%")
 	}
+	return m.guestsQuery(ctx, where, args)
+}
+
+// guestsQuery 执行访客名单查询；where/args 由调用方拼好（名单搜索与按 id
+// 取详情共用同一份投影与扫描）。
+func (m *Manager) guestsQuery(ctx context.Context, where string, args []any) ([]GuestInfo, error) {
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT gu.id, gu.name, gu.disabled_at, h.claimed_at, h.claim_name, h.access_code_locked_at,
 		       (SELECT COUNT(*) FROM guest_links l WHERE l.guest_id = gu.id),

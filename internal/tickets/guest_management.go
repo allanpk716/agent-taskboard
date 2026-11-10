@@ -149,6 +149,9 @@ func (m *Manager) setGuestDisabled(ctx context.Context, viewer identity.Viewer, 
 	if err := tx.QueryRowContext(ctx,
 		`SELECT name, disabled_at FROM guests WHERE id = ?`, guestID).
 		Scan(&guestName, &disabledAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrGuestNotFound
+		}
 		return err
 	}
 	eventType := "guest_enabled"
@@ -223,14 +226,12 @@ func (m *Manager) setGuestDisabled(ctx context.Context, viewer identity.Viewer, 
 
 // guestByID 读取一位访客的名单信息（含停用状态）。
 func (m *Manager) guestByID(ctx context.Context, guestID int64) (GuestInfo, error) {
-	guests, err := m.Guests(ctx, "")
+	guests, err := m.guestsQuery(ctx, " WHERE gu.id = ?", []any{guestID})
 	if err != nil {
 		return GuestInfo{}, err
 	}
-	for _, g := range guests {
-		if g.ID == guestID {
-			return g, nil
-		}
+	if len(guests) == 1 {
+		return guests[0], nil
 	}
 	return GuestInfo{}, ErrGuestNotFound
 }

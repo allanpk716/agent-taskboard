@@ -292,6 +292,9 @@ func Test停用恢复访客凭证失效与轮次回指派人(t *testing.T) {
 	}
 
 	s.Clock().Advance(2 * time.Hour)
+	if res := setGuestDisabled(t, s, s.AgentClient(assigneeAgent), fillLink.GuestID, "enable"); res.StatusCode != http.StatusForbidden {
+		t.Fatalf("成员 Agent 恢复访客状态码 = %d，想 403", res.StatusCode)
+	}
 	if res := setGuestDisabled(t, s, admin, fillLink.GuestID, "enable"); res.StatusCode != http.StatusNoContent {
 		t.Fatalf("恢复访客状态码 = %d，想 204", res.StatusCode)
 	}
