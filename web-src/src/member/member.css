@@ -3627,9 +3627,10 @@ textarea.src {
   font-size: 15px;
 }
 
-/* 单独新建访客（#339）：单页渐进展开；#343 会在此基础上加勾选区与摘要栏。 */
+/* 单独新建访客（#339/#343）：单页渐进展开；名字之下是老工单勾选区与
+   访问码卡片，底部固定摘要栏一次确认“建立访客 + 归入老工单”。 */
 .guest-new-page {
-  padding-bottom: 40px;
+  padding-bottom: 178px;
 }
 .guest-similar {
   border: 1px solid #f0d9a8;
@@ -3680,6 +3681,37 @@ textarea.src {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.guest-new-summary {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 78px;
+  z-index: 44;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #dfe6f2;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(20, 30, 50, 0.14);
+}
+.guest-new-summary-text {
+  color: #55607a;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+@media (min-width: 768px) {
+  .guest-new-page {
+    padding-bottom: 40px;
+  }
+  .guest-new-summary {
+    left: auto;
+    right: 24px;
+    bottom: 24px;
+    width: 340px;
+  }
 }
 
 /* 先选访客再建单（#340）：向导第一步的通讯录式选择、填写步顶部的“发给”
