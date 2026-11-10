@@ -235,8 +235,8 @@ func Test合并访客拒绝Agent非法目标与权限边界(t *testing.T) {
 	} {
 		parts := strings.SplitN(method, " ", 2)
 		res := s.Do(t, admin, parts[0], parts[1], nil, nil)
-		if res.StatusCode != http.StatusNotFound {
-			t.Fatalf("[%s] 操作已并入访客状态码 = %d，想 404", name, res.StatusCode)
+		if res.StatusCode != http.StatusConflict {
+			t.Fatalf("[%s] 操作已并入访客状态码 = %d，想 409", name, res.StatusCode)
 		}
 		assertErrorCode(t, res, "guest_already_merged")
 	}
