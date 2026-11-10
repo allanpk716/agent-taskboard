@@ -19,7 +19,7 @@ import (
 // 访客链接管理的校验错误；HTTP 层把它们映射成 4xx 错误码。
 var (
 	// ErrNoteRequired 表示创建访客链接时没写备注。
-	ErrNoteRequired = errors.New("访客链接需要备注，如「检验科-张三」")
+	ErrNoteRequired = errors.New("访客链接需要备注，如「补全质控说明」")
 	// ErrGuestRequired 表示创建访客链接时既没带已有访客，也没带新访客名字。
 	ErrGuestRequired = errors.New("创建访客链接需要选择一位已有访客，或填写新访客名字")
 	// ErrGuestBothProvided 表示已有访客与新访客名字同时出现（只能二选一）。
