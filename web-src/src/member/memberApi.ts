@@ -818,12 +818,7 @@ export interface GuestLinkAssignmentPreview {
   ticket_count: number
   claimed_link_count: number
   device_count: number
-  access_code_action:
-    | 'keep_guest'
-    | 'remain_unclaimed'
-    | 'choice_required'
-    | 'reuse_source_link'
-    | 'generate'
+  access_code_action: GuestAccessCodeAction
   source_link_ids: number[]
   source_link_id?: number
   source_device_count: number
@@ -834,12 +829,19 @@ export type GuestAccessCodeChoiceBody =
   | { source_link_id: number }
   | 'generate'
 
+export type GuestAccessCodeAction =
+  | 'keep_guest'
+  | 'remain_unclaimed'
+  | 'choice_required'
+  | 'reuse_source_link'
+  | 'generate'
+
 export interface GuestLinkAssignmentResult {
   guest_id: number
   guest_name: string
   link_count: number
   ticket_count: number
-  access_code_action: 'keep_guest' | 'remain_unclaimed' | 'reuse_source_link' | 'generate'
+  access_code_action: Exclude<GuestAccessCodeAction, 'choice_required'>
   access_code?: string
   links: Array<{ id: number; ticket_number: string; ticket_title: string }>
 }
@@ -1066,18 +1068,6 @@ export async function mergeGuest(
     method: 'POST',
     body: JSON.stringify({ target_guest_id: targetGuestId }),
     idempotencyKey: crypto.randomUUID(),
-  })
-}
-
-/** 把上线前的无主老链接归到已有访客或新建访客名下。 */
-export async function assignGuestLinkToGuest(
-  number: string,
-  id: number,
-  body: { guest_id?: number; new_guest_name?: string },
-): Promise<GuestLink> {
-  return api(`/api/v1/tickets/${encodeURIComponent(number)}/guest-links/${id}/assign-guest`, {
-    method: 'POST',
-    body: JSON.stringify(body),
   })
 }
 

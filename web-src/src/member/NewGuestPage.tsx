@@ -6,13 +6,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError } from '../api'
 import {
-  assignGuestLinks,
   copyGuestHomeText,
   createGuest,
   fetchGuests,
   fetchUnassignedGuestLinks,
-  type GuestAccessCodeChoiceBody,
-  type GuestLinkAssignmentResult,
   type GuestSummary,
   type UnassignedGuestLink,
 } from './memberApi'
@@ -22,21 +19,31 @@ import { GuestAssignConsequence } from './GuestAssignConsequence'
 import { GuestLegacyLinkPicker } from './GuestLegacyLinkPicker'
 import { guestCreatedAssignmentFailed } from './guestAssignmentFailure'
 import { copyText, nav, toast } from './ui'
+import { useGuestLinkAssignment } from './useGuestLinkAssignment'
 
 export function NewGuestPage() {
   const [name, setName] = useState('')
   const [guests, setGuests] = useState<GuestSummary[] | null>(null)
   const [guestsError, setGuestsError] = useState<string | null>(null)
   const [created, setCreated] = useState<GuestSummary | null>(null)
-  const [assigned, setAssigned] = useState<GuestLinkAssignmentResult | null>(null)
-  const [generatedCode, setGeneratedCode] = useState<string | null>(null)
   const [links, setLinks] = useState<UnassignedGuestLink[] | null>(null)
   const [linksError, setLinksError] = useState<string | null>(null)
-  const [selectedIds, setSelectedIds] = useState<number[]>([])
-  const [selectedSourceId, setSelectedSourceId] = useState<number | undefined>()
-  const [generateSelected, setGenerateSelected] = useState(false)
-  const [busy, setBusy] = useState(false)
+  const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const {
+    selectedIds,
+    setSelectedIds,
+    claimedSelectedLinks,
+    requiresChoice,
+    selectedSourceId,
+    generateSelected,
+    selectSource,
+    selectGenerate,
+    busy: assignmentBusy,
+    lastResult: assigned,
+    generatedCode,
+    submitAssignment,
+  } = useGuestLinkAssignment({ links, guestClaimed: false })
 
   useEffect(() => {
     let alive = true
@@ -88,53 +95,8 @@ export function NewGuestPage() {
     }
   }, [trimmed])
 
-  // 名字变了会重新拉列表；不再返回的链接从勾选里去掉。
-  useEffect(() => {
-    if (!links) return
-    setSelectedIds((current) => current.filter((id) => links.some((link) => link.id === id)))
-  }, [links])
-
-  const selectedLinks = useMemo(
-    () => (links ?? []).filter((link) => selectedIds.includes(link.id)),
-    [links, selectedIds],
-  )
-  const claimedSelectedLinks = useMemo(
-    () => selectedLinks.filter((link) => link.claimed),
-    [selectedLinks],
-  )
-  const requiresChoice = claimedSelectedLinks.length > 0
-
-  // 默认沿用最近使用过的已认领链接（与批量归属页同一规则）。
-  const latestSourceId = useMemo(() => {
-    const sorted = [...claimedSelectedLinks].sort((a, b) => {
-      const at = a.last_used_at ? Date.parse(a.last_used_at) : 0
-      const bt = b.last_used_at ? Date.parse(b.last_used_at) : 0
-      if (bt !== at) return bt - at
-      return b.id - a.id
-    })
-    return sorted[0]?.id
-  }, [claimedSelectedLinks])
-
-  useEffect(() => {
-    if (!claimedSelectedLinks.length) {
-      setSelectedSourceId(undefined)
-      setGenerateSelected(false)
-      return
-    }
-    if (generateSelected) return
-    if (!selectedSourceId || !claimedSelectedLinks.some((link) => link.id === selectedSourceId)) {
-      setSelectedSourceId(latestSourceId)
-    }
-  }, [claimedSelectedLinks, generateSelected, latestSourceId, selectedSourceId])
-
   const selectedSource = claimedSelectedLinks.find((link) => link.id === selectedSourceId)
-  const accessCodeChoice: GuestAccessCodeChoiceBody | undefined = requiresChoice
-    ? generateSelected
-      ? ('generate' as const)
-      : selectedSourceId
-        ? ({ source_link_id: selectedSourceId } as const)
-        : undefined
-    : undefined
+  const busy = creating || assignmentBusy
   const disableSubmit =
     !trimmed || busy || (requiresChoice && !generateSelected && !selectedSourceId)
 
@@ -153,16 +115,16 @@ export function NewGuestPage() {
 
   async function submit() {
     if (!trimmed || busy || disableSubmit) return
-    setBusy(true)
+    setCreating(true)
     setError(null)
     try {
       const { guest } = await createGuest(trimmed)
+      setCreating(false)
       if (selectedIds.length) {
         try {
-          const result = await assignGuestLinks(guest.id, selectedIds, accessCodeChoice)
+          const result = await submitAssignment(guest.id)
+          if (!result) return
           window.dispatchEvent(new Event('tb:invalidate'))
-          setAssigned(result)
-          if (result.access_code) setGeneratedCode(result.access_code)
         } catch (e) {
           guestCreatedAssignmentFailed(guest.id, guest.name, e)
           return
@@ -177,7 +139,7 @@ export function NewGuestPage() {
     } catch (e) {
       setError(e instanceof ApiError ? `${e.code}：${e.message}` : '建立访客失败，请稍后再试')
     } finally {
-      setBusy(false)
+      setCreating(false)
     }
   }
 
@@ -342,14 +304,8 @@ export function NewGuestPage() {
             sourceLinks={claimedSelectedLinks}
             selectedSourceId={selectedSourceId}
             generateSelected={generateSelected}
-            onSelectSource={(sourceId) => {
-              setGenerateSelected(false)
-              setSelectedSourceId(sourceId)
-            }}
-            onSelectGenerate={() => {
-              setGenerateSelected(true)
-              setSelectedSourceId(undefined)
-            }}
+            onSelectSource={selectSource}
+            onSelectGenerate={selectGenerate}
           />
           <GuestAssignConsequence
             guestName={trimmed}

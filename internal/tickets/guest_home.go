@@ -356,7 +356,7 @@ func (m *Manager) GuestHomeTickets(ctx context.Context, guestID int64) ([]GuestH
 			API: "/api/v1/tickets/" + full.Number, ReadOnly: full.Status == "closed",
 			ExpiresAt: links[seq].expires, CanEditBrief: links[seq].canEdit,
 		}
-		if turn.Party == "guest" && full.Status != "closed" {
+		if guestWaitingOn(turn, full) {
 			item.WaitingOn = true
 			item.Reason = guestHomeWaitingReason(turn)
 		}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -70,6 +71,12 @@ type GuestDetailResult struct {
 	Tickets []GuestDetailTicket
 }
 
+// guestWaitingOn 统一“这张工单当前轮到访客且仍可操作”的判断；已关闭工单
+// 即使轮次字段遗留 guest 也不算待访客处理。
+func guestWaitingOn(turn WaitingOn, full Full) bool {
+	return turn.Party == "guest" && full.Status != "closed"
+}
+
 // GuestDetail 返回访客的名字、认领与停用状态，以及名下在 viewer 可见范围内的
 // 工单和链接。部门共享的访客名单不能绕过工单可见范围（spec 用户故事 9）。
 func (m *Manager) GuestDetail(ctx context.Context, viewer identity.Viewer, guestID int64) (GuestDetailResult, error) {
@@ -126,7 +133,8 @@ func (m *Manager) GuestDetail(ctx context.Context, viewer identity.Viewer, guest
 		item := GuestDetailTicket{
 			Seq: full.Seq, Number: full.Number, Title: full.Title, Status: full.Status, Links: own,
 		}
-		if turn := WaitingOnOf(full, own, m.clk.Now()); turn.Party == "guest" && full.Status != "closed" {
+		turn := WaitingOnOf(full, own, m.clk.Now())
+		if guestWaitingOn(turn, full) {
 			item.WaitingOnGuest = true
 			item.WaitingReason = guestDetailWaitingReason(turn)
 		}
@@ -148,11 +156,9 @@ func guestDetailWaitingReason(turn WaitingOn) string {
 // sortGuestDetailTickets 让轮到访客的工单排最前（同组新工单在前），
 // 其他开启工单其次，已关闭工单最后；与访客主页的排序口径一致。
 func sortGuestDetailTickets(items []GuestDetailTicket) {
-	for i := 1; i < len(items); i++ {
-		for j := i; j > 0 && guestDetailTicketLess(items[j], items[j-1]); j-- {
-			items[j], items[j-1] = items[j-1], items[j]
-		}
-	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return guestDetailTicketLess(items[i], items[j])
+	})
 }
 
 func guestDetailTicketLess(a, b GuestDetailTicket) bool {

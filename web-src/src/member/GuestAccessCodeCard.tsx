@@ -1,12 +1,7 @@
 import type { ReactNode } from 'react'
-import type { UnassignedGuestLink } from './memberApi'
+import type { GuestAccessCodeAction, UnassignedGuestLink } from './memberApi'
 
-export type GuestAccessCodeCardMode =
-  | 'keep_guest'
-  | 'remain_unclaimed'
-  | 'choice_required'
-  | 'reuse_source_link'
-  | 'generate'
+export type GuestAccessCodeCardMode = GuestAccessCodeAction
 
 interface Props {
   mode: GuestAccessCodeCardMode
