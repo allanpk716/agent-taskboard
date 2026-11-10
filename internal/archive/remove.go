@@ -428,8 +428,10 @@ func (s *Service) removalState(ctx context.Context, tx *sql.Tx, numbers []string
 	attRows.Close()
 
 	hashRows, err := tx.QueryContext(ctx, `
-		SELECT l.ticket_seq, l.key_hash, d.token_hash FROM guest_links l
-		LEFT JOIN guest_devices d ON d.guest_link_id = l.id
+		SELECT l.ticket_seq, l.key_hash, d.token_hash
+		FROM guest_links l
+		JOIN guest_credential_holders h ON h.id = l.credential_holder_id
+		LEFT JOIN guest_credential_devices d ON d.credential_holder_id = h.id
 		WHERE l.ticket_seq IN (`+store.Placeholders(len(seqArgs))+`)`, seqArgs...)
 	if err != nil {
 		return removalSnapshot{}, err
@@ -557,7 +559,10 @@ func deleteTicketsTx(ctx context.Context, tx *sql.Tx, tickets []TicketSummary) e
 		`DELETE FROM ticket_reads WHERE ticket_seq IN (` + placeholder + `)`,
 		`DELETE FROM timeline_events WHERE ticket_seq IN (` + placeholder + `)`,
 		`DELETE FROM tickets WHERE seq IN (` + placeholder + `)`,
-		`DELETE FROM guest_devices WHERE guest_link_id IN (
+		`DELETE FROM guest_credential_devices WHERE credential_holder_id IN (
+			SELECT credential_holder_id FROM guest_links WHERE ticket_seq IN (` + placeholder + `))`,
+		`UPDATE guest_links SET credential_holder_id = NULL WHERE ticket_seq IN (` + placeholder + `)`,
+		`DELETE FROM guest_credential_holders WHERE owner_type = 'guest_link' AND owner_id IN (
 			SELECT id FROM guest_links WHERE ticket_seq IN (` + placeholder + `))`,
 		`DELETE FROM guest_links WHERE ticket_seq IN (` + placeholder + `)`,
 	} {

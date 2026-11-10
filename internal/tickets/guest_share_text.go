@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/guestcredentials"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 )
 
@@ -82,12 +83,6 @@ func (m *Manager) RotateGuestLinkKey(ctx context.Context, viewer identity.Viewer
 		return GuestLinkShare{}, ErrGuestLinkCipherUnavailable
 	}
 	accessCode := ""
-	if row.ClaimedAt.Valid {
-		accessCode, err = identity.NewAccessCode()
-		if err != nil {
-			return GuestLinkShare{}, err
-		}
-	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE guest_links SET key_hash = ?, key_ciphertext = ?
 		WHERE id = ? AND ticket_seq = ?`,
@@ -95,15 +90,11 @@ func (m *Manager) RotateGuestLinkKey(ctx context.Context, viewer identity.Viewer
 		return GuestLinkShare{}, err
 	}
 	if row.ClaimedAt.Valid {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM guest_devices WHERE guest_link_id = ?`, id); err != nil {
+		reset, err := guestcredentials.Reset(ctx, tx, row.HolderID, now)
+		if err != nil {
 			return GuestLinkShare{}, err
 		}
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE guest_links
-			SET access_code_hash = ?, access_code_failures = 0, access_code_locked_at = NULL
-			WHERE id = ?`, identity.CredentialHash(accessCode), id); err != nil {
-			return GuestLinkShare{}, err
-		}
+		accessCode = reset.AccessCode
 	}
 	if err := m.insertLinkEvent(ctx, tx, full.Seq, authorOf(viewer), "guest_link_rotated",
 		row.Note, "", now); err != nil {

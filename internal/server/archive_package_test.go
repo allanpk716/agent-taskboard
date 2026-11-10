@@ -87,14 +87,16 @@ type archiveManifestBody struct {
 }
 
 type archiveStructuredTicketBody struct {
-	Replies       []map[string]any `json:"replies"`
-	Attachments   []map[string]any `json:"attachments"`
-	Timeline      []map[string]any `json:"timeline"`
-	AccessRecords []map[string]any `json:"access_records"`
-	Collaborators []map[string]any `json:"collaborators"`
-	GuestLinks    []map[string]any `json:"guest_links"`
-	GuestDevices  []map[string]any `json:"guest_devices"`
-	TicketReads   []map[string]any `json:"ticket_reads"`
+	Replies                []map[string]any `json:"replies"`
+	Attachments            []map[string]any `json:"attachments"`
+	Timeline               []map[string]any `json:"timeline"`
+	AccessRecords          []map[string]any `json:"access_records"`
+	Collaborators          []map[string]any `json:"collaborators"`
+	GuestLinks             []map[string]any `json:"guest_links"`
+	GuestDevices           []map[string]any `json:"guest_devices"`
+	GuestCredentialHolders []map[string]any `json:"guest_credential_holders"`
+	GuestCredentialDevices []map[string]any `json:"guest_credential_devices"`
+	TicketReads            []map[string]any `json:"ticket_reads"`
 }
 
 type adminOperationBody struct {
@@ -327,7 +329,8 @@ func Test生成归档包可下载且校验和与Markdown有效(t *testing.T) {
 		t.Fatalf("结构化工单 JSON 无效：%v", err)
 	}
 	for _, key := range []string{"ticket", "brief_versions", "replies", "attachments", "timeline",
-		"drafts", "access_records", "labels", "collaborators", "guest_links", "guest_devices", "ticket_reads"} {
+		"drafts", "access_records", "labels", "collaborators", "guest_links", "guest_devices",
+		"guest_credential_holders", "guest_credential_devices", "ticket_reads"} {
 		if _, ok := rawStructured[key]; !ok {
 			t.Errorf("结构化工单 JSON 缺少 %s", key)
 		}
@@ -338,10 +341,13 @@ func Test生成归档包可下载且校验和与Markdown有效(t *testing.T) {
 	}
 	if len(structured.Replies) != 1 || len(structured.Attachments) != 1 ||
 		len(structured.Collaborators) != 1 || len(structured.GuestLinks) != 1 ||
-		len(structured.GuestDevices) != 1 || len(structured.TicketReads) != 1 {
-		t.Fatalf("结构化工单关联数据不完整：replies=%d attachments=%d collaborators=%d guest_links=%d guest_devices=%d ticket_reads=%d",
+		len(structured.GuestDevices) != 1 || len(structured.GuestCredentialHolders) != 1 ||
+		len(structured.GuestCredentialDevices) != 1 || len(structured.TicketReads) != 1 {
+		t.Fatalf("结构化工单关联数据不完整：replies=%d attachments=%d collaborators=%d guest_links=%d guest_devices=%d holders=%d credential_devices=%d ticket_reads=%d",
 			len(structured.Replies), len(structured.Attachments), len(structured.Collaborators),
-			len(structured.GuestLinks), len(structured.GuestDevices), len(structured.TicketReads))
+			len(structured.GuestLinks), len(structured.GuestDevices),
+			len(structured.GuestCredentialHolders), len(structured.GuestCredentialDevices),
+			len(structured.TicketReads))
 	}
 	for _, key := range []string{"id", "ticket_seq", "key_hash", "note", "expires_at", "revoked_at",
 		"can_edit_brief", "created_by_member_id", "created_by_agent_id", "created_at", "claimed_at",
@@ -353,6 +359,17 @@ func Test生成归档包可下载且校验和与Markdown有效(t *testing.T) {
 	for _, key := range []string{"id", "guest_link_id", "token_hash", "created_at", "entry_method"} {
 		if _, ok := structured.GuestDevices[0][key]; !ok {
 			t.Errorf("导出的访客设备缺少恢复列 %s：%+v", key, structured.GuestDevices[0])
+		}
+	}
+	for _, key := range []string{"id", "owner_type", "owner_id", "claimed_at", "claim_name",
+		"access_code_hash", "access_code_failures", "access_code_locked_at", "created_at"} {
+		if _, ok := structured.GuestCredentialHolders[0][key]; !ok {
+			t.Errorf("导出的访客凭证持有者缺少恢复列 %s：%+v", key, structured.GuestCredentialHolders[0])
+		}
+	}
+	for _, key := range []string{"id", "credential_holder_id", "token_hash", "created_at", "entry_method"} {
+		if _, ok := structured.GuestCredentialDevices[0][key]; !ok {
+			t.Errorf("导出的访客设备凭证缺少恢复列 %s：%+v", key, structured.GuestCredentialDevices[0])
 		}
 	}
 	markdownTarget := "attachments/" + log.ID + "/%E6%9C%8D%E5%8A%A1%E6%97%A5%E5%BF%97.txt"

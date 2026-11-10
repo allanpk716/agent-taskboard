@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
+	"github.com/allanpk716/agent-taskboard/internal/guestcredentials"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/template"
 )
@@ -460,6 +461,10 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 		intake.CreatedBy.MemberID, now.Format(time.RFC3339Nano)).Scan(&linkID); err != nil {
 		return SubmissionResult{}, fmt.Errorf("写入提交者的访客链接失败：%w", err)
 	}
+	holder, err := guestcredentials.CreateLinkHolder(ctx, tx, linkID, now)
+	if err != nil {
+		return SubmissionResult{}, err
+	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE tickets SET creator_link_id = ? WHERE seq = ?`, linkID, t.Seq); err != nil {
 		return SubmissionResult{}, err
@@ -517,6 +522,7 @@ func (m *Manager) SubmitToIntake(ctx context.Context, slug string, in Submission
 	claim, err := m.ClaimGuestLink(ctx, identity.GuestLink{
 		ID: linkID, TicketSeq: t.Seq, Note: note,
 		ExpiresAt: result.ExpiresAt, CanEditBrief: true,
+		CredentialHolderID: holder.ID,
 	}, authorName)
 	if err != nil {
 		return SubmissionResult{}, err
