@@ -71,12 +71,18 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
   表示名字相近（只是推荐，不要自动勾选）。确认一批后先用
   `GET {{BASE}}/api/v1/guests/<guest_id>/assign-links/preview?link_ids=1,2` 看影响，
   再带 `Idempotency-Key` 调 `POST {{BASE}}/api/v1/guests/<guest_id>/assign-links`，
-  请求体 `{"link_ids":[1,2]}`。
-- 批量归属的当前规则：目标访客已认领时保留 TA 的访问码，被归入链接原来的访问码和
+  请求体按预览结果补访问码选项。
+- 批量归属规则：目标访客已认领时保留 TA 的访问码，被归入链接原来的访问码和
   设备作废；目标访客未认领且所选链接都未认领时，访客保持未认领。这两种成功路径都
   不能带 `access_code`，否则 422 `access_code_choice_not_allowed`。目标访客未认领而
-  所选里有已认领链接时，本版本一律 422 `access_code_choice_required`，告诉主人这项
-  选择稍后在网页开放；不要伪造或猜测访问码。`link_ids` 为空、含非正数或重复 id 返回
+  所选里有已认领链接时必须二选一：沿用某条已认领链接则请求
+  `{"link_ids":[1,2], "access_code":{"source_link_id":1}}`，来源必须在所选且已认领，
+  其设备与访问码转给访客，其余旧凭证作废；缺少选项返回 422
+  `access_code_choice_required`，来源不在所选或未认领返回 422
+  `invalid_access_code_choice`。
+  **生成新的访问码不是你能做的**：`"generate"` 只接受主人本人在网页上的会话，
+  成员 Agent 会得到 403 `web_session_required`，也拿不到只显示一次的新码；请把这类
+  选择交回主人在网页完成，不要伪造或猜测访问码。`link_ids` 为空、含非正数或重复 id 返回
   422 `invalid_link_ids`；任一链接不可见 404 `guest_link_not_found`，已归属
   409 `guest_link_already_assigned`，已撤销或过期 422 `guest_link_not_assignable`。
   整批原子完成：任一失败时其他链接不会变化。

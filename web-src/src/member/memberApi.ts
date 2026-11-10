@@ -814,8 +814,16 @@ export interface GuestLinkAssignmentPreview {
   ticket_count: number
   claimed_link_count: number
   device_count: number
-  access_code_action: 'keep_guest' | 'remain_unclaimed' | 'choice_required'
+  access_code_action:
+    | 'keep_guest'
+    | 'remain_unclaimed'
+    | 'choice_required'
+    | 'reuse_source_link'
+    | 'generate'
   source_link_ids: number[]
+  source_link_id?: number
+  source_device_count: number
+  invalidated_device_count: number
 }
 
 export type GuestAccessCodeChoiceBody =
@@ -827,7 +835,8 @@ export interface GuestLinkAssignmentResult {
   guest_name: string
   link_count: number
   ticket_count: number
-  access_code_action: 'keep_guest' | 'remain_unclaimed'
+  access_code_action: 'keep_guest' | 'remain_unclaimed' | 'reuse_source_link' | 'generate'
+  access_code?: string
   links: Array<{ id: number; ticket_number: string; ticket_title: string }>
 }
 
@@ -903,16 +912,19 @@ export async function fetchUnassignedGuestLinks(
   return body.links as UnassignedGuestLink[]
 }
 
-/** 批量归属影响预览：访问码处理方式和将受影响的链接、设备数。 */
+/** 批量归属影响预览：choice_required 时带所选访问码方案，后果随选项变化。 */
 export async function previewGuestLinkAssignment(
   guestId: number,
   linkIds: number[],
+  accessCode?: GuestAccessCodeChoiceBody,
 ): Promise<GuestLinkAssignmentPreview> {
   const params = new URLSearchParams({ link_ids: linkIds.join(',') })
+  if (accessCode === 'generate') params.set('access_code', 'generate')
+  else if (accessCode) params.set('source_link_id', String(accessCode.source_link_id))
   return api(`/api/v1/guests/${guestId}/assign-links/preview?${params}`)
 }
 
-/** 批量归属无主老链接；#341 的两种成功路径都省略 access_code。 */
+/** 批量归属无主老链接；需要选择访问码时必须带 source_link_id 或 generate。 */
 export async function assignGuestLinks(
   guestId: number,
   linkIds: number[],

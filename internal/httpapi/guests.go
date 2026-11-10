@@ -392,17 +392,27 @@ func (a *API) previewGuestLinkAssignment(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return
 	}
-	preview, err := a.tickets.GuestLinkAssignmentPreview(r.Context(), viewer, id, ids)
-	if !a.writeGuestLinkAssignmentError(w, err, false) {
+	choice, ok := parseAssignLinkPreviewChoice(w, r)
+	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	preview, err := a.tickets.GuestLinkAssignmentPreview(r.Context(), viewer, id, ids, choice)
+	if !a.writeGuestLinkAssignmentError(w, err) {
+		return
+	}
+	body := map[string]any{
 		"guest_id": preview.GuestID, "guest_name": preview.GuestName,
 		"guest_claimed": preview.GuestClaimed, "link_count": preview.LinkCount,
 		"ticket_count": preview.TicketCount, "claimed_link_count": preview.ClaimedLinkCount,
 		"device_count": preview.DeviceCount, "access_code_action": preview.AccessCodeAction,
-		"source_link_ids": preview.SourceLinkIDs,
-	})
+		"source_link_ids":          preview.SourceLinkIDs,
+		"source_device_count":      preview.SourceDeviceCount,
+		"invalidated_device_count": preview.InvalidatedDeviceCount,
+	}
+	if preview.SourceLinkID != 0 {
+		body["source_link_id"] = preview.SourceLinkID
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 // assignGuestLinks 处理 POST /api/v1/guests/{id}/assign-links。
@@ -423,7 +433,7 @@ func (a *API) assignGuestLinks(w http.ResponseWriter, r *http.Request, id int64)
 	}
 	a.withIdempotency(w, r, func(w http.ResponseWriter, r *http.Request) {
 		result, err := a.tickets.AssignGuestLinks(r.Context(), viewer, id, req.LinkIDs, choice)
-		if !a.writeGuestLinkAssignmentError(w, err, true) {
+		if !a.writeGuestLinkAssignmentError(w, err) {
 			return
 		}
 		links := make([]map[string]any, 0, len(result.Links))
@@ -432,17 +442,22 @@ func (a *API) assignGuestLinks(w http.ResponseWriter, r *http.Request, id int64)
 				"id": link.ID, "ticket_number": link.TicketNumber, "ticket_title": link.TicketTitle,
 			})
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
+		body := map[string]any{
 			"guest_id": result.GuestID, "guest_name": result.GuestName,
 			"link_count": result.LinkCount, "ticket_count": result.TicketCount,
 			"access_code_action": result.AccessCodeAction, "links": links,
-		})
+		}
+		if result.AccessCode != "" {
+			body["access_code"] = result.AccessCode
+		}
+		writeJSON(w, http.StatusOK, body)
 	})
 }
 
 func parseAssignLinkIDsQuery(w http.ResponseWriter, r *http.Request) ([]int64, bool) {
 	query := r.URL.Query()
-	if apiErr := rejectUnknownParams(query, []string{"link_ids"}, ""); apiErr != nil {
+	if apiErr := rejectUnknownParams(query,
+		[]string{"link_ids", "source_link_id", "access_code"}, ""); apiErr != nil {
 		writeAPIError(w, apiErr)
 		return nil, false
 	}
@@ -473,6 +488,36 @@ func parseAssignLinkIDsQuery(w http.ResponseWriter, r *http.Request) ([]int64, b
 	return ids, true
 }
 
+func parseAssignLinkPreviewChoice(w http.ResponseWriter, r *http.Request) (tickets.GuestAccessCodeChoice, bool) {
+	query := r.URL.Query()
+	rawSource := strings.TrimSpace(query.Get("source_link_id"))
+	rawAccessCode := strings.TrimSpace(query.Get("access_code"))
+	if rawSource == "" && rawAccessCode == "" {
+		return tickets.GuestAccessCodeChoice{}, true
+	}
+	if rawSource != "" && rawAccessCode != "" {
+		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidAccessCodeChoice,
+			"source_link_id 与 access_code=generate 只能二选一",
+			"沿用访问码用 source_link_id=链接id；生成新码用 access_code=generate")
+		return tickets.GuestAccessCodeChoice{}, false
+	}
+	if rawAccessCode != "" {
+		if rawAccessCode != "generate" {
+			WriteError(w, http.StatusUnprocessableEntity, CodeInvalidAccessCodeChoice,
+				"预览的 access_code 只能是 generate", "生成新码用 access_code=generate；沿用访问码用 source_link_id=链接id")
+			return tickets.GuestAccessCodeChoice{}, false
+		}
+		return tickets.GuestAccessCodeChoice{Provided: true, Generate: true}, true
+	}
+	id, err := strconv.ParseInt(rawSource, 10, 64)
+	if err != nil || id <= 0 {
+		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidAccessCodeChoice,
+			"source_link_id 必须是正整数", "例如 source_link_id=12")
+		return tickets.GuestAccessCodeChoice{}, false
+	}
+	return tickets.GuestAccessCodeChoice{Provided: true, SourceLinkID: id}, true
+}
+
 func parseGuestAccessCodeChoice(w http.ResponseWriter, raw json.RawMessage) (tickets.GuestAccessCodeChoice, bool) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return tickets.GuestAccessCodeChoice{}, true
@@ -491,11 +536,11 @@ func parseGuestAccessCodeChoice(w http.ResponseWriter, raw json.RawMessage) (tic
 	}
 	WriteError(w, http.StatusUnprocessableEntity, CodeInvalidAccessCodeChoice,
 		"access_code 只能省略，或取 {source_link_id: 链接id} / \"generate\"",
-		"本票的两种可成功路径都应省略 access_code")
+		"未认领访客归入已认领链接时必须二选一；其余情形省略 access_code")
 	return tickets.GuestAccessCodeChoice{}, false
 }
 
-func (a *API) writeGuestLinkAssignmentError(w http.ResponseWriter, err error, submit bool) bool {
+func (a *API) writeGuestLinkAssignmentError(w http.ResponseWriter, err error) bool {
 	var notAssignable *tickets.GuestLinkNotAssignableError
 	switch {
 	case errors.Is(err, tickets.ErrGuestNotFound):
@@ -520,11 +565,15 @@ func (a *API) writeGuestLinkAssignmentError(w http.ResponseWriter, err error, su
 		WriteError(w, http.StatusUnprocessableEntity, CodeAccessCodeChoiceNotAllowed, err.Error(),
 			"已认领访客保留现有访问码；所选链接都未认领时访客保持未认领，都应省略 access_code")
 	case errors.Is(err, tickets.ErrGuestAccessCodeChoiceRequired):
-		hint := "所选链接里有已认领链接，需要选择沿用哪条访问码或生成新码"
-		if submit {
-			hint += "；该选择在下一张票开放，本版本请先只归已认领访客或全未认领链接"
-		}
-		WriteError(w, http.StatusUnprocessableEntity, CodeAccessCodeChoiceRequired, err.Error(), hint)
+		WriteError(w, http.StatusUnprocessableEntity, CodeAccessCodeChoiceRequired, err.Error(),
+			"所选链接里有已认领链接，需要选择沿用哪条访问码或生成新码")
+	case errors.Is(err, tickets.ErrGuestAccessCodeChoiceInvalid):
+		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidAccessCodeChoice, err.Error(),
+			"重新读取 GET /api/v1/guest-links/unassigned，并从本批已认领链接中选择一条")
+	case errors.Is(err, tickets.ErrGuestAccessCodeGenerateWebSessionRequired):
+		WriteError(w, http.StatusForbidden, CodeWebSessionRequired,
+			"生成新的访问码只接受网页成员会话",
+			"Agent token 不能看到只显示一次的新访问码；请在网页上登录后操作（ADR 0003）")
 	case err == nil:
 		return true
 	default:

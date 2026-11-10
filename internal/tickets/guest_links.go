@@ -53,8 +53,12 @@ var (
 	ErrInvalidGuestLinkIDs = errors.New("link_ids 必须是非空、不重复的正整数数组")
 	// ErrGuestAccessCodeChoiceNotAllowed 表示当前批量归属情形不接受访问码选项。
 	ErrGuestAccessCodeChoiceNotAllowed = errors.New("这种归属情形不用选择访问码")
-	// ErrGuestAccessCodeChoiceRequired 表示本票尚未开放未认领访客的访问码选择。
+	// ErrGuestAccessCodeChoiceRequired 表示未认领访客归入已认领链接时缺少访问码选项。
 	ErrGuestAccessCodeChoiceRequired = errors.New("访客未认领且所选链接里有已认领链接，需要选择访问码处理方式")
+	// ErrGuestAccessCodeChoiceInvalid 表示 source_link_id 不在所选链接中或那条链接未认领。
+	ErrGuestAccessCodeChoiceInvalid = errors.New("source_link_id 必须是所选链接中一条已认领链接")
+	// ErrGuestAccessCodeGenerateWebSessionRequired 表示生成新访问码只接受网页成员会话。
+	ErrGuestAccessCodeGenerateWebSessionRequired = errors.New("生成新的访问码只接受网页成员会话")
 )
 
 // GuestLinkNotAssignableError 表示批量归属选中了已撤销或已过期的链接。
@@ -1186,8 +1190,8 @@ func stripDepartmentPrefix(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// GuestAccessCodeChoice 是 #341 为 #342 预留的访问码选项形状：当前两种
-// 可成功路径都必须是未提供；#342 再实现 source_link_id 与 generate。
+// GuestAccessCodeChoice 是批量归属的访问码选项：沿用一条已认领老链接，
+// 或由网页成员生成只显示一次的新码。
 type GuestAccessCodeChoice struct {
 	Provided     bool
 	Generate     bool
@@ -1196,15 +1200,18 @@ type GuestAccessCodeChoice struct {
 
 // AssignableGuestLinkPreview 描述一次批量归属的影响，不改变任何数据。
 type AssignableGuestLinkPreview struct {
-	GuestID          int64
-	GuestName        string
-	GuestClaimed     bool
-	LinkCount        int
-	TicketCount      int
-	ClaimedLinkCount int
-	DeviceCount      int
-	AccessCodeAction string
-	SourceLinkIDs    []int64
+	GuestID                int64
+	GuestName              string
+	GuestClaimed           bool
+	LinkCount              int
+	TicketCount            int
+	ClaimedLinkCount       int
+	DeviceCount            int
+	AccessCodeAction       string
+	SourceLinkIDs          []int64
+	SourceLinkID           int64
+	SourceDeviceCount      int
+	InvalidatedDeviceCount int
 }
 
 // AssignGuestLinksResult 是批量归属成功后的汇总；每条链接还在各自工单上
@@ -1215,6 +1222,7 @@ type AssignGuestLinksResult struct {
 	LinkCount        int
 	TicketCount      int
 	AccessCodeAction string
+	AccessCode       string
 	Links            []AssignedGuestLinkSummary
 }
 
@@ -1253,10 +1261,10 @@ func validateGuestLinkIDs(ids []int64) error {
 	return nil
 }
 
-// GuestLinkAssignmentPreview 返回把 ids 归给 guestID 前的影响。校验规则与
-// POST 相同；只有“需要选访问码”是预览可返回的状态，提交端在 #341 仍拒绝。
+// GuestLinkAssignmentPreview 返回把 ids 归给 guestID 前的影响。choice_required
+// 时可以带 source_link_id 或 generate，让预览反映成员所选访问码方案的后果。
 func (m *Manager) GuestLinkAssignmentPreview(ctx context.Context, viewer identity.Viewer,
-	guestID int64, ids []int64) (AssignableGuestLinkPreview, error) {
+	guestID int64, ids []int64, choice GuestAccessCodeChoice) (AssignableGuestLinkPreview, error) {
 	if err := validateGuestLinkIDs(ids); err != nil {
 		return AssignableGuestLinkPreview{}, err
 	}
@@ -1281,12 +1289,14 @@ func (m *Manager) GuestLinkAssignmentPreview(ctx context.Context, viewer identit
 	if err != nil {
 		return AssignableGuestLinkPreview{}, err
 	}
-	return assignmentPreview(targetGuestID, guestName, guestClaimed, links), nil
+	return applyGuestAccessCodeChoice(assignmentPreview(targetGuestID, guestName, guestClaimed, links),
+		links, choice, viewer)
 }
 
 // AssignGuestLinks 把一批无主老链接归到 guestID。凭证处理复用单条归属：
-// 已认领访客保留自己的凭证，老链接凭证删除；未认领访客归入全未认领链接后
-// 仍保持未认领。所有校验、改归属和时间线事件都在一个事务里完成。
+// 已认领访客保留自己的凭证；未认领访客可沿用一条已认领链接的凭证，或生成
+// 只显示一次的新码；全未认领时保持未认领。所有校验、改归属、凭证变化和
+// 时间线事件都在一个事务里完成。
 func (m *Manager) AssignGuestLinks(ctx context.Context, viewer identity.Viewer, guestID int64,
 	ids []int64, choice GuestAccessCodeChoice) (AssignGuestLinksResult, error) {
 	if err := validateGuestLinkIDs(ids); err != nil {
@@ -1318,12 +1328,45 @@ func (m *Manager) AssignGuestLinks(ctx context.Context, viewer identity.Viewer, 
 		return AssignGuestLinksResult{}, ErrGuestAccessCodeChoiceNotAllowed
 	}
 	if preview.AccessCodeAction == "choice_required" {
-		return AssignGuestLinksResult{}, ErrGuestAccessCodeChoiceRequired
+		if !choice.Provided {
+			return AssignGuestLinksResult{}, ErrGuestAccessCodeChoiceRequired
+		}
+		preview, err = applyGuestAccessCodeChoice(preview, links, choice, viewer)
+		if err != nil {
+			return AssignGuestLinksResult{}, err
+		}
+	} else if choice.Provided {
+		return AssignGuestLinksResult{}, ErrGuestAccessCodeChoiceNotAllowed
 	}
 	if _, err := m.ensureGuestHomeKeyTx(ctx, tx, targetGuestID); err != nil {
 		return AssignGuestLinksResult{}, err
 	}
-	for _, link := range links {
+	orderedLinks := links
+	if choice.SourceLinkID != 0 {
+		orderedLinks = make([]assignableGuestLink, 0, len(links))
+		for _, link := range links {
+			if link.ID == choice.SourceLinkID {
+				orderedLinks = append(orderedLinks, link)
+				continue
+			}
+			orderedLinks = append(orderedLinks, link)
+		}
+	}
+	newAccessCode := ""
+	if choice.Generate {
+		reset, err := guestcredentials.Reset(ctx, tx, guestHolderID, now)
+		if err != nil {
+			return AssignGuestLinksResult{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE guest_credential_holders
+			SET claimed_at = ?, claim_name = ?
+			WHERE id = ?`, now.Format(time.RFC3339Nano), guestName, guestHolderID); err != nil {
+			return AssignGuestLinksResult{}, err
+		}
+		newAccessCode = reset.AccessCode
+	}
+	for _, link := range orderedLinks {
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE guest_links SET guest_id = ?, credential_holder_id = ? WHERE id = ?`,
 			targetGuestID, guestHolderID, link.ID); err != nil {
@@ -1343,7 +1386,8 @@ func (m *Manager) AssignGuestLinks(ctx context.Context, viewer identity.Viewer, 
 	result := AssignGuestLinksResult{
 		GuestID: targetGuestID, GuestName: guestName, LinkCount: preview.LinkCount,
 		TicketCount: preview.TicketCount, AccessCodeAction: preview.AccessCodeAction,
-		Links: make([]AssignedGuestLinkSummary, 0, len(links)),
+		AccessCode: newAccessCode,
+		Links:      make([]AssignedGuestLinkSummary, 0, len(links)),
 	}
 	for _, link := range links {
 		result.Links = append(result.Links, AssignedGuestLinkSummary{
@@ -1448,4 +1492,38 @@ func assignmentPreview(guestID int64, guestName string, guestClaimed bool,
 		preview.AccessCodeAction = "choice_required"
 	}
 	return preview
+}
+
+func applyGuestAccessCodeChoice(preview AssignableGuestLinkPreview, links []assignableGuestLink,
+	choice GuestAccessCodeChoice, viewer identity.Viewer) (AssignableGuestLinkPreview, error) {
+	if !choice.Provided {
+		return preview, nil
+	}
+	if preview.AccessCodeAction != "choice_required" {
+		return AssignableGuestLinkPreview{}, ErrGuestAccessCodeChoiceNotAllowed
+	}
+	if choice.Generate {
+		if !viewer.IsWebSession() {
+			return AssignableGuestLinkPreview{}, ErrGuestAccessCodeGenerateWebSessionRequired
+		}
+		preview.AccessCodeAction = "generate"
+		preview.SourceLinkID = 0
+		preview.SourceDeviceCount = 0
+		preview.InvalidatedDeviceCount = preview.DeviceCount
+		return preview, nil
+	}
+	for _, link := range links {
+		if link.ID != choice.SourceLinkID {
+			continue
+		}
+		if !link.Claimed {
+			return AssignableGuestLinkPreview{}, ErrGuestAccessCodeChoiceInvalid
+		}
+		preview.AccessCodeAction = "reuse_source_link"
+		preview.SourceLinkID = link.ID
+		preview.SourceDeviceCount = link.DeviceCount
+		preview.InvalidatedDeviceCount = preview.DeviceCount - link.DeviceCount
+		return preview, nil
+	}
+	return AssignableGuestLinkPreview{}, ErrGuestAccessCodeChoiceInvalid
 }

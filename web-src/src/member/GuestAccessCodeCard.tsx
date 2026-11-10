@@ -1,7 +1,12 @@
 import type { ReactNode } from 'react'
 import type { UnassignedGuestLink } from './memberApi'
 
-export type GuestAccessCodeCardMode = 'keep_guest' | 'remain_unclaimed' | 'choice_required'
+export type GuestAccessCodeCardMode =
+  | 'keep_guest'
+  | 'remain_unclaimed'
+  | 'choice_required'
+  | 'reuse_source_link'
+  | 'generate'
 
 interface Props {
   mode: GuestAccessCodeCardMode
@@ -14,7 +19,7 @@ interface Props {
   children?: ReactNode
 }
 
-/** 访问码卡片骨架；#341 只展示两种无需选择的结果，选择控件留给 #342。 */
+/** 批量归属的访问码卡片：展示结果，或在需要时选择沿用来源 / 生成新码。 */
 export function GuestAccessCodeCard({
   mode,
   guestName,
@@ -45,13 +50,13 @@ export function GuestAccessCodeCard({
       )}
       {mode === 'choice_required' && (
         <>
-          <div className="guest-access-choice">
-            <strong>需要选择访问码</strong>
-            <span className="hint">当前版本暂未开放这一步；请先只勾选未认领链接。</span>
-          </div>
           {onSelectSource &&
             sourceLinks.map((link) => (
-              <label key={link.id} className="guest-access-choice">
+              <label
+                key={link.id}
+                className={`guest-access-choice${selectedSourceId === link.id ? ' selected' : ''}`}
+                data-source-id={link.id}
+              >
                 <input
                   type="radio"
                   name="guest-access-source"
@@ -68,7 +73,7 @@ export function GuestAccessCodeCard({
               </label>
             ))}
           {onSelectGenerate && (
-            <label className="guest-access-choice">
+            <label className={`guest-access-choice${generateSelected ? ' selected' : ''}`}>
               <input
                 type="radio"
                 name="guest-access-source"
@@ -83,6 +88,18 @@ export function GuestAccessCodeCard({
           )}
         </>
       )}
+      {mode === 'reuse_source_link' && (
+        <div className="guest-access-choice selected">
+          <strong>沿用所选老链接的访问码</strong>
+          <span className="hint">来源链接的认领状态、称呼、访问码、锁定和设备都转给访客。</span>
+        </div>
+      )}
+      {mode === 'generate' && (
+        <div className="guest-access-choice selected">
+          <strong>生成新的访问码</strong>
+          <span className="hint">访客变为已认领，称呼取访客名字；旧访问码和设备作废。</span>
+        </div>
+      )}
       {children}
     </div>
   )
@@ -91,5 +108,7 @@ export function GuestAccessCodeCard({
 function modeText(mode: GuestAccessCodeCardMode, person: string): string {
   if (mode === 'keep_guest') return `保留${person}的现有访问码`
   if (mode === 'choice_required') return '需要选择沿用或生成'
+  if (mode === 'reuse_source_link') return '沿用所选老链接的访问码'
+  if (mode === 'generate') return '生成只显示一次的新码'
   return '访客保持未认领'
 }

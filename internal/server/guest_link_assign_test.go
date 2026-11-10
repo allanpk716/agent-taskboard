@@ -273,19 +273,23 @@ type batchAssignGuestLinksResponse struct {
 	LinkCount        int                        `json:"link_count"`
 	TicketCount      int                        `json:"ticket_count"`
 	AccessCodeAction string                     `json:"access_code_action"`
+	AccessCode       string                     `json:"access_code,omitempty"`
 	Links            []batchAssignGuestLinkItem `json:"links"`
 }
 
 type batchAssignPreviewResponse struct {
-	GuestID          int64   `json:"guest_id"`
-	GuestName        string  `json:"guest_name"`
-	GuestClaimed     bool    `json:"guest_claimed"`
-	LinkCount        int     `json:"link_count"`
-	TicketCount      int     `json:"ticket_count"`
-	ClaimedLinkCount int     `json:"claimed_link_count"`
-	DeviceCount      int     `json:"device_count"`
-	AccessCodeAction string  `json:"access_code_action"`
-	SourceLinkIDs    []int64 `json:"source_link_ids"`
+	GuestID                int64   `json:"guest_id"`
+	GuestName              string  `json:"guest_name"`
+	GuestClaimed           bool    `json:"guest_claimed"`
+	LinkCount              int     `json:"link_count"`
+	TicketCount            int     `json:"ticket_count"`
+	ClaimedLinkCount       int     `json:"claimed_link_count"`
+	DeviceCount            int     `json:"device_count"`
+	AccessCodeAction       string  `json:"access_code_action"`
+	SourceLinkIDs          []int64 `json:"source_link_ids"`
+	SourceLinkID           int64   `json:"source_link_id,omitempty"`
+	SourceDeviceCount      int     `json:"source_device_count"`
+	InvalidatedDeviceCount int     `json:"invalidated_device_count"`
 }
 
 func listUnassignedGuestLinks(t testing.TB, s *tbtest.Server, c *http.Client, query string) unassignedGuestLinksResponse {
@@ -684,20 +688,15 @@ func Test批量归属请求校验与整批原子性(t *testing.T) {
 	claimedOldTicket := mustCreateTicket(t, s, web, "已认领老工单")
 	claimedOld := s.CreateLegacyGuestLink(t, web, claimedOldTicket, map[string]any{"note": "已认领老联系"})
 	claimGuestLink(t, s, guestKeyOf(t, guestLinkResponse{ID: claimedOld.ID, URL: claimedOld.URL}), "检验科 李四")
-	for _, body := range []map[string]any{
-		{"link_ids": []int64{goodA.ID, claimedOld.ID}},
-		{"link_ids": []int64{goodA.ID, claimedOld.ID}, "access_code": "generate"},
-		{"link_ids": []int64{goodA.ID, claimedOld.ID}, "access_code": map[string]any{"source_link_id": claimedOld.ID}},
-	} {
-		res, _ := batchAssignGuestLinks(t, s, web, unclaimedGuestID, body)
-		if res.StatusCode != http.StatusUnprocessableEntity {
-			t.Fatalf("未认领访客混入已认领链接状态码 = %d，想 422", res.StatusCode)
-		}
-		var got errorBody
-		tbtest.DecodeJSON(t, res, &got)
-		if got.Error.Code != "access_code_choice_required" {
-			t.Fatalf("未认领访客访问码错误码 = %q，想 access_code_choice_required", got.Error.Code)
-		}
+	res, _ := batchAssignGuestLinks(t, s, web, unclaimedGuestID,
+		map[string]any{"link_ids": []int64{goodA.ID, claimedOld.ID}})
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("未认领访客混入已认领链接且缺少访问码选项状态码 = %d，想 422", res.StatusCode)
+	}
+	var got errorBody
+	tbtest.DecodeJSON(t, res, &got)
+	if got.Error.Code != "access_code_choice_required" {
+		t.Fatalf("未认领访客缺少访问码选项错误码 = %q，想 access_code_choice_required", got.Error.Code)
 	}
 	links := listUnassignedGuestLinks(t, s, web, "").Links
 	remaining := map[int64]bool{goodA.ID: false, claimedOld.ID: false}
