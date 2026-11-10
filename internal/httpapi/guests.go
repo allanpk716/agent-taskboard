@@ -23,6 +23,8 @@ type guestView struct {
 	ClaimName          string     `json:"claim_name,omitempty"`
 	AccessCodeLockedAt *time.Time `json:"access_code_locked_at,omitempty"`
 	LinkCount          int        `json:"link_count"`
+	PendingCount       int        `json:"pending_count"`
+	LastContactAt      *time.Time `json:"last_contact_at,omitempty"`
 	CreatedBy          authorView `json:"created_by"`
 	CreatedAt          time.Time  `json:"created_at"`
 }
@@ -34,10 +36,11 @@ func (a *API) handleGuests(w http.ResponseWriter, r *http.Request) {
 			"列出部门访客用 GET /api/v1/guests?q=<名字>")
 		return
 	}
-	if _, ok := a.memberFromRequestFor(w, r, "访客不能查看部门访客名单"); !ok {
+	viewer, ok := a.memberFromRequestFor(w, r, "访客不能查看部门访客名单")
+	if !ok {
 		return
 	}
-	guests, err := a.tickets.Guests(r.Context(), r.URL.Query().Get("q"))
+	guests, err := a.tickets.Guests(r.Context(), viewer, r.URL.Query().Get("q"))
 	if err != nil {
 		panic(err)
 	}
@@ -435,6 +438,7 @@ func newGuestView(g tickets.GuestInfo) guestView {
 		MergedIntoGuestID: g.MergedIntoGuestID, MergedAt: g.MergedAt,
 		ClaimedAt: g.ClaimedAt, ClaimName: g.ClaimName,
 		AccessCodeLockedAt: g.AccessCodeLockedAt, LinkCount: g.LinkCount,
+		PendingCount: g.PendingCount, LastContactAt: g.LastContactAt,
 		CreatedBy: newAuthorView(g.CreatedBy, false), CreatedAt: g.CreatedAt,
 	}
 }

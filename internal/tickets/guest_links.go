@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -526,13 +527,16 @@ type GuestInfo struct {
 	ClaimName          string
 	AccessCodeLockedAt *time.Time
 	LinkCount          int
+	PendingCount       int
+	LastContactAt      *time.Time
 	CreatedBy          Author
 	CreatedAt          time.Time
 }
 
 // Guests 列出部门访客名单；query 非空时按名字包含匹配（HTTP 层保证只有
 // 成员和成员 Agent 能调用）。按名字排序，成员和 Agent 都能稳定查找。
-func (m *Manager) Guests(ctx context.Context, query string) ([]GuestInfo, error) {
+// 每行附通讯录式名单（#345）需要的最近联系与待处理数。
+func (m *Manager) Guests(ctx context.Context, viewer identity.Viewer, query string) ([]GuestInfo, error) {
 	query = strings.TrimSpace(query)
 	where := " WHERE gu.merged_into_guest_id IS NULL"
 	args := []any{}
@@ -540,7 +544,135 @@ func (m *Manager) Guests(ctx context.Context, query string) ([]GuestInfo, error)
 		where += " AND gu.name LIKE ? ESCAPE '\\'"
 		args = append(args, "%"+escapeLike(query)+"%")
 	}
-	return m.guestsQuery(ctx, where, args)
+	guests, err := m.guestsQuery(ctx, where, args)
+	if err != nil || len(guests) == 0 {
+		return guests, err
+	}
+	if err := m.fillGuestListActivity(ctx, viewer, guests); err != nil {
+		return nil, err
+	}
+	return guests, nil
+}
+
+// fillGuestListActivity 补齐名单行的“最近联系”与“待处理数”。最近联系取
+// 访客经名下链接打开工单的最近一次访问记录；待处理数只数查看者可见、
+// 未关闭且当前轮到访客的工单（ADR 0019：访客聚合不能绕过工单可见范围）。
+func (m *Manager) fillGuestListActivity(ctx context.Context, viewer identity.Viewer, guests []GuestInfo) error {
+	placeholders := make([]string, len(guests))
+	idArgs := make([]any, len(guests))
+	byID := make(map[int64]*GuestInfo, len(guests))
+	for i := range guests {
+		placeholders[i] = "?"
+		idArgs[i] = guests[i].ID
+		byID[guests[i].ID] = &guests[i]
+	}
+	inList := strings.Join(placeholders, ",")
+
+	rows, err := m.db.QueryContext(ctx, `
+		SELECT l.guest_id, MAX(r.last_at)
+		FROM access_records r
+		JOIN guest_links l ON l.id = r.actor_link_id
+		WHERE r.actor_kind = 'guest' AND l.guest_id IN (`+inList+`)
+		GROUP BY l.guest_id`, idArgs...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var guestID int64
+		var lastAt string
+		if err := rows.Scan(&guestID, &lastAt); err != nil {
+			return err
+		}
+		at, err := parseTime(lastAt)
+		if err != nil {
+			return err
+		}
+		if g, ok := byID[guestID]; ok {
+			g.LastContactAt = &at
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	rows.Close()
+
+	seqRows, err := m.db.QueryContext(ctx, `
+		SELECT DISTINCT l.guest_id, l.ticket_seq
+		FROM guest_links l
+		WHERE l.revoked_at IS NULL AND l.guest_id IN (`+inList+`)
+		ORDER BY l.guest_id, l.ticket_seq`, idArgs...)
+	if err != nil {
+		return err
+	}
+	seqsByGuest := map[int64][]int64{}
+	allSeqs := map[int64]bool{}
+	for seqRows.Next() {
+		var guestID, seq int64
+		if err := seqRows.Scan(&guestID, &seq); err != nil {
+			seqRows.Close()
+			return err
+		}
+		seqsByGuest[guestID] = append(seqsByGuest[guestID], seq)
+		allSeqs[seq] = true
+	}
+	if err := seqRows.Err(); err != nil {
+		seqRows.Close()
+		return err
+	}
+	seqRows.Close()
+	if len(allSeqs) == 0 {
+		return nil
+	}
+
+	visible, err := m.VisibleSeqs(ctx, viewer)
+	if err != nil {
+		return err
+	}
+	visibleSet := make(map[int64]bool, len(visible))
+	for _, seq := range visible {
+		visibleSet[seq] = true
+	}
+	now := m.clk.Now()
+	fullBySeq := map[int64]Full{}
+	linksBySeq := map[int64][]GuestLinkInfo{}
+	for guestID, seqs := range seqsByGuest {
+		pending := 0
+		for _, seq := range seqs {
+			if !visibleSet[seq] {
+				continue
+			}
+			full, ok := fullBySeq[seq]
+			if !ok {
+				full, err = m.ByRef(ctx, strconv.FormatInt(seq, 10))
+				if err != nil {
+					return err
+				}
+				fullBySeq[seq] = full
+			}
+			own, ok := linksBySeq[seq]
+			if !ok {
+				own, err = GuestLinksForTicket(ctx, m.db, seq)
+				if err != nil {
+					return err
+				}
+				linksBySeq[seq] = own
+			}
+			guestLinks := make([]GuestLinkInfo, 0, len(own))
+			for _, l := range own {
+				if l.GuestID == guestID {
+					guestLinks = append(guestLinks, l)
+				}
+			}
+			if turn := WaitingOnOf(full, guestLinks, now); turn.Party == "guest" && full.Status != "closed" {
+				pending++
+			}
+		}
+		if g, ok := byID[guestID]; ok {
+			g.PendingCount = pending
+		}
+	}
+	return nil
 }
 
 // guestsQuery 执行访客名单查询；where/args 由调用方拼好（名单搜索与按 id

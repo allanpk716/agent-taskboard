@@ -51,7 +51,7 @@ function pageTitle(route: Route, newTicketTitle: string): string {
     case 'tools':
       return '工具'
     case 'guests':
-      return '访客管理'
+      return '访客'
     case 'guestDetail':
       return '访客'
     case 'me':
@@ -187,9 +187,12 @@ export function MemberApp() {
   }
 
   const h = route
-  const toolsOn =
-    h.page === 'tools' || h.page === 'templates' || h.page === 'templateEdit' ||
-    h.page === 'guests' || h.page === 'guestDetail'
+  const toolsOn = h.page === 'tools' || h.page === 'templates' || h.page === 'templateEdit'
+  // 访客入口提到一级（#345）：手机上在「工单」标签内做「工单｜访客」分段，
+  // 电脑侧边栏加一级「访客」入口；guestDetail 是访客的详情页，也归访客。
+  const guestsOn = h.page === 'guests' || h.page === 'guestDetail'
+  const ticketsOn = h.page === 'tickets' || guestsOn
+  const showMainSegment = h.page === 'tickets' || h.page === 'guests'
   const meOn = h.page === 'me' || h.page === 'admin'
   const centered =
     ['tools', 'me', 'admin', 'new', 'templates', 'templateEdit', 'feedback', 'draft', 'guests', 'guestDetail'].includes(h.page)
@@ -309,6 +312,7 @@ export function MemberApp() {
         {item('/', '📥', '收件箱', '收件箱', h.page === 'inbox' || (h.page === 'detail' && fromInbox), inboxCount)}
         {item('/drafts', '✎', '✎ 草稿', '草稿', h.page === 'drafts', draftCount, false, 'amber')}
         {item('/tickets', '🗂', '工单', '工单', h.page === 'tickets' || (h.page === 'detail' && !fromInbox))}
+        {item('/guests', '👥', '访客', '访客', guestsOn)}
         {item('/tools', '🧰', '工具', '工具', toolsOn)}
         {item('/me', '👤', '我的', '我的', meOn)}
         {me.is_admin && item('/admin', '🛡', '管理', '管理', h.page === 'admin')}
@@ -379,18 +383,42 @@ export function MemberApp() {
       <VersionBanner check={versionCheck} />
       {intro}
       <div className="b-app">
-        <header className="b-top">
-          <h1 className="b-title">{pageTitle(route, newTicketTitle)}</h1>
-          {bell}
-          <div className="b-me">
-            {me.name}
-            <i>{me.is_admin ? '管理员' : '成员'}</i>
+        <header className={`b-top${showMainSegment ? ' with-seg' : ''}`}>
+          <div className="b-top-row">
+            <h1 className="b-title">{pageTitle(route, newTicketTitle)}</h1>
+            {bell}
+            <div className="b-me">
+              {me.name}
+              <i>{me.is_admin ? '管理员' : '成员'}</i>
+            </div>
           </div>
+          {showMainSegment && (
+            <div className="main-seg" role="tablist" aria-label="工单或访客">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={h.page === 'tickets'}
+                className={h.page === 'tickets' ? 'on' : undefined}
+                onClick={() => nav('/tickets')}
+              >
+                工单
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={h.page === 'guests'}
+                className={h.page === 'guests' ? 'on' : undefined}
+                onClick={() => nav('/guests')}
+              >
+                访客
+              </button>
+            </div>
+          )}
         </header>
         <div className="b-body">{page}</div>
         <nav className="b-tabs" aria-label="主导航">
           {tab('inbox', '📥', '收件箱', inboxCount)}
-          {tab('tickets', '🗂', '工单')}
+          {tab('tickets', '🗂', '工单', undefined, ticketsOn)}
           <a
             className={`tabbtn plus${h.page === 'new' ? ' on' : ''}`}
             href="/new"

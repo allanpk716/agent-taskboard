@@ -762,6 +762,10 @@ export interface GuestSummary {
   claim_name?: string
   access_code_locked_at?: string
   link_count: number
+  /** 待处理数：当前轮到访客的工单数（按查看者可见范围过滤）。 */
+  pending_count: number
+  /** 最近联系：访客最近一次经名下链接打开工单的时间。 */
+  last_contact_at?: string
   created_at: string
 }
 
