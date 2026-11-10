@@ -16,6 +16,8 @@ var (
 	ErrClaimNameRequired = errors.New("认领需要填写你的称呼")
 	// ErrLinkAlreadyClaimed 表示链接已被另一位访客抢先认领。
 	ErrLinkAlreadyClaimed = errors.New("这条链接已被认领")
+	// ErrHomeAlreadyClaimed 表示主页已被另一位访客抢先认领。
+	ErrHomeAlreadyClaimed = errors.New("这个主页已被认领")
 	// ErrLinkNotClaimed 表示链接还没有访客认领。
 	ErrLinkNotClaimed = errors.New("这条链接尚未认领")
 	// ErrAccessCodeRequired 表示凭访问码进入时没有填访问码。

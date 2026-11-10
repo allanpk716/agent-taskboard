@@ -18,7 +18,7 @@ var (
 	// ErrGuestNameRequired 表示改名时没有给出新的访客名字。
 	ErrGuestNameRequired = errors.New("访客名字不能为空")
 	// ErrGuestAlreadyDisabled 表示访客已经处于停用状态。
-	ErrGuestAlreadyDisabled = errors.New("这位访客已停用")
+	ErrGuestAlreadyDisabled = errors.New("这位访客已经是停用状态")
 	// ErrGuestNotDisabled 表示访客当前是正常状态，无需恢复。
 	ErrGuestNotDisabled = errors.New("这位访客没有停用")
 )

@@ -222,7 +222,7 @@ func (m *Manager) ClaimGuestHome(ctx context.Context, home identity.GuestHome, a
 		case errors.Is(err, guestcredentials.ErrClaimNameRequired):
 			return GuestClaimResult{}, ErrClaimNameRequired
 		case errors.Is(err, guestcredentials.ErrAlreadyClaimed):
-			return GuestClaimResult{}, ErrLinkAlreadyClaimed
+			return GuestClaimResult{}, ErrHomeAlreadyClaimed
 		}
 		return GuestClaimResult{}, err
 	}

@@ -173,6 +173,8 @@ func (a *API) writeGuestClaimError(w http.ResponseWriter, err error) {
 			"请填写你的称呼")
 	case errors.Is(err, tickets.ErrLinkAlreadyClaimed):
 		WriteError(w, http.StatusConflict, CodeLinkClaimed, err.Error(), "")
+	case errors.Is(err, tickets.ErrHomeAlreadyClaimed):
+		WriteError(w, http.StatusConflict, CodeLinkClaimed, err.Error(), "")
 	case errors.Is(err, tickets.ErrAccessCodeRequired):
 		WriteError(w, http.StatusUnprocessableEntity, CodeAccessCodeRequired, err.Error(),
 			"访问码是认领主页时显示的 6 位数字")
