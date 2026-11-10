@@ -125,11 +125,16 @@ func Test访客往来对象固定为最早链接的访客(t *testing.T) {
 			(1, '20261103-001', 'report', '客户反馈设备故障', 'open', '', 1, 3, 3,
 			 '2026-11-03T10:00:00+08:00', 4)`,
 		`INSERT INTO guest_links (id, ticket_seq, key_hash, note, expires_at, can_edit_brief,
-			claimed_at, claim_name, created_by_member_id, created_at) VALUES
+			created_by_member_id, created_at) VALUES
 			(1, 1, 'first', '王五的链接', '2999-01-01T00:00:00+08:00', 1,
-			 '2026-11-03T10:10:00+08:00', '王五', 3, '2026-11-03T10:05:00+08:00'),
+			 3, '2026-11-03T10:05:00+08:00'),
 			(2, 1, 'second', '赵六访客的链接', '2999-01-01T00:00:00+08:00', 1,
-			 '2026-11-03T11:10:00+08:00', '赵六访客', 3, '2026-11-03T11:05:00+08:00')`,
+			 3, '2026-11-03T11:05:00+08:00')`,
+		`INSERT INTO guest_credential_holders
+		 (id, owner_type, owner_id, claimed_at, claim_name, access_code_failures, created_at)
+		 VALUES (1,'guest_link',1,'2026-11-03T10:10:00+08:00','王五',0,'2026-11-03T10:05:00+08:00'),
+		        (2,'guest_link',2,'2026-11-03T11:10:00+08:00','赵六访客',0,'2026-11-03T11:05:00+08:00')`,
+		`UPDATE guest_links SET credential_holder_id = id`,
 		`INSERT INTO timeline_events (ticket_seq, seq, change_seq, type, actor_member_id,
 			actor_link_id, actor_author_name, at, body_md) VALUES
 			(1, 1, 1, 'created', 3, NULL, NULL, '2026-11-03T10:00:00+08:00', NULL),

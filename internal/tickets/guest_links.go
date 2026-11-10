@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/guestcredentials"
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 )
 
@@ -156,6 +157,9 @@ func (m *Manager) createGuestLinkTx(ctx context.Context, tx *sql.Tx, ticketSeq i
 	).Scan(&id); err != nil {
 		return nil, fmt.Errorf("写入访客链接失败：%w", err)
 	}
+	if _, err := guestcredentials.CreateLinkHolder(ctx, tx, id, now); err != nil {
+		return nil, err
+	}
 	if err := m.insertLinkEvent(ctx, tx, ticketSeq, actor, "guest_link_created",
 		spec.Note, "", now); err != nil {
 		return nil, err
@@ -208,14 +212,16 @@ func (m *Manager) GuestLinks(ctx context.Context, ref string) ([]GuestLinkInfo, 
 // 通知和等待方推导因此在同一事务快照上工作。
 func GuestLinksForTicket(ctx context.Context, q Queryer, ticketSeq int64) ([]GuestLinkInfo, error) {
 	rows, err := q.QueryContext(ctx, `
-		SELECT g.id, g.key_ciphertext, g.note, g.expires_at, g.revoked_at, g.claimed_at, g.claim_name,
-		       g.access_code_locked_at,
+		SELECT g.id, g.key_ciphertext, g.note, g.expires_at, g.revoked_at,
+		       cred.claimed_at, cred.claim_name, cred.access_code_locked_at,
 		       g.can_edit_brief, g.created_at,
 		       m.id, m.name, a.id, a.name, a.revoked_at,
 		       (SELECT COUNT(*) FROM timeline_events e
 		         WHERE e.actor_link_id = g.id AND e.type != 'guest_link_claimed'),
-		       (SELECT COUNT(*) FROM guest_devices d WHERE d.guest_link_id = g.id)
+		       (SELECT COUNT(*) FROM guest_credential_devices d
+		         WHERE d.credential_holder_id = g.credential_holder_id)
 		FROM guest_links g
+		JOIN guest_credential_holders cred ON cred.id = g.credential_holder_id
 		LEFT JOIN members m ON m.id = g.created_by_member_id
 		LEFT JOIN agent_tokens a ON a.id = g.created_by_agent_id
 		WHERE g.ticket_seq = ? ORDER BY g.id`, ticketSeq)
@@ -370,6 +376,7 @@ type guestLinkRow struct {
 	RevokedAt     sql.NullString
 	ClaimedAt     sql.NullString
 	KeyCiphertext sql.NullString
+	HolderID      int64
 	ExpiresAtTime time.Time
 }
 
@@ -380,9 +387,13 @@ func (m *Manager) linkForTicketTx(ctx context.Context, q Queryer, ticketSeq, id 
 		row guestLinkRow
 	)
 	err := q.QueryRowContext(ctx, `
-		SELECT note, expires_at, revoked_at, claimed_at, key_ciphertext
-		FROM guest_links WHERE id = ? AND ticket_seq = ?`, id, ticketSeq).
-		Scan(&row.Note, &row.ExpiresAt, &row.RevokedAt, &row.ClaimedAt, &row.KeyCiphertext)
+		SELECT g.note, g.expires_at, g.revoked_at, cred.claimed_at,
+		       g.key_ciphertext, g.credential_holder_id
+		FROM guest_links g
+		JOIN guest_credential_holders cred ON cred.id = g.credential_holder_id
+		WHERE g.id = ? AND g.ticket_seq = ?`, id, ticketSeq).
+		Scan(&row.Note, &row.ExpiresAt, &row.RevokedAt, &row.ClaimedAt,
+			&row.KeyCiphertext, &row.HolderID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return guestLinkRow{}, ErrGuestLinkNotFound
 	}

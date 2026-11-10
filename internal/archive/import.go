@@ -311,6 +311,7 @@ func (s *Service) parseImportPackage(readerAt io.ReaderAt, size int64) (*parsedI
 			return nil, fmt.Errorf("%w：%s 后有多余内容", ErrPackageInvalid, name)
 		}
 		normalizeImportTicket(&export)
+		normalizeLegacyGuestCredentials(&export)
 		if err := validateImportTicket(meta, export); err != nil {
 			return nil, fmt.Errorf("%w：%v", ErrPackageInvalid, err)
 		}
@@ -323,10 +324,12 @@ func (s *Service) parseImportPackage(readerAt io.ReaderAt, size int64) (*parsedI
 }
 
 func validateImportTicket(meta manifestTicket, export ticketExport) error {
+	normalizeLegacyGuestCredentials(&export)
 	if export.Ticket == nil || export.BriefVersions == nil || export.Replies == nil ||
 		export.Attachments == nil || export.Timeline == nil || export.Drafts == nil ||
 		export.AccessRecords == nil || export.Labels == nil || export.Collaborators == nil ||
-		export.GuestLinks == nil || export.GuestDevices == nil || export.TicketReads == nil {
+		export.GuestLinks == nil || export.GuestDevices == nil || export.TicketReads == nil ||
+		export.GuestCredentialHolders == nil || export.GuestCredentialDevices == nil {
 		return fmt.Errorf("%s 的结构化数据不完整", meta.Number)
 	}
 	seq := importInt(export.Ticket, "seq")
@@ -363,6 +366,19 @@ func validateImportTicket(meta manifestTicket, export ticketExport) error {
 			return fmt.Errorf("%s 的访客设备关联到缺失链接", meta.Number)
 		}
 	}
+	holderIDs := newIntSet()
+	for _, row := range export.GuestCredentialHolders {
+		holderIDs.add(row["id"])
+		ownerType, _ := row["owner_type"].(string)
+		if ownerType == "guest_link" && !linkIDs.items[importInt(row, "owner_id")] {
+			return fmt.Errorf("%s 的访客凭证持有者关联到缺失链接", meta.Number)
+		}
+	}
+	for _, row := range export.GuestCredentialDevices {
+		if !holderIDs.items[importInt(row, "credential_holder_id")] {
+			return fmt.Errorf("%s 的访客设备关联到缺失凭证持有者", meta.Number)
+		}
+	}
 	var attachmentBytes int64
 	slimPackages := map[string]bool{}
 	for _, row := range export.Attachments {
@@ -390,6 +406,17 @@ func validateImportTicket(meta manifestTicket, export ticketExport) error {
 		return fmt.Errorf("%s 的清单瘦身包与附件瘦身状态不一致", meta.Number)
 	}
 	return nil
+}
+
+func normalizeLegacyGuestCredentials(export *ticketExport) {
+	if export.GuestCredentialHolders != nil {
+		return
+	}
+	export.GuestCredentialHolders = []map[string]any{}
+	export.GuestCredentialDevices = []map[string]any{}
+	for _, link := range export.GuestLinks {
+		link["credential_holder_id"] = int64(0)
+	}
 }
 
 func sameStringSet(got map[string]bool, want []string) bool {
@@ -485,7 +512,8 @@ func safeImportPath(name string) bool {
 func normalizeImportTicket(export *ticketExport) {
 	for _, rows := range []*[]map[string]any{&export.BriefVersions, &export.Replies,
 		&export.Attachments, &export.Timeline, &export.AccessRecords, &export.Labels,
-		&export.Collaborators, &export.GuestLinks, &export.GuestDevices, &export.TicketReads} {
+		&export.Collaborators, &export.GuestLinks, &export.GuestDevices,
+		&export.GuestCredentialHolders, &export.GuestCredentialDevices, &export.TicketReads} {
 		for i, row := range *rows {
 			(*rows)[i] = normalizeImportMap(row).(map[string]any)
 		}
@@ -607,8 +635,11 @@ func (s *Service) checkImportIDsTx(ctx context.Context, tx *sql.Tx, export ticke
 	for _, row := range export.GuestLinks {
 		refs = append(refs, idRef{"guest_links", importInt(row, "id"), "访客链接 ID 已被平台使用"})
 	}
-	for _, row := range export.GuestDevices {
-		refs = append(refs, idRef{"guest_devices", importInt(row, "id"), "访客设备 ID 已被平台使用"})
+	for _, row := range export.GuestCredentialHolders {
+		refs = append(refs, idRef{"guest_credential_holders", importInt(row, "id"), "访客凭证持有者 ID 已被平台使用"})
+	}
+	for _, row := range export.GuestCredentialDevices {
+		refs = append(refs, idRef{"guest_credential_devices", importInt(row, "id"), "访客设备凭证 ID 已被平台使用"})
 	}
 	for _, item := range export.Drafts {
 		draft, _ := item["draft"].(map[string]any)
@@ -886,15 +917,22 @@ var importTableColumns = []struct {
 		"attachment_id", "attachment_ref", "attachment_filename", "first_at", "last_at", "count"}},
 	{"ticket_labels", []string{"ticket_seq", "label"}},
 	{"ticket_collaborators", []string{"ticket_seq", "member_id", "added_at"}},
+	{"guest_credential_holders", []string{"id", "owner_type", "owner_id", "claimed_at",
+		"claim_name", "access_code_hash", "access_code_failures", "access_code_locked_at", "created_at"}},
 	{"guest_links", []string{"id", "ticket_seq", "key_hash", "note", "expires_at", "revoked_at",
-		"can_edit_brief", "created_by_member_id", "created_by_agent_id", "created_at", "claimed_at",
-		"claim_name", "access_code_hash", "access_code_failures", "access_code_locked_at",
-		"key_ciphertext"}},
-	{"guest_devices", []string{"id", "guest_link_id", "token_hash", "created_at", "entry_method"}},
+		"can_edit_brief", "created_by_member_id", "created_by_agent_id", "created_at",
+		"credential_holder_id", "key_ciphertext"}},
+	{"guest_credential_devices", []string{"id", "credential_holder_id", "token_hash",
+		"created_at", "entry_method"}},
 	{"ticket_reads", []string{"member_id", "ticket_seq", "last_read_seq"}},
 }
 
 func insertImportTicketTx(ctx context.Context, tx *sql.Tx, export ticketExport) error {
+	if len(export.GuestLinks) > 0 && len(export.GuestCredentialHolders) == 0 {
+		if err := insertLegacyGuestCredentialsTx(ctx, tx, export); err != nil {
+			return err
+		}
+	}
 	draftRows, draftVersionRows := importDraftRows(export)
 	for _, table := range importTableColumns {
 		rows, err := importRowsForTable(export, table.name, draftRows, draftVersionRows)
@@ -903,6 +941,36 @@ func insertImportTicketTx(ctx context.Context, tx *sql.Tx, export ticketExport) 
 		}
 		if err := insertRowsTx(ctx, tx, table.name, table.columns, rows); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func insertLegacyGuestCredentialsTx(ctx context.Context, tx *sql.Tx, export ticketExport) error {
+	for _, link := range export.GuestLinks {
+		var holderID int64
+		if err := tx.QueryRowContext(ctx, `
+			INSERT INTO guest_credential_holders
+				(owner_type, owner_id, claimed_at, claim_name, access_code_hash,
+				 access_code_failures, access_code_locked_at, created_at)
+			VALUES ('guest_link', ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+			link["id"], link["claimed_at"], link["claim_name"], link["access_code_hash"],
+			link["access_code_failures"], link["access_code_locked_at"], link["created_at"]).
+			Scan(&holderID); err != nil {
+			return fmt.Errorf("恢复旧格式的访客凭证持有者：%w", err)
+		}
+		link["credential_holder_id"] = holderID
+		for _, device := range export.GuestDevices {
+			if importInt(device, "guest_link_id") != importInt(link, "id") {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO guest_credential_devices
+					(credential_holder_id, token_hash, entry_method, created_at)
+				VALUES (?, ?, ?, ?)`,
+				holderID, device["token_hash"], device["entry_method"], device["created_at"]); err != nil {
+				return fmt.Errorf("恢复旧格式的访客设备凭证：%w", err)
+			}
 		}
 	}
 	return nil
@@ -942,10 +1010,12 @@ func importRowsForTable(export ticketExport, table string, draftRows, draftVersi
 		return export.Labels, nil
 	case "ticket_collaborators":
 		return export.Collaborators, nil
+	case "guest_credential_holders":
+		return export.GuestCredentialHolders, nil
 	case "guest_links":
 		return export.GuestLinks, nil
-	case "guest_devices":
-		return export.GuestDevices, nil
+	case "guest_credential_devices":
+		return export.GuestCredentialDevices, nil
 	case "ticket_reads":
 		return export.TicketReads, nil
 	default:
