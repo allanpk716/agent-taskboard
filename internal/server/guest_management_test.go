@@ -25,20 +25,23 @@ type guestDetailLinkBody struct {
 }
 
 type guestDetailTicketBody struct {
-	Number string                `json:"number"`
-	Title  string                `json:"title"`
-	Status string                `json:"status"`
-	Links  []guestDetailLinkBody `json:"links"`
+	Number         string                `json:"number"`
+	Title          string                `json:"title"`
+	Status         string                `json:"status"`
+	WaitingOnGuest bool                  `json:"waiting_on_guest"`
+	WaitingReason  string                `json:"waiting_reason"`
+	Links          []guestDetailLinkBody `json:"links"`
 }
 
 type guestDetailBody struct {
 	Guest struct {
-		ID         int64   `json:"id"`
-		Name       string  `json:"name"`
-		ClaimedAt  *string `json:"claimed_at"`
-		ClaimName  string  `json:"claim_name"`
-		DisabledAt *string `json:"disabled_at"`
-		LinkCount  int     `json:"link_count"`
+		ID          int64   `json:"id"`
+		Name        string  `json:"name"`
+		ClaimedAt   *string `json:"claimed_at"`
+		ClaimName   string  `json:"claim_name"`
+		DisabledAt  *string `json:"disabled_at"`
+		LinkCount   int     `json:"link_count"`
+		DeviceCount int     `json:"device_count"`
 	} `json:"guest"`
 	Tickets []guestDetailTicketBody `json:"tickets"`
 }
@@ -99,6 +102,78 @@ func Test成员查看访客详情只列可见范围内工单(t *testing.T) {
 	if res := s.Do(t, s.NewClient(), http.MethodGet,
 		"/api/v1/guests/"+strconv.FormatInt(link.GuestID, 10), nil, nil); res.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("匿名查看部门访客详情状态码 = %d，想 401/403", res.StatusCode)
+	}
+}
+
+// 访客详情是档案页数据源（#338）：轮到访客的工单置顶并注明成员侧原因；
+// 已登录设备数按访客级凭证统计，同一字段也供「访问」标签展示。
+func Test访客详情轮到访客置顶原因与设备数(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	web := s.Login("陈工", "secret-pass")
+
+	// 最旧的工单：可填写说明链接、尚无回复 → 轮到访客补全说明。
+	fill := mustCreateTicket(t, s, web, "等待补全说明")
+	fillLink := mustCreateGuestLink(t, s, web, fill, map[string]any{
+		"note": "补全说明", "new_guest_name": "检验科-张三", "can_edit_brief": true,
+	})
+	// 较新的反馈工单：成员回复后轮到访客答复。
+	var repliedCreated struct {
+		Number string `json:"number"`
+	}
+	res := createWithGuestLink(t, s, web, map[string]any{
+		"kind": "report", "title": "等待访客答复", "brief_md": "打印日志待补充",
+		"labels":     []string{"机型:UD-2300"},
+		"guest_link": map[string]any{"note": "追问日志", "guest_id": fillLink.GuestID},
+	})
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("建反馈工单状态码 = %d，想 201", res.StatusCode)
+	}
+	tbtest.DecodeJSON(t, res, &repliedCreated)
+	if res := reply(t, s, web, repliedCreated.Number, "请把打印日志发一下"); res.StatusCode != http.StatusCreated {
+		t.Fatalf("成员回复状态码 = %d，想 201", res.StatusCode)
+	}
+	// 最新的工单已关闭：不轮到访客，也不应挤到置顶工单前面。
+	closed := mustCreateTicket(t, s, web, "已关闭的旧工单")
+	mustCreateGuestLink(t, s, web, closed, map[string]any{"note": "回看结果", "guest_id": fillLink.GuestID})
+	if res := s.Do(t, web, http.MethodPost, "/api/v1/tickets/"+closed+"/close",
+		map[string]any{"reason": "done"}, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("关闭工单状态码 = %d，想 200", res.StatusCode)
+	}
+	// 访客认领一次（访客级凭证）→ 1 台已登录设备。
+	var claim struct {
+		DeviceToken string `json:"device_token"`
+		AccessCode  string `json:"access_code"`
+	}
+	res = s.Do(t, s.AgentClient(guestKeyOf(t, fillLink)), http.MethodPost, "/api/v1/guest-links/claim",
+		map[string]string{"author_name": "检验科 张三"}, &claim)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("访客认领状态码 = %d，想 201", res.StatusCode)
+	}
+
+	res, detail := fetchGuestDetail(t, s, web, fillLink.GuestID)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("成员查看访客详情状态码 = %d，想 200", res.StatusCode)
+	}
+	if detail.Guest.DeviceCount != 1 || detail.Guest.ClaimedAt == nil {
+		t.Fatalf("访客 = %+v，想已认领且 1 台已登录设备", detail.Guest)
+	}
+	numbers := make([]string, 0, len(detail.Tickets))
+	for _, item := range detail.Tickets {
+		numbers = append(numbers, item.Number)
+	}
+	want := []string{repliedCreated.Number, fill, closed}
+	if strings.Join(numbers, ",") != strings.Join(want, ",") {
+		t.Fatalf("访客工单顺序 = %v，想轮到访客的置顶（新到旧）再已关闭：%v", numbers, want)
+	}
+	if !detail.Tickets[0].WaitingOnGuest || detail.Tickets[0].WaitingReason != "已回复，等待访客答复" {
+		t.Fatalf("成员回复后的反馈工单 = %+v，想轮到访客并注明原因", detail.Tickets[0])
+	}
+	if !detail.Tickets[1].WaitingOnGuest || detail.Tickets[1].WaitingReason != "等待访客补全说明" {
+		t.Fatalf("可填写说明工单 = %+v，想轮到访客并注明原因", detail.Tickets[1])
+	}
+	if detail.Tickets[2].WaitingOnGuest || detail.Tickets[2].WaitingReason != "" {
+		t.Fatalf("已关闭工单 = %+v，不应轮到访客", detail.Tickets[2])
 	}
 }
 

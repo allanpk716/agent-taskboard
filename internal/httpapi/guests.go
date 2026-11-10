@@ -25,6 +25,7 @@ type guestView struct {
 	LinkCount          int        `json:"link_count"`
 	PendingCount       int        `json:"pending_count"`
 	LastContactAt      *time.Time `json:"last_contact_at,omitempty"`
+	DeviceCount        int        `json:"device_count"`
 	CreatedBy          authorView `json:"created_by"`
 	CreatedAt          time.Time  `json:"created_at"`
 }
@@ -153,11 +154,13 @@ func (a *API) guestDetail(w http.ResponseWriter, r *http.Request, id int64) {
 }
 
 type guestDetailTicketView struct {
-	Number string          `json:"number"`
-	Title  string          `json:"title"`
-	Status string          `json:"status"`
-	API    string          `json:"api"`
-	Links  []guestLinkView `json:"links"`
+	Number         string          `json:"number"`
+	Title          string          `json:"title"`
+	Status         string          `json:"status"`
+	WaitingOnGuest bool            `json:"waiting_on_guest"`
+	WaitingReason  string          `json:"waiting_reason"`
+	API            string          `json:"api"`
+	Links          []guestLinkView `json:"links"`
 }
 
 func newGuestDetailTicketViews(items []tickets.GuestDetailTicket) []guestDetailTicketView {
@@ -169,6 +172,7 @@ func newGuestDetailTicketViews(items []tickets.GuestDetailTicket) []guestDetailT
 		}
 		views = append(views, guestDetailTicketView{
 			Number: item.Number, Title: item.Title, Status: item.Status,
+			WaitingOnGuest: item.WaitingOnGuest, WaitingReason: item.WaitingReason,
 			API: "/api/v1/tickets/" + item.Number, Links: links,
 		})
 	}
@@ -438,7 +442,7 @@ func newGuestView(g tickets.GuestInfo) guestView {
 		MergedIntoGuestID: g.MergedIntoGuestID, MergedAt: g.MergedAt,
 		ClaimedAt: g.ClaimedAt, ClaimName: g.ClaimName,
 		AccessCodeLockedAt: g.AccessCodeLockedAt, LinkCount: g.LinkCount,
-		PendingCount: g.PendingCount, LastContactAt: g.LastContactAt,
+		PendingCount: g.PendingCount, LastContactAt: g.LastContactAt, DeviceCount: g.DeviceCount,
 		CreatedBy: newAuthorView(g.CreatedBy, false), CreatedAt: g.CreatedAt,
 	}
 }

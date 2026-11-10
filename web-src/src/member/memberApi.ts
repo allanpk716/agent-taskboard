@@ -766,6 +766,7 @@ export interface GuestSummary {
   pending_count: number
   /** 最近联系：访客最近一次经名下链接打开工单的时间。 */
   last_contact_at?: string
+  device_count: number
   created_at: string
 }
 
@@ -783,6 +784,8 @@ export interface GuestDetailTicket {
   number: string
   title: string
   status: string
+  waiting_on_guest: boolean
+  waiting_reason: string
   api: string
   links: GuestDetailLink[]
 }

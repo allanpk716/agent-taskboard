@@ -26,11 +26,13 @@ var (
 // GuestDetailTicket 是访客详情里的一张工单：工单概要加上这位访客名下
 // 指向这张工单的全部链接。
 type GuestDetailTicket struct {
-	Seq    int64
-	Number string
-	Title  string
-	Status string
-	Links  []GuestLinkInfo
+	Seq            int64
+	Number         string
+	Title          string
+	Status         string
+	WaitingOnGuest bool
+	WaitingReason  string
+	Links          []GuestLinkInfo
 }
 
 // GuestDetailResult 是成员查看访客详情的结果；Tickets 已按调用者可见范围过滤。
@@ -92,11 +94,55 @@ func (m *Manager) GuestDetail(ctx context.Context, viewer identity.Viewer, guest
 				own = append(own, l)
 			}
 		}
-		tickets = append(tickets, GuestDetailTicket{
+		item := GuestDetailTicket{
 			Seq: full.Seq, Number: full.Number, Title: full.Title, Status: full.Status, Links: own,
-		})
+		}
+		if turn := WaitingOnOf(full, own, m.clk.Now()); turn.Party == "guest" && full.Status != "closed" {
+			item.WaitingOnGuest = true
+			item.WaitingReason = guestDetailWaitingReason(turn)
+		}
+		tickets = append(tickets, item)
 	}
+	sortGuestDetailTickets(tickets)
 	return GuestDetailResult{Guest: guest, Tickets: tickets}, nil
+}
+
+// guestDetailWaitingReason 把轮到访客的原因翻译给成员看：不是访客自己
+// 看主页，而是成员在档案页理解“为什么置顶、TA 要做什么”。
+func guestDetailWaitingReason(turn WaitingOn) string {
+	if turn.Text == "访客补全说明" {
+		return "等待访客补全说明"
+	}
+	return "已回复，等待访客答复"
+}
+
+// sortGuestDetailTickets 让轮到访客的工单排最前（同组新工单在前），
+// 其他开启工单其次，已关闭工单最后；与访客主页的排序口径一致。
+func sortGuestDetailTickets(items []GuestDetailTicket) {
+	for i := 1; i < len(items); i++ {
+		for j := i; j > 0 && guestDetailTicketLess(items[j], items[j-1]); j-- {
+			items[j], items[j-1] = items[j-1], items[j]
+		}
+	}
+}
+
+func guestDetailTicketLess(a, b GuestDetailTicket) bool {
+	ra, rb := guestDetailRank(a), guestDetailRank(b)
+	if ra != rb {
+		return ra < rb
+	}
+	return a.Seq > b.Seq
+}
+
+func guestDetailRank(item GuestDetailTicket) int {
+	switch {
+	case item.WaitingOnGuest:
+		return 0
+	case item.Status == "closed":
+		return 2
+	default:
+		return 1
+	}
 }
 
 // RenameGuest 给访客改名。新回复与时间线按写入时的名字快照署名，历史留痕
