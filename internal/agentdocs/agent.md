@@ -44,6 +44,13 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
   字段放进请求体的 `guest_link` 对象。
 - 列表 `GET {{BASE}}/api/v1/tickets/<工单编号>/guest-links` 的每条链接带 `guest_id` 和
   `guest_name`；转发与留痕优先用访客名字。上线前的无主老链接没有这两个字段，仍按备注区分。
+- 主人让你把无主老链接归到访客时，调
+  `POST {{BASE}}/api/v1/tickets/<工单编号>/guest-links/<链接id>/assign-guest`。
+  请求体同样是 `{"guest_id": <已有访客id>}` 或 `{"new_guest_name": "检验科-张三"}` 二选一。
+  目标访客未认领而老链接已认领时，老访问码和设备会转给这位访客；目标访客已认领时，
+  老链接自己的访问码和设备作废；未认领老链接直接沿用访客状态。操作会写
+  `guest_link_assigned` 时间线事件（`reason` 为 `manual`），不发通知；已归属链接返回
+  409 `guest_link_already_assigned`，不要尝试重复归属。
 
 ## 访客链接转发文案
 
