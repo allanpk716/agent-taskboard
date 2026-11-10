@@ -37,7 +37,7 @@ export function LandingPage({
   // 自由格式是一整段话（大约 3 分钟）；模板按字段数估几分钟（封在 3–10）。
   const free = (ticket.brief.template_fields ?? []).length === 0
   const minutes = free ? 3 : Math.max(3, Math.min(10, Math.round(fields.length * 0.55)))
-  const [author, setAuthor] = useState(loadAuthor() || ticket.viewer.link_note || '')
+  const [author, setAuthor] = useState(loadAuthor() || ticket.viewer.guest_name || ticket.viewer.link_note || '')
 
   return (
     <div className="guest-landing">

@@ -53,7 +53,7 @@ test('发链接请人填写：选模板后填请谁填写，生成可用链接',
   await expect(page.getByLabel('请谁反馈')).toHaveCount(0)
   const gen = page.getByRole('button', { name: '生成链接' })
   await expect(gen).toBeDisabled()
-  await page.getByLabel('请谁填写').fill('检验科-张三')
+  await page.getByLabel('新建访客名字').fill('检验科-张三')
   await expect(gen).toBeDisabled()
   await page.getByLabel('什么事').fill('整理质控规则对照表')
   await expect(gen).toBeEnabled()

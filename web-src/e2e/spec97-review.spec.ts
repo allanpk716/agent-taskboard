@@ -8,7 +8,7 @@ async function createGuestReplyTicket(
 ): Promise<string> {
   const number = await createTicket(request, { title, assignee: '管理员' })
   const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
-    data: { note: '检验科-张三', valid_days: 30 },
+    data: { note: '检验科-张三', new_guest_name: '检验科-张三', valid_days: 30 },
   })
   expect(link.ok(), `创建访客链接失败：${await link.text()}`).toBeTruthy()
   const key = String((await link.json()).url).slice(3)
@@ -24,7 +24,7 @@ async function createGuestReplyTicket(
 test('mobile guest link dialog loads the existing list', async ({ page, request }) => {
   const number = await createTicket(request, { title: '手机访客链接的工单' })
   const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
-    data: { note: '检验科-李四', valid_days: 7 },
+    data: { note: '检验科-李四', new_guest_name: '检验科-李四', valid_days: 7 },
   })
   expect(link.ok()).toBeTruthy()
 

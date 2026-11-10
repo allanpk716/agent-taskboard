@@ -152,6 +152,7 @@ test('复制给对方的Agent访客分支没有链接时能新建并显示转发
   const dialog = page.locator('.modal')
   await dialog.getByRole('radio', { name: '访客' }).check()
   await expect(dialog.locator('.peer-create')).toBeVisible()
+  await dialog.getByLabel('新建访客名字').fill('检验科-张三')
   await dialog.getByLabel('备注').fill('检验科-张三')
   await dialog.getByLabel('有效期').selectOption('7')
   await dialog.getByLabel('可填写说明').check()

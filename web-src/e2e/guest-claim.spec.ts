@@ -9,7 +9,7 @@ async function createGuestLink(request: APIRequestContext, title: string) {
   expect(ticket.status()).toBe(201)
   const number = ((await ticket.json()) as { number: string }).number
   const link = await request.post(`/api/v1/tickets/${number}/guest-links`, {
-    data: { note: '检验科-张三', valid_days: 30 },
+    data: { note: '检验科-张三', new_guest_name: '检验科-张三', valid_days: 30 },
   })
   expect(link.status()).toBe(201)
   const body = (await link.json()) as { id: number; url: string; expires_at: string }

@@ -25,7 +25,7 @@ test('Agent 表格显示草稿模式，切到可直接发前需要确认', async
 
   await row.getByRole('switch', { name: '草稿模式' }).click()
   const dialog = page.getByRole('dialog', { name: '改为可直接发？' })
-  await expect(dialog).toContainText('它写的内容将立刻对外可见，署名里不注明「经你确认」')
+  await expect(dialog).toContainText('它写的内容会先在你电脑上生成预览，你确认后才提交；署名里不注明「经你确认」')
   await dialog.getByRole('button', { name: '取消' }).click()
   await expect(dialog).toHaveCount(0)
   await expect(row.getByText('必须走草稿')).toBeVisible()
