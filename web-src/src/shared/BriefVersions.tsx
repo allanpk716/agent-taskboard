@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { BriefVersion, TicketView } from './types'
-import { authorName, fmtDateCN, fmtSize } from './format'
+import { attLinkProps, authorName, fmtDateCN, fmtSize } from './format'
 import { Markdown } from './markdown'
 
 type VersionLoader = () => Promise<{ versions: BriefVersion[] }>
@@ -158,7 +158,7 @@ function VersionFull({
         <div className="atts">
           {attachments.map(({ id, attachment }) =>
             attachment ? (
-              <a key={id} className="att" href={attachment.url} target="_blank" rel="noreferrer">
+              <a key={id} className="att" href={attachment.url} {...attLinkProps(attachment.filename)} rel="noreferrer">
                 📎 {attachment.filename} · {fmtSize(attachment.size)}
                 {!currentIDs.has(id) && <span className="att-removed">后来的版本中已移除</span>}
               </a>

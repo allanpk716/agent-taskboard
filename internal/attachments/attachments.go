@@ -220,7 +220,7 @@ func ContentTypeOf(filename string) string {
 		return "text/html; charset=utf-8"
 	case ".svg":
 		return "image/svg+xml"
-	case ".txt", ".log":
+	case ".txt", ".log", ".md", ".markdown":
 		return "text/plain; charset=utf-8"
 	}
 	if typ := mime.TypeByExtension(ext); typ != "" {
@@ -491,7 +491,7 @@ func mbText(bytes int64) string {
 
 var (
 	imageExt    = regexp.MustCompile(`(?i)\.(png|jpe?g|gif|webp)$`)
-	inlineExt   = regexp.MustCompile(`(?i)\.(png|jpe?g|gif|webp|pdf|txt|log)$`)
+	inlineExt   = regexp.MustCompile(`(?i)\.(png|jpe?g|gif|webp|pdf|txt|log|md|markdown)$`)
 	anyAttRef   = regexp.MustCompile(`att:(att_\d+)`)
 	imageAttRef = regexp.MustCompile(`!\[[^\]]*\]\(att:(att_\d+)\)`)
 )
@@ -500,7 +500,7 @@ var (
 // HTML 和 SVG 只能下载）。
 func IsImage(filename string) bool { return imageExt.MatchString(filename) }
 
-// IsInline 报告这个文件是否允许 inline 返回：图片、PDF、.txt 和 .log；
+// IsInline 报告这个文件是否允许 inline 返回：图片、PDF、.txt、.log 和 Markdown（按纯文本）；
 // 其余（含 HTML、SVG）一律 Content-Disposition: attachment。
 func IsInline(filename string) bool { return inlineExt.MatchString(filename) }
 
