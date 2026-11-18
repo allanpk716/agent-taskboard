@@ -31,7 +31,7 @@ func downloadAttachment(t testing.TB, s *tbtest.Server, c *http.Client, path str
 	return res
 }
 
-// 下载的 Content-Disposition 与 nosniff（验收点）：图片、PDF、.txt、.log 以
+// 下载的 Content-Disposition 与 nosniff（验收点）：图片、PDF、.txt、.log、.md 以
 // inline 返回；其余（含 HTML、SVG）一律 attachment；所有响应都带
 // X-Content-Type-Options: nosniff。内容逐字节一致，Content-Type 按扩展名。
 func Test附件下载的安全响应头(t *testing.T) {
@@ -48,14 +48,15 @@ func Test附件下载的安全响应头(t *testing.T) {
 		"说明.txt":  []byte("文本内容"),
 		"日志.log":  []byte("2026-10-16 09:00 INFO 启动"),
 		"数据.zip":  []byte("PK\x03\x04zip"),
+		"规范.md":   []byte("# 标题\n正文"),
 	}
 	refs := map[string]string{}
 	for name, content := range files {
 		refs[name] = mustUploadAttachment(t, s, web, number, name, content).ID
 	}
-	// 分两条回复挂上（每帖最多 5 个附件）：前四个、后三个。
+	// 分两条回复挂上（每帖最多 5 个附件）：前四个、后四个。
 	first := []string{"报告.html", "图形.svg", "截图.png", "文档.pdf"}
-	second := []string{"说明.txt", "日志.log", "数据.zip"}
+	second := []string{"说明.txt", "日志.log", "数据.zip", "规范.md"}
 	for _, group := range [][]string{first, second} {
 		ids := make([]string, 0, len(group))
 		for _, name := range group {
@@ -84,6 +85,7 @@ func Test附件下载的安全响应头(t *testing.T) {
 		"说明.txt":  "inline",
 		"日志.log":  "inline",
 		"数据.zip":  "attachment",
+		"规范.md":   "inline", // Markdown 按纯文本打开
 	} {
 		res := downloadAttachment(t, s, web, urls[name])
 		if res.StatusCode != http.StatusOK {

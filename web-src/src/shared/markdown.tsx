@@ -6,6 +6,7 @@ import remarkGfm from 'remark-gfm'
 import remarkParse from 'remark-parse'
 import { useState, type ReactNode } from 'react'
 import type { Attachment } from './types'
+import { attLinkProps } from './format'
 
 export interface MarkdownProps {
   body: string
@@ -166,7 +167,7 @@ export function Markdown(props: MarkdownProps) {
           )
         }
         return (
-          <a className="att-link" href={att.url} target="_blank" rel="noreferrer">
+          <a className="att-link" href={att.url} {...attLinkProps(att.filename)} rel="noreferrer">
             {children}
           </a>
         )

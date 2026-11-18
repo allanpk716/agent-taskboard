@@ -93,3 +93,9 @@ export function avatarChar(display: string): string {
   const ch = display.trim().charAt(0)
   return ch || '?'
 }
+
+// 附件链接属性：浏览器能直接打开的类型（与后端 IsInline 一致）开新标签页，
+// 其余直接下载，避免弹出空白标签页。
+export function attLinkProps(filename: string) {
+  return /\.(?:png|jpe?g|gif|webp|pdf|txt|log|md|markdown)$/i.test(filename) ? { target: '_blank' } : { download: filename }
+}

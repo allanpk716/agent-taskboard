@@ -1,6 +1,6 @@
 // 附件下载（#33）：GET /api/v1/attachments/{att_N}/{filename}。
 // 与工单相同的凭证（会话 cookie / Agent token / 访客设备凭证）。
-// Content-Disposition：图片、PDF、.txt、.log 以 inline 返回，其余（含 HTML、SVG）
+// Content-Disposition：图片、PDF、.txt、.log、.md 以 inline 返回，其余（含 HTML、SVG）
 // 一律 attachment；所有响应都带 X-Content-Type-Options: nosniff。
 package httpapi
 

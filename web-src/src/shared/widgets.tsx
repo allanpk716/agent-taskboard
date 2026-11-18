@@ -1,7 +1,7 @@
 // 对话流里的共用小部件：头像、附件条、大图查看。
 import { useEffect } from 'react'
 import type { Attachment, Author, TicketSlim } from './types'
-import { authorName, avatarChar, fmtDateCN, fmtSize } from './format'
+import { attLinkProps, authorName, avatarChar, fmtDateCN, fmtSize } from './format'
 
 /** 头像：访客绿、成员蓝、成员 Agent 紫且带机器人角标（prototype a.html）。 */
 export function Avatar({ author }: { author: Author | undefined | null }) {
@@ -62,7 +62,7 @@ export function AttachmentChips({
             📎 {a.filename} · {fmtSize(a.size)}
           </button>
         ) : (
-          <a key={a.id} className="att" href={a.url} target="_blank" rel="noreferrer">
+          <a key={a.id} className="att" href={a.url} {...attLinkProps(a.filename)} rel="noreferrer">
             📎 {a.filename} · {fmtSize(a.size)}
           </a>
         )
