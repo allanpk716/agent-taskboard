@@ -22,6 +22,15 @@ backend = 'local'
 # 备份留在挂载的数据卷内；异地备份由后续工单统一设计。
 target = '/app/data/backups'
 
+[webhook]
+# 通知出口默认关闭。启用时 allowed_bases 只填部署者认可的目标平台根地址。
+# 容器通过 TASKBOARD_OUTLET_KEY 环境变量注入 base64 编码的 32 字节主密钥；
+# 该值不写入 config.toml，也不进入数据库备份。
+enabled       = false
+allowed_bases = []
+window_start  = "08:00"  # 北京时间
+window_end    = "20:00"
+
 [update]
 # 容器模式通过替换镜像升级，不使用原地更新源。
 sources = []

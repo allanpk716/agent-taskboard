@@ -5,8 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
+	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
 )
 
@@ -88,6 +90,121 @@ backend = 'minio'
 	_, err := config.Load(path)
 	if err == nil || !strings.Contains(err.Error(), "backend") {
 		t.Fatalf("非法后端应拒绝并提示 backend：%v", err)
+	}
+}
+
+func Test通知出口配置默认关闭并可解析部署白名单与北京时间窗口(t *testing.T) {
+	cfg, err := config.Load(writeConfig(t, ""))
+	if err != nil {
+		t.Fatalf("空配置应能加载：%v", err)
+	}
+	if cfg.Webhook.Enabled {
+		t.Fatal("webhook 缺省应关闭，避免新部署意外外呼")
+	}
+	if len(cfg.Webhook.AllowedBases) != 0 {
+		t.Fatalf("默认白名单 = %v，想为空", cfg.Webhook.AllowedBases)
+	}
+	if cfg.Webhook.WindowStart != "08:00" || cfg.Webhook.WindowEnd != "20:00" {
+		t.Fatalf("默认窗口 = %s-%s，想 08:00-20:00（北京时间）",
+			cfg.Webhook.WindowStart, cfg.Webhook.WindowEnd)
+	}
+
+	path := writeConfig(t, `[webhook]
+enabled = true
+allowed_bases = ['https://bot.example.test', 'https://bot2.example.test/base/']
+window_start = '09:30'
+window_end = '21:00'
+`)
+	cfg, err = config.Load(path)
+	if err != nil {
+		t.Fatalf("合法 webhook 配置应能加载：%v", err)
+	}
+	if !cfg.Webhook.Enabled || len(cfg.Webhook.AllowedBases) != 2 ||
+		cfg.Webhook.AllowedBases[1] != "https://bot2.example.test/base/" ||
+		cfg.Webhook.WindowStart != "09:30" || cfg.Webhook.WindowEnd != "21:00" {
+		t.Fatalf("webhook 配置 = %+v", cfg.Webhook)
+	}
+}
+
+func Test通知出口开启时拒绝缺失白名单和非法窗口(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "缺失白名单",
+			body: "[webhook]\nenabled = true\n",
+			want: "allowed_bases",
+		},
+		{
+			name: "非法起点",
+			body: "[webhook]\nenabled = true\nallowed_bases = ['https://bot.example.test']\nwindow_start = '24:00'\n",
+			want: "window_start",
+		},
+		{
+			name: "非法终点",
+			body: "[webhook]\nenabled = true\nallowed_bases = ['https://bot.example.test']\nwindow_end = '8:00'\n",
+			want: "window_end",
+		},
+		{
+			name: "起点不早于终点",
+			body: "[webhook]\nenabled = true\nallowed_bases = ['https://bot.example.test']\nwindow_start = '20:00'\nwindow_end = '08:00'\n",
+			want: "推送窗口",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := config.Load(writeConfig(t, tc.body))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("错误应包含 %q：%v", tc.want, err)
+			}
+		})
+	}
+}
+
+func Test通知出口窗口解析固定为北京时间(t *testing.T) {
+	cfg, err := config.Load(writeConfig(t, `[webhook]
+window_start = '09:30'
+window_end = '21:00'
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, end, err := cfg.Webhook.TimeWindow()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start.Location() != clock.Beijing || end.Location() != clock.Beijing ||
+		start.Hour() != 9 || start.Minute() != 30 || end.Hour() != 21 || end.Minute() != 0 {
+		t.Fatalf("窗口 = %s-%s，想北京时间 09:30-21:00", start.Format(time.Kitchen), end.Format(time.Kitchen))
+	}
+}
+
+func Test通知出口白名单拒绝非HTTPS和带凭据查询片段地址(t *testing.T) {
+	for _, base := range []string{
+		"http://bot.example.test",
+		"https://user:pass@bot.example.test",
+		"https://bot.example.test?next=/admin",
+		"https://bot.example.test#fragment",
+		"https://bot.example.test/../other",
+	} {
+		_, err := config.Load(writeConfig(t, `[webhook]
+allowed_bases = ['`+base+`']
+`))
+		if err == nil || !strings.Contains(err.Error(), "allowed_bases") {
+			t.Fatalf("base %q 应拒绝：%v", base, err)
+		}
+	}
+}
+
+func Test通知出口关闭时仍拒绝无法解析的窗口(t *testing.T) {
+	_, err := config.Load(writeConfig(t, `[webhook]
+enabled = false
+window_start = '8:00'
+`))
+	if err == nil || !strings.Contains(err.Error(), "window_start") {
+		t.Fatalf("关闭状态下 malformed window_start 也应拒绝：%v", err)
 	}
 }
 

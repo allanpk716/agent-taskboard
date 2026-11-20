@@ -3,12 +3,15 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 
 	"github.com/allanpk716/agent-taskboard/internal/attachments"
+	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
 )
 
@@ -32,6 +35,8 @@ type Config struct {
 	Update Update `toml:"update"`
 	// Intake 是反馈入口匿名上传的防护配置。
 	Intake Intake `toml:"intake"`
+	// Webhook 是通知出口的部署级配置（#371）。总开关缺省关闭。
+	Webhook Webhook `toml:"webhook"`
 }
 
 // Server 是 [server] 小节：部署对外信息。
@@ -83,6 +88,33 @@ type Intake struct {
 	UploadRatePerMin int `toml:"upload_rate_per_min"`
 	PendingQuotaMB   int `toml:"pending_quota_mb"`
 	DailyLimit       int `toml:"daily_limit"`
+}
+
+// Webhook 是 [webhook] 小节：通知出口的部署级开关、地址白名单与推送窗口。
+// webhook key 与加密主密钥都不在这里，只能分别由成员提交和环境变量注入。
+type Webhook struct {
+	// Enabled 表示是否启用通知出口；缺省 false，新部署不应有意外外呼。
+	Enabled bool `toml:"enabled"`
+	// AllowedBases 是部署者认可的目标 bot 平台根地址。成员只提交 bot_id，
+	// 服务端用这个白名单拼接最终 webhook 地址。
+	AllowedBases []string `toml:"allowed_bases"`
+	// WindowStart 是推送窗口起点（含），北京时间 HH:MM。
+	WindowStart string `toml:"window_start"`
+	// WindowEnd 是推送窗口终点（不含），北京时间 HH:MM。
+	WindowEnd string `toml:"window_end"`
+}
+
+// TimeWindow 把配置中的 HH:MM 解析成固定北京时间的时间值，供推送循环判断窗口。
+func (w Webhook) TimeWindow() (time.Time, time.Time, error) {
+	start, err := parseWebhookClock(w.WindowStart, "window_start")
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	end, err := parseWebhookClock(w.WindowEnd, "window_end")
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	return start, end, nil
 }
 
 // Backup 是 [backup] 小节：备份目标与保留策略（#43，docs/deploy-and-release.md
@@ -177,6 +209,9 @@ func Load(path string) (Config, error) {
 		cfg.Server.Deploy = deploy
 	}
 	ApplyDefaults(&cfg)
+	if err := validateWebhook(cfg.Webhook); err != nil {
+		return cfg, fmt.Errorf("解析 %s 失败：%w", path, err)
+	}
 	return cfg, nil
 }
 
@@ -231,6 +266,65 @@ func ApplyDefaults(cfg *Config) {
 	if cfg.Intake.DailyLimit == 0 {
 		cfg.Intake.DailyLimit = 200
 	}
+	if cfg.Webhook.WindowStart == "" {
+		cfg.Webhook.WindowStart = "08:00"
+	}
+	if cfg.Webhook.WindowEnd == "" {
+		cfg.Webhook.WindowEnd = "20:00"
+	}
+}
+
+func validateWebhook(webhook Webhook) error {
+	for _, raw := range webhook.AllowedBases {
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
+			parsed.RawQuery != "" || parsed.Fragment != "" || parsed.RawFragment != "" ||
+			!safeWebhookBasePath(parsed.Path) {
+			return fmt.Errorf("[webhook] allowed_bases = %q 无效（只能是带主机的 https 根地址，不能带用户信息、查询或片段）", raw)
+		}
+	}
+	if webhook.Enabled && len(webhook.AllowedBases) == 0 {
+		return fmt.Errorf("[webhook] enabled = true 时 allowed_bases 不能为空")
+	}
+	start, err := parseWebhookClock(webhook.WindowStart, "window_start")
+	if err != nil {
+		return err
+	}
+	end, err := parseWebhookClock(webhook.WindowEnd, "window_end")
+	if err != nil {
+		return err
+	}
+	if !start.Before(end) {
+		return fmt.Errorf("[webhook] 推送窗口起点 %s 必须早于终点 %s（北京时间）",
+			webhook.WindowStart, webhook.WindowEnd)
+	}
+	return nil
+}
+
+func safeWebhookBasePath(path string) bool {
+	if path == "" || path == "/" {
+		return true
+	}
+	if !strings.HasPrefix(path, "/") {
+		return false
+	}
+	for _, segment := range strings.Split(strings.Trim(path, "/"), "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+func parseWebhookClock(raw, field string) (time.Time, error) {
+	if len(raw) != 5 || raw[2] != ':' {
+		return time.Time{}, fmt.Errorf("[webhook] %s = %q 无效（北京时间，必须是 HH:MM）", field, raw)
+	}
+	parsed, err := time.ParseInLocation("15:04", raw, clock.Beijing)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("[webhook] %s = %q 无效（北京时间，必须是 HH:MM）", field, raw)
+	}
+	return parsed, nil
 }
 
 // StorageConfig 把 [attachments] 小节转成附件后端的装配参数（#314）。
