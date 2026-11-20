@@ -145,6 +145,21 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 读取通知、身份、收件箱、在等他与协作中清单」，`hint` 为「请用浏览器打开工单处理；
 如需其它操作，登录网页后操作」。
 
+## 通知出口（「我的 → 通知推送」，#372）
+
+以下单例资源全部**只接受成员本人网页会话**；成员 Agent 与客户端凭证都不能配置或测试
+通知出口。`webhook.enabled=false` 时读取返回 `{enabled:false,outlet:null}`，写操作返回
+409 `webhook_disabled`。
+
+| 方法与路径 | 说明 |
+|---|---|
+| `GET /api/v1/me/notification-outlet` | 读取 `{enabled,outlet}`；`outlet` 为 `null` 或 `{bot_id,key_last4,last_pushed_id,generation,status}`，永不返回 webhook key 或密文。 |
+| `PUT /api/v1/me/notification-outlet` | 保存/重建 `{bot_id,key}`。`bot_id` 必须匹配 `^[a-z0-9]{1,64}$`；key 每次必填、只写不读。保存事务内把 `last_pushed_id` 建到该成员通知 `MAX(id)`，从下一条新通知开始推送。 |
+| `POST /api/v1/me/notification-outlet/pause` | 暂停；游标与代数不动。 |
+| `POST /api/v1/me/notification-outlet/resume` | 恢复；不重建基线。 |
+| `DELETE /api/v1/me/notification-outlet` | 删除配置；以后保存会重建基线，不补推历史通知。 |
+| `POST /api/v1/me/notification-outlet/test` | 发送 `{"event":"taskboard.test"}`。目标 POST 使用服务端白名单 URL、`X-Webhook-Key` 和唯一 `X-Idempotency-Key: taskboard-test:<member>:<epoch-ms>`，不重试。每成员限 1 次/分钟；结果用 200 `{result,http_status}` 表达 `ok/ignored/unauthorized/timeout`（其他非 2xx 为 `http_error`）。 |
+
 `GET /api/v1/session` 与登录成功响应的结构（成员）：
 
 ```json
