@@ -28,6 +28,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/notifications"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
+	"github.com/allanpk716/agent-taskboard/internal/outlet"
 	"github.com/allanpk716/agent-taskboard/internal/server"
 	"github.com/allanpk716/agent-taskboard/internal/slim"
 	"github.com/allanpk716/agent-taskboard/internal/store"
@@ -63,6 +64,8 @@ type options struct {
 	captchaAnswer string
 	listenHost    string
 	startupErr    *error
+	webhook       config.Webhook
+	outletClient  *outlet.Client
 
 	withoutGuestLinkCipher bool
 	attachmentStorage      attachments.Storage
@@ -145,6 +148,17 @@ func WithIntake(ratePerMin, pendingQuotaMB, dailyLimit int) Option {
 	}
 }
 
+// WithWebhook 指定通知出口部署配置；生产配置来自 config.toml。
+func WithWebhook(webhook config.Webhook) Option {
+	return func(o *options) { o.webhook = webhook }
+}
+
+// WithOutletClient 注入通知出口测试按钮使用的受限 HTTP client（测试可信任
+// httptest 的自签证书；生成为空时使用 #371 的默认受限 client）。
+func WithOutletClient(client *outlet.Client) Option {
+	return func(o *options) { o.outletClient = client }
+}
+
 // defaultClockStart 是假时钟默认起点：一个工作日的上午。
 var defaultClockStart = time.Date(2026, 10, 16, 9, 0, 0, 0, clock.Beijing)
 
@@ -193,6 +207,7 @@ func Start(t testing.TB, opts ...Option) *Server {
 	if o.intake != (config.Intake{}) {
 		cfg.Intake = o.intake
 	}
+	cfg.Webhook = o.webhook
 	if o.publicURL != "" {
 		cfg.Server.PublicURL = o.publicURL
 	}
@@ -208,6 +223,9 @@ func Start(t testing.TB, opts ...Option) *Server {
 	}
 	if o.attachmentStorage != nil {
 		srvOpts = append(srvOpts, server.WithAttachmentStorage(o.attachmentStorage))
+	}
+	if o.outletClient != nil {
+		srvOpts = append(srvOpts, server.WithOutletClient(o.outletClient))
 	}
 	srv, err := server.New(cfg, st, clk, srvOpts...)
 	if err != nil {
