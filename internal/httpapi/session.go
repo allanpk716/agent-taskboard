@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -164,7 +165,8 @@ func (a *API) Handler() http.Handler {
 }
 
 // clientScopeMiddleware 在认证成功后限制客户端凭证的接口面。通知接口的子路径
-// 由这里统一放行，后续新增通知端点不需要逐个 handler 补检查。
+// 由这里统一放行；收件箱两条清单只放行精确的 GET 地址；工单列表只放行
+// 「协作中」这一个查询组合。
 func (a *API) clientScopeMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, hasToken := bearerToken(r)
@@ -178,14 +180,42 @@ func (a *API) clientScopeMiddleware(next http.Handler) http.Handler {
 		}
 		allowed := strings.HasPrefix(r.URL.Path, "/api/v1/notifications") ||
 			(r.Method == http.MethodGet && r.URL.Path == "/api/v1/session") ||
+			(r.Method == http.MethodGet && r.URL.Path == "/api/v1/inbox") ||
+			(r.Method == http.MethodGet && r.URL.Path == "/api/v1/inbox/waiting-on-counterparts") ||
+			(r.Method == http.MethodGet && r.URL.Path == "/api/v1/tickets" && clientTicketsQueryAllowed(r.URL.Query())) ||
 			(r.Method == http.MethodDelete && r.URL.Path == "/api/v1/me/clients/self")
 		if !allowed {
-			WriteError(w, http.StatusForbidden, CodeClientScope, "客户端凭证只能读取通知和身份",
+			WriteError(w, http.StatusForbidden, CodeClientScope, "客户端凭证只能读取通知、身份、收件箱、在等他与协作中清单",
 				"请用浏览器打开工单处理；如需其它操作，登录网页后操作")
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), viewerContextKey, viewer)))
 	})
+}
+
+// clientTicketsQueryAllowed 判断工单列表查询是否恰好是「协作中」组合：
+// 除 sort、limit、page_token（各至多一次且非空）外，必须且只能是
+// collaborator=me 与 status=open，不能重复、留空或叠加其他筛选。
+func clientTicketsQueryAllowed(q url.Values) bool {
+	for key, values := range q {
+		switch key {
+		case "collaborator":
+			if len(values) != 1 || values[0] != "me" {
+				return false
+			}
+		case "status":
+			if len(values) != 1 || values[0] != "open" {
+				return false
+			}
+		case "sort", "limit", "page_token":
+			if len(values) != 1 || values[0] == "" {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return q.Get("collaborator") == "me" && q.Get("status") == "open"
 }
 
 // handleSession 处理会话资源：

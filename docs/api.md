@@ -20,7 +20,12 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 - 凭证四种，统一解析成一个 Viewer（`kind` 为 `member` / `guest`，成员带 `member` 与 `agent` / `client`，访客带 `guest_link`，见 spec「身份与凭证」模块）：
   1. **成员本人**：网页会话 cookie `tb_session`（HttpOnly + Secure + SameSite=Lax）。本人操作的唯一来源。
   2. **成员 Agent**：`Authorization: Bearer <Agent token>`，token 由 `POST /api/v1/me/agent-tokens` 签发（前缀 `tbag_`）。ADR 0003：用 token 的操作一律署名为「某成员 的 Agent · 名字」，永远不算本人。
-  3. **Orca 插件**：`Authorization: Bearer <客户端凭证>`（前缀 `tbc_`）。权限边界是 `client_scope`：只能调用通知接口、`GET /session`，以及撤销自己的 `DELETE /me/clients/self`；它不署名、不代表成员操作工单。
+  3. **Orca 插件**：`Authorization: Bearer <客户端凭证>`（前缀 `tbc_`）。权限边界是
+     `client_scope`：只能调用通知接口（含 `GET /notifications/unread`）、`GET /session`、
+     `GET /inbox`、`GET /inbox/waiting-on-counterparts`、仅「协作中」组合的
+     `GET /tickets?collaborator=me&status=open`，以及撤销自己的
+     `DELETE /me/clients/self`；它不署名、不代表成员操作工单，其余请求一律
+     403 `client_scope`。
   4. **访客**：访客是部门级、长期存在的身份（#328），链接密钥（前缀 `tbg_`）只用于读取认领/输码页信息、执行认领和凭访问码进入；浏览器成功后使用同源设备凭证（Bearer 前缀 `tbgd_`，同时收到 HttpOnly cookie `tb_guest_device`）。访客 Agent 后续请求用组合凭证 `Authorization: Bearer tbg_<链接密钥>:<访问码>`。认领或输码作用于整个访客身份：这台设备对这位访客名下全部未撤销、未过期的链接可信，之后成员新加的链接也直接可信；换设备时在任一链接输一次访问码即可。
   `tbg_<链接密钥>:<访问码>` 只作用于这条链接所在的那一张工单；主页组合凭证
   `tbh_<主页密钥>:<访问码>` 才覆盖这位访客名下的全部有效工单。
@@ -135,6 +140,10 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 凭证。`hostname` 由插件传「Orca · <主机名>」，「已连接设备」照此显示；插件请求带
 `User-Agent: taskboard-orca-plugin/<语义化版本>`，服务端解析后在设备列表显示版本。
 旧 Windows 桌面客户端已下线，已签发的凭证不因此吊销，但旧 exe 不再收到更新。
+
+客户端凭证越过上述边界时统一返回 403 `client_scope`：`message` 为「客户端凭证只能
+读取通知、身份、收件箱、在等他与协作中清单」，`hint` 为「请用浏览器打开工单处理；
+如需其它操作，登录网页后操作」。
 
 `GET /api/v1/session` 与登录成功响应的结构（成员）：
 
@@ -253,9 +262,9 @@ spec 用户故事 84），没有 `inbox`：
 | 方法与路径 | 说明 |
 |---|---|
 | `POST /api/v1/tickets` | 建单（成员/成员 Agent；访客 403 `members_only`，访客建单走反馈入口 #35）。可带 `collaborators` 一并指定协作者（抄送，#274）、带 `guest_link` 一并创建访客链接（#64「请人反馈」）。 |
-| `GET /api/v1/tickets` | 条件列表（#37，仅成员；只返回当前凭证可见范围内的工单，见「查询与计数（#37）」）。 |
-| `GET /api/v1/tickets/counts` | 按一个维度计数（#37，仅成员；筛选与可见范围均与列表相同）。 |
-| `GET /api/v1/tickets/{id}` | 读一张可见范围内的工单；`?format=markdown` 返回给 Agent 读的 Markdown。网页会话与客户端凭证读取时把该成员的工单未读游标推进到最新事件；成员 Agent 读取不改变未读状态。 |
+| `GET /api/v1/tickets` | 条件列表（#37，仅成员；只返回当前凭证可见范围内的工单，见「查询与计数（#37）」）。客户端凭证仅可用「协作中」组合，详见下文。 |
+| `GET /api/v1/tickets/counts` | 按一个维度计数（#37，仅成员；筛选与可见范围均与列表相同；客户端凭证 403 `client_scope`）。 |
+| `GET /api/v1/tickets/{id}` | 读一张可见范围内的工单；`?format=markdown` 返回给 Agent 读的 Markdown。网页会话读取时把该成员的工单未读游标推进到最新事件；成员 Agent 读取不改变未读状态；客户端凭证 403 `client_scope`。 |
 | `PATCH /api/v1/tickets/{id}` | 修订标题/说明（创建者一方；持「可填写说明」链接的访客；乐观锁）。 |
 | `POST /api/v1/tickets/{id}/replies` | 回复（成员、成员 Agent、访客）；`deliver: true` 仅指派人一方（#36）。 |
 | `POST /api/v1/tickets/{id}/close` | 关闭（可见范围内的成员；访客 403 `members_only`）。 |
@@ -271,8 +280,8 @@ spec 用户故事 84），没有 `inbox`：
 | `GET /api/v1/tickets/{id}/access-records` | 读取访问记录（仅可见范围内的成员与成员 Agent；只读，无删改接口）。 |
 | `POST /api/v1/tickets/{id}/attachments` | 上传一个待用附件（multipart；见「附件（#33）」）。 |
 | `GET /api/v1/attachments/{att_N}/{filename}` | 附件下载（与工单相同的凭证，或访客链接的签名地址）。 |
-| `GET /api/v1/inbox` | 收件箱（#36，仅成员）：轮到我且在我可见范围内的开启工单 + 原因 + 触发者 + 最后回复时间 + 往来对象。 |
-| `GET /api/v1/inbox/waiting-on-counterparts` | 「在等他」（仅成员）：我创建或指派、当前轮到往来对象的开启工单；不计入收件箱数量。 |
+| `GET /api/v1/inbox` | 收件箱（#36，仅成员；客户端凭证可用）：轮到我且在我可见范围内的开启工单 + 原因 + 触发者 + 最后回复时间 + 往来对象。 |
+| `GET /api/v1/inbox/waiting-on-counterparts` | 「在等他」（仅成员；客户端凭证可用）：我创建或指派、当前轮到往来对象的开启工单；不计入收件箱数量。 |
 
 （labels 在 #31；guest-links 见下。）
 
@@ -622,6 +631,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 ### GET /api/v1/inbox（仅成员）
 
 - 访客 403 `members_only`（决议 4），匿名 401。
+  成员网页会话与客户端凭证都可调用，响应内容一致；清单仍先套用该成员的可见范围。
 - 列出「现在轮到我」的**开启**工单，按最后回复时间倒序；没有回复的按创建时间。
   同一成员名下所有 Agent 共用一份
   （Agent 定时轮询它即可，不靠人口头转告）；未指派、轮到本部门的工单进入有效
@@ -652,11 +662,15 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   - `read_new` = `/api/v1/tickets/<编号>/timeline?after=<我在该单最后一条任意事件的 seq>`
     （不只回复——要读的是「上次我看过之后别人做了什么」）；`read_full` =
     `/api/v1/tickets/<编号>?format=markdown`。
+  两个地址照常返回给客户端凭证；它请求这两个地址时仍得到 403 `client_scope`。
 
 ### GET /api/v1/inbox/waiting-on-counterparts（仅成员）
 
 - 「在等他」只读查询，供按往来对象分组视图展开弱化列表：列出我作为创建者或
   指派人、当前轮到往来对象一方的**开启**工单。自派自和待初筛不算「等对方」。
+  成员网页会话与客户端凭证都可调用，响应内容一致；清单仍先套用该成员的可见范围。
+  返回项中的 `read_new` / `read_full` 与收件箱一样照常返回，客户端凭证请求它们仍得到
+  403 `client_scope`。
 - 响应结构与收件箱同为 `{member, count, items}`，`items` 字段与收件箱项一致；
   这里可忽略 `reason`。`count` 是「在等他」自己的数量，**不能**并入
   `GET /api/v1/inbox` 的 `count`；这些工单不属于收件箱，也不触发通知。
@@ -667,6 +681,10 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 （访客 403 `members_only`，匿名 401）；筛选条件完全相同，且都先套用当前成员
 或成员 Agent 的可见范围：创建者、当前指派人、协作者、未指派时的有效初筛人，
 管理员为全部工单。
+客户端凭证例外：只放行列表的「协作中」组合，`GET /tickets/counts` 不放行；
+越界请求返回 403 `client_scope`。例外只作用于客户端凭证；网页会话与成员 Agent
+照旧按上述规则调用。读取收件箱、「在等他」与「协作中」不推进工单未读，也不把
+通知标为已读。
 
 ### GET /api/v1/tickets（条件列表）
 
@@ -709,6 +727,11 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   同键时按工单序号倒序；`limit` 默认 50、最大 200（422 `invalid_limit`）；
   翻页用偏移量 `page_token=p<offset>`（已接受的取舍：翻页可能漏项/重复，
   需要完整拉取时用 `sort=created` 或 `changed_after`），跟着响应里的 `next` 走。
+- 客户端凭证只放行查询条件恰好为 `collaborator=me&status=open` 的这一种组合，
+   响应与网页会话相同；可另带 `sort`、`limit`、`page_token`（各至多一次且不能留空），
+   照常跟随响应里的 `next` 翻完整清单。缺失、重复或留空 `collaborator` / `status`，
+   叠加其他任何筛选或输出参数（含 `include=brief`、`format=markdown`），以及重复
+   或留空翻页排序参数，都返回 403 `client_scope`。
 - 响应：`{total, count, items, next(下一页完整地址，没有时为 null), cursor,
   filters(解析后的标准条件，含 `label_any` + 实际 sort), resolved_aliases?, archived?}`。每项是**摘要**：
   `number, seq, url, kind, title, status, close_reason, template, creator, assignee,
@@ -721,8 +744,9 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   访客视图不出现），正常账号没有这两个兄弟字段。
 - `unread` 按成员计算：可见工单上存在大于其已读游标的回复（含交付）、访客修订或补全说明、
   指派或改派、关闭或重开、协作者变动，且不是本人亲自操作时为 `true`；本人名下成员 Agent
-  的操作为 `true`。标签增删不计。成员用网页会话或客户端凭证读详情会推进游标，成员 Agent
-  读详情不推进。上线迁移前的历史工单按基线视为已读。该状态独立于通知已读。
+  的操作为 `true`。标签增删不计。成员用网页会话读详情会推进游标，成员 Agent
+  读详情不推进；客户端凭证不能读详情。上线迁移前的历史工单按基线视为已读。
+  该状态独立于通知已读。
 - `format=markdown` 返回 `text/markdown`：一张表格（编号/标题/状态/指派人/轮到/标签/更新，
   命中信息内联在标题行）+ 末尾「下一步」（读全文、跟 `next` 翻页、`changed_after` 增量）。
 
