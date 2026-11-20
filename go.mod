@@ -3,8 +3,6 @@ module github.com/allanpk716/agent-taskboard
 go 1.26.0
 
 require (
-	fyne.io/systray v1.12.2
-	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3
 	github.com/BurntSushi/toml v1.6.0
 	github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.6.1
 	golang.org/x/crypto v0.58.0
@@ -17,8 +15,6 @@ require (
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/go-ole/go-ole v1.3.0 // indirect
-	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect

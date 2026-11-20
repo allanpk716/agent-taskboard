@@ -52,6 +52,7 @@ export function ClientConnectPage() {
   return (
     <main className="login">
       <h1>连接这台电脑</h1>
+      <p className="client-source">Orca 插件请求连接这台电脑</p>
       <p className="client-hostname">{hostname || '未知电脑'}</p>
       {error && <p role="alert" className="error">{error}</p>}
       <div className="btnrow">

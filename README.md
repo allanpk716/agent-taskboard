@@ -12,7 +12,7 @@
 - 术语:[`GLOSSARY.md`](GLOSSARY.md)
 - Agent 说明书:[`internal/agentdocs/agent.md`](internal/agentdocs/agent.md)(运行中的服务在 `/agent.md` 提供)
 - 接口:[`docs/api.md`](docs/api.md)
-- 开发:[`docs/dev.md`](docs/dev.md);部署与发版:[`docs/deploy-and-release.md`](docs/deploy-and-release.md);桌面客户端:[`docs/desktop-client.md`](docs/desktop-client.md)
+- 开发:[`docs/dev.md`](docs/dev.md);部署与发版:[`docs/deploy-and-release.md`](docs/deploy-and-release.md);Orca 插件:[`docs/desktop-client.md`](docs/desktop-client.md)
 - 架构决定:[`docs/adr/`](docs/adr/)
 
 ## 添加到手机主屏
@@ -24,10 +24,9 @@
 
 ## 本地构建镜像
 
-镜像内的桌面客户端下载自已发布的客户端 Release，构建时必须同时提供后端版本和客户端版本：
+构建本地镜像时提供后端版本：
 
 ```bash
 docker build --build-arg APP_VERSION=0.0.0-local \
-  --build-arg CLIENT_VERSION=<已发布客户端版本，例如 0.1.4> \
   -t taskboard:local .
 ```

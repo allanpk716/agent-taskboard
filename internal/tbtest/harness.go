@@ -551,7 +551,7 @@ type IssuedClientCredential struct {
 	CreatedAt string `json:"created_at"`
 }
 
-// StartClientConnect 模拟桌面客户端打开浏览器并由成员点击「连接」。
+// StartClientConnect 模拟客户端（Orca 插件）打开浏览器并由成员点击「连接」。
 func (s *Server) StartClientConnect(t testing.TB, c *http.Client, hostname string) ClientConnect {
 	t.Helper()
 	var created struct {
@@ -596,7 +596,7 @@ func (s *Server) IssueClientCredential(t testing.TB, c *http.Client, hostname st
 	return s.ExchangeClientCode(t, s.StartClientConnect(t, c, hostname), testClientVerifier)
 }
 
-// ClientCredentialClient 模拟桌面客户端调用 API。
+// ClientCredentialClient 模拟持有客户端凭证的一方（Orca 插件）调用 API。
 func (s *Server) ClientCredentialClient(token string) *http.Client {
 	return &http.Client{Transport: bearerTransport{token: token}}
 }
