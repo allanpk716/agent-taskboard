@@ -23,7 +23,7 @@
 ├── docker-compose.yml        # 由 deploy/cloud/docker-compose.yml 复制，image 写死版本号
 ├── config.toml               # 只在服务器上维护，属主 root:65532，权限 640
 ├── deploy.env                # 部署脚本读取的镜像仓库地址等，只在服务器上维护
-├── oss.env                   # 仅 OSS 后端需要；root:root，权限 600
+├── oss.env                   # OSS AccessKey 与通知出口主密钥等环境注入；root:root，权限 600
 └── deploy.sh                 # 每次部署前从对应 tag 上传
 ```
 
@@ -44,6 +44,20 @@
 - Orca 插件独立发布、版本不受管理员控制（ADR 0020），它用到的接口（会话、通知流、通知已读、客户端凭证）尤其要保持向后兼容；已安装的旧桌面 exe 也继续调用同一组接口，客户端凭证不因下线被吊销。
 - 所有会产生新内容的请求（回复、建单、反馈提交、附件上传）都接受 `Idempotency-Key` 请求头。服务端按 key 去重，key 重复时返回首次请求的结果；入口附件上传是唯一例外：key 必填，用来把同一份草稿的多个附件归属到之后的一次提交，不做单响应快照。
 - `GET /api/v1/health` 返回 `server_version` 和 `web_version`。前后端合并发布后两者相同；CI 冒烟和部署脚本都用它核对版本。
+
+## 通知出口（webhook 门铃）
+
+`[webhook]` 缺省关闭，新部署不会有意外外呼；只有把 `enabled` 改成 `true` 并配置 HTTPS 白名单后才启用：
+
+```toml
+[webhook]
+enabled       = false
+allowed_bases = ['https://<bot平台地址>']
+window_start  = '08:00'
+window_end    = '20:00'
+```
+
+开启后还必须注入 `TASKBOARD_OUTLET_KEY`：base64 标准编码的 32 字节主密钥（例如 `openssl rand -base64 32`）。它只走环境变量，不进 `config.toml`、数据库和备份；`deploy/cloud/docker-compose.yml` 的 `env_file` 会从 `/opt/taskboard/oss.env` 注入。主密钥丢失时已有 webhook key 无法解密，代价是成员重新粘贴各自的 key。
 
 ## 附件上限与显示
 
@@ -116,11 +130,14 @@ signing_host      = ''                       # 空 = 桶默认外网域名
 
 服务端 API 一律走 `internal_endpoint`，同地域内网不占 ECS 公网出口；浏览器拿到的签名地址使用桶默认外网域名，只有以后开自定义域名或传输加速时才改 `signing_host`。所有对象都在根前缀下：`<prefix>attachments/`、`<prefix>archive-packages/`、`<prefix>backups/`。
 
-`/opt/taskboard/oss.env` 只放两行凭证，属主 `root:root`，权限 `600`；`deploy/cloud/docker-compose.yml` 里的 `env_file` 会在启动时把它注入 taskboard 容器。凭证不进 `config.toml`、数据库和备份：
+`/opt/taskboard/oss.env` 只放需要环境注入的凭证，属主 `root:root`，权限 `600`；`deploy/cloud/docker-compose.yml` 里的 `env_file` 会在启动时把它注入 taskboard 容器。凭证不进 `config.toml`、数据库和备份：
 
 ```dotenv
 OSS_ACCESS_KEY_ID=<为 taskboard 单独生成的 AK ID>
 OSS_ACCESS_KEY_SECRET=<为 taskboard 单独生成的 AK Secret>
+
+# 启用 [webhook] 时额外放入；附件仍用 local 后端时可以只放这一行
+TASKBOARD_OUTLET_KEY=<base64 编码的 32 字节主密钥>
 ```
 
 桶 `urithub-files` 的配置要求：

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -116,7 +117,7 @@ func Test门铃按未读四桶计数推送并推进持久游标(t *testing.T) {
 	request := requests[0]
 	mu.Unlock()
 	if request.Path != "/api/v1/bots/bot01/webhook" || request.WebhookKey != "webhook-secret" ||
-		request.Idempotency != "taskboard:1:g1:6" || request.ContentType != "application/json" {
+		request.Idempotency != outletIdempotencyKey(t, s.DB, 1, 6) || request.ContentType != "application/json" {
 		t.Fatalf("请求地址/鉴权/幂等键不符：%+v", request)
 	}
 	want := map[string]any{
@@ -271,7 +272,7 @@ func Test系统通知豁免推送窗口(t *testing.T) {
 	waitForOutletCondition(t, func() bool { return queryOutletCursor(t, s.DB, 1) == 1 })
 	mu.Lock()
 	defer mu.Unlock()
-	if idempotency != "taskboard:1:g1:1" {
+	if idempotency != outletIdempotencyKey(t, s.DB, 1, 1) {
 		t.Fatalf("系统通知幂等键 = %q，想 taskboard:1:g1:1", idempotency)
 	}
 }
@@ -374,6 +375,7 @@ func Test恢复出口不重建基线且首响只数最近二十四小时(t *test
 	if _, err := manager.Save(ctx, 1, "bot01", "webhook-secret"); err != nil {
 		t.Fatal(err)
 	}
+	generation := queryOutletGeneration(t, s.DB, 1)
 	if _, err := manager.Pause(ctx, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +386,7 @@ func Test恢复出口不重建基线且首响只数最近二十四小时(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resumed.LastPushedID != 0 || resumed.Generation != 1 {
+	if resumed.LastPushedID != 0 || resumed.Generation != generation {
 		t.Fatalf("恢复不能重建基线：%+v", resumed)
 	}
 
@@ -419,7 +421,7 @@ func Test恢复出口不重建基线且首响只数最近二十四小时(t *test
 	if first["from_id"] != float64(0) || first["latest_id"] != float64(2) || first["turn"] != float64(1) {
 		t.Fatalf("恢复首响只应数最近 24 小时的未读：%v", first)
 	}
-	if firstKey != "taskboard:1:g1:2" {
+	if firstKey != outletIdempotencyKey(t, s.DB, 1, 2) {
 		t.Fatalf("恢复首响幂等键 = %q", firstKey)
 	}
 
@@ -510,7 +512,7 @@ func Test服务端五XX失败同键退避重试且封顶半小时(t *testing.T) 
 		t.Fatalf("总尝试次数 = %d，想初次加 7 次重试", len(keys))
 	}
 	for _, key := range keys {
-		if key != "taskboard:1:g1:1" {
+		if key != outletIdempotencyKey(t, s.DB, 1, 1) {
 			t.Fatalf("重试必须复用同键，得到 %v", keys)
 		}
 	}
@@ -584,8 +586,177 @@ func Test游标写入失败后下轮同键重推(t *testing.T) {
 	})
 	mu.Lock()
 	defer mu.Unlock()
-	if keys[0] != "taskboard:1:g1:1" || keys[1] != keys[0] {
+	if keys[0] != outletIdempotencyKey(t, s.DB, 1, 1) || keys[1] != keys[0] {
 		t.Fatalf("游标失败后的两次请求应同键：%v", keys)
+	}
+}
+
+func Test停机取消后仍登记重试并在租约到期后同键重推(t *testing.T) {
+	s := openOutletTestStore(t)
+	ctx := context.Background()
+	insertOutletMember(t, s.DB, 1, "wang")
+	insertOutletTicket(t, s.DB)
+	clk := clock.NewFake(time.Date(2026, 11, 20, 9, 0, 0, 0, clock.Beijing))
+	cipher := newOutletTestCipher(t)
+	if _, err := outlet.NewManager(s.DB, clk, cipher).Save(ctx, 1, "bot01", "webhook-secret"); err != nil {
+		t.Fatal(err)
+	}
+	insertOutletNotification(t, s.DB, 1, "turn", "assigned", nil)
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var mu sync.Mutex
+	var keys []string
+	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		keys = append(keys, r.Header.Get("X-Idempotency-Key"))
+		first := len(keys) == 1
+		mu.Unlock()
+		if first {
+			select {
+			case <-started:
+			default:
+				close(started)
+			}
+			<-release
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(target.Close)
+	pusher := newOutletTestPusher(t, s, clk, cipher, target, "08:00", "20:00", newOutletTestLogs())
+	if err := pusher.Dispatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	if lease := queryOutletNextAttempt(t, s.DB, 1); !lease.Equal(clk.Now().Add(2 * time.Minute)) {
+		t.Fatalf("发送前的在途租约 = %s，想 %s", lease, clk.Now().Add(2*time.Minute))
+	}
+	if err := pusher.Stop(context.Background()); err != nil {
+		t.Fatalf("停机等待在途请求失败：%v", err)
+	}
+	close(release)
+	next := queryOutletNextAttempt(t, s.DB, 1)
+	if state, attempts := queryOutletRetryState(t, s.DB, 1); state != "retryable" || attempts != 1 {
+		t.Fatalf("停机取消后 outlet = %s/%d，想已登记一次可重试", state, attempts)
+	}
+	if next.IsZero() || next.Before(clk.Now()) {
+		t.Fatalf("停机取消后的重试时间 = %s，想已可重试", next)
+	}
+
+	clk.Advance(2 * time.Minute)
+	restarted := newOutletTestPusher(t, s, clk, cipher, target, "08:00", "20:00", newOutletTestLogs())
+	if err := restarted.Dispatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitForOutletCondition(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(keys) == 2 && queryOutletCursor(t, s.DB, 1) == 1
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if keys[0] != outletIdempotencyKey(t, s.DB, 1, 1) || keys[1] != keys[0] {
+		t.Fatalf("租约到期后的重推应复用同键：%v", keys)
+	}
+}
+
+func Test孤立的在途行租约到期后同键重推(t *testing.T) {
+	s := openOutletTestStore(t)
+	ctx := context.Background()
+	insertOutletMember(t, s.DB, 1, "wang")
+	insertOutletTicket(t, s.DB)
+	clk := clock.NewFake(time.Date(2026, 11, 20, 9, 0, 0, 0, clock.Beijing))
+	cipher := newOutletTestCipher(t)
+	if _, err := outlet.NewManager(s.DB, clk, cipher).Save(ctx, 1, "bot01", "webhook-secret"); err != nil {
+		t.Fatal(err)
+	}
+	insertOutletNotification(t, s.DB, 1, "turn", "assigned", nil)
+	// 模拟成功/失败两次状态写入都失败后进程消失：claim 已留下 retryable，
+	// 但没有任何结果可写，next_attempt_at 只剩租约。
+	if _, err := s.DB.Exec(`
+		UPDATE outlet SET retry_state='retryable',pending_latest_id=1,attempt_count=1,
+			next_attempt_at='2026-11-20T09:02:00+08:00'
+		WHERE member_id=1`); err != nil {
+		t.Fatal(err)
+	}
+
+	clk.Advance(time.Minute)
+	blocked := newOutletTestPusher(t, s, clk, cipher, httptest.NewTLSServer(http.NotFoundHandler()),
+		"08:00", "20:00", newOutletTestLogs())
+	t.Cleanup(func() { blocked.Stop(context.Background()) })
+	if err := blocked.Dispatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if _, attempts := queryOutletRetryState(t, s.DB, 1); attempts != 1 {
+		t.Fatalf("租约未到期不应重推，attempts = %d", attempts)
+	}
+
+	clk.Advance(time.Minute)
+	var mu sync.Mutex
+	var keys []string
+	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		keys = append(keys, r.Header.Get("X-Idempotency-Key"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(target.Close)
+	pusher := newOutletTestPusher(t, s, clk, cipher, target, "08:00", "20:00", newOutletTestLogs())
+	if err := pusher.Dispatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitForOutletCondition(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(keys) == 1 && queryOutletCursor(t, s.DB, 1) == 1
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if keys[0] != outletIdempotencyKey(t, s.DB, 1, 1) {
+		t.Fatalf("租约到期后的重推应复用同键：%v", keys)
+	}
+}
+
+func Test派发后成员暂停使claim落空不外呼(t *testing.T) {
+	s := openOutletTestStore(t)
+	ctx := context.Background()
+	insertOutletMember(t, s.DB, 1, "wang")
+	insertOutletTicket(t, s.DB)
+	clk := clock.NewFake(time.Date(2026, 11, 20, 9, 0, 0, 0, clock.Beijing))
+	cipher := newOutletTestCipher(t)
+	manager := outlet.NewManager(s.DB, clk, cipher)
+	if _, err := manager.Save(ctx, 1, "bot01", "old-webhook-secret"); err != nil {
+		t.Fatal(err)
+	}
+	insertOutletNotification(t, s.DB, 1, "turn", "assigned", nil)
+
+	var mu sync.Mutex
+	requests := 0
+	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(target.Close)
+	logs := newOutletTestLogs()
+	gate := newOutletClockGate(clk)
+	pusher := newOutletTestPusher(t, s, gate, cipher, target, "08:00", "20:00", logs)
+	if err := pusher.Dispatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	<-gate.started
+	if _, err := manager.Pause(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	close(gate.release)
+	waitForOutletCondition(t, func() bool { return strings.Contains(logs.String(), "派发后变化") })
+	mu.Lock()
+	defer mu.Unlock()
+	if requests != 0 {
+		t.Fatalf("派发后成员又暂停时不应外呼，请求数 = %d", requests)
 	}
 }
 
@@ -634,7 +805,7 @@ func Test发送途中新增通知不被游标跳过(t *testing.T) {
 	})
 	mu.Lock()
 	defer mu.Unlock()
-	if keys[0] != "taskboard:1:g1:1" || keys[1] != "taskboard:1:g1:2" {
+	if keys[0] != outletIdempotencyKey(t, s.DB, 1, 1) || keys[1] != outletIdempotencyKey(t, s.DB, 1, 2) {
 		t.Fatalf("发送途中新增的通知下一响应换 latest：%v", keys)
 	}
 }
@@ -671,6 +842,7 @@ func Test重建基线递增代数后不复用旧幂等键(t *testing.T) {
 		defer mu.Unlock()
 		return len(keys) == 1 && queryOutletCursor(t, s.DB, 1) == 2
 	})
+	initialKey := outletIdempotencyKey(t, s.DB, 1, 2)
 
 	if _, err := manager.Save(ctx, 1, "bot02", "new-webhook-secret"); err != nil {
 		t.Fatal(err)
@@ -686,7 +858,7 @@ func Test重建基线递增代数后不复用旧幂等键(t *testing.T) {
 	})
 	mu.Lock()
 	defer mu.Unlock()
-	if keys[0] != "taskboard:1:g1:2" || keys[1] != "taskboard:1:g2:3" {
+	if keys[0] != initialKey || keys[1] != outletIdempotencyKey(t, s.DB, 1, 3) {
 		t.Fatalf("重建基线后的幂等键 = %v，想 generation +1", keys)
 	}
 }
@@ -747,7 +919,7 @@ func Test四XX确定性失败不重试(t *testing.T) {
 	})
 	mu.Lock()
 	defer mu.Unlock()
-	if keys[1] != "taskboard:1:g1:2" {
+	if keys[1] != outletIdempotencyKey(t, s.DB, 1, 2) {
 		t.Fatalf("新 latest 是新幂等键，不该复用 4xx 旧键：%v", keys)
 	}
 }
@@ -857,6 +1029,9 @@ func Test空响ignored单独记录且日志不含响应内容(t *testing.T) {
 		t.Fatal(err)
 	}
 	insertOutletNotification(t, s.DB, 1, "turn", "assigned", nil)
+	if _, err := s.DB.Exec(`UPDATE outlet SET failure_count=2 WHERE member_id=1`); err != nil {
+		t.Fatal(err)
+	}
 
 	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -873,8 +1048,8 @@ func Test空响ignored单独记录且日志不含响应内容(t *testing.T) {
 		t.Fatalf("ignored 日志不得包含响应 body 或 key：%q", out)
 	}
 	got, err := outlet.NewManager(s.DB, clk, cipher).Get(ctx, 1)
-	if err != nil || got.DeliveryState != "ignored" {
-		t.Fatalf("ignored 后投递状态 = %+v err=%v，想 delivery_state=ignored", got, err)
+	if err != nil || got.DeliveryState != "ignored" || got.FailureCount != 2 {
+		t.Fatalf("ignored 后投递状态 = %+v err=%v，想 delivery_state=ignored 且 failure_count=2", got, err)
 	}
 	if cursor := queryOutletCursor(t, s.DB, 1); cursor != 1 {
 		t.Fatalf("ignored 是 2xx，游标应照常推进，实际 %d", cursor)
@@ -938,6 +1113,25 @@ type capturedOutletRequest struct {
 	ContentType string
 }
 
+type outletClockGate struct {
+	clock.Clock
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newOutletClockGate(wrapped clock.Clock) *outletClockGate {
+	return &outletClockGate{Clock: wrapped, started: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (c *outletClockGate) Now() time.Time {
+	c.once.Do(func() {
+		close(c.started)
+		<-c.release
+	})
+	return c.Clock.Now()
+}
+
 func newOutletTestCipher(t *testing.T) *outlet.Cipher {
 	t.Helper()
 	cipher, err := outlet.NewCipher([]byte(strings.Repeat("k", 32)))
@@ -993,6 +1187,21 @@ func queryOutletCursor(t *testing.T, db *sql.DB, memberID int64) int64 {
 		t.Fatal(err)
 	}
 	return cursor
+}
+
+func queryOutletGeneration(t *testing.T, db *sql.DB, memberID int64) int64 {
+	t.Helper()
+	var generation int64
+	if err := db.QueryRow(`SELECT generation FROM outlet WHERE member_id=?`, memberID).Scan(&generation); err != nil {
+		t.Fatal(err)
+	}
+	return generation
+}
+
+func outletIdempotencyKey(t *testing.T, db *sql.DB, memberID, latestID int64) string {
+	t.Helper()
+	generation := queryOutletGeneration(t, db, memberID)
+	return fmt.Sprintf("taskboard:%d:g%d:%d", memberID, generation, latestID)
 }
 
 func queryOutletRetryState(t *testing.T, db *sql.DB, memberID int64) (string, int64) {

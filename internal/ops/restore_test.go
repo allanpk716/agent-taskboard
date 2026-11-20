@@ -93,6 +93,61 @@ func Test恢复换库并从镜像补齐附件(t *testing.T) {
 	}
 }
 
+func Test恢复备份后递增通知出口代数(t *testing.T) {
+	target := t.TempDir()
+	dataDir := t.TempDir()
+	st, err := store.Open(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clk := clock.NewFake(beijing(2026, 11, 20, 9, 0, 0))
+	b, err := ops.NewBackups(st.DB, dataDir, ops.BackupOptions{
+		Target: target, DailyAt: "03:00", KeepDaily: 1, KeepMonthly: 1, KeepPreupdate: 1,
+	}, clk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB.Exec(`INSERT INTO members (id,username,name,password_hash,is_admin,created_at)
+		VALUES (1,'wang','王工','x',0,'2026-11-20T09:00:00+08:00')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DB.Exec(`INSERT INTO outlet (
+		member_id,bot_id,key_cipher,last_pushed_id,generation,status,failure_count,created_at,updated_at
+	) VALUES (1,'bot01','v1:cipher',7,2,'paused',3,
+		'2026-11-20T09:00:00+08:00','2026-11-20T09:00:00+08:00')`); err != nil {
+		t.Fatal(err)
+	}
+	record, err := b.BackupNow(context.Background(), ops.KindDaily)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	restoreAt := beijing(2026, 11, 21, 9, 0, 0)
+	restoreDir := t.TempDir()
+	if _, err := ops.Restore(restoreDir, 0, filepath.Join(target, record.Filename), restoreAt); err != nil {
+		t.Fatalf("恢复失败：%v", err)
+	}
+	restored, err := store.Open(restoreDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	var cursor, generation int64
+	var status, keyCipher string
+	if err := restored.DB.QueryRow(`
+		SELECT last_pushed_id,generation,status,key_cipher FROM outlet WHERE member_id=1`).
+		Scan(&cursor, &generation, &status, &keyCipher); err != nil {
+		t.Fatal(err)
+	}
+	if cursor != 7 || status != "paused" || keyCipher != "v1:cipher" {
+		t.Fatalf("恢复不应重建基线或改配置：cursor=%d status=%s cipher=%s", cursor, status, keyCipher)
+	}
+	if want := restoreAt.Unix(); generation != want {
+		t.Fatalf("恢复后 generation = %d，想防备份回退撞键的 %d", generation, want)
+	}
+}
+
 // 服务还在运行时拒绝恢复：对运行中的库做热替换不安全（Windows 下文件也被占用）。
 func Test服务运行时拒绝恢复(t *testing.T) {
 	target := t.TempDir()

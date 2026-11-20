@@ -22,8 +22,13 @@ const (
 	MinPushInterval = time.Minute
 	// MaxRetryDelay 是持续 5xx/超时后的重试退避上限。
 	MaxRetryDelay = 30 * time.Minute
+	// ClaimLease 是一次外呼从 claim 到结果落库的最长占用时间。发送前先把
+	// retryable 行指到租约到期，进程中途死掉时重启后能按同键继续重试。
+	ClaimLease = 2 * time.Minute
 	// autoPauseFailureCount 是 4xx 连续失败多少次后自动暂停。
 	autoPauseFailureCount = 2
+	// stateWriteTimeout 是取消推送循环后仍要完成的 DB 状态写入时限。
+	stateWriteTimeout = 5 * time.Second
 
 	retryStateNone      = "none"
 	retryStateRetryable = "retryable"
@@ -167,7 +172,7 @@ func (p *Pusher) Dispatch(ctx context.Context) error {
 }
 
 func (p *Pusher) dispatchRow(ctx context.Context, row outletRow) {
-	if row.status == "paused" {
+	if row.status == StatusPaused {
 		p.logResult(row.memberID, "paused", outletCounts{
 			fromID: row.lastPushedID, latestID: row.pendingID.Int64,
 		}, 0, 0)
@@ -189,16 +194,15 @@ func (p *Pusher) dispatchRow(ctx context.Context, row outletRow) {
 		row.attemptCount = 0
 	}
 	if row.retryState == retryStateRetryable {
-		if !row.nextAttempt.Valid {
-			return
-		}
-		next, err := time.Parse(time.RFC3339Nano, row.nextAttempt.String)
-		if err != nil {
-			p.logError(row.memberID, fmt.Errorf("解析门铃重试时间失败：%w", err))
-			return
-		}
-		if p.clk.Now().Before(next) {
-			return
+		if row.nextAttempt.Valid {
+			next, err := time.Parse(time.RFC3339Nano, row.nextAttempt.String)
+			if err != nil {
+				p.logError(row.memberID, fmt.Errorf("解析门铃重试时间失败：%w", err))
+				return
+			}
+			if p.clk.Now().Before(next) {
+				return
+			}
 		}
 		if !row.pendingID.Valid || row.pendingID.Int64 <= row.lastPushedID {
 			p.logError(row.memberID, errors.New("门铃重试状态缺少有效 latest_id"))
@@ -350,21 +354,31 @@ func (p *Pusher) count(ctx context.Context, memberID, fromID int64, pending sql.
 func (p *Pusher) advanceWithoutPush(ctx context.Context, row outletRow, latest int64) error {
 	now := p.clk.Now().Format(time.RFC3339Nano)
 	_, err := p.db.ExecContext(ctx, `
-		UPDATE outlet SET last_pushed_id=?, retry_state='none', pending_latest_id=NULL,
-			attempt_count=0, next_attempt_at=NULL, catchup_after=NULL, updated_at=?
-		WHERE member_id=? AND generation=? AND last_pushed_id=? AND status='active'`,
-		latest, now, row.memberID, row.generation, row.lastPushedID)
+		UPDATE outlet SET last_pushed_id=?, `+PendingStateResetSQL+`,
+			catchup_after=NULL, updated_at=?
+		WHERE member_id=? AND generation=? AND last_pushed_id=? AND status=?`,
+		latest, now, row.memberID, row.generation, row.lastPushedID, StatusActive)
 	return err
 }
 
 func (p *Pusher) claim(ctx context.Context, row outletRow, latest int64) error {
-	now := p.clk.Now().Format(time.RFC3339Nano)
-	_, err := p.db.ExecContext(ctx, `
+	now := p.clk.Now()
+	leaseUntil := now.Add(ClaimLease).Format(time.RFC3339Nano)
+	res, err := p.db.ExecContext(ctx, `
 		UPDATE outlet SET retry_state='retryable', pending_latest_id=?, attempt_count=?,
-			next_attempt_at=NULL, updated_at=?
-		WHERE member_id=? AND generation=? AND last_pushed_id=? AND status='active'`,
-		latest, row.attemptCount, now, row.memberID, row.generation, row.lastPushedID)
-	return err
+			next_attempt_at=?, updated_at=?
+		WHERE member_id=? AND generation=? AND last_pushed_id=? AND status=?`,
+		latest, row.attemptCount, leaseUntil, now.Format(time.RFC3339Nano),
+		row.memberID, row.generation, row.lastPushedID, StatusActive)
+	if err != nil {
+		return err
+	}
+	if affected, err := res.RowsAffected(); err != nil {
+		return err
+	} else if affected != 1 {
+		return errors.New("门铃 outlet 已在派发后变化，放弃本响")
+	}
+	return nil
 }
 
 func (p *Pusher) work(row outletRow, endpoint, webhookKey string, payload []byte, counts outletCounts) {
@@ -421,18 +435,20 @@ func responseIgnored(body []byte) bool {
 
 func (p *Pusher) markSuccess(row outletRow, latest int64, ignored bool) error {
 	now := p.clk.Now().Format(time.RFC3339Nano)
-	deliveryState := "ok"
+	deliveryState := DeliveryStateOK
 	if ignored {
-		deliveryState = "ignored"
+		deliveryState = DeliveryStateIgnored
 	}
-	res, err := p.db.ExecContext(p.ctx, `
-		UPDATE outlet SET last_pushed_id=?, retry_state='none', pending_latest_id=NULL,
-			attempt_count=0, next_attempt_at=NULL, failure_count=0,
+	ctx, cancel := p.stateContext()
+	defer cancel()
+	res, err := p.db.ExecContext(ctx, `
+		UPDATE outlet SET last_pushed_id=?, `+PendingStateResetSQL+`,
+			failure_count=CASE WHEN ? THEN failure_count ELSE 0 END,
 			delivery_state=?, delivery_state_at=?, transient_since=NULL, catchup_after=NULL,
 			last_pushed_at=?, updated_at=?
-		WHERE member_id=? AND generation=? AND last_pushed_id=? AND pending_latest_id=? AND status='active'`,
-		latest, deliveryState, now, now, now,
-		row.memberID, row.generation, row.lastPushedID, latest)
+		WHERE member_id=? AND generation=? AND last_pushed_id=? AND pending_latest_id=? AND status=?`,
+		latest, ignored, deliveryState, now, now, now,
+		row.memberID, row.generation, row.lastPushedID, latest, StatusActive)
 	if err != nil {
 		return err
 	}
@@ -455,25 +471,27 @@ func (p *Pusher) markFailure(row outletRow, latest int64, permanent bool) error 
 		next = now.Add(retryDelay(row.attemptCount + 1)).Format(time.RFC3339Nano)
 	}
 	pause := permanent && row.failureCount+1 >= autoPauseFailureCount
-	tx, err := p.db.BeginTx(p.ctx, nil)
+	ctx, cancel := p.stateContext()
+	defer cancel()
+	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(p.ctx, `
+	res, err := tx.ExecContext(ctx, `
 		UPDATE outlet SET
 			retry_state=?, pending_latest_id=?, attempt_count=attempt_count+1,
 			next_attempt_at=?, failure_count=failure_count+?,
-			status=CASE WHEN ? THEN 'paused' ELSE ? END,
-			pause_reason=CASE WHEN ? THEN 'outlet_paused' ELSE NULL END,
+				status=CASE WHEN ? THEN ? ELSE ? END,
+				pause_reason=CASE WHEN ? THEN ? ELSE NULL END,
 			delivery_state=?, delivery_state_at=?,
 			transient_since=CASE WHEN ? THEN NULL ELSE COALESCE(transient_since, ?) END,
 			updated_at=?
-		WHERE member_id=? AND generation=? AND last_pushed_id=? AND pending_latest_id=? AND status='active'`,
+		WHERE member_id=? AND generation=? AND last_pushed_id=? AND pending_latest_id=? AND status=?`,
 		state, latest, next, permanentFailureIncrement(permanent),
-		pause, row.status, pause,
+		pause, StatusPaused, StatusActive, pause, PauseReasonOutletPaused,
 		deliveryStateName(permanent), nowText, permanent, nowText, nowText,
-		row.memberID, row.generation, row.lastPushedID, latest)
+		row.memberID, row.generation, row.lastPushedID, latest, StatusActive)
 	if err != nil {
 		return err
 	}
@@ -483,7 +501,7 @@ func (p *Pusher) markFailure(row outletRow, latest int64, permanent bool) error 
 		return errors.New("门铃失败状态未写入，保留同键待重试")
 	}
 	if pause && p.notifier != nil {
-		if err := p.notifier.NotifyOutletPausedTx(p.ctx, tx, row.memberID, now); err != nil {
+		if err := p.notifier.NotifyOutletPausedTx(ctx, tx, row.memberID, now); err != nil {
 			return err
 		}
 	}
@@ -496,11 +514,15 @@ func (p *Pusher) markFailure(row outletRow, latest int64, permanent bool) error 
 	return nil
 }
 
+func (p *Pusher) stateContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(p.ctx), stateWriteTimeout)
+}
+
 func deliveryStateName(permanent bool) string {
 	if permanent {
-		return "permanent"
+		return DeliveryStatePermanent
 	}
-	return "transient"
+	return DeliveryStateTransient
 }
 
 func permanentFailureIncrement(permanent bool) int64 {

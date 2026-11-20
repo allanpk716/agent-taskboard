@@ -153,10 +153,10 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 
 | 方法与路径 | 说明 |
 |---|---|
-| `GET /api/v1/me/notification-outlet` | 读取 `{enabled,outlet}`；`outlet` 为 `null` 或 `{bot_id,key_last4,last_pushed_id,generation,status}`，永不返回 webhook key 或密文。 |
+| `GET /api/v1/me/notification-outlet` | 读取 `{enabled,outlet}`；`outlet` 为 `null` 或 `{bot_id,key_last4,last_pushed_id,generation,status,failure_count,pause_reason,delivery_state,delivery_state_at,transient_since}`，永不返回 webhook key 或密文。`failure_count` 是确定性失败的连续计数；`pause_reason` 仅暂停时存在（`member` / `outlet_paused` / `member_deactivated`）。`delivery_state` 为 `ok` / `transient` / `ignored` / `permanent`；`delivery_state_at` 是当前分级开始时间，`transient_since` 只在临时故障期间存在。 |
 | `PUT /api/v1/me/notification-outlet` | 保存/重建 `{bot_id,key}`。`bot_id` 必须匹配 `^[a-z0-9]{1,64}$`；key 每次必填、只写不读。保存事务内把 `last_pushed_id` 建到该成员通知 `MAX(id)`，从下一条新通知开始推送。 |
 | `POST /api/v1/me/notification-outlet/pause` | 暂停；游标与代数不动。 |
-| `POST /api/v1/me/notification-outlet/resume` | 恢复；不重建基线。 |
+| `POST /api/v1/me/notification-outlet/resume` | 恢复；不重建基线，补推一响，且首响只数最近 24 小时内仍未读的通知。 |
 | `DELETE /api/v1/me/notification-outlet` | 删除配置；以后保存会重建基线，不补推历史通知。 |
 | `POST /api/v1/me/notification-outlet/test` | 发送 `{"event":"taskboard.test"}`。目标 POST 使用服务端白名单 URL、`X-Webhook-Key` 和唯一 `X-Idempotency-Key: taskboard-test:<member>:<epoch-ms>`，不重试。每成员限 1 次/分钟；结果用 200 `{result,http_status}` 表达 `ok/ignored/unauthorized/timeout`（其他非 2xx 为 `http_error`）。 |
 

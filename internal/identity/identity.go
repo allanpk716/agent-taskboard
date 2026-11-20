@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/outletstate"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -269,10 +270,16 @@ func (m *Manager) DeactivateMember(ctx context.Context, id int64) (bool, error) 
 	}
 	// 通知出口跟随账号停用，并清掉在途重试与失败分级，停用后不再外呼。
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE outlet SET status='paused',pause_reason='member_deactivated',failure_count=0,
-			pending_latest_id=NULL,retry_state='none',attempt_count=0,next_attempt_at=NULL,
-			delivery_state='ok',delivery_state_at=?,transient_since=NULL,catchup_after=NULL,updated_at=?
-		WHERE member_id=?`, now, now, id); err != nil {
+		UPDATE outlet SET
+			status=CASE WHEN status=? THEN ? ELSE status END,
+			pause_reason=CASE WHEN status=? THEN ? ELSE pause_reason END,
+			failure_count=0,
+			`+outletstate.PendingStateResetSQL+`,
+			`+outletstate.DeliveryStateResetSQL+`,updated_at=?
+		WHERE member_id=?`,
+		outletstate.StatusActive, outletstate.StatusPaused, outletstate.StatusActive,
+		outletstate.PauseReasonMemberDeactivated,
+		now, now, id); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -310,11 +317,16 @@ func (m *Manager) ReactivateMember(ctx context.Context, id int64) (bool, error) 
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE outlet SET
 			last_pushed_id=(SELECT COALESCE(MAX(id),0) FROM notifications WHERE member_id=outlet.member_id),
-			generation=generation+1,status='active',failure_count=0,pause_reason=NULL,
-			pending_latest_id=NULL,retry_state='none',attempt_count=0,next_attempt_at=NULL,
-			last_pushed_at=NULL,delivery_state='ok',delivery_state_at=?,transient_since=NULL,
-			catchup_after=NULL,updated_at=?
-		WHERE member_id=?`, now, now, id); err != nil {
+			generation=generation+1,
+			status=CASE WHEN pause_reason=? THEN ? ELSE status END,
+			pause_reason=CASE WHEN pause_reason=? THEN NULL ELSE pause_reason END,
+			failure_count=0,
+			`+outletstate.PendingStateResetSQL+`,`+outletstate.LastPushedAtResetSQL+`,
+			`+outletstate.DeliveryStateResetSQL+`,updated_at=?
+		WHERE member_id=?`,
+		outletstate.PauseReasonMemberDeactivated, outletstate.StatusActive,
+		outletstate.PauseReasonMemberDeactivated,
+		now, now, id); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {

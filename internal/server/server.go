@@ -178,9 +178,12 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	slims := slim.NewService(st.DB, cfg.DataDir, backups.TargetDir(), atts,
 		attachmentBackend.objectStorage, c)
 	draftStore.SetNotifier(notificationStore.DraftNotifier())
+	var outletCipher *outlet.Cipher
 	var pusher *outlet.Pusher
+	var outletManager *outlet.Manager
+	var outletBuilder *outlet.URLBuilder
 	if cfg.Webhook.Enabled {
-		outletCipher, err := outlet.NewCipherFromEnv()
+		outletCipher, err = outlet.NewCipherFromEnv()
 		if err != nil {
 			return nil, fmt.Errorf("通知出口已启用但主密钥不可用：%w", err)
 		}
@@ -191,23 +194,15 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 		if err != nil {
 			return nil, fmt.Errorf("装配通知出口失败：%w", err)
 		}
-	}
-	attachmentLinks, err := attachmentlink.LoadOrCreate(cfg.DataDir)
-	if err != nil {
-		return nil, err
-	}
-	var outletManager *outlet.Manager
-	var outletBuilder *outlet.URLBuilder
-	if cfg.Webhook.Enabled {
-		outletCipher, err := outlet.NewCipherFromEnv()
-		if err != nil {
-			return nil, fmt.Errorf("通知出口已启用但主密钥不可用：%w", err)
-		}
 		outletBuilder, err = outlet.NewURLBuilder(cfg.Webhook.AllowedBases)
 		if err != nil {
 			return nil, fmt.Errorf("通知出口白名单不可用：%w", err)
 		}
 		outletManager = outlet.NewManager(st.DB, c, outletCipher)
+	}
+	attachmentLinks, err := attachmentlink.LoadOrCreate(cfg.DataDir)
+	if err != nil {
+		return nil, err
 	}
 	outletClient := o.outletClient
 	if outletClient == nil {

@@ -51,7 +51,7 @@ func (a *API) handleNotificationOutlet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.Key == "" {
-			WriteError(w, http.StatusUnprocessableEntity, CodeOutletWebhookKeyMissing,
+			WriteError(w, http.StatusUnprocessableEntity, CodeOutletWebhookKeyRequired,
 				outlet.ErrInvalidWebhookKey.Error(), "key 只写不读；更换 bot_id 后必须重新粘贴")
 			return
 		}
@@ -172,7 +172,7 @@ func (a *API) writeOutletError(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, outlet.ErrInvalidBotID):
 		WriteError(w, http.StatusUnprocessableEntity, CodeInvalidOutletBotID, err.Error(), "")
 	case errors.Is(err, outlet.ErrInvalidWebhookKey):
-		WriteError(w, http.StatusUnprocessableEntity, CodeOutletWebhookKeyMissing, err.Error(), "")
+		WriteError(w, http.StatusUnprocessableEntity, CodeOutletWebhookKeyRequired, err.Error(), "")
 	case errors.Is(err, outlet.ErrMasterKeyMissing):
 		WriteError(w, http.StatusServiceUnavailable, CodeWebhookDisabled,
 			"通知出口主密钥不可用", "请联系部署管理员重新注入 TASKBOARD_OUTLET_KEY")

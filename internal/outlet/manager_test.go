@@ -57,9 +57,10 @@ func Test保存出口配置在同一事务写入成员通知基线并递增代�
 	if saved.LastPushedID != baseline || baseline != 3 {
 		t.Fatalf("基线 = %d（返回 %d），想保存事务内的 MAX(id)=3", baseline, saved.LastPushedID)
 	}
-	if saved.Generation != 1 {
-		t.Fatalf("首次保存 generation = %d，想 1", saved.Generation)
+	if want := clk.Now().Unix(); saved.Generation != want {
+		t.Fatalf("首次保存 generation = %d，想防代数回退的 Unix 秒 %d", saved.Generation, want)
 	}
+	initialGeneration := saved.Generation
 
 	if _, err := s.DB.Exec(`UPDATE outlet SET status='paused',failure_count=3,pause_reason='bad key',
 		pending_latest_id=3,retry_state='retryable',attempt_count=2,
@@ -87,7 +88,7 @@ func Test保存出口配置在同一事务写入成员通知基线并递增代�
 		&pendingID, &retryState, &attempts, &nextAttempt, &lastPushed); err != nil {
 		t.Fatal(err)
 	}
-	if botID != "bot02" || baseline != 4 || generation != 2 || status != "active" || failures != 0 || pauseReason.Valid {
+	if botID != "bot02" || baseline != 4 || generation != initialGeneration+1 || status != "active" || failures != 0 || pauseReason.Valid {
 		t.Fatalf("重建后的 outlet = %s/%d/%d/%s/%d/%v", botID, baseline, generation, status, failures, pauseReason)
 	}
 	if pendingID.Valid || retryState != "none" || attempts != 0 || nextAttempt.Valid || lastPushed.Valid {
@@ -103,6 +104,28 @@ func Test保存出口配置在同一事务写入成员通知基线并递增代�
 	plain, err := cipher.Decrypt(cipherText)
 	if err != nil || plain != "new-webhook-secret" {
 		t.Fatalf("新密文解密失败或明文不符：err=%v", err)
+	}
+}
+
+func Test删除后重建出口代数不回退(t *testing.T) {
+	s := openOutletTestStore(t)
+	ctx := context.Background()
+	insertOutletMember(t, s.DB, 1, "wang")
+	clk := clock.NewFake(time.Date(2026, 11, 20, 9, 0, 0, 0, clock.Beijing))
+	manager := outlet.NewManager(s.DB, clk, newOutletTestCipher(t))
+
+	if _, err := manager.Save(ctx, 1, "bot01", "webhook-secret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Delete(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := manager.Save(ctx, 1, "bot02", "new-webhook-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := clk.Now().Unix(); rebuilt.Generation != want {
+		t.Fatalf("删除后重建 generation = %d，想不回退的当前 Unix 秒 %d", rebuilt.Generation, want)
 	}
 }
 

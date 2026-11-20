@@ -54,7 +54,8 @@ func Test网页会话自助维护通知出口且key只回末四位(t *testing.T)
 	res := s.Do(t, web, http.MethodPut, "/api/v1/me/notification-outlet",
 		map[string]string{"bot_id": "bot01", "key": "old-webhook-key-1234"}, &saved)
 	if res.StatusCode != http.StatusOK || saved.Outlet == nil || saved.Outlet.BotID != "bot01" ||
-		saved.Outlet.KeyLast4 != "1234" || saved.Outlet.Status != "active" || saved.Outlet.Generation != 1 {
+		saved.Outlet.KeyLast4 != "1234" || saved.Outlet.Status != "active" ||
+		saved.Outlet.Generation != s.Clock().Now().Unix() {
 		t.Fatalf("保存出口 = %d/%+v，想 200 且只回 key 末四位", res.StatusCode, saved)
 	}
 
@@ -90,12 +91,13 @@ func Test网页会话自助维护通知出口且key只回末四位(t *testing.T)
 	if strings.Contains(string(raw), "old-webhook-key-1234") {
 		t.Fatalf("失败状态回显泄露 webhook key：%s", raw)
 	}
+	firstGeneration := saved.Outlet.Generation
 
 	// 改 bot_id 视同换配置，必须重新粘贴 key；旧 key 被新密文覆盖。
 	res = s.Do(t, web, http.MethodPut, "/api/v1/me/notification-outlet",
 		map[string]string{"bot_id": "bot02", "key": "new-webhook-key-5678"}, &saved)
 	if res.StatusCode != http.StatusOK || saved.Outlet == nil || saved.Outlet.BotID != "bot02" ||
-		saved.Outlet.KeyLast4 != "5678" || saved.Outlet.Generation != 2 {
+		saved.Outlet.KeyLast4 != "5678" || saved.Outlet.Generation != firstGeneration+1 {
 		t.Fatalf("更换 bot = %d/%+v，想 200、新 key 末四位并递增代数", res.StatusCode, saved)
 	}
 

@@ -477,6 +477,55 @@ func Test成员停用联动通知出口且恢复重建基线(t *testing.T) {
 	}
 }
 
+func Test恢复账号不复活成员自己暂停的通知出口(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	s.CreateMember("王工", "member-pass")
+	wang := s.Login("王工", "member-pass")
+	var wangSession sessionBody
+	s.Do(t, wang, http.MethodGet, "/api/v1/session", nil, &wangSession)
+	memberID := wangSession.Viewer.Member.ID
+	db := s.Store().DB
+
+	if _, err := db.Exec(`
+		INSERT INTO outlet (
+			member_id,bot_id,key_cipher,last_pushed_id,generation,status,failure_count,pause_reason,
+			created_at,updated_at
+		) VALUES (?, 'bot01', 'cipher', 0, 1, 'paused', 1, 'member',
+			'2026-11-20T09:00:00+08:00', '2026-11-20T09:00:00+08:00')`, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO notifications (member_id,kind,reason,text,url,created_at,read_at)
+		VALUES (?, 'fyi', 'backup_failing', '停用前通知', '', '2026-11-20T09:00:00+08:00', NULL)`,
+		memberID); err != nil {
+		t.Fatal(err)
+	}
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/members/"+itoa(memberID)+"/deactivate", nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("停用王工状态码 = %d，想 200", res.StatusCode)
+	}
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/members/"+itoa(memberID)+"/reactivate", nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("恢复王工状态码 = %d，想 200", res.StatusCode)
+	}
+
+	var cursor, generation int64
+	var status, reason string
+	if err := db.QueryRow(`
+		SELECT last_pushed_id,generation,status,pause_reason FROM outlet WHERE member_id=?`, memberID).
+		Scan(&cursor, &generation, &status, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if cursor == 0 || generation != 2 {
+		t.Fatalf("恢复账号仍应重建 outlet 基线：cursor=%d generation=%d", cursor, generation)
+	}
+	if status != "paused" || reason != "member" {
+		t.Fatalf("成员自己暂停的 outlet = %s/%s，想保持 paused/member", status, reason)
+	}
+}
+
 // 管理员可以停用和恢复另一位管理员；唯一被禁止的是停用自己。
 func Test管理员可停用并恢复其他管理员(t *testing.T) {
 	s := tbtest.Start(t)

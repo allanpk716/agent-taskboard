@@ -74,12 +74,12 @@ func (m *Manager) Get(ctx context.Context, memberID int64) (Configuration, error
 
 // Pause 暂停推送；游标与代数保持不动，恢复后由推送循环决定补推口径。
 func (m *Manager) Pause(ctx context.Context, memberID int64) (Configuration, error) {
-	return m.setStatus(ctx, memberID, "paused", "member")
+	return m.setStatus(ctx, memberID, StatusPaused, PauseReasonMember)
 }
 
 // Resume 恢复推送；不重建基线，last_pushed_id 原样保留。
 func (m *Manager) Resume(ctx context.Context, memberID int64) (Configuration, error) {
-	return m.setStatus(ctx, memberID, "active", "")
+	return m.setStatus(ctx, memberID, StatusActive, "")
 }
 
 func (m *Manager) setStatus(ctx context.Context, memberID int64, status, pauseReason string) (Configuration, error) {
@@ -87,7 +87,7 @@ func (m *Manager) setStatus(ctx context.Context, memberID int64, status, pauseRe
 		return Configuration{}, ErrOutletNotFound
 	}
 	now := m.clk.Now().Format(time.RFC3339Nano)
-	resume := status == "active"
+	resume := status == StatusActive
 	var catchupAfter any
 	if resume {
 		catchupAfter = m.clk.Now().Add(-ResumeCatchupWindow).Format(time.RFC3339Nano)
@@ -95,13 +95,13 @@ func (m *Manager) setStatus(ctx context.Context, memberID int64, status, pauseRe
 	result, err := m.db.ExecContext(ctx, `
 		UPDATE outlet
 		SET status=?,failure_count=0,pause_reason=?,
-			pending_latest_id=NULL,retry_state='none',attempt_count=0,next_attempt_at=NULL,
-			delivery_state=CASE WHEN ? THEN 'ok' ELSE delivery_state END,
+			`+PendingStateResetSQL+`,
+			delivery_state=CASE WHEN ? THEN ? ELSE delivery_state END,
 			delivery_state_at=CASE WHEN ? THEN ? ELSE delivery_state_at END,
 			transient_since=CASE WHEN ? THEN NULL ELSE transient_since END,
 			catchup_after=?,updated_at=?
 		WHERE member_id=?`,
-		status, nullString(pauseReason), resume, resume, now, resume, catchupAfter, now, memberID)
+		status, nullString(pauseReason), resume, DeliveryStateOK, resume, now, resume, catchupAfter, now, memberID)
 	if err != nil {
 		return Configuration{}, err
 	}
