@@ -164,7 +164,7 @@ func (a *API) Handler() http.Handler {
 }
 
 // clientScopeMiddleware 在认证成功后限制客户端凭证的接口面。通知接口的子路径
-// 由这里统一放行，后续新增通知端点不需要逐个 handler 补检查。
+// 由这里统一放行；收件箱两条清单只放行精确的 GET 地址。
 func (a *API) clientScopeMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, hasToken := bearerToken(r)
@@ -178,9 +178,11 @@ func (a *API) clientScopeMiddleware(next http.Handler) http.Handler {
 		}
 		allowed := strings.HasPrefix(r.URL.Path, "/api/v1/notifications") ||
 			(r.Method == http.MethodGet && r.URL.Path == "/api/v1/session") ||
+			(r.Method == http.MethodGet && r.URL.Path == "/api/v1/inbox") ||
+			(r.Method == http.MethodGet && r.URL.Path == "/api/v1/inbox/waiting-on-counterparts") ||
 			(r.Method == http.MethodDelete && r.URL.Path == "/api/v1/me/clients/self")
 		if !allowed {
-			WriteError(w, http.StatusForbidden, CodeClientScope, "客户端凭证只能读取通知和身份",
+			WriteError(w, http.StatusForbidden, CodeClientScope, "客户端凭证只能读取通知、身份、收件箱和在等他",
 				"请用浏览器打开工单处理；如需其它操作，登录网页后操作")
 			return
 		}

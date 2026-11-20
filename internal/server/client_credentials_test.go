@@ -3,6 +3,8 @@ package server_test
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"testing"
@@ -151,7 +153,7 @@ func Test客户端PKCEcode一次性过期与verifier校验(t *testing.T) {
 	}
 }
 
-// 客户端凭证越过通知面时统一 403 client_scope；它自己可以撤销自己。
+// 客户端凭证越过通知与清单面时统一 403 client_scope；它自己可以撤销自己。
 func Test客户端凭证权限边界与自撤销(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateMember("wang", "member-pass")
@@ -167,12 +169,131 @@ func Test客户端凭证权限边界与自撤销(t *testing.T) {
 	if errBody.Error.Hint != "请用浏览器打开工单处理；如需其它操作，登录网页后操作" {
 		t.Fatalf("client_scope hint = %q", errBody.Error.Hint)
 	}
+	if errBody.Error.Message != "客户端凭证只能读取通知、身份、收件箱和在等他" {
+		t.Fatalf("client_scope message = %q", errBody.Error.Message)
+	}
 
 	if res := s.Do(t, client, http.MethodDelete, "/api/v1/me/clients/self", nil, nil); res.StatusCode != http.StatusNoContent {
 		t.Fatalf("客户端自撤销状态码 = %d", res.StatusCode)
 	}
 	if res := s.Do(t, client, http.MethodGet, "/api/v1/session", nil, nil); res.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("自撤销后状态码 = %d, 想 401", res.StatusCode)
+	}
+}
+
+// 客户端凭证读到的收件箱与网页会话逐字段一致；可见范围外的工单不出现。
+func Test客户端凭证读取收件箱与网页一致(t *testing.T) {
+	w := newHandoffWorld(t)
+	inboxTicket := w.createHandoffTicket(t, w.webWang, "王工派给李工", "李工").Number
+	foreign := w.createHandoffTicket(t, w.webWang, "王工派给赵工", "赵工").Number
+	issued := w.s.IssueClientCredential(t, w.webLi, "WORKSTATION-01")
+	client := w.s.ClientCredentialClient(issued.Token)
+
+	webRes := w.s.Do(t, w.webLi, http.MethodGet, "/api/v1/inbox", nil, nil)
+	clientRes := w.s.Do(t, client, http.MethodGet, "/api/v1/inbox", nil, nil)
+	if clientRes.StatusCode != http.StatusOK {
+		t.Fatalf("客户端读收件箱状态码 = %d，想 200", clientRes.StatusCode)
+	}
+	webBody, err := io.ReadAll(webRes.Body)
+	if err != nil {
+		t.Fatalf("读网页收件箱响应失败：%v", err)
+	}
+	clientBody, err := io.ReadAll(clientRes.Body)
+	if err != nil {
+		t.Fatalf("读客户端收件箱响应失败：%v", err)
+	}
+	if string(webBody) != string(clientBody) {
+		t.Fatalf("网页与客户端收件箱不一致：\n网页：%s\n客户端：%s", webBody, clientBody)
+	}
+
+	var inbox inboxBody
+	if err := json.Unmarshal(clientBody, &inbox); err != nil {
+		t.Fatalf("解码收件箱失败：%v", err)
+	}
+	if inbox.Count != 1 || len(inbox.Items) != 1 || inbox.Items[0].Number != inboxTicket {
+		t.Fatalf("客户端收件箱 = %+v，想只有 %s", inbox, inboxTicket)
+	}
+	if inbox.itemByNumber(foreign) != nil {
+		t.Fatalf("可见范围外的工单 %s 泄进客户端收件箱：%+v", foreign, inbox.Items)
+	}
+}
+
+// 客户端凭证读到的「在等他」与网页会话逐字段一致；可见范围外的工单不出现。
+func Test客户端凭证读取在等他与网页一致(t *testing.T) {
+	w := newHandoffWorld(t)
+	waiting := w.createHandoffTicket(t, w.webLi, "李工等王工处理", "王工").Number
+	foreign := w.createHandoffTicket(t, w.webZhao, "赵工等王工处理", "王工").Number
+	issued := w.s.IssueClientCredential(t, w.webLi, "WORKSTATION-01")
+	client := w.s.ClientCredentialClient(issued.Token)
+
+	webRes := w.s.Do(t, w.webLi, http.MethodGet, "/api/v1/inbox/waiting-on-counterparts", nil, nil)
+	clientRes := w.s.Do(t, client, http.MethodGet, "/api/v1/inbox/waiting-on-counterparts", nil, nil)
+	if clientRes.StatusCode != http.StatusOK {
+		t.Fatalf("客户端读在等他状态码 = %d，想 200", clientRes.StatusCode)
+	}
+	webBody, err := io.ReadAll(webRes.Body)
+	if err != nil {
+		t.Fatalf("读网页在等他响应失败：%v", err)
+	}
+	clientBody, err := io.ReadAll(clientRes.Body)
+	if err != nil {
+		t.Fatalf("读客户端在等他响应失败：%v", err)
+	}
+	if string(webBody) != string(clientBody) {
+		t.Fatalf("网页与客户端在等他不一致：\n网页：%s\n客户端：%s", webBody, clientBody)
+	}
+
+	var waitingBody inboxBody
+	if err := json.Unmarshal(clientBody, &waitingBody); err != nil {
+		t.Fatalf("解码在等他失败：%v", err)
+	}
+	if waitingBody.Count != 1 || len(waitingBody.Items) != 1 || waitingBody.Items[0].Number != waiting {
+		t.Fatalf("客户端在等他 = %+v，想只有 %s", waitingBody, waiting)
+	}
+	if waitingBody.itemByNumber(foreign) != nil {
+		t.Fatalf("可见范围外的工单 %s 泄进客户端在等他：%+v", foreign, waitingBody.Items)
+	}
+}
+
+// 清单是摘要读取：不推进工单未读和通知已读；read_new/read_full 仍被挡住。
+func Test客户端凭证读清单不推进已读且全文仍拒绝(t *testing.T) {
+	w := newHandoffWorld(t)
+	number := w.createHandoffTicket(t, w.webWang, "王工派给李工", "李工").Number
+	issued := w.s.IssueClientCredential(t, w.webLi, "WORKSTATION-01")
+	client := w.s.ClientCredentialClient(issued.Token)
+
+	before := notificationsOf(t, w, client, "")
+	if before.UnreadCount != 1 || len(before.Items) != 1 || before.Items[0].ReadAt != nil {
+		t.Fatalf("读清单前通知状态 = %+v，想一条未读", before)
+	}
+	inbox := w.inboxOf(t, client)
+	item := inbox.itemByNumber(number)
+	if item == nil || !item.Unread || item.ReadNew == "" || item.ReadFull == "" {
+		t.Fatalf("客户端收件箱摘要不对：%+v", inbox.Items)
+	}
+	w.waitingCounterpartsOf(t, client)
+
+	var unread struct {
+		UnreadCount int `json:"unread_count"`
+	}
+	res := w.s.Do(t, client, http.MethodGet, "/api/v1/notifications/unread", nil, &unread)
+	if res.StatusCode != http.StatusOK || unread.UnreadCount != 1 {
+		t.Fatalf("客户端未读数 = %d/%d，想 200/1", res.StatusCode, unread.UnreadCount)
+	}
+	after := notificationsOf(t, w, client, "")
+	if after.UnreadCount != 1 || len(after.Items) != 1 || after.Items[0].ReadAt != nil {
+		t.Fatalf("读清单后通知被标已读：%+v", after)
+	}
+	if webInbox := w.inboxOf(t, w.webLi); webInbox.itemByNumber(number) == nil || !webInbox.itemByNumber(number).Unread {
+		t.Fatalf("读清单后工单未读被推进：%+v", webInbox.Items)
+	}
+
+	for name, path := range map[string]string{"read_new": item.ReadNew, "read_full": item.ReadFull} {
+		var errBody errorBody
+		res := w.s.Do(t, client, http.MethodGet, path, nil, &errBody)
+		if res.StatusCode != http.StatusForbidden || errBody.Error.Code != "client_scope" {
+			t.Fatalf("%s 状态码/错误码 = %d/%q，想 403/client_scope", name, res.StatusCode, errBody.Error.Code)
+		}
 	}
 }
 
