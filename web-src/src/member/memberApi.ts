@@ -472,6 +472,11 @@ export interface NotificationOutlet {
   last_pushed_id: number
   generation: number
   status: 'active' | 'paused'
+  failure_count: number
+  pause_reason?: 'member' | 'outlet_paused' | 'member_deactivated' | string
+  delivery_state: 'ok' | 'transient' | 'ignored' | 'permanent'
+  delivery_state_at?: string
+  transient_since?: string
 }
 
 export interface NotificationOutletView {

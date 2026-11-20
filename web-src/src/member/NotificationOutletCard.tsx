@@ -130,6 +130,7 @@ export function NotificationOutletCard() {
 
   const outlet = view?.outlet
   const disabled = view != null && !view.enabled
+  const health = outletHealth(outlet)
 
   return (
     <div className="mcard" data-testid="notification-outlet-card">
@@ -150,16 +151,27 @@ export function NotificationOutletCard() {
       {!disabled && (
         <>
           {outlet && (
-            <div className="kv">
-              <span>当前配置</span>
-              <span>
-                <b className="mono">{outlet.bot_id}</b>{' '}
-                <span className={`badge ${outlet.status === 'active' ? 'open' : 'closed'}`}>
-                  {outlet.status === 'active' ? '推送中' : '已暂停'}
+            <>
+              <div className="kv">
+                <span>当前配置</span>
+                <span>
+                  <b className="mono">{outlet.bot_id}</b>{' '}
+                  <span className={`badge ${outlet.status === 'active' ? 'open' : 'closed'}`}>
+                    {outlet.status === 'active' ? '推送中' : '已暂停'}
+                  </span>
+                  <div className="hint">webhook key 只显示末 4 位：····{outlet.key_last4}</div>
                 </span>
-                <div className="hint">webhook key 只显示末 4 位：····{outlet.key_last4}</div>
-              </span>
-            </div>
+              </div>
+              {health.tone !== 'ok' && (
+                <div
+                  className={health.tone === 'error' ? 'errbox' : 'warnbox'}
+                  role="status"
+                  data-testid="outlet-delivery-state"
+                >
+                  {health.text}
+                </div>
+              )}
+            </>
           )}
 
           <label className="fldlab" htmlFor="notification-outlet-bot-id">
@@ -288,4 +300,45 @@ function testResultText(result: NotificationOutletTestResponse): string {
     default:
       return `目标平台返回 ${result.http_status}，链路未通过。`
   }
+}
+
+// #374：失败分级提示。4xx 自动暂停标红；网络/5xx 标黄，持续超过约 4 小时
+// 再标红；ignored 单独标黄（空响≠链路通）。成员手动暂停只是正常状态。
+function outletHealth(outlet: NotificationOutletView['outlet'] | undefined): {
+  tone: 'ok' | 'warn' | 'error'
+  text: string
+} {
+  if (!outlet) return { tone: 'ok', text: '' }
+  if (outlet.status === 'paused') {
+    if (outlet.pause_reason === 'outlet_paused') {
+      return {
+        tone: 'error',
+        text: '目标平台连续拒绝请求（4xx），通知推送已自动暂停；请检查配置后重新保存或恢复。',
+      }
+    }
+    if (outlet.pause_reason === 'member_deactivated') {
+      return {
+        tone: 'error',
+        text: '通知推送已随成员账号停用；恢复账号后会从下一条新通知开始推送。',
+      }
+    }
+    return { tone: 'ok', text: '' }
+  }
+  if (outlet.delivery_state === 'permanent') {
+    return { tone: 'error', text: '目标平台拒绝请求（4xx）；这一条不会重试，请检查配置。' }
+  }
+  if (outlet.delivery_state === 'ignored') {
+    return {
+      tone: 'warn',
+      text: '目标平台可达，但返回 ignored:true：这个 bot 没有接住通知事件（空响≠链路通）。',
+    }
+  }
+  if (outlet.delivery_state === 'transient') {
+    const since = outlet.transient_since ? Date.parse(outlet.transient_since) : NaN
+    const stale = Number.isFinite(since) && Date.now() - since >= 4 * 60 * 60 * 1000
+    return stale
+      ? { tone: 'error', text: '暂时送不到已超过约 4 小时；请检查目标平台或网络。' }
+      : { tone: 'warn', text: '暂时送不到（网络或目标平台 5xx）；平台会按同一幂等键自动重试。' }
+  }
+  return { tone: 'ok', text: '' }
 }

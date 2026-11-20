@@ -14,6 +14,7 @@ import (
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
 	"github.com/allanpk716/agent-taskboard/internal/config"
+	"github.com/allanpk716/agent-taskboard/internal/notifications"
 	"github.com/allanpk716/agent-taskboard/internal/outlet"
 	"github.com/allanpk716/agent-taskboard/internal/store"
 )
@@ -361,7 +362,87 @@ func Test暂停出口只记录paused不POST(t *testing.T) {
 	}
 }
 
-func Test服务端五XX失败用同键退避重试三次(t *testing.T) {
+func Test恢复出口不重建基线且首响只数最近二十四小时(t *testing.T) {
+	s := openOutletTestStore(t)
+	ctx := context.Background()
+	insertOutletMember(t, s.DB, 1, "wang")
+	insertOutletTicket(t, s.DB)
+	now := time.Date(2026, 11, 20, 9, 0, 0, 0, clock.Beijing)
+	clk := clock.NewFake(now)
+	cipher := newOutletTestCipher(t)
+	manager := outlet.NewManager(s.DB, clk, cipher)
+	if _, err := manager.Save(ctx, 1, "bot01", "webhook-secret"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Pause(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	insertOutletNotificationAt(t, s.DB, 1, "turn", now.Add(-25*time.Hour))
+	insertOutletNotificationAt(t, s.DB, 1, "turn", now.Add(-time.Hour))
+
+	resumed, err := manager.Resume(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.LastPushedID != 0 || resumed.Generation != 1 {
+		t.Fatalf("恢复不能重建基线：%+v", resumed)
+	}
+
+	var mu sync.Mutex
+	var payloads []map[string]any
+	var idempotencies []string
+	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("解析门铃 payload 失败：%v", err)
+		}
+		mu.Lock()
+		payloads = append(payloads, payload)
+		idempotencies = append(idempotencies, r.Header.Get("X-Idempotency-Key"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(target.Close)
+	pusher := newOutletTestPusher(t, s, clk, cipher, target, "08:00", "20:00", newOutletTestLogs())
+	if err := pusher.Dispatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitForOutletCondition(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(payloads) == 1 && queryOutletCursor(t, s.DB, 1) == 2
+	})
+	mu.Lock()
+	first := payloads[0]
+	firstKey := idempotencies[0]
+	mu.Unlock()
+	if first["from_id"] != float64(0) || first["latest_id"] != float64(2) || first["turn"] != float64(1) {
+		t.Fatalf("恢复首响只应数最近 24 小时的未读：%v", first)
+	}
+	if firstKey != "taskboard:1:g1:2" {
+		t.Fatalf("恢复首响幂等键 = %q", firstKey)
+	}
+
+	// 首响之后回到正常口径：不再按 created_at 截断计数窗口。
+	insertOutletNotificationAt(t, s.DB, 1, "turn", now.Add(-30*time.Hour))
+	clk.Advance(time.Minute)
+	if err := pusher.Dispatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitForOutletCondition(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(payloads) == 2 && queryOutletCursor(t, s.DB, 1) == 3
+	})
+	mu.Lock()
+	second := payloads[1]
+	mu.Unlock()
+	if second["from_id"] != float64(2) || second["latest_id"] != float64(3) || second["turn"] != float64(1) {
+		t.Fatalf("恢复后的第二响应回到正常计数口径：%v", second)
+	}
+}
+
+func Test服务端五XX失败同键退避重试且封顶半小时(t *testing.T) {
 	s := openOutletTestStore(t)
 	ctx := context.Background()
 	insertOutletMember(t, s.DB, 1, "wang")
@@ -394,8 +475,18 @@ func Test服务端五XX失败用同键退避重试三次(t *testing.T) {
 		mu.Unlock()
 		return state == "retryable" && attempts == 1 && count == 1
 	})
-	for i, delay := range []time.Duration{60 * time.Second, 120 * time.Second, 240 * time.Second} {
-		clk.Advance(delay)
+	// 指数退避的字面量表：先推进上一轮的等待时间，失败后核对下一轮等待。
+	retryPlan := []struct{ advance, next time.Duration }{
+		{60 * time.Second, 120 * time.Second},
+		{120 * time.Second, 240 * time.Second},
+		{240 * time.Second, 480 * time.Second},
+		{480 * time.Second, 960 * time.Second},
+		{960 * time.Second, 1800 * time.Second},
+		{1800 * time.Second, 1800 * time.Second},
+		{1800 * time.Second, 1800 * time.Second},
+	}
+	for i, step := range retryPlan {
+		clk.Advance(step.advance)
 		if err := pusher.Dispatch(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -407,11 +498,16 @@ func Test服务端五XX失败用同键退避重试三次(t *testing.T) {
 			mu.Unlock()
 			return state == "retryable" && attempts == int64(wantAttempts) && count == wantAttempts
 		})
+		next := queryOutletNextAttempt(t, s.DB, 1)
+		wantNext := clk.Now().Add(step.next)
+		if !next.Equal(wantNext) {
+			t.Fatalf("第 %d 次失败后的退避 = %s，想 %s", i+2, next.Sub(clk.Now()), wantNext.Sub(clk.Now()))
+		}
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(keys) != 4 {
-		t.Fatalf("总尝试次数 = %d，想初次加 3 次重试", len(keys))
+	if len(keys) != 8 {
+		t.Fatalf("总尝试次数 = %d，想初次加 7 次重试", len(keys))
 	}
 	for _, key := range keys {
 		if key != "taskboard:1:g1:1" {
@@ -420,6 +516,18 @@ func Test服务端五XX失败用同键退避重试三次(t *testing.T) {
 	}
 	if cursor := queryOutletCursor(t, s.DB, 1); cursor != 0 {
 		t.Fatalf("持续失败不能推进游标，实际 %d", cursor)
+	}
+	var status, delivery string
+	var failures int64
+	var transientSince sql.NullString
+	if err := s.DB.QueryRow(
+		`SELECT status,failure_count,delivery_state,transient_since FROM outlet WHERE member_id=1`).
+		Scan(&status, &failures, &delivery, &transientSince); err != nil {
+		t.Fatal(err)
+	}
+	if status != "active" || failures != 0 || delivery != "transient" || !transientSince.Valid {
+		t.Fatalf("5xx 是暂时性故障，应保持 active 且标黄：status=%s failures=%d delivery=%s since=%v",
+			status, failures, delivery, transientSince)
 	}
 }
 
@@ -644,6 +752,100 @@ func Test四XX确定性失败不重试(t *testing.T) {
 	}
 }
 
+func Test四XX连续失败自动暂停并通知成员本人(t *testing.T) {
+	s := openOutletTestStore(t)
+	ctx := context.Background()
+	insertOutletMember(t, s.DB, 1, "wang")
+	insertOutletTicket(t, s.DB)
+	clk := clock.NewFake(time.Date(2026, 11, 20, 9, 0, 0, 0, clock.Beijing))
+	cipher := newOutletTestCipher(t)
+	manager := outlet.NewManager(s.DB, clk, cipher)
+	if _, err := manager.Save(ctx, 1, "bot01", "webhook-secret"); err != nil {
+		t.Fatal(err)
+	}
+	notes := notifications.NewManager(s.DB, clk)
+	insertOutletNotification(t, s.DB, 1, "turn", "assigned", nil)
+
+	var mu sync.Mutex
+	requests := 0
+	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests++
+		mu.Unlock()
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(target.Close)
+	pusher := newOutletTestPusher(t, s, clk, cipher, target, "08:00", "20:00", newOutletTestLogs())
+	pusher.SetNotifier(notes)
+
+	if err := pusher.Dispatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitForOutletCondition(t, func() bool {
+		var status, delivery string
+		var failures int64
+		if err := s.DB.QueryRow(
+			`SELECT status,failure_count,delivery_state FROM outlet WHERE member_id=1`).
+			Scan(&status, &failures, &delivery); err != nil {
+			return false
+		}
+		return status == "active" && failures == 1 && delivery == "permanent"
+	})
+
+	insertOutletNotification(t, s.DB, 1, "turn", "returned", nil)
+	if err := pusher.Dispatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitForOutletCondition(t, func() bool {
+		var status, reason, delivery string
+		var failures int64
+		if err := s.DB.QueryRow(
+			`SELECT status,failure_count,pause_reason,delivery_state FROM outlet WHERE member_id=1`).
+			Scan(&status, &failures, &reason, &delivery); err != nil {
+			return false
+		}
+		return status == "paused" && failures == 2 && reason == "outlet_paused" && delivery == "permanent"
+	})
+	listed, err := notes.List(ctx, notifications.ListQuery{MemberID: 1, IncludeSystem: true, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pauseNote *notifications.Item
+	for i := range listed.Items {
+		if listed.Items[i].Reason == notifications.ReasonOutletPaused {
+			pauseNote = &listed.Items[i]
+			break
+		}
+	}
+	if pauseNote == nil || pauseNote.Number != "" || strings.Contains(pauseNote.Text, "webhook-secret") {
+		t.Fatalf("自动暂停应发不挂工单且不泄露 key 的站内通知，得到 %+v", pauseNote)
+	}
+
+	insertOutletNotification(t, s.DB, 1, "turn", "delivered", nil)
+	if err := pusher.Dispatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	mu.Lock()
+	gotRequests := requests
+	mu.Unlock()
+	if gotRequests != 2 {
+		t.Fatalf("自动暂停后不应继续外呼，请求数 = %d", gotRequests)
+	}
+	if cursor := queryOutletCursor(t, s.DB, 1); cursor != 0 {
+		t.Fatalf("自动暂停不能推进游标，实际 %d", cursor)
+	}
+
+	saved, err := manager.Save(ctx, 1, "bot01", "fresh-webhook-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Status != "active" || saved.FailureCount != 0 || saved.PauseReason != nil ||
+		saved.DeliveryState != "ok" || saved.TransientSince != nil {
+		t.Fatalf("配置变更应恢复出口并重置失败分级：%+v", saved)
+	}
+}
+
 func Test空响ignored单独记录且日志不含响应内容(t *testing.T) {
 	s := openOutletTestStore(t)
 	ctx := context.Background()
@@ -669,6 +871,13 @@ func Test空响ignored单独记录且日志不含响应内容(t *testing.T) {
 	waitForOutletCondition(t, func() bool { return strings.Contains(logs.String(), "result=ignored") })
 	if out := logs.String(); strings.Contains(out, "response-secret") || strings.Contains(out, "webhook-secret") {
 		t.Fatalf("ignored 日志不得包含响应 body 或 key：%q", out)
+	}
+	got, err := outlet.NewManager(s.DB, clk, cipher).Get(ctx, 1)
+	if err != nil || got.DeliveryState != "ignored" {
+		t.Fatalf("ignored 后投递状态 = %+v err=%v，想 delivery_state=ignored", got, err)
+	}
+	if cursor := queryOutletCursor(t, s.DB, 1); cursor != 1 {
+		t.Fatalf("ignored 是 2xx，游标应照常推进，实际 %d", cursor)
 	}
 }
 
@@ -796,6 +1005,23 @@ func queryOutletRetryState(t *testing.T, db *sql.DB, memberID int64) (string, in
 	return state, attempts
 }
 
+func queryOutletNextAttempt(t *testing.T, db *sql.DB, memberID int64) time.Time {
+	t.Helper()
+	var next sql.NullString
+	if err := db.QueryRow(`SELECT next_attempt_at FROM outlet WHERE member_id=?`, memberID).
+		Scan(&next); err != nil {
+		t.Fatal(err)
+	}
+	if !next.Valid {
+		t.Fatal("失败后应有下一次重试时间")
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, next.String)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parsed
+}
+
 func insertOutletTicket(t *testing.T, db *sql.DB) {
 	t.Helper()
 	if _, err := db.Exec(`INSERT INTO tickets
@@ -823,6 +1049,18 @@ func insertOutletNotification(t *testing.T, db *sql.DB, memberID int64, kind, re
 		VALUES (?, 1, 'T-0001', '内部工单标题', ?, ?, '通知内容', '',
 		 1, ?, 'member', '王工', '2026-11-20T09:10:00+08:00', ?)`,
 		memberID, kind, reason, reason, readAt); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func insertOutletNotificationAt(t *testing.T, db *sql.DB, memberID int64, kind string, at time.Time) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO notifications
+		(member_id, ticket_seq, ticket_number, ticket_title, kind, reason, text, url,
+		 trigger_seq, trigger_type, actor_kind, actor_name, created_at, read_at)
+		VALUES (?, 1, 'T-0001', '内部工单标题', ?, 'assigned', '通知内容', '',
+		 1, 'assigned', 'member', '王工', ?, NULL)`,
+		memberID, kind, at.Format(time.RFC3339Nano)); err != nil {
 		t.Fatal(err)
 	}
 }

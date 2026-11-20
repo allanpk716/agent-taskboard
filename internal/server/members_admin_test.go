@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"database/sql"
 	"io"
 	"net/http"
 	"strconv"
@@ -409,6 +410,70 @@ func Test停用撤销AgentToken且恢复账号不复活Token(t *testing.T) {
 	if res := s.Do(t, wangAgain, http.MethodPost,
 		"/api/v1/members/"+itoa(wangSession.Viewer.Member.ID)+"/reactivate", nil, nil); res.StatusCode != http.StatusForbidden {
 		t.Errorf("非管理员恢复状态码 = %d, 想 403", res.StatusCode)
+	}
+}
+
+// 成员停用时通知出口跟随暂停并清掉在途重试；恢复账号时 outlet 像重建配置
+// 一样写当时通知 MAX(id) 并递增代数，停用期间的积压不补推（#374）。
+func Test成员停用联动通知出口且恢复重建基线(t *testing.T) {
+	s := tbtest.Start(t)
+	s.CreateAdmin("陈工", "secret-pass")
+	admin := s.Login("陈工", "secret-pass")
+	s.CreateMember("王工", "member-pass")
+	wang := s.Login("王工", "member-pass")
+	var wangSession sessionBody
+	s.Do(t, wang, http.MethodGet, "/api/v1/session", nil, &wangSession)
+	memberID := wangSession.Viewer.Member.ID
+	db := s.Store().DB
+
+	if _, err := db.Exec(`
+		INSERT INTO outlet (
+			member_id,bot_id,key_cipher,last_pushed_id,generation,status,failure_count,
+			pending_latest_id,retry_state,attempt_count,next_attempt_at,last_pushed_at,
+			delivery_state,delivery_state_at,created_at,updated_at
+		) VALUES (?, 'bot01', 'cipher', 0, 1, 'active', 1, 1, 'permanent', 1,
+			'2026-11-20T09:00:00+08:00', NULL, 'permanent', '2026-11-20T09:00:00+08:00',
+			'2026-11-20T09:00:00+08:00', '2026-11-20T09:00:00+08:00')`, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO notifications (member_id,kind,reason,text,url,created_at,read_at)
+		VALUES (?, 'fyi', 'backup_failing', '停用前通知', '', '2026-11-20T09:00:00+08:00', NULL)`,
+		memberID); err != nil {
+		t.Fatal(err)
+	}
+
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/members/"+itoa(memberID)+"/deactivate", nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("停用王工状态码 = %d, 想 200", res.StatusCode)
+	}
+	var status, reason, retryState, delivery string
+	var pending sql.NullInt64
+	if err := db.QueryRow(`
+		SELECT status,pause_reason,retry_state,pending_latest_id,delivery_state
+		FROM outlet WHERE member_id=?`, memberID).
+		Scan(&status, &reason, &retryState, &pending, &delivery); err != nil {
+		t.Fatal(err)
+	}
+	if status != "paused" || reason != "member_deactivated" || retryState != "none" ||
+		pending.Valid || delivery != "ok" {
+		t.Fatalf("停用后 outlet = %s/%s/%s/%v/%s，想跟随暂停并清空重试",
+			status, reason, retryState, pending, delivery)
+	}
+
+	if res := s.Do(t, admin, http.MethodPost,
+		"/api/v1/members/"+itoa(memberID)+"/reactivate", nil, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("恢复王工状态码 = %d, 想 200", res.StatusCode)
+	}
+	var cursor, generation int64
+	if err := db.QueryRow(`
+		SELECT last_pushed_id,generation,status FROM outlet WHERE member_id=?`, memberID).
+		Scan(&cursor, &generation, &status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "active" || cursor == 0 || generation != 2 {
+		t.Fatalf("恢复后 outlet = %s/%d/g%d，想按当时通知 MAX(id) 重建基线并恢复推送",
+			status, cursor, generation)
 	}
 }
 

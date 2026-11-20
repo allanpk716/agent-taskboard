@@ -32,6 +32,10 @@ func Test系统通知迁移保留既有数据并强制CHECK(t *testing.T) {
 				strings.HasPrefix(e.Name(), "0042_") {
 				continue
 			}
+			// 0043/0054 依赖重建后的通知表列结构，同样留给 Open 按顺序补跑。
+			if strings.HasPrefix(e.Name(), "0043_") || strings.HasPrefix(e.Name(), "0054_") {
+				continue
+			}
 			names = append(names, e.Name())
 		}
 	}
@@ -168,5 +172,17 @@ func Test系统通知迁移保留既有数据并强制CHECK(t *testing.T) {
 	) VALUES (1,1,'20261016-001','旧通知','fyi','backup_failing','系统通知不能挂工单',
 		1,'created','member','王工','/admin#backup','2026-10-16T11:02:00+08:00')`); err == nil {
 		t.Fatal("系统 reason 带工单应被 CHECK 拦住")
+	}
+	if _, err := st.DB.ExecContext(ctx, `INSERT INTO notifications (
+		member_id, kind, reason, text, url, created_at
+	) VALUES (1,'fyi','outlet_paused','门铃已自动暂停','/me','2026-10-16T11:03:00+08:00')`); err != nil {
+		t.Fatalf("outlet_paused 应允许不挂工单：%v", err)
+	}
+	if _, err := st.DB.ExecContext(ctx, `INSERT INTO notifications (
+		member_id, ticket_seq, ticket_number, ticket_title, kind, reason, text,
+		trigger_seq, trigger_type, actor_kind, actor_name, url, created_at
+	) VALUES (1,1,'20261016-001','旧通知','fyi','outlet_paused','门铃系统通知不能挂工单',
+		1,'created','member','王工','/me','2026-10-16T11:04:00+08:00')`); err == nil {
+		t.Fatal("outlet_paused 带工单应被 CHECK 拦住")
 	}
 }

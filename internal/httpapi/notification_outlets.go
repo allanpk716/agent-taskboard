@@ -134,11 +134,16 @@ type notificationOutletView struct {
 }
 
 type outletViewRow struct {
-	BotID        string `json:"bot_id"`
-	KeyLast4     string `json:"key_last4"`
-	LastPushedID int64  `json:"last_pushed_id"`
-	Generation   int64  `json:"generation"`
-	Status       string `json:"status"`
+	BotID           string  `json:"bot_id"`
+	KeyLast4        string  `json:"key_last4"`
+	LastPushedID    int64   `json:"last_pushed_id"`
+	Generation      int64   `json:"generation"`
+	Status          string  `json:"status"`
+	FailureCount    int64   `json:"failure_count"`
+	PauseReason     *string `json:"pause_reason,omitempty"`
+	DeliveryState   string  `json:"delivery_state"`
+	DeliveryStateAt *string `json:"delivery_state_at,omitempty"`
+	TransientSince  *string `json:"transient_since,omitempty"`
 }
 
 func (a *API) writeWebhookDisabled(w http.ResponseWriter) {
@@ -151,7 +156,9 @@ func (a *API) writeOutlet(w http.ResponseWriter, status int, config outlet.Confi
 		Outlet: &outletViewRow{
 			BotID: config.BotID, KeyLast4: config.KeyLast4,
 			LastPushedID: config.LastPushedID, Generation: config.Generation,
-			Status: config.Status,
+			Status: config.Status, FailureCount: config.FailureCount, PauseReason: config.PauseReason,
+			DeliveryState: config.DeliveryState, DeliveryStateAt: config.DeliveryStateAt,
+			TransientSince: config.TransientSince,
 		}}
 	writeJSON(w, status, view)
 }

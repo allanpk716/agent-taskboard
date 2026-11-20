@@ -80,6 +80,18 @@ func Test通知出口迁移建立每成员一行配置表(t *testing.T) {
 	if _, err := s.DB.ExecContext(ctx, `UPDATE outlet SET attempt_count=-1`); err == nil {
 		t.Fatal("outlet 重试次数不能为负")
 	}
+	if _, err := s.DB.ExecContext(ctx, `UPDATE outlet SET delivery_state='broken'`); err == nil {
+		t.Fatal("outlet 投递状态只允许 ok/transient/ignored/permanent")
+	}
+	var deliveryState string
+	if err := s.DB.QueryRowContext(ctx, `SELECT delivery_state FROM outlet WHERE member_id=1`).
+		Scan(&deliveryState); err != nil || deliveryState != "ok" {
+		t.Fatalf("存量 outlet 的投递状态应缺省 ok，实际 %q err=%v", deliveryState, err)
+	}
+	if err := s.DB.QueryRowContext(ctx, `SELECT delivery_state FROM outlet WHERE member_id=1`).
+		Scan(new(string)); err != nil || err == nil {
+		_ = err
+	}
 
 	rows, err := s.DB.QueryContext(ctx, `PRAGMA table_info(outlet)`)
 	if err != nil {
@@ -104,6 +116,7 @@ func Test通知出口迁移建立每成员一行配置表(t *testing.T) {
 		"member_id", "bot_id", "key_cipher", "last_pushed_id", "generation",
 		"status", "failure_count", "pause_reason", "created_at", "updated_at",
 		"pending_latest_id", "retry_state", "attempt_count", "next_attempt_at", "last_pushed_at",
+		"delivery_state", "delivery_state_at", "transient_since", "catchup_after",
 	}
 	for _, name := range want {
 		if _, ok := got[name]; !ok {

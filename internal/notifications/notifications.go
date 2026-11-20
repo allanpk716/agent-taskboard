@@ -40,6 +40,7 @@ const (
 	ReasonCollaboratorReplied = "collaborator_replied"
 	ReasonBackupFailing       = "backup_failing"
 	ReasonBackupRecovered     = "backup_recovered"
+	ReasonOutletPaused        = "outlet_paused"
 	ReasonDraftPending        = "draft_pending"
 )
 
@@ -465,6 +466,19 @@ func (m *Manager) NotifySystem(ctx context.Context, reason, text string) error {
 	}
 	m.Wake(memberIDs)
 	return nil
+}
+
+// NotifyOutletPausedTx 在推送器写自动暂停的同一事务里，给成员本人发一条
+// 不挂工单的系统通知；提交后由调用方唤醒通知流。
+func (m *Manager) NotifyOutletPausedTx(ctx context.Context, tx *sql.Tx, memberID int64, at time.Time) error {
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO notifications (
+			member_id, kind, reason, text, url, created_at, read_at
+		) VALUES (?, 'fyi', ?, ?, '/me', ?, NULL)`,
+		memberID, ReasonOutletPaused,
+		"通知推送连续被目标平台拒绝（4xx），已自动暂停；请到「我的」页检查配置后恢复。",
+		at.Format(time.RFC3339Nano))
+	return err
 }
 
 // LastBackupAlertAt 实现 ops.BackupNotifier 的持久化告警节奏查询。

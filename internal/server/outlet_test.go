@@ -23,11 +23,15 @@ import (
 type outletBody struct {
 	Enabled bool `json:"enabled"`
 	Outlet  *struct {
-		BotID        string `json:"bot_id"`
-		KeyLast4     string `json:"key_last4"`
-		LastPushedID int64  `json:"last_pushed_id"`
-		Generation   int64  `json:"generation"`
-		Status       string `json:"status"`
+		BotID          string  `json:"bot_id"`
+		KeyLast4       string  `json:"key_last4"`
+		LastPushedID   int64   `json:"last_pushed_id"`
+		Generation     int64   `json:"generation"`
+		Status         string  `json:"status"`
+		FailureCount   int64   `json:"failure_count"`
+		PauseReason    *string `json:"pause_reason"`
+		DeliveryState  string  `json:"delivery_state"`
+		TransientSince *string `json:"transient_since"`
 	} `json:"outlet"`
 }
 
@@ -66,6 +70,25 @@ func Test网页会话自助维护通知出口且key只回末四位(t *testing.T)
 	}
 	if strings.Contains(string(raw), "old-webhook-key-1234") || strings.Contains(logs.String(), "old-webhook-key-1234") {
 		t.Fatalf("GET 响应或日志泄露 webhook key：response=%q logs=%q", raw, logs.String())
+	}
+
+	// 失败分级与自动暂停原因要回显给「我的」页标红，但仍不携带 key。
+	if _, err := s.Store().DB.Exec(`
+		UPDATE outlet SET status='paused',failure_count=2,pause_reason='outlet_paused',
+			delivery_state='permanent',delivery_state_at='2026-11-20T09:00:01+08:00',
+			transient_since=NULL WHERE bot_id='bot01'`); err != nil {
+		t.Fatal(err)
+	}
+	var failed outletBody
+	res = s.Do(t, web, http.MethodGet, "/api/v1/me/notification-outlet", nil, &failed)
+	raw, _ = io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusOK || failed.Outlet == nil || failed.Outlet.Status != "paused" ||
+		failed.Outlet.FailureCount != 2 || failed.Outlet.PauseReason == nil ||
+		*failed.Outlet.PauseReason != "outlet_paused" || failed.Outlet.DeliveryState != "permanent" {
+		t.Fatalf("失败状态回显 = %d/%s，想暂停原因与确定性失败分级", res.StatusCode, raw)
+	}
+	if strings.Contains(string(raw), "old-webhook-key-1234") {
+		t.Fatalf("失败状态回显泄露 webhook key：%s", raw)
 	}
 
 	// 改 bot_id 视同换配置，必须重新粘贴 key；旧 key 被新密文覆盖。

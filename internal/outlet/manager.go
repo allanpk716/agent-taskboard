@@ -22,6 +22,10 @@ var (
 
 var botIDPattern = regexp.MustCompile(`^[a-z0-9]{1,64}$`)
 
+// ResumeCatchupWindow 是显式恢复后首响的计数窗口：只数恢复时刻往前 24 小时
+// 内的未读，避免长时间暂停后第一声报出巨大的历史计数。
+const ResumeCatchupWindow = 24 * time.Hour
+
 // Configuration 是保存后的非敏感出口信息，永不包含 webhook key。
 type Configuration struct {
 	MemberID     int64
@@ -30,6 +34,12 @@ type Configuration struct {
 	LastPushedID int64
 	Generation   int64
 	Status       string
+	FailureCount int64
+	PauseReason  *string
+	// DeliveryState 与两个时间字段只用于界面分级提示，不含错误详情或 key。
+	DeliveryState   string
+	DeliveryStateAt *string
+	TransientSince  *string
 }
 
 // Manager 封装通知出口配置的加密存储与基线写入。
@@ -104,8 +114,9 @@ func (m *Manager) SaveTx(ctx context.Context, tx *sql.Tx, memberID int64, botID,
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO outlet (
 			member_id,bot_id,key_cipher,last_pushed_id,generation,status,failure_count,pause_reason,
-			pending_latest_id,retry_state,attempt_count,next_attempt_at,last_pushed_at,created_at,updated_at
-		) VALUES (?,?,?,?,?,'active',0,NULL,NULL,'none',0,NULL,NULL,?,?)
+			pending_latest_id,retry_state,attempt_count,next_attempt_at,last_pushed_at,
+			delivery_state,delivery_state_at,transient_since,catchup_after,created_at,updated_at
+		) VALUES (?,?,?,?,?,'active',0,NULL,NULL,'none',0,NULL,NULL,'ok',?,NULL,NULL,?,?)
 		ON CONFLICT(member_id) DO UPDATE SET
 			bot_id=excluded.bot_id,
 			key_cipher=excluded.key_cipher,
@@ -119,13 +130,17 @@ func (m *Manager) SaveTx(ctx context.Context, tx *sql.Tx, memberID int64, botID,
 			attempt_count=0,
 			next_attempt_at=NULL,
 			last_pushed_at=NULL,
+			delivery_state='ok',
+			delivery_state_at=excluded.delivery_state_at,
+			transient_since=NULL,
+			catchup_after=NULL,
 			updated_at=excluded.updated_at`,
-		memberID, botID, keyCipher, lastPushedID, generation, now, now); err != nil {
+		memberID, botID, keyCipher, lastPushedID, generation, now, now, now); err != nil {
 		return Configuration{}, fmt.Errorf("保存通知出口失败：%w", err)
 	}
 	return Configuration{
 		MemberID: memberID, BotID: botID, KeyLast4: keyLast4(webhookKey),
 		LastPushedID: lastPushedID,
-		Generation:   generation, Status: "active",
+		Generation:   generation, Status: "active", DeliveryState: "ok",
 	}, nil
 }

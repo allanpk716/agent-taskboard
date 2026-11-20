@@ -22,32 +22,42 @@ const (
 	MinPushInterval = time.Minute
 	// MaxRetryDelay 是持续 5xx/超时后的重试退避上限。
 	MaxRetryDelay = 30 * time.Minute
+	// autoPauseFailureCount 是 4xx 连续失败多少次后自动暂停。
+	autoPauseFailureCount = 2
 
 	retryStateNone      = "none"
 	retryStateRetryable = "retryable"
 	retryStatePermanent = "permanent"
 )
 
+// OutletNotifier 把自动暂停写成成员本人的站内系统通知，并唤醒通知流。
+type OutletNotifier interface {
+	NotifyOutletPausedTx(ctx context.Context, tx *sql.Tx, memberID int64, at time.Time) error
+	Wake(memberIDs []int64)
+}
+
 // PusherDeps 汇出门铃推送循环的系统依赖，生产装配和测试都走同一个入口。
 type PusherDeps struct {
-	DB      *sql.DB
-	Clock   clock.Clock
-	Cipher  *Cipher
-	Webhook config.Webhook
-	Client  *Client
-	Logger  *log.Logger
+	DB       *sql.DB
+	Clock    clock.Clock
+	Cipher   *Cipher
+	Webhook  config.Webhook
+	Client   *Client
+	Logger   *log.Logger
+	Notifier OutletNotifier
 }
 
 // Pusher 是部署级门铃派发器：每个 outlet 一个有界 worker，游标与重试状态持久在 DB。
 type Pusher struct {
-	db      *sql.DB
-	clk     clock.Clock
-	cipher  *Cipher
-	client  *Client
-	logger  *log.Logger
-	builder *URLBuilder
-	start   time.Time
-	end     time.Time
+	db       *sql.DB
+	clk      clock.Clock
+	cipher   *Cipher
+	client   *Client
+	logger   *log.Logger
+	builder  *URLBuilder
+	notifier OutletNotifier
+	start    time.Time
+	end      time.Time
 
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -83,11 +93,14 @@ func NewPusher(deps PusherDeps) (*Pusher, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Pusher{
 		db: deps.DB, clk: deps.Clock, cipher: deps.Cipher, client: deps.Client,
-		logger: deps.Logger, builder: builder, start: start, end: end,
+		logger: deps.Logger, builder: builder, notifier: deps.Notifier, start: start, end: end,
 		ctx: ctx, cancel: cancel,
 		inFlight: make(map[int64]struct{}), lastLog: make(map[int64]string),
 	}, nil
 }
+
+// SetNotifier 装配自动暂停通知；生产装配与测试都使用同一接口。
+func (p *Pusher) SetNotifier(notifier OutletNotifier) { p.notifier = notifier }
 
 type outletRow struct {
 	status       string
@@ -97,10 +110,12 @@ type outletRow struct {
 	lastPushedID int64
 	generation   int64
 	retryState   string
+	failureCount int64
 	pendingID    sql.NullInt64
 	attemptCount int64
 	nextAttempt  sql.NullString
 	lastPushed   sql.NullString
+	catchupAfter sql.NullString
 }
 
 type outletCounts struct {
@@ -117,7 +132,8 @@ func (p *Pusher) Dispatch(ctx context.Context) error {
 	outlets := []outletRow{}
 	rows, err := p.db.QueryContext(ctx, `
 		SELECT status, member_id, bot_id, key_cipher, last_pushed_id, generation,
-			retry_state, pending_latest_id, attempt_count, next_attempt_at, last_pushed_at
+			failure_count, retry_state, pending_latest_id, attempt_count, next_attempt_at, last_pushed_at,
+			catchup_after
 		FROM outlet ORDER BY member_id`)
 	if err != nil {
 		return err
@@ -126,8 +142,8 @@ func (p *Pusher) Dispatch(ctx context.Context) error {
 	for rows.Next() {
 		var row outletRow
 		if err := rows.Scan(&row.status, &row.memberID, &row.botID, &row.keyCipher, &row.lastPushedID,
-			&row.generation, &row.retryState, &row.pendingID, &row.attemptCount,
-			&row.nextAttempt, &row.lastPushed); err != nil {
+			&row.generation, &row.failureCount, &row.retryState, &row.pendingID, &row.attemptCount,
+			&row.nextAttempt, &row.lastPushed, &row.catchupAfter); err != nil {
 			return err
 		}
 		outlets = append(outlets, row)
@@ -158,7 +174,7 @@ func (p *Pusher) dispatchRow(ctx context.Context, row outletRow) {
 		return
 	}
 	if row.retryState == retryStatePermanent {
-		current, err := p.count(ctx, row.memberID, row.lastPushedID, sql.NullInt64{}, retryStateNone)
+		current, err := p.count(ctx, row.memberID, row.lastPushedID, sql.NullInt64{}, retryStateNone, row.catchupAfter)
 		if err != nil {
 			p.logError(row.memberID, err)
 			return
@@ -190,7 +206,7 @@ func (p *Pusher) dispatchRow(ctx context.Context, row outletRow) {
 		}
 	}
 
-	counts, err := p.count(ctx, row.memberID, row.lastPushedID, row.pendingID, row.retryState)
+	counts, err := p.count(ctx, row.memberID, row.lastPushedID, row.pendingID, row.retryState, row.catchupAfter)
 	if err != nil {
 		p.logError(row.memberID, err)
 		return
@@ -273,7 +289,8 @@ type outletPayload struct {
 	System   int64  `json:"system"`
 }
 
-func (p *Pusher) count(ctx context.Context, memberID, fromID int64, pending sql.NullInt64, state string) (outletCounts, error) {
+func (p *Pusher) count(ctx context.Context, memberID, fromID int64, pending sql.NullInt64,
+	state string, catchupAfter sql.NullString) (outletCounts, error) {
 	counts := outletCounts{fromID: fromID}
 	var latest int64
 	if state == retryStateRetryable && pending.Valid {
@@ -287,6 +304,10 @@ func (p *Pusher) count(ctx context.Context, memberID, fromID int64, pending sql.
 	if latest <= fromID {
 		return counts, nil
 	}
+	var catchup any
+	if catchupAfter.Valid {
+		catchup = catchupAfter.String
+	}
 	rows, err := p.db.QueryContext(ctx, `
 		SELECT bucket,COUNT(*) FROM (
 			SELECT CASE
@@ -297,7 +318,8 @@ func (p *Pusher) count(ctx context.Context, memberID, fromID int64, pending sql.
 			END AS bucket
 			FROM notifications
 			WHERE member_id=? AND id>? AND id<=? AND read_at IS NULL AND kind<>'draft'
-		) WHERE bucket IS NOT NULL GROUP BY bucket`, memberID, fromID, latest)
+				AND (? IS NULL OR created_at>=?)
+		) WHERE bucket IS NOT NULL GROUP BY bucket`, memberID, fromID, latest, catchup, catchup)
 	if err != nil {
 		return outletCounts{}, err
 	}
@@ -329,7 +351,7 @@ func (p *Pusher) advanceWithoutPush(ctx context.Context, row outletRow, latest i
 	now := p.clk.Now().Format(time.RFC3339Nano)
 	_, err := p.db.ExecContext(ctx, `
 		UPDATE outlet SET last_pushed_id=?, retry_state='none', pending_latest_id=NULL,
-			attempt_count=0, next_attempt_at=NULL, updated_at=?
+			attempt_count=0, next_attempt_at=NULL, catchup_after=NULL, updated_at=?
 		WHERE member_id=? AND generation=? AND last_pushed_id=? AND status='active'`,
 		latest, now, row.memberID, row.generation, row.lastPushedID)
 	return err
@@ -360,7 +382,7 @@ func (p *Pusher) work(row outletRow, endpoint, webhookKey string, payload []byte
 	duration := time.Since(started)
 	if err == nil && response.IsSuccess() {
 		ignored := responseIgnored(response.Body)
-		if err := p.markSuccess(row, counts.latestID); err != nil {
+		if err := p.markSuccess(row, counts.latestID, ignored); err != nil {
 			if markErr := p.markFailure(row, counts.latestID, false); markErr != nil {
 				err = fmt.Errorf("%v；登记重试也失败：%w", err, markErr)
 			} else {
@@ -397,13 +419,20 @@ func responseIgnored(body []byte) bool {
 	return decoded.Ignored
 }
 
-func (p *Pusher) markSuccess(row outletRow, latest int64) error {
+func (p *Pusher) markSuccess(row outletRow, latest int64, ignored bool) error {
 	now := p.clk.Now().Format(time.RFC3339Nano)
+	deliveryState := "ok"
+	if ignored {
+		deliveryState = "ignored"
+	}
 	res, err := p.db.ExecContext(p.ctx, `
 		UPDATE outlet SET last_pushed_id=?, retry_state='none', pending_latest_id=NULL,
-			attempt_count=0, next_attempt_at=NULL, last_pushed_at=?, updated_at=?
+			attempt_count=0, next_attempt_at=NULL, failure_count=0,
+			delivery_state=?, delivery_state_at=?, transient_since=NULL, catchup_after=NULL,
+			last_pushed_at=?, updated_at=?
 		WHERE member_id=? AND generation=? AND last_pushed_id=? AND pending_latest_id=? AND status='active'`,
-		latest, now, now, row.memberID, row.generation, row.lastPushedID, latest)
+		latest, deliveryState, now, now, now,
+		row.memberID, row.generation, row.lastPushedID, latest)
 	if err != nil {
 		return err
 	}
@@ -417,6 +446,7 @@ func (p *Pusher) markSuccess(row outletRow, latest int64) error {
 
 func (p *Pusher) markFailure(row outletRow, latest int64, permanent bool) error {
 	now := p.clk.Now()
+	nowText := now.Format(time.RFC3339Nano)
 	state := retryStateRetryable
 	var next any
 	if permanent {
@@ -424,11 +454,25 @@ func (p *Pusher) markFailure(row outletRow, latest int64, permanent bool) error 
 	} else {
 		next = now.Add(retryDelay(row.attemptCount + 1)).Format(time.RFC3339Nano)
 	}
-	res, err := p.db.ExecContext(p.ctx, `
-		UPDATE outlet SET retry_state=?, pending_latest_id=?, attempt_count=attempt_count+1,
-			next_attempt_at=?, failure_count=failure_count+?, updated_at=?
+	pause := permanent && row.failureCount+1 >= autoPauseFailureCount
+	tx, err := p.db.BeginTx(p.ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(p.ctx, `
+		UPDATE outlet SET
+			retry_state=?, pending_latest_id=?, attempt_count=attempt_count+1,
+			next_attempt_at=?, failure_count=failure_count+?,
+			status=CASE WHEN ? THEN 'paused' ELSE ? END,
+			pause_reason=CASE WHEN ? THEN 'outlet_paused' ELSE NULL END,
+			delivery_state=?, delivery_state_at=?,
+			transient_since=CASE WHEN ? THEN NULL ELSE COALESCE(transient_since, ?) END,
+			updated_at=?
 		WHERE member_id=? AND generation=? AND last_pushed_id=? AND pending_latest_id=? AND status='active'`,
-		state, latest, next, permanentFailureIncrement(permanent), now.Format(time.RFC3339Nano),
+		state, latest, next, permanentFailureIncrement(permanent),
+		pause, row.status, pause,
+		deliveryStateName(permanent), nowText, permanent, nowText, nowText,
 		row.memberID, row.generation, row.lastPushedID, latest)
 	if err != nil {
 		return err
@@ -438,7 +482,25 @@ func (p *Pusher) markFailure(row outletRow, latest int64, permanent bool) error 
 	} else if affected == 0 {
 		return errors.New("门铃失败状态未写入，保留同键待重试")
 	}
+	if pause && p.notifier != nil {
+		if err := p.notifier.NotifyOutletPausedTx(p.ctx, tx, row.memberID, now); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if pause && p.notifier != nil {
+		p.notifier.Wake([]int64{row.memberID})
+	}
 	return nil
+}
+
+func deliveryStateName(permanent bool) string {
+	if permanent {
+		return "permanent"
+	}
+	return "transient"
 }
 
 func permanentFailureIncrement(permanent bool) int64 {

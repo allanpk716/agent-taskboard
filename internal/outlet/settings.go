@@ -33,14 +33,19 @@ func (m *Manager) Get(ctx context.Context, memberID int64) (Configuration, error
 		return Configuration{}, ErrMasterKeyMissing
 	}
 	var (
-		out       Configuration
-		keyCipher string
+		out             Configuration
+		keyCipher       string
+		pauseReason     sql.NullString
+		deliveryStateAt sql.NullString
+		transientSince  sql.NullString
 	)
 	out.MemberID = memberID
 	err := m.db.QueryRowContext(ctx, `
-		SELECT bot_id,key_cipher,last_pushed_id,generation,status
+		SELECT bot_id,key_cipher,last_pushed_id,generation,status,failure_count,pause_reason,
+			delivery_state,delivery_state_at,transient_since
 		FROM outlet WHERE member_id=?`, memberID,
-	).Scan(&out.BotID, &keyCipher, &out.LastPushedID, &out.Generation, &out.Status)
+	).Scan(&out.BotID, &keyCipher, &out.LastPushedID, &out.Generation, &out.Status,
+		&out.FailureCount, &pauseReason, &out.DeliveryState, &deliveryStateAt, &transientSince)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Configuration{}, ErrOutletNotFound
 	}
@@ -52,6 +57,18 @@ func (m *Manager) Get(ctx context.Context, memberID int64) (Configuration, error
 		return Configuration{}, err
 	}
 	out.KeyLast4 = keyLast4(key)
+	if pauseReason.Valid {
+		reason := pauseReason.String
+		out.PauseReason = &reason
+	}
+	if deliveryStateAt.Valid {
+		at := deliveryStateAt.String
+		out.DeliveryStateAt = &at
+	}
+	if transientSince.Valid {
+		since := transientSince.String
+		out.TransientSince = &since
+	}
 	return out, nil
 }
 
@@ -70,10 +87,21 @@ func (m *Manager) setStatus(ctx context.Context, memberID int64, status, pauseRe
 		return Configuration{}, ErrOutletNotFound
 	}
 	now := m.clk.Now().Format(time.RFC3339Nano)
+	resume := status == "active"
+	var catchupAfter any
+	if resume {
+		catchupAfter = m.clk.Now().Add(-ResumeCatchupWindow).Format(time.RFC3339Nano)
+	}
 	result, err := m.db.ExecContext(ctx, `
 		UPDATE outlet
-		SET status=?,failure_count=0,pause_reason=?,updated_at=?
-		WHERE member_id=?`, status, nullString(pauseReason), now, memberID)
+		SET status=?,failure_count=0,pause_reason=?,
+			pending_latest_id=NULL,retry_state='none',attempt_count=0,next_attempt_at=NULL,
+			delivery_state=CASE WHEN ? THEN 'ok' ELSE delivery_state END,
+			delivery_state_at=CASE WHEN ? THEN ? ELSE delivery_state_at END,
+			transient_since=CASE WHEN ? THEN NULL ELSE transient_since END,
+			catchup_after=?,updated_at=?
+		WHERE member_id=?`,
+		status, nullString(pauseReason), resume, resume, now, resume, catchupAfter, now, memberID)
 	if err != nil {
 		return Configuration{}, err
 	}

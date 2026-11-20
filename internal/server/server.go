@@ -186,6 +186,7 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 		}
 		pusher, err = outlet.NewPusher(outlet.PusherDeps{
 			DB: st.DB, Clock: c, Cipher: outletCipher, Webhook: cfg.Webhook,
+			Notifier: notificationStore,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("装配通知出口失败：%w", err)
