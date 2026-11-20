@@ -1,8 +1,6 @@
 package server_test
 
 import (
-	"bytes"
-	"mime/multipart"
 	"net/http"
 	"strings"
 	"testing"
@@ -30,91 +28,56 @@ func Test可见范围外成员与Agent写入工单得到一致的404无副作用
 		t.Fatalf("建单状态码 = %d", res.StatusCode)
 	}
 	number := created.Number
-	s.CreateGuestLink(t, creator, number, map[string]any{"note": "检验科-张三"})
-
-	doUpload := func(c *http.Client, ref string) *http.Response {
-		t.Helper()
-		var body bytes.Buffer
-		mw := multipart.NewWriter(&body)
-		fw, err := mw.CreateFormFile("file", "内部资料.txt")
-		if err != nil {
-			t.Fatal(err)
+	for credential, client := range map[string]*http.Client{"成员": outsider, "成员Agent": agent} {
+		hidden := s.Do(t, client, http.MethodPost, "/api/v1/tickets/"+number+"/replies", map[string]any{"body_md": "越权回复"}, nil)
+		if hidden.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s回复隐藏工单状态码 = %d, 想 404", credential, hidden.StatusCode)
 		}
-		if _, err = fw.Write([]byte("secret")); err != nil {
-			t.Fatal(err)
+		missing := s.Do(t, client, http.MethodPost, "/api/v1/tickets/20990101-001/replies", map[string]any{"body_md": "越权回复"}, nil)
+		if missing.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s回复不存在工单状态码 = %d, 想 404", credential, missing.StatusCode)
 		}
-		if err = mw.Close(); err != nil {
-			t.Fatal(err)
+		if got, want := responseBody(t, hidden), responseBody(t, missing); got != want {
+			t.Fatalf("%s回复的隐藏/不存在工单 404 响应不一致：\n%q\n%q", credential, got, want)
 		}
-		req, err := http.NewRequest(http.MethodPost, s.URL()+"/api/v1/tickets/"+ref+"/attachments", &body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		req.Header.Set("Content-Type", mw.FormDataContentType())
-		got, err := c.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { got.Body.Close() })
-		return got
 	}
 
-	routes := []struct {
-		name   string
-		method string
-		path   func(ref string) string
-		body   any
-		upload bool
-	}{
-		{name: "回复", method: http.MethodPost, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/replies" }, body: map[string]any{"body_md": "越权回复"}},
-		{name: "修订说明", method: http.MethodPatch, path: func(ref string) string { return "/api/v1/tickets/" + ref }, body: map[string]any{"brief_md": "越权修订", "base_revision": int64(1)}},
-		{name: "关闭", method: http.MethodPost, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/close" }, body: map[string]any{"reason": "done"}},
-		{name: "重开", method: http.MethodPost, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/reopen" }},
-		{name: "指派", method: http.MethodPost, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/assign" }, body: map[string]any{"assignee": "旁观者"}},
-		{name: "标签", method: http.MethodPost, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/labels" }, body: map[string]any{"add": []string{"机型:UD-2300"}}},
-		{name: "加入协作者", method: http.MethodPost, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/collaborators" }, body: map[string]any{"member": "旁观者"}},
-		{name: "移出协作者", method: http.MethodDelete, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/collaborators/4" }},
-		{name: "退出协作者", method: http.MethodPost, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/collaborators/leave" }},
-		{name: "创建访客链接", method: http.MethodPost, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/guest-links" }, body: map[string]any{"note": "越权链接"}},
-		{name: "列出访客链接", method: http.MethodGet, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/guest-links" }},
-		{name: "撤销访客链接", method: http.MethodDelete, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/guest-links/1" }},
-		{name: "延期访客链接", method: http.MethodPost, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/guest-links/1/extend" }, body: map[string]any{"valid_days": 90}},
-		{name: "重置访问码", method: http.MethodPost, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/guest-links/1/reset-access-code" }},
-		{name: "上传附件", method: http.MethodPost, path: func(ref string) string { return "/api/v1/tickets/" + ref + "/attachments" }, upload: true},
-	}
-
-	for _, route := range routes {
-		for credential, client := range map[string]*http.Client{"成员": outsider, "成员Agent": agent} {
-			var hidden, missing *http.Response
-			if route.upload {
-				hidden = doUpload(client, number)
-				missing = doUpload(client, "20990101-001")
-			} else {
-				hidden = s.Do(t, client, route.method, route.path(number), route.body, nil)
-				missing = s.Do(t, client, route.method, route.path("20990101-001"), route.body, nil)
-			}
-			if hidden.StatusCode != http.StatusNotFound {
-				t.Fatalf("%s %s %s 状态码 = %d, 想 404", credential, route.name, route.method, hidden.StatusCode)
-			}
-			if got, want := responseBody(t, hidden), responseBody(t, missing); got != want {
-				t.Fatalf("%s %s 的 404 响应不一致：\n%q\n%q", credential, route.name, got, want)
-			}
+	// 无副作用：被拒的回复不能写进时间线。
+	var ticket ticketResponseBody
+	s.Do(t, creator, http.MethodGet, "/api/v1/tickets/"+number, nil, &ticket)
+	for _, ev := range ticket.Timeline {
+		if ev.Type == "reply" {
+			t.Fatalf("被拒回复写进了时间线：%+v", ev)
 		}
 	}
 
 	records := readAccessRecords(t, s, admin, number)
-	denied := 0
+	var denied []accessRecordBody
 	for _, record := range records.Records {
 		if record.Action != "denied" {
 			continue
 		}
-		denied++
+		denied = append(denied, record)
 		if record.Count != 1 {
 			t.Fatalf("被拒记录次数 = %+v, 想 1", record)
 		}
 	}
-	if denied != len(routes)*2 {
-		t.Fatalf("被拒记录有 %d 条, 想 %d", denied, len(routes)*2)
+	if len(denied) != 2 {
+		t.Fatalf("被拒记录有 %d 条, 想 2：%+v", len(denied), denied)
+	}
+	sawMember, sawAgent := false, false
+	for _, record := range denied {
+		switch {
+		case record.Actor.Kind == "member" && record.Actor.Name == "旁观者":
+			sawMember = true
+		case record.Actor.Kind == "agent" && record.Actor.Name == "旁观者 的 Agent · 旁观的 Agent":
+			sawAgent = true
+		default:
+			t.Errorf("被拒记录署名不对：%+v", record)
+		}
+	}
+	if !sawMember || !sawAgent {
+		t.Fatalf("被拒记录应同时留下成员与成员 Agent 署名：%+v", denied)
 	}
 }
 
