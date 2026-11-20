@@ -2,6 +2,7 @@ package release
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -69,34 +70,37 @@ func TestMergeLatest拒绝损坏的latestjson(t *testing.T) {
 	}
 }
 
-func TestMergeLatest发布客户端时保留前后端(t *testing.T) {
+func TestMergeLatest拒绝未知组件(t *testing.T) {
+	for _, component := range []string{"cli", "client"} {
+		if _, err := MergeLatestJSON(nil, component, LatestEntry{}); err == nil {
+			t.Fatalf("只有 server 和 web 两个组件，%s 应被拒绝", component)
+		}
+	}
+}
+
+func TestMergeLatest再写出时丢弃旧client条目(t *testing.T) {
 	existing := []byte(`{
 	  "server": {"version":"1.2.0","tag":"server/v1.2.0","manifest_url":"https://github.com/acme/board/releases/download/server/v1.2.0/manifest.json"},
-	  "web": {"version":"1.4.0","tag":"web/v1.4.0","manifest_url":"https://github.com/acme/board/releases/download/web/v1.4.0/manifest.json"}
+	  "web": {"version":"1.4.0","tag":"web/v1.4.0","manifest_url":"https://github.com/acme/board/releases/download/web/v1.4.0/manifest.json"},
+	  "client": {"version":"1.0.0","tag":"client/v1.0.0","manifest_url":"https://github.com/acme/board/releases/download/client/v1.0.0/manifest.json"}
 	}`)
-	entry := LatestEntry{
-		Version: "1.0.0", Tag: "client/v1.0.0",
-		ManifestURL: "https://github.com/acme/board/releases/download/client/v1.0.0/manifest.json",
-	}
-	data, err := MergeLatestJSON(existing, ComponentClient, entry)
+	data, err := MergeLatestJSON(existing, ComponentServer, LatestEntry{
+		Version:     "1.3.0",
+		Tag:         "server/v1.3.0",
+		ManifestURL: "https://github.com/acme/board/releases/download/server/v1.3.0/manifest.json",
+	})
 	if err != nil {
-		t.Fatalf("合并 client：%v", err)
+		t.Fatalf("合并 server：%v", err)
+	}
+	if strings.Contains(string(data), `"client"`) {
+		t.Fatalf("旧 client 条目应被丢弃：\n%s", data)
 	}
 	var l Latest
 	if err := json.Unmarshal(data, &l); err != nil {
 		t.Fatalf("解析 latest.json：%v\n%s", err, data)
 	}
-	if l.Client == nil || *l.Client != entry {
-		t.Fatalf("client 条目不对：%+v", l.Client)
-	}
-	if l.Server == nil || l.Server.Version != "1.2.0" || l.Web == nil || l.Web.Version != "1.4.0" {
-		t.Fatalf("server/web 条目应保留：%+v %+v", l.Server, l.Web)
-	}
-}
-
-func TestMergeLatest拒绝未知组件(t *testing.T) {
-	if _, err := MergeLatestJSON(nil, "cli", LatestEntry{}); err == nil {
-		t.Fatal("只有 server 和 web 两个组件")
+	if l.Server == nil || l.Server.Version != "1.3.0" || l.Web == nil || l.Web.Version != "1.4.0" {
+		t.Fatalf("server/web 条目不正确：%+v %+v", l.Server, l.Web)
 	}
 }
 

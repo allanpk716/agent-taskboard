@@ -26,7 +26,6 @@ type updateStatusBody struct {
 	SourceUsed          string              `json:"source_used"`
 	Server              componentStatusBody `json:"server"`
 	Web                 componentStatusBody `json:"web"`
-	Client              componentStatusBody `json:"client"`
 	WebNeedsNewerServer bool                `json:"web_needs_newer_server"`
 }
 
@@ -43,23 +42,8 @@ type updateResultBody struct {
 	Steps           []string `json:"steps"`
 	ServerUpdated   bool     `json:"server_updated"`
 	WebUpdated      bool     `json:"web_updated"`
-	ClientUpdated   bool     `json:"client_updated"`
-	ClientError     string   `json:"client_error"`
 	RestartNeeded   bool     `json:"restart_needed"`
 	PreupdateBackup string   `json:"preupdate_backup"`
-}
-
-func (f *adminUpdateFixture) addClient(t *testing.T, version string, m release.Manifest, files map[string][]byte) {
-	t.Helper()
-	f.latest.Client = &release.LatestEntry{
-		Version: version, Tag: "client/v" + version,
-		ManifestURL: "https://github.com/example/example/releases/download/client/v" + version + "/manifest.json",
-	}
-	data, _ := json.Marshal(m)
-	f.byPath["releases/download/client/v"+version+"/manifest.json"] = data
-	for name, content := range files {
-		f.byPath["releases/download/client/v"+version+"/"+name] = content
-	}
 }
 
 // adminUpdateFixture 造一个假 GitHub 更新源，并按它启动真实服务。
@@ -201,9 +185,6 @@ func Test管理员可检查更新(t *testing.T) {
 	}
 	if !status.Web.UpdateAvailable || status.Web.Latest != "1.4.0" {
 		t.Errorf("前端应提示有 1.4.0 更新：%+v", status)
-	}
-	if status.Client.UpdateAvailable || status.Client.Latest != "" {
-		t.Errorf("客户端尚未发布不应影响检查：%+v", status.Client)
 	}
 	_ = fx
 }

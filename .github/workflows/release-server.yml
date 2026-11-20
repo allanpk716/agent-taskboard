@@ -134,7 +134,7 @@ jobs:
             -tag "$GITHUB_REF_NAME" -repo "$GITHUB_REPOSITORY" -file latest.json
           if ! gh release view channel-stable -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create channel-stable --target "$GITHUB_SHA" --title channel-stable \
-              --notes "固定 tag：latest.json 记录平台与客户端的最新版本（打 server/v* 或 client/v* tag 时自动更新）" \
+              --notes "固定 tag：latest.json 记录平台的最新版本（打 server/v* 或 web/v* tag 时自动更新）" \
               -R "$GITHUB_REPOSITORY"
           fi
           gh release upload channel-stable latest.json --clobber -R "$GITHUB_REPOSITORY"

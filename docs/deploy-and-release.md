@@ -195,7 +195,7 @@ docker compose run --rm --no-deps --entrypoint /bin/sh taskboard \
 
 ## 发布
 
-仓库里的实现：`.github/workflows/release-server.yml` 和 `release-client.yml`（CI）；`cmd/release`（manifest、latest 和 check-exe 子命令，CI 与本地演练共用）；`scripts/docker-smoke.ps1`（本地镜像冒烟）。
+仓库里的实现：`.github/workflows/release-server.yml`（CI）；`cmd/release`（manifest、latest 和 check-exe 子命令，CI 与本地演练共用）；`scripts/docker-smoke.ps1`（本地镜像冒烟）。
 
 ### 平台：`server/vX.Y.Z`
 
@@ -222,40 +222,24 @@ docker compose run --rm --no-deps --entrypoint /bin/sh taskboard \
 
 脚本构建带 `e2e_fixed_captcha` build tag 的本地测试镜像（验证码固定为 `TB123`），启动容器，执行和 CI 相同的首页、路由、静态资源、版本检查，再检查带验证码登录、进程非 root，并在重建容器后验证数据仍保留。发布镜像不带该 build tag，验证码仍是随机实现。脚本结束时会删除冒烟容器、数据卷和镜像。
 
-### 桌面客户端：`client/vX.Y.Z`
-
-客户端独立发布（ADR 0011）。`release-client` 流水线在 Ubuntu 上交叉构建 Windows/amd64 的 `taskboard-client.exe`，用 `release check-exe` 核对产物平台，生成 `manifest.json` 并发布 `client/vX.Y.Z` Release。之后它再做两件事：
-
-- 把同一个 exe 以固定文件名 `taskboard-client.exe` 上传到 `channel-stable` Release（`--clobber`）。网页上的下载按钮指向这个固定地址，始终下载最新版；
-- 读改写 `channel-stable` 的 `latest.json`，只更新 client 条目。客户端检查更新时读的就是它。
-
 ### `channel-stable` 与固定地址
 
-固定 tag `channel-stable` 下的 Release 放着 `latest.json`（记录 server 和 client 各自的最新版本）和最新的 `taskboard-client.exe`。组件分开打 tag 后，`releases/latest` 只指向最近发布的那一个，所以不能依赖它。
+固定 tag `channel-stable` 下的 Release 放着 `latest.json`（记录 server 的最新版本，并保留仍有价值的旧 web 条目）。组件分开打 tag 后，`releases/latest` 只指向最近发布的那一个，所以不能依赖它。
 
-客户端**不调用 `api.github.com`**，只使用固定地址：
+更新器**不调用 `api.github.com`**，只使用固定地址：
 
 - `https://github.com/<repo>/releases/download/channel-stable/latest.json`
 - `https://github.com/<repo>/releases/download/<tag>/<file>`
 
 下载的产物都按对应 Release 的 `manifest.json` 里的 SHA256 校验。
 
-CI 更新 `latest.json` 的方式是读改写：下载现有文件，用 `release latest` 只替换本组件的条目（另一组件原样保留），再 `--clobber` 上传。server 和 client 同时打 tag 的极端情况下，两个工作流可能同时尝试创建 `channel-stable` Release，失败的那个重跑一次即可。
+CI 更新 `latest.json` 的方式是读改写：下载现有文件，用 `release latest` 只替换本组件的条目（另一组件原样保留），再 `--clobber` 上传。
 
 ### 演练（不碰 GitHub）
 
 ```bash
-# latest.json：先发 server 再发 client，互不覆盖
+# latest.json：更新 server，保留旧 web 条目
 go run ./cmd/release latest -component server -version 0.1.0 -tag server/v0.1.0 -repo OWNER/REPO -file latest.json
-go run ./cmd/release latest -component client -version 0.1.0 -tag client/v0.1.0 -repo OWNER/REPO -file latest.json
-
-# 桌面客户端：显式交叉构建 Windows/amd64
-mkdir -p dist
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath \
-  -ldflags='-s -w -H=windowsgui -X github.com/allanpk716/agent-taskboard/internal/version.Client=0.1.0' \
-  -o dist/taskboard-client.exe ./cmd/taskboard-client
-go run ./cmd/release check-exe -goos windows -goarch amd64 dist/taskboard-client.exe
-go run ./cmd/release manifest -component client -version 0.1.0 -dir dist
 
 # 平台镜像
 docker build --build-arg APP_VERSION=0.0.0-local -t taskboard:local .
