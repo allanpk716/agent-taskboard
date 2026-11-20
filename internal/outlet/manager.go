@@ -102,8 +102,9 @@ func (m *Manager) SaveTx(ctx context.Context, tx *sql.Tx, memberID int64, botID,
 	generation := oldGeneration + 1
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO outlet (
-			member_id,bot_id,key_cipher,last_pushed_id,generation,status,failure_count,pause_reason,created_at,updated_at
-		) VALUES (?,?,?,?,?,'active',0,NULL,?,?)
+			member_id,bot_id,key_cipher,last_pushed_id,generation,status,failure_count,pause_reason,
+			pending_latest_id,retry_state,attempt_count,next_attempt_at,last_pushed_at,created_at,updated_at
+		) VALUES (?,?,?,?,?,'active',0,NULL,NULL,'none',0,NULL,NULL,?,?)
 		ON CONFLICT(member_id) DO UPDATE SET
 			bot_id=excluded.bot_id,
 			key_cipher=excluded.key_cipher,
@@ -112,6 +113,11 @@ func (m *Manager) SaveTx(ctx context.Context, tx *sql.Tx, memberID int64, botID,
 			status='active',
 			failure_count=0,
 			pause_reason=NULL,
+			pending_latest_id=NULL,
+			retry_state='none',
+			attempt_count=0,
+			next_attempt_at=NULL,
+			last_pushed_at=NULL,
 			updated_at=excluded.updated_at`,
 		memberID, botID, keyCipher, lastPushedID, generation, now, now); err != nil {
 		return Configuration{}, fmt.Errorf("保存通知出口失败：%w", err)

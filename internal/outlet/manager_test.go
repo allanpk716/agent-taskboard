@@ -61,7 +61,10 @@ func Test保存出口配置在同一事务写入成员通知基线并递增代�
 		t.Fatalf("首次保存 generation = %d，想 1", saved.Generation)
 	}
 
-	if _, err := s.DB.Exec(`UPDATE outlet SET status='paused',failure_count=3,pause_reason='bad key' WHERE member_id=1`); err != nil {
+	if _, err := s.DB.Exec(`UPDATE outlet SET status='paused',failure_count=3,pause_reason='bad key',
+		pending_latest_id=3,retry_state='retryable',attempt_count=2,
+		next_attempt_at='2026-11-20T09:10:00+08:00',last_pushed_at='2026-11-20T09:00:00+08:00'
+		WHERE member_id=1`); err != nil {
 		t.Fatal(err)
 	}
 	insertSystemNotification(t, s.DB, 2, "李工的第二条")
@@ -73,13 +76,23 @@ func Test保存出口配置在同一事务写入成员通知基线并递增代�
 		botID, status, cipherText string
 		generation, failures      int64
 		pauseReason               sql.NullString
+		pendingID                 sql.NullInt64
+		attempts                  int64
+		retryState                string
+		nextAttempt, lastPushed   sql.NullString
 	)
-	if err := s.DB.QueryRow(`SELECT bot_id,key_cipher,last_pushed_id,generation,status,failure_count,pause_reason
-		FROM outlet WHERE member_id=1`).Scan(&botID, &cipherText, &baseline, &generation, &status, &failures, &pauseReason); err != nil {
+	if err := s.DB.QueryRow(`SELECT bot_id,key_cipher,last_pushed_id,generation,status,failure_count,pause_reason,
+		pending_latest_id,retry_state,attempt_count,next_attempt_at,last_pushed_at
+		FROM outlet WHERE member_id=1`).Scan(&botID, &cipherText, &baseline, &generation, &status, &failures, &pauseReason,
+		&pendingID, &retryState, &attempts, &nextAttempt, &lastPushed); err != nil {
 		t.Fatal(err)
 	}
 	if botID != "bot02" || baseline != 4 || generation != 2 || status != "active" || failures != 0 || pauseReason.Valid {
 		t.Fatalf("重建后的 outlet = %s/%d/%d/%s/%d/%v", botID, baseline, generation, status, failures, pauseReason)
+	}
+	if pendingID.Valid || retryState != "none" || attempts != 0 || nextAttempt.Valid || lastPushed.Valid {
+		t.Fatalf("重建基线应重置推送状态：pending=%d state=%s attempts=%d next=%v last=%v",
+			pendingID.Int64, retryState, attempts, nextAttempt, lastPushed)
 	}
 	if saved.Generation != generation {
 		t.Fatalf("返回 generation = %d，库内 = %d", saved.Generation, generation)

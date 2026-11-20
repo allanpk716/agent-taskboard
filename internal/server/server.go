@@ -27,6 +27,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/labels"
 	"github.com/allanpk716/agent-taskboard/internal/notifications"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
+	"github.com/allanpk716/agent-taskboard/internal/outlet"
 	"github.com/allanpk716/agent-taskboard/internal/slim"
 	"github.com/allanpk716/agent-taskboard/internal/storage"
 	"github.com/allanpk716/agent-taskboard/internal/store"
@@ -50,6 +51,7 @@ type Server struct {
 	Drafts        *drafts.Manager
 	Archives      *archive.Service
 	Slims         *slim.Service
+	outletPusher  *outlet.Pusher
 
 	handler  http.Handler
 	web      *webapp.Handler
@@ -169,6 +171,19 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	slims := slim.NewService(st.DB, cfg.DataDir, backups.TargetDir(), atts,
 		attachmentBackend.objectStorage, c)
 	draftStore.SetNotifier(notificationStore.DraftNotifier())
+	var pusher *outlet.Pusher
+	if cfg.Webhook.Enabled {
+		outletCipher, err := outlet.NewCipherFromEnv()
+		if err != nil {
+			return nil, fmt.Errorf("通知出口已启用但主密钥不可用：%w", err)
+		}
+		pusher, err = outlet.NewPusher(outlet.PusherDeps{
+			DB: st.DB, Clock: c, Cipher: outletCipher, Webhook: cfg.Webhook,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("装配通知出口失败：%w", err)
+		}
+	}
 	attachmentLinks, err := attachmentlink.LoadOrCreate(cfg.DataDir)
 	if err != nil {
 		return nil, err
@@ -200,11 +215,15 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 		Drafts:        draftStore,
 		Archives:      archives,
 		Slims:         slims,
+		outletPusher:  pusher,
 		handler:       mux,
 		httpSrv:       &http.Server{Handler: mux},
 		web:           web,
 	}, nil
 }
+
+// Outlet 返回通知出口推送器；配置关闭时为 nil，供启动装配测试检查。
+func (s *Server) Outlet() *outlet.Pusher { return s.outletPusher }
 
 // Handler 返回完整路由（测试和反向代理调试用）。
 func (s *Server) Handler() http.Handler { return s.handler }
@@ -220,14 +239,26 @@ func (s *Server) Serve(ln net.Listener) error {
 	archiveDone := make(chan struct{})
 	backupDone := make(chan struct{})
 	idemDone := make(chan struct{})
+	outletDone := make(chan struct{})
 	go s.runAttachmentJanitor(janitorDone)
 	go s.runArchiveJanitor(archiveDone)
 	go s.Backups.RunSchedule(backupDone, ops.DefaultScheduleTick)
 	go s.runIdempotencyJanitor(idemDone)
+	if s.outletPusher != nil {
+		go s.outletPusher.Run(outletDone, outlet.DefaultTick)
+	}
 	defer func() { close(archiveDone) }()
 	defer func() { close(idemDone) }()
 	defer func() { close(backupDone) }()
 	defer func() { close(janitorDone) }()
+	defer func() {
+		if s.outletPusher != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), ShutdownTimeout)
+			defer cancel()
+			_ = s.outletPusher.Stop(ctx)
+		}
+	}()
+	defer func() { close(outletDone) }()
 	defer s.web.Close()
 	err := s.httpSrv.Serve(ln)
 	if err == http.ErrServerClosed {
@@ -341,9 +372,17 @@ func (s *Server) selfHealthCheck() {
 
 // Shutdown 优雅停机。
 func (s *Server) Shutdown(ctx context.Context) error {
+	var outletErr error
+	if s.outletPusher != nil {
+		outletErr = s.outletPusher.Stop(ctx)
+	}
 	s.Notifications.Close()
 	// httpSrv 在 New 里建好：Shutdown 先于 Serve 时，Serve 会立即返回 ErrServerClosed。
-	return s.httpSrv.Shutdown(ctx)
+	httpErr := s.httpSrv.Shutdown(ctx)
+	if outletErr != nil {
+		return outletErr
+	}
+	return httpErr
 }
 
 // ShutdownTimeout 是优雅停机的等待上限。

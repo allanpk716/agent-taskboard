@@ -74,6 +74,12 @@ func Test通知出口迁移建立每成员一行配置表(t *testing.T) {
 	if _, err := s.DB.ExecContext(ctx, `UPDATE outlet SET failure_count=-1`); err == nil {
 		t.Fatal("outlet 失败计数不能为负")
 	}
+	if _, err := s.DB.ExecContext(ctx, `UPDATE outlet SET retry_state='unknown'`); err == nil {
+		t.Fatal("outlet 重试状态只允许 none/retryable/permanent")
+	}
+	if _, err := s.DB.ExecContext(ctx, `UPDATE outlet SET attempt_count=-1`); err == nil {
+		t.Fatal("outlet 重试次数不能为负")
+	}
 
 	rows, err := s.DB.QueryContext(ctx, `PRAGMA table_info(outlet)`)
 	if err != nil {
@@ -97,6 +103,7 @@ func Test通知出口迁移建立每成员一行配置表(t *testing.T) {
 	want := []string{
 		"member_id", "bot_id", "key_cipher", "last_pushed_id", "generation",
 		"status", "failure_count", "pause_reason", "created_at", "updated_at",
+		"pending_latest_id", "retry_state", "attempt_count", "next_attempt_at", "last_pushed_at",
 	}
 	for _, name := range want {
 		if _, ok := got[name]; !ok {
