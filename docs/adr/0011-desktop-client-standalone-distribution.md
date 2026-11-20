@@ -4,7 +4,7 @@
 
 ## 状态
 
-已接受。取代 [ADR 0005](0005-server-hosts-desktop-client.md) 和 [ADR 0006](0006-client-server-url-stamp.md)，并取代 [ADR 0009](0009-cloud-docker-deployment.md) 中「镜像携带桌面客户端」的部分。
+**已被 [ADR 0020](0020-orca-plugin-replaces-desktop-client.md) 取代**：桌面客户端下线，由 Orca 插件接替。原状态：已接受。取代 [ADR 0005](0005-server-hosts-desktop-client.md) 和 [ADR 0006](0006-client-server-url-stamp.md)，并取代 [ADR 0009](0009-cloud-docker-deployment.md) 中「镜像携带桌面客户端」的部分。
 
 ## 背景
 
