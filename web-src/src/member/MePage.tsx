@@ -20,6 +20,7 @@ import {
   type Me,
 } from './memberApi'
 import { fmtShort } from '../shared/format'
+import { NotificationOutletCard } from './NotificationOutletCard'
 import { copyText, nav, toast } from './ui'
 import { Confirm, Modal } from './ui'
 import { versionFooterText } from '../shared/versionCheck'
@@ -157,6 +158,8 @@ export function MePage({
           </button>
         </div>
       </div>
+
+      <NotificationOutletCard />
 
       {me.is_admin && (
         <div className="mcard">

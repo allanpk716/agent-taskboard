@@ -43,6 +43,16 @@ upload_rate_per_min = 20
 pending_quota_mb    = 200
 daily_limit         = 200
 
+# 通知出口（#371/#370）。默认关闭，新部署不会有意外外呼；启用时必须配置
+# 部署者认可的目标 bot 平台根地址。成员只提交 bot_id，URL 由服务端拼接。
+# webhook key 的加密主密钥不写配置文件：用环境变量 TASKBOARD_OUTLET_KEY
+# 注入 base64 编码的 32 字节密钥；密钥丢失后成员重新粘贴 webhook key。
+[webhook]
+enabled       = false
+allowed_bases = []
+window_start  = "08:00"  # 北京时间，含起点
+window_end    = "20:00"  # 北京时间，不含终点；窗口外只记不推
+
 # 备份（#43，见 docs/deploy-and-release.md「备份与恢复」）。定时备份内置在 serve 里；
 # 手动备份用 taskboard backup，恢复用 taskboard restore <备份文件>。
 [backup]

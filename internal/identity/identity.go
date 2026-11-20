@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/allanpk716/agent-taskboard/internal/clock"
+	"github.com/allanpk716/agent-taskboard/internal/outletstate"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -267,6 +268,20 @@ func (m *Manager) DeactivateMember(ctx context.Context, id int64) (bool, error) 
 		now, id); err != nil {
 		return false, err
 	}
+	// 通知出口跟随账号停用，并清掉在途重试与失败分级，停用后不再外呼。
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE outlet SET
+			status=CASE WHEN status=? THEN ? ELSE status END,
+			pause_reason=CASE WHEN status=? THEN ? ELSE pause_reason END,
+			failure_count=0,
+			`+outletstate.PendingStateResetSQL+`,
+			`+outletstate.DeliveryStateResetSQL+`,updated_at=?
+		WHERE member_id=?`,
+		outletstate.StatusActive, outletstate.StatusPaused, outletstate.StatusActive,
+		outletstate.PauseReasonMemberDeactivated,
+		now, now, id); err != nil {
+		return false, err
+	}
 	if err := tx.Commit(); err != nil {
 		return false, err
 	}
@@ -274,7 +289,9 @@ func (m *Manager) DeactivateMember(ctx context.Context, id int64) (bool, error) 
 }
 
 // ReactivateMember 恢复成员账号（#112）：只清停用标记。密码、历史会话、
-// Agent token 与客户端凭证都不变，因此停用时撤销的 token 不会复活。
+// Agent token 与客户端凭证都不变，因此停用时撤销的 token 不会复活；
+// 通知出口例外：保留 bot/key，但按重建配置处理——写入当时通知 MAX(id)
+// 并递增代数，停用期间的积压不补推（#374）。
 // 已启用账号的再恢复是幂等成功。返回是否发生了变化。
 func (m *Manager) ReactivateMember(ctx context.Context, id int64) (bool, error) {
 	tx, err := m.db.BeginTx(ctx, nil)
@@ -294,6 +311,22 @@ func (m *Manager) ReactivateMember(ctx context.Context, id int64) (bool, error) 
 		return false, nil
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE members SET deactivated_at = NULL WHERE id = ?`, id); err != nil {
+		return false, err
+	}
+	now := m.clock.Now().Format(time.RFC3339Nano)
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE outlet SET
+			last_pushed_id=(SELECT COALESCE(MAX(id),0) FROM notifications WHERE member_id=outlet.member_id),
+			generation=generation+1,
+			status=CASE WHEN pause_reason=? THEN ? ELSE status END,
+			pause_reason=CASE WHEN pause_reason=? THEN NULL ELSE pause_reason END,
+			failure_count=0,
+			`+outletstate.PendingStateResetSQL+`,`+outletstate.LastPushedAtResetSQL+`,
+			`+outletstate.DeliveryStateResetSQL+`,updated_at=?
+		WHERE member_id=?`,
+		outletstate.PauseReasonMemberDeactivated, outletstate.StatusActive,
+		outletstate.PauseReasonMemberDeactivated,
+		now, now, id); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {

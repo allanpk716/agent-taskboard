@@ -186,7 +186,22 @@ func RestoreWithStorageAndMarker(dataDir string, port int, backupFile string, no
 		}
 		res.AttachmentsRestored++
 	}
+	if err := bumpOutletGenerations(st.DB, now); err != nil {
+		return res, err
+	}
 	return res, nil
+}
+
+func bumpOutletGenerations(db *sql.DB, now time.Time) error {
+	_, err := db.Exec(`
+		UPDATE outlet
+		SET generation=MAX(generation+1,?), updated_at=?
+		`,
+		now.Unix(), now.Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("恢复后递增通知出口代数失败：%w", err)
+	}
+	return nil
 }
 
 func normalizeBackendMarker(marker attachments.BackendMarker) (attachments.BackendMarker, error) {

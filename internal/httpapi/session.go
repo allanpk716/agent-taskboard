@@ -25,6 +25,7 @@ import (
 	"github.com/allanpk716/agent-taskboard/internal/identity"
 	"github.com/allanpk716/agent-taskboard/internal/notifications"
 	"github.com/allanpk716/agent-taskboard/internal/ops"
+	"github.com/allanpk716/agent-taskboard/internal/outlet"
 	"github.com/allanpk716/agent-taskboard/internal/slim"
 	"github.com/allanpk716/agent-taskboard/internal/storage"
 	"github.com/allanpk716/agent-taskboard/internal/templates"
@@ -44,6 +45,10 @@ type API struct {
 	atts            *attachments.Manager
 	backups         *ops.Backups
 	notifications   *notifications.Manager
+	outlets         *outlet.Manager
+	outletBuilder   *outlet.URLBuilder
+	outletClient    *outlet.Client
+	outletTests     *requestRateLimiter
 	accessRecords   *accessrecords.Manager
 	drafts          *drafts.Manager
 	storage         *storage.Service
@@ -86,10 +91,18 @@ func NewAPI(ident *identity.Manager, tk *tickets.Manager, tpl *templates.Manager
 	return &API{ident: ident, tickets: tk, templates: tpl, idem: idem, atts: atts, backups: backups,
 		accessRecords: accessRecs, drafts: draftStore, storage: storageStats, archive: archives, slim: slims, cfg: cfg, clk: clk,
 		intakeUploads: newRequestRateLimiter(cfg.Intake.UploadRatePerMin, clk),
+		outletTests:   newRequestRateLimiter(1, clk),
 		clientOnline:  make(map[int64]int),
 		captchaSource: captcha.Random{}, captchas: make(map[string]captchaRecord),
 		loginLimits: newRequestRateLimiter(loginRatePerMinute, clk),
 		loginLocks:  newLoginLockStore()}
+}
+
+// SetOutlet 装配通知出口配置管理器、白名单 URL 构造器和受限 HTTP client。
+func (a *API) SetOutlet(manager *outlet.Manager, builder *outlet.URLBuilder, client *outlet.Client) {
+	a.outlets = manager
+	a.outletBuilder = builder
+	a.outletClient = client
 }
 
 // Handler 返回 /api/v1 前缀的 http.Handler（带 panic 恢复，统一错误格式）。
@@ -108,6 +121,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/me/agent-tokens/", a.handleAgentToken)
 	mux.HandleFunc("/api/v1/me/notices/", a.handleMemberNotice)
 	mux.HandleFunc("/api/v1/me/password", a.handleOwnPassword)
+	mux.HandleFunc("/api/v1/me/notification-outlet", a.handleNotificationOutlet)
+	mux.HandleFunc("/api/v1/me/notification-outlet/", a.handleNotificationOutletAction)
 	mux.HandleFunc("/api/v1/tickets", a.handleTicketsRoot)
 	mux.HandleFunc("/api/v1/tickets/", a.handleTicketRef)
 	mux.HandleFunc("/api/v1/guests", a.handleGuests)

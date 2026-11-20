@@ -464,6 +464,68 @@ export async function revokeClient(id: number): Promise<void> {
   await api(`/api/v1/me/clients/${id}`, { method: 'DELETE' })
 }
 
+/* ---------------- 通知出口（#372，webhook 门铃自助配置） ---------------- */
+
+export interface NotificationOutlet {
+  bot_id: string
+  key_last4: string
+  last_pushed_id: number
+  generation: number
+  status: 'active' | 'paused'
+  failure_count: number
+  pause_reason?: 'member' | 'outlet_paused' | 'member_deactivated' | string
+  delivery_state: 'ok' | 'transient' | 'ignored' | 'permanent'
+  delivery_state_at?: string
+  transient_since?: string
+}
+
+export interface NotificationOutletView {
+  enabled: boolean
+  outlet: NotificationOutlet | null
+}
+
+export type NotificationOutletTestResult =
+  | 'ok'
+  | 'ignored'
+  | 'unauthorized'
+  | 'timeout'
+  | 'http_error'
+
+export interface NotificationOutletTestResponse {
+  result: NotificationOutletTestResult
+  http_status: number
+}
+
+export async function fetchNotificationOutlet(): Promise<NotificationOutletView> {
+  return api('/api/v1/me/notification-outlet')
+}
+
+export async function saveNotificationOutlet(
+  botID: string,
+  webhookKey: string,
+): Promise<NotificationOutletView> {
+  return api('/api/v1/me/notification-outlet', {
+    method: 'PUT',
+    body: JSON.stringify({ bot_id: botID, key: webhookKey }),
+  })
+}
+
+export async function pauseNotificationOutlet(): Promise<NotificationOutletView> {
+  return api('/api/v1/me/notification-outlet/pause', { method: 'POST' })
+}
+
+export async function resumeNotificationOutlet(): Promise<NotificationOutletView> {
+  return api('/api/v1/me/notification-outlet/resume', { method: 'POST' })
+}
+
+export async function deleteNotificationOutlet(): Promise<void> {
+  await api('/api/v1/me/notification-outlet', { method: 'DELETE' })
+}
+
+export async function sendNotificationOutletTest(): Promise<NotificationOutletTestResponse> {
+  return api('/api/v1/me/notification-outlet/test', { method: 'POST' })
+}
+
 /* ---------------- 成员账号（#42，仅管理员） ---------------- */
 
 export interface MemberAccount {
