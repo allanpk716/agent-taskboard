@@ -19,6 +19,17 @@ type attachmentLinkBody struct {
 	Filename  string `json:"filename"`
 }
 
+type attachmentLinkErrorBody struct {
+	URL   string `json:"url"`
+	Error struct {
+		Code            string `json:"code"`
+		Message         string `json:"message"`
+		Hint            string `json:"hint"`
+		SlimPackageName string `json:"slim_package_name"`
+		SlimRemovedAt   string `json:"slim_removed_at"`
+	} `json:"error"`
+}
+
 func Test成员Agent换取附件短链接并免token下载(t *testing.T) {
 	s := tbtest.Start(t, tbtest.WithPublicURL("https://taskboard.example.com"))
 	s.CreateAdmin("陈工", "secret-pass")
@@ -139,5 +150,98 @@ func Test无权工单附件不能换取链接(t *testing.T) {
 	_, token := s.IssueAgentToken(t, outsider, "外线")
 	if res := s.Do(t, s.AgentClient(token), http.MethodGet, "/api/v1/attachment-links/"+att.ID, nil, nil); res.StatusCode != http.StatusNotFound {
 		t.Fatalf("无权附件取链接状态码 = %d, 想 404", res.StatusCode)
+	}
+}
+
+func Test已瘦身附件不能换取短链接并保留旧地址瘦身拦截(t *testing.T) {
+	f := newSlimRaceFixture(t, "已瘦身附件换链接")
+	_, agentToken := f.s.IssueAgentToken(t, f.member, "现场助理")
+	agent := f.s.AgentClient(agentToken)
+
+	f.s.CreateMember("外线", "outside-pass")
+	outsider := f.s.Login("外线", "outside-pass")
+	_, outsiderToken := f.s.IssueAgentToken(t, outsider, "外线助理")
+	outsiderAgent := f.s.AgentClient(outsiderToken)
+	pendingNumber := mustCreateTicket(t, f.s, f.member, "待用附件不因瘦身改变")
+	pending := mustUploadAttachment(t, f.s, f.member, pendingNumber, "待用.log", []byte("pending"))
+
+	var before attachmentLinkBody
+	if res := f.s.Do(t, agent, http.MethodGet, "/api/v1/attachment-links/"+f.att.ID, nil, &before); res.StatusCode != http.StatusOK {
+		t.Fatalf("瘦身前取链接状态码 = %d, 想 200", res.StatusCode)
+	}
+	if res := f.s.Do(t, agent, http.MethodGet, "/api/v1/attachment-links/"+pending.ID, nil, nil); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("待用附件取链接状态码 = %d, 想 404", res.StatusCode)
+	}
+	if res := f.s.Do(t, outsiderAgent, http.MethodGet, "/api/v1/attachment-links/"+f.att.ID, nil, nil); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("无权附件取链接状态码 = %d, 想 404", res.StatusCode)
+	}
+	oldURL, err := url.Parse(before.URL)
+	if err != nil {
+		t.Fatalf("解析瘦身前链接失败：%v", err)
+	}
+	oldPath := oldURL.EscapedPath() + "?" + oldURL.RawQuery
+
+	pkg := f.generateSlim(t)
+	pkgRes := f.s.Do(t, f.admin, http.MethodGet, pkg.DownloadURL, nil, nil)
+	if pkgRes.StatusCode != http.StatusOK {
+		t.Fatalf("下载瘦身包状态码 = %d, 想 200", pkgRes.StatusCode)
+	}
+	pkgBytes := readAll(t, pkgRes)
+	var removed slimRemoveBody
+	if res := f.removeSlim(t, pkg); res.StatusCode != http.StatusOK {
+		t.Fatalf("确认瘦身状态码 = %d, 想 200", res.StatusCode)
+	} else {
+		tbtest.DecodeJSON(t, res, &removed)
+	}
+
+	var denied attachmentLinkErrorBody
+	res := f.s.Do(t, agent, http.MethodGet, "/api/v1/attachment-links/"+f.att.ID, nil, &denied)
+	if res.StatusCode != http.StatusGone {
+		t.Fatalf("瘦身后取链接状态码 = %d, 想 410", res.StatusCode)
+	}
+	if denied.URL != "" {
+		t.Fatalf("瘦身后不应返回下载地址：%+v", denied)
+	}
+	if denied.Error.Code != "attachment_slimmed" {
+		t.Fatalf("瘦身后取链接错误码 = %q, 想 attachment_slimmed", denied.Error.Code)
+	}
+	if denied.Error.SlimPackageName != pkg.Name || denied.Error.SlimRemovedAt != removed.RemovedAt ||
+		!strings.Contains(denied.Error.Message, pkg.Name) {
+		t.Fatalf("瘦身后取链接错误体 = %+v，想包含包 %s 和移出时间 %s", denied, pkg.Name, removed.RemovedAt)
+	}
+	if res := f.s.Do(t, agent, http.MethodGet, "/api/v1/attachment-links/"+pending.ID, nil, nil); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("瘦身后待用附件取链接状态码 = %d, 想 404", res.StatusCode)
+	}
+	if res := f.s.Do(t, outsiderAgent, http.MethodGet, "/api/v1/attachment-links/"+f.att.ID, nil, nil); res.StatusCode != http.StatusNotFound {
+		t.Fatalf("瘦身后无权附件取链接状态码 = %d, 想 404", res.StatusCode)
+	}
+
+	oldRes := downloadAttachment(t, f.s, f.s.NewClient(), oldPath)
+	if oldRes.StatusCode != http.StatusGone {
+		t.Fatalf("瘦身前签出的地址下载状态码 = %d, 想 410", oldRes.StatusCode)
+	}
+	var oldDenied attachmentLinkErrorBody
+	tbtest.DecodeJSON(t, oldRes, &oldDenied)
+	if oldDenied.Error.Code != "attachment_slimmed" || oldDenied.Error.SlimPackageName != pkg.Name ||
+		oldDenied.Error.SlimRemovedAt != removed.RemovedAt {
+		t.Fatalf("旧地址瘦身错误体 = %+v，想包 %s 和移出时间 %s", oldDenied, pkg.Name, removed.RemovedAt)
+	}
+
+	if res, got := restoreSlim(t, f.s, f.admin, pkgBytes, f.number); res.StatusCode != http.StatusOK ||
+		len(got.Restored) != 1 || got.Restored[0].Number != f.number {
+		t.Fatalf("恢复瘦身包 = %d/%+v，想恢复 %s", res.StatusCode, got, f.number)
+	}
+	var restored attachmentLinkBody
+	if res := f.s.Do(t, agent, http.MethodGet, "/api/v1/attachment-links/"+f.att.ID, nil, &restored); res.StatusCode != http.StatusOK {
+		t.Fatalf("恢复后取链接状态码 = %d, 想 200", res.StatusCode)
+	}
+	restoredURL, err := url.Parse(restored.URL)
+	if err != nil {
+		t.Fatalf("解析恢复后链接失败：%v", err)
+	}
+	download := downloadAttachment(t, f.s, f.s.NewClient(), restoredURL.EscapedPath()+"?"+restoredURL.RawQuery)
+	downloadBody := string(readAll(t, download))
+	if download.StatusCode != http.StatusOK || downloadBody != "race-body" {
+		t.Fatalf("恢复后下载 = %d/%q, 想 200/race-body", download.StatusCode, downloadBody)
 	}
 }

@@ -50,6 +50,10 @@ func (a *API) handleAttachmentLink(w http.ResponseWriter, r *http.Request) {
 			"先在说明或回复里引用它（attachment_ids 或正文 att: 引用）")
 		return
 	}
+	if att.SlimRemovedAt != nil {
+		writeAttachmentSlimmed(w, att)
+		return
+	}
 
 	expiresAt := a.clk.Now().Add(attachmentlink.TTL)
 	query := url.Values{}

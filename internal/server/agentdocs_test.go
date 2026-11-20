@@ -112,6 +112,30 @@ func Test附件下载说明要求curl跟随跳转(t *testing.T) {
 	}
 }
 
+func Test附件瘦身短链接说明同步到说明书和接口参考(t *testing.T) {
+	s := tbtest.Start(t)
+
+	for _, path := range []string{"/agent.md", "/api.md"} {
+		t.Run(path, func(t *testing.T) {
+			res := s.Do(t, s.NewClient(), http.MethodGet, path, nil, nil)
+			body, err := io.ReadAll(res.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := string(body)
+			for _, want := range []string{
+				"410 `attachment_slimmed`",
+				"`slim_package_name`、`slim_removed_at`",
+				"不会生成下载地址",
+			} {
+				if !strings.Contains(got, want) {
+					t.Errorf("%s 缺少 %q", path, want)
+				}
+			}
+		})
+	}
+}
+
 func assertAgentDocContains(t *testing.T, s *tbtest.Server, want string) {
 	t.Helper()
 	res := s.Do(t, s.NewClient(), http.MethodGet, "/agent.md", nil, nil)

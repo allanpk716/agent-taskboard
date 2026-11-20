@@ -472,6 +472,8 @@ paths:
       summary: 换取单个附件的短时效下载地址
       description: |
         仅成员 Agent 可用。调用者必须能读附件所属工单；待用附件返回 404。
+        附件已瘦身移出服务器时返回 410 attachment_slimmed，不生成下载地址；
+        error 附 slim_package_name 和 slim_removed_at。
         返回地址 10 分钟有效、绑定该附件和该 Agent，下载时不再带 token；
         Agent 被撤销或失去权限后立即失效。地址只给本次下载使用，不要转贴。
       parameters:
@@ -490,7 +492,19 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
         "410":
-          $ref: "#/components/responses/Gone"
+          description: 附件已瘦身移出服务器，返回 attachment_slimmed；error 附 slim_package_name 与 slim_removed_at
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Error"
+                  - type: object
+                    properties:
+                      error:
+                        type: object
+                        properties:
+                          slim_package_name: { type: string }
+                          slim_removed_at: { type: string, format: date-time }
   /api/v1/drafts:
     get:
       tags: [drafts]

@@ -19,8 +19,21 @@ type openAPIDocument struct {
 		URL string `yaml:"url"`
 	} `yaml:"servers"`
 	Paths map[string]map[string]struct {
-		OperationID string `yaml:"operationId"`
+		OperationID string                     `yaml:"operationId"`
+		Responses   map[string]openAPIResponse `yaml:"responses"`
 	} `yaml:"paths"`
+}
+
+type openAPIResponse struct {
+	Description string `yaml:"description"`
+	Content     map[string]struct {
+		Schema openAPISchema `yaml:"schema"`
+	} `yaml:"content"`
+}
+
+type openAPISchema struct {
+	AllOf      []openAPISchema          `yaml:"allOf"`
+	Properties map[string]openAPISchema `yaml:"properties"`
 }
 
 func Test公开OpenAPI描述免凭证返回并替换请求地址(t *testing.T) {
@@ -97,6 +110,53 @@ func TestOpenAPI描述恰好二十一个真实操作且守住红线(t *testing.T
 			t.Fatalf("OpenAPI 描述包含红线索 %q", forbidden)
 		}
 	}
+}
+
+func Test附件短链接OpenAPI专门描述已瘦身410(t *testing.T) {
+	s := tbtest.Start(t)
+	res := s.Do(t, s.NewClient(), http.MethodGet, "/openapi.yaml", nil, nil)
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc openAPIDocument
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("解析 OpenAPI YAML 失败：%v", err)
+	}
+
+	gone := doc.Paths["/api/v1/attachment-links/{att}"]["get"].Responses["410"]
+	for _, want := range []string{"附件已瘦身移出", "attachment_slimmed", "slim_package_name", "slim_removed_at"} {
+		if !strings.Contains(gone.Description, want) {
+			t.Fatalf("短链接 410 描述 = %q, 想包含 %q", gone.Description, want)
+		}
+	}
+	if strings.Contains(gone.Description, "工单已归档移除") {
+		t.Fatalf("短链接 410 描述不应沿用归档文案：%q", gone.Description)
+	}
+	jsonContent, ok := gone.Content["application/json"]
+	if !ok {
+		t.Fatal("短链接 410 缺少 application/json 响应体")
+	}
+	for _, field := range []string{"slim_package_name", "slim_removed_at"} {
+		if !openAPISchemaHasProperty(jsonContent.Schema, "error", field) {
+			t.Fatalf("短链接 410 错误 schema 缺少 error.%s", field)
+		}
+	}
+}
+
+func openAPISchemaHasProperty(schema openAPISchema, path ...string) bool {
+	if len(path) == 0 {
+		return true
+	}
+	if child, ok := schema.Properties[path[0]]; ok && openAPISchemaHasProperty(child, path[1:]...) {
+		return true
+	}
+	for _, child := range schema.AllOf {
+		if openAPISchemaHasProperty(child, path...) {
+			return true
+		}
+	}
+	return false
 }
 
 func assertOpenAPIRouteExists(t *testing.T, s *tbtest.Server, method, path string) {
