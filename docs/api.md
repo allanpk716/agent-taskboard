@@ -20,7 +20,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 - 凭证四种，统一解析成一个 Viewer（`kind` 为 `member` / `guest`，成员带 `member` 与 `agent` / `client`，访客带 `guest_link`，见 spec「身份与凭证」模块）：
   1. **成员本人**：网页会话 cookie `tb_session`（HttpOnly + Secure + SameSite=Lax）。本人操作的唯一来源。
   2. **成员 Agent**：`Authorization: Bearer <Agent token>`，token 由 `POST /api/v1/me/agent-tokens` 签发（前缀 `tbag_`）。ADR 0003：用 token 的操作一律署名为「某成员 的 Agent · 名字」，永远不算本人。
-  3. **桌面客户端**：`Authorization: Bearer <客户端凭证>`（前缀 `tbc_`）。权限边界是
+  3. **Orca 插件**：`Authorization: Bearer <客户端凭证>`（前缀 `tbc_`）。权限边界是
      `client_scope`：只能调用通知接口（含 `GET /notifications/unread`）、`GET /session`、
      `GET /inbox`、`GET /inbox/waiting-on-counterparts`、仅「协作中」组合的
      `GET /tickets?collaborator=me&status=open`，以及撤销自己的
@@ -90,7 +90,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
     "kind": "member",
     "member": {"id": 1, "username": "chen", "name": "陈工", "is_admin": false},
     "agent": null,
-    "client": {"id": 8, "hostname": "WORKSTATION-01"}
+    "client": {"id": 8, "hostname": "Orca · WORKSTATION-01"}
   },
   "inbox": "/api/v1/inbox",
   "drafts": {"count": 2, "url": "/api/v1/drafts"}
@@ -100,7 +100,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 网页会话没有 `viewer.client`；客户端凭证必带。成员 Agent 的 `viewer.agent` 另有
 `draft_mode: "required"|"direct"`（缺省 `direct`）。网页会话另有 `notices`
 （如 `drafts_direct_intro`：上线把名下 Agent 改为可直接发的一次性提示）。
-`min_client_version` 已随服务端代管客户端机制移除；0.1.4 客户端把缺失字段解析为空值，不会因此停止工作。
+`min_client_version` 已随服务端代管客户端机制移除；0.1.4 旧桌面客户端把缺失字段解析为空值，不会因此停止工作。
 
 ## 通知（#74）
 
@@ -124,18 +124,22 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
   `closed` / `reopened`。本人网页操作不通知自己；其名下成员 Agent 的操作照常通知本人。
 - 游标格式错误：400 `invalid_after` / `invalid_before`；SSE 重连头错误：400 `invalid_last_event_id`。
 
-## 桌面客户端凭证（#74）
+## 客户端凭证（Orca 插件，#74）
 
 | 方法与路径 | 说明 |
 |---|---|
 | `POST /api/v1/client/connect` | 网页会话确认「连接这台电脑」。请求体 `{port,state,code_challenge,hostname}`，返回 `{redirect_url}`；port 只允许本机回环监听。 |
 | `POST /api/v1/client/token` | 客户端用一次性 code 和 PKCE verifier 换客户端凭证。 |
-| `GET /api/v1/me/clients` | 列出本人已连接电脑。 |
-| `DELETE /api/v1/me/clients/{id}` | 网页会话撤销某台电脑。 |
-| `DELETE /api/v1/me/clients/self` | 客户端凭证撤销自己（退出登录/卸载用）。 |
+| `GET /api/v1/me/clients` | 列出本人已连接设备。 |
+| `DELETE /api/v1/me/clients/{id}` | 网页会话撤销某台设备。 |
+| `DELETE /api/v1/me/clients/self` | 客户端凭证撤销自己（插件退出登录/解除绑定用）。 |
 | `POST /api/v1/me/password` | 自助改密 `{old_password,new_password}`；成功 204，并在同一事务里保留当前网页会话、注销其他网页会话；客户端凭证与 Agent token 不受影响。原密码错误 422 `invalid_old_password`，少于 8 位 422 `password_too_short`，新密码与旧密码相同 422 `password_unchanged`（先校验旧密码，再判断是否相同）。 |
 
-桌面客户端安装包不在服务端代管；网页和客户端都从 GitHub Release 的 `channel-stable` 固定地址下载。
+客户端凭证供 Orca 插件使用（ADR 0020），签发流程不变：插件在本机回环监听并打开
+浏览器，成员在网页确认「连接这台电脑」后，插件用一次性 code 和 PKCE verifier 换取
+凭证。`hostname` 由插件传「Orca · <主机名>」，「已连接设备」照此显示；插件请求带
+`User-Agent: taskboard-orca-plugin/<语义化版本>`，服务端解析后在设备列表显示版本。
+旧 Windows 桌面客户端已下线，已签发的凭证不因此吊销，但旧 exe 不再收到更新。
 
 客户端凭证越过上述边界时统一返回 403 `client_scope`：`message` 为「客户端凭证只能
 读取通知、身份、收件箱、在等他与协作中清单」，`hint` 为「请用浏览器打开工单处理；
@@ -1868,7 +1872,6 @@ ticket_numbers=20260601-001
   "source_used": "github",
   "server": {"current": "1.0.0", "latest": "1.2.3", "update_available": true},
   "web": {"current": "2.0.0", "latest": "2.1.0", "update_available": false, "min_server": "1.0.0"},
-  "client": {"current": "0.2.0", "latest": "0.3.0", "update_available": true},
   "web_needs_newer_server": false
 }
 ```
@@ -1885,11 +1888,10 @@ ticket_numbers=20260601-001
 ```json
 {
   "source_used": "github",
-  "steps": ["后端 1.0.0 → 1.2.3", "前端 2.0.0 → 2.1.0", "客户端 0.2.0 → 0.3.0"],
+  "steps": ["后端 1.0.0 → 1.2.3", "前端 2.0.0 → 2.1.0"],
   "message": "后端已更新：服务即将退出，由 NSSM 拉起新版本（新版本启动时会自动迁移并做健康检查）",
   "server_updated": true,
   "web_updated": true,
-  "client_updated": true,
   "restart_needed": true,
   "preupdate_backup": "taskboard-20261016-220105-preupdate.db",
   "preupdate_backup_local": true
@@ -1897,8 +1899,7 @@ ticket_numbers=20260601-001
 ```
 
 - 已经是最新时 `steps` 为空、`message` 为「已是最新，无需更新」。
-- 后端或前端更新失败（更新前备份失败等）返回 `500 update_failed`；客户端是独立组件，
-  失败时响应仍为 200，`client_updated=false` 且 `client_error` 说明原因（例如 SHA256 不符），后端/前端照常更新。
+- 后端或前端更新失败（更新前备份失败等）返回 `500 update_failed`。
 - 更新前备份目标不可达但本机兜底成功时更新继续，`preupdate_backup_local` 为 `true` 并在结果里标明「只在本机」。
 - 后端更新成功后服务写完响应即退出，由 NSSM 拉起新版本；命令行等价的入口是
   `taskboard update`（提示重启）、`taskboard rollback`（回滚）。

@@ -178,33 +178,9 @@ export function MePage({
         </div>
       )}
 
-      <div className="mcard" id="client" data-testid="client-card">
-        <div className="sec-t" style={{ marginTop: 0 }}>
-          桌面客户端
-        </div>
-        <div className="btnrow">
-          <a
-            className="btn"
-            data-testid="client-download"
-            href="https://github.com/allanpk716/agent-taskboard/releases/download/channel-stable/taskboard-client.exe"
-            target="_blank"
-            rel="noreferrer"
-          >
-            下载 Windows 客户端
-          </a>
-        </div>
-        <div className="hint" data-testid="client-server-url">
-          首次运行时填写平台地址：{window.location.origin}
-        </div>
-        <div className="hint">
-          首次运行如遇 SmartScreen，先点「更多信息」，再点「仍要运行」；被杀毒软件拦截时，把
-          taskboard-client.exe 加入信任。
-        </div>
-      </div>
-
       <div className="mcard">
         <div className="sec-t" style={{ marginTop: 0 }}>
-          已连接的电脑
+          已连接设备
         </div>
         <table className="mini-tbl">
           <tbody>
@@ -217,7 +193,7 @@ export function MePage({
                 <td>
                   <div>{c.last_used_at ? `最近使用 ${fmtShort(c.last_used_at)}` : '未使用'}</div>
                   <div className="hint">
-                    {c.client_version ? `taskboard-client ${c.client_version}` : '客户端版本未上报'}
+                    {c.client_version ? c.client_version : '插件版本未上报'}
                   </div>
                 </td>
                 <td>
@@ -230,7 +206,7 @@ export function MePage({
             {clients !== null && clients.length === 0 && (
               <tr>
                 <td className="hint" colSpan={3}>
-                  还没有已连接的电脑。
+                  还没有已连接设备。
                 </td>
               </tr>
             )}
@@ -383,7 +359,7 @@ export function MePage({
       {revokingClient && (
         <Confirm
           title={`撤销「${revokingClient.hostname}」`}
-          body={<>撤销后这台电脑的桌面客户端立即退出登录，需要重新连接才能继续提醒。</>}
+          body={<>撤销后这台电脑的 Orca 插件立即退出登录，需要重新连接才能继续提醒。</>}
           yesLabel="撤销"
           danger
           onYes={() => void revokeConnectedClient()}

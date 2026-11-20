@@ -154,43 +154,6 @@ func TestGitHub源经镜像取得最新版本并校验产物(t *testing.T) {
 	}
 }
 
-func TestGitHub源忽略客户端组件(t *testing.T) {
-	fx := newGitHubFixture("1.0.0", "1.0.0", "1.0.0")
-	files := map[string][]byte{"taskboard-client.exe": []byte("client exe")}
-	m := testManifest("client", "1.0.0", "", files)
-	data, _ := json.Marshal(m)
-	fx.bySuffix["releases/download/client/v1.0.0/manifest.json"] = data
-	fx.bySuffix["releases/download/client/v1.0.0/taskboard-client.exe"] = files["taskboard-client.exe"]
-	fx.latest.Client = &release.LatestEntry{
-		Version: "1.0.0", Tag: "client/v1.0.0",
-		ManifestURL: "https://github.com/example/example/releases/download/client/v1.0.0/manifest.json",
-	}
-	fake := newFakeGitHub(t, fx.latest, fx.bySuffix)
-
-	src := &GitHubSource{Repo: "example/example", Mirror: []string{fake.server.URL + "/m/"}}
-	latest, err := src.Latest(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if latest.Server == nil || latest.Web == nil {
-		t.Fatalf("应解析平台组件：%+v", latest)
-	}
-}
-
-func Test客户端尚未发布不影响其余组件(t *testing.T) {
-	fx := newGitHubFixture("1.0.0", "1.0.0", "1.0.0")
-	fake := newFakeGitHub(t, fx.latest, fx.bySuffix)
-
-	src := &GitHubSource{Repo: "example/example", Mirror: []string{fake.server.URL + "/m/"}}
-	latest, err := src.Latest(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if latest.Server == nil || latest.Web == nil {
-		t.Fatalf("client 未发布不应导致整体失败：%+v", latest)
-	}
-}
-
 // 镜像前缀按顺序尝试：第一个连不上时用第二个。
 func TestGitHub源镜像按顺序回退(t *testing.T) {
 	fx := newGitHubFixture("1.0.0", "1.1.0", "1.0.0")

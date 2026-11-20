@@ -22,7 +22,8 @@ func testClientChallenge() string {
 }
 
 // 成员在网页确认后，客户端凭 PKCE code 换到只能读通知的客户端凭证；
-// 使用痕迹、列表和撤销都从公开 HTTP 接口可观察。
+// 使用痕迹、列表和撤销都从公开 HTTP 接口可观察。旧桌面客户端与 Orca 插件
+// 都按各自 User-Agent 上报版本。
 func Test客户端凭证完整签发使用与撤销流程(t *testing.T) {
 	s := tbtest.Start(t)
 	s.CreateAdmin("admin", "secret-pass")
@@ -94,6 +95,16 @@ func Test客户端凭证完整签发使用与撤销流程(t *testing.T) {
 	}
 	if got.LastUsedAt == "" || got.CreatedAt == "" {
 		t.Fatalf("电脑列表缺时间：%+v", got)
+	}
+
+	res = s.DoWithHeaders(t, client, http.MethodGet, "/api/v1/notifications/unread",
+		map[string]string{"User-Agent": "taskboard-orca-plugin/3.1.4"}, nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("Orca 插件读未读数状态码 = %d", res.StatusCode)
+	}
+	s.Do(t, web, http.MethodGet, "/api/v1/me/clients", nil, &list)
+	if len(list.Clients) != 1 || list.Clients[0].ClientVersion != "3.1.4" {
+		t.Fatalf("Orca 插件使用后的电脑列表不对：%+v", list.Clients)
 	}
 
 	if res := s.Do(t, web, http.MethodDelete, "/api/v1/me/clients/"+itoa(issued.ID), nil, nil); res.StatusCode != http.StatusNoContent {

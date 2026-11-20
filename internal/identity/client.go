@@ -21,10 +21,10 @@ var ErrInvalidClientCode = errors.New("客户端连接 code 无效、已过期�
 var ErrInvalidClientPort = errors.New("客户端回调端口必须是 1-65535")
 var ErrInvalidClientConnect = errors.New("客户端连接参数不合法")
 
-// IsClientToken 判断 Bearer token 是否为桌面客户端凭证。
+// IsClientToken 判断 Bearer token 是否为客户端凭证（Orca 插件与旧桌面客户端共用）。
 func IsClientToken(token string) bool { return strings.HasPrefix(token, ClientTokenPrefix) }
 
-// Client 是解析凭证时携带的桌面客户端信息。
+// Client 是解析凭证时携带的客户端信息。
 type Client struct {
 	ID       int64
 	Hostname string
@@ -139,7 +139,7 @@ func (m *Manager) ExchangeClientCode(ctx context.Context, code, verifier string)
 	return cred, nil
 }
 
-var clientVersionRE = regexp.MustCompile(`^taskboard-client/([0-9]+\.[0-9]+\.[0-9]+)`)
+var clientVersionRE = regexp.MustCompile(`^(?:taskboard-client|taskboard-orca-plugin)/([0-9]+\.[0-9]+\.[0-9]+)`)
 
 // ViewerFromClientToken 解析客户端凭证，并按请求的 User-Agent 记录使用痕迹。
 func (m *Manager) ViewerFromClientToken(ctx context.Context, token, userAgent string) (Viewer, error) {

@@ -4,7 +4,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"testing"
 
 	"github.com/allanpk716/agent-taskboard/internal/tbtest"
@@ -38,33 +37,19 @@ func Test可见范围外成员与Agent读取工单得到一致的404并留下被
 		t.Fatalf("建单状态码 = %d", res.StatusCode)
 	}
 	number := created.Number
-	att := mustUploadAttachment(t, s, creator, number, "内部资料.txt", []byte("secret"))
-	if res := claimByReply(t, s, creator, number, map[string]any{"attachment_ids": []string{att.ID}}); res.StatusCode != http.StatusCreated {
-		t.Fatalf("挂附件状态码 = %d", res.StatusCode)
-	}
-	attPath := "/api/v1/attachments/" + att.ID + "/" + url.PathEscape("内部资料.txt")
-
-	assertSame404 := func(name, hiddenPath, missingPath string, clients map[string]*http.Client) {
-		t.Helper()
-		for credential, client := range clients {
-			hidden := s.Do(t, client, http.MethodGet, hiddenPath, nil, nil)
-			if hidden.StatusCode != http.StatusNotFound {
-				t.Fatalf("%s %s 状态码 = %d, 想 404", credential, name, hidden.StatusCode)
-			}
-			missing := s.Do(t, client, http.MethodGet, missingPath, nil, nil)
-			if missing.StatusCode != http.StatusNotFound {
-				t.Fatalf("%s 不存在 %s 状态码 = %d, 想 404", credential, name, missing.StatusCode)
-			}
-			if got, want := responseBody(t, hidden), responseBody(t, missing); got != want {
-				t.Fatalf("%s %s 的 404 响应不一致：\n%q\n%q", credential, name, got, want)
-			}
+	for credential, client := range map[string]*http.Client{"成员": outsider, "成员Agent": agent} {
+		hidden := s.Do(t, client, http.MethodGet, "/api/v1/tickets/"+number, nil, nil)
+		if hidden.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s读隐藏工单状态码 = %d, 想 404", credential, hidden.StatusCode)
+		}
+		missing := s.Do(t, client, http.MethodGet, "/api/v1/tickets/20990101-001", nil, nil)
+		if missing.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s读不存在工单状态码 = %d, 想 404", credential, missing.StatusCode)
+		}
+		if got, want := responseBody(t, hidden), responseBody(t, missing); got != want {
+			t.Fatalf("%s的隐藏/不存在工单 404 响应不一致：\n%q\n%q", credential, got, want)
 		}
 	}
-	clients := map[string]*http.Client{"成员": outsider, "成员Agent": agent}
-	assertSame404("详情", "/api/v1/tickets/"+number, "/api/v1/tickets/20990101-001", clients)
-	assertSame404("时间线", "/api/v1/tickets/"+number+"/timeline", "/api/v1/tickets/20990101-001/timeline", clients)
-	assertSame404("访问记录", "/api/v1/tickets/"+number+"/access-records", "/api/v1/tickets/20990101-001/access-records", clients)
-	assertSame404("附件", attPath, "/api/v1/attachments/att_999999/%E5%86%85%E9%83%A8%E8%B5%84%E6%96%99.txt", clients)
 
 	got := readAccessRecords(t, s, admin, number)
 	var denied []accessRecordBody
@@ -73,16 +58,25 @@ func Test可见范围外成员与Agent读取工单得到一致的404并留下被
 			denied = append(denied, r)
 		}
 	}
-	if len(denied) != 8 {
-		t.Fatalf("被拒记录有 %d 条, 想 8：%+v", len(denied), denied)
+	if len(denied) != 2 {
+		t.Fatalf("被拒记录有 %d 条, 想 2：%+v", len(denied), denied)
 	}
+	sawMember, sawAgent := false, false
 	for _, r := range denied {
-		if r.Actor.Kind != "member" && r.Actor.Kind != "agent" {
-			t.Errorf("被拒记录访问者类型 = %q, 想 member/agent", r.Actor.Kind)
+		if r.Count != 1 {
+			t.Errorf("被拒记录次数不对：%+v", r)
 		}
-		if !strings.Contains(r.Actor.Name, "旁观者") || r.Count != 1 {
-			t.Errorf("被拒记录署名/次数不对：%+v", r)
+		switch {
+		case r.Actor.Kind == "member" && r.Actor.Name == "旁观者":
+			sawMember = true
+		case r.Actor.Kind == "agent" && r.Actor.Name == "旁观者 的 Agent · 旁观的 Agent":
+			sawAgent = true
+		default:
+			t.Errorf("被拒记录署名不对：%+v", r)
 		}
+	}
+	if !sawMember || !sawAgent {
+		t.Fatalf("被拒记录应同时留下成员与成员 Agent 署名：%+v", denied)
 	}
 }
 

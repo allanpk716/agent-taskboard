@@ -18,7 +18,6 @@ type LatestEntry struct {
 type Latest struct {
 	Server *LatestEntry `json:"server,omitempty"`
 	Web    *LatestEntry `json:"web,omitempty"`
-	Client *LatestEntry `json:"client,omitempty"`
 }
 
 // MergeLatestJSON 读改写 latest.json：只替换 component 自己的条目，
@@ -35,10 +34,8 @@ func MergeLatestJSON(existing []byte, component string, entry LatestEntry) ([]by
 		l.Server = &entry
 	case ComponentWeb:
 		l.Web = &entry
-	case ComponentClient:
-		l.Client = &entry
 	default:
-		return nil, fmt.Errorf("未知组件 %q（只能是 %s、%s 或 %s）", component, ComponentServer, ComponentWeb, ComponentClient)
+		return nil, fmt.Errorf("未知组件 %q（只能是 %s 或 %s）", component, ComponentServer, ComponentWeb)
 	}
 	return json.MarshalIndent(l, "", "  ")
 }
