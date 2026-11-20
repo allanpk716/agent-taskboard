@@ -224,7 +224,7 @@ agent-taskboard 是部门工单记录平台。Agent 可以创建和处理工单�
 
   下载会跳转，必须带 `-L`；签名地址几分钟后失效，不能存下来复用。链接只给自己用，
   不要转贴到工单或聊天里；`curl -L` 跨主机跳转时不会带上 Authorization。
-- 读取接口里附件带 `slim_removed_at` / `slim_package_name` 时表示它已被瘦身移出服务器：不要尝试下载（会得到 410 `attachment_slimmed`）；需要这个文件时请人联系管理员，用瘦身包恢复。
+- 读取接口里附件带 `slim_removed_at` / `slim_package_name` 时表示它已被瘦身移出服务器：不要再去换短时链接；如果仍调用附件链接接口，会立即得到 410 `attachment_slimmed`，错误对象附 `slim_package_name`、`slim_removed_at`，不会生成下载地址。需要这个文件时请人联系管理员，用瘦身包恢复。
 
 ## Markdown 约定
 

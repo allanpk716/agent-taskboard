@@ -1156,7 +1156,7 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
   404 `ticket_not_found`，防枚举）。
   只有待用（pending）状态不提供下载（404）。
   已被瘦身移出的附件返回 410 `attachment_slimmed`，错误对象附
-  `slim_package_name`（与说明文字一致）；不要重试，需要文件时请联系管理员恢复。
+  `slim_package_name`、`slim_removed_at`（与说明文字一致）；不要重试，需要文件时请联系管理员恢复。
 - 访客不再使用签名地址：JSON 与 Markdown 都返回普通附件路径，浏览器用
   `tb_guest_device` cookie，程序化调用用 `tbgd_` Bearer。地址泄露后不能下载；
   每次成功下载记入访问记录，访客署名为链接备注加自报称呼并标注已认领设备。
@@ -1168,11 +1168,14 @@ can_edit_brief 链接全部撤销或过期 且 访客未修订说明 且 尚无�
 
 - 仅成员 Agent（`tbag_` token）可调用；网页会话和访客返回 `403 agents_only`。调用者
   必须能读附件所属工单，否则 `404`；pending 附件同样 `404`。
+- 已瘦身附件返回 410 `attachment_slimmed`，错误对象附
+  `slim_package_name`、`slim_removed_at`，不会生成下载地址；需要文件时请联系管理员恢复。
 - 返回 `{url, expires_at, mime, size, filename}`。`url` 指向现有附件下载路由并带
   HMAC 签名，10 分钟有效，绑定这一个附件和签发它的成员 Agent；下载时不需要再带
   token。Agent 被撤销或失去该工单读取权限后，链接立即失效。
 - 签名下载每次仍会重新核对签名、有效期、Agent 状态和工单权限，成功下载按该成员
   Agent 写访问记录，响应头沿用上面的 inline/attachment 规则。
+  瘦身前已签出的地址不例外：附件瘦身后，下载入口仍返回同一个 410。
 - 下载示例：
 
   ```sh
