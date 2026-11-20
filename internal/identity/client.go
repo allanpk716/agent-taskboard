@@ -139,7 +139,7 @@ func (m *Manager) ExchangeClientCode(ctx context.Context, code, verifier string)
 	return cred, nil
 }
 
-var clientVersionRE = regexp.MustCompile(`^taskboard-client/([0-9]+\.[0-9]+\.[0-9]+)`)
+var clientVersionRE = regexp.MustCompile(`^(?:taskboard-client|taskboard-orca-plugin)/([0-9]+\.[0-9]+\.[0-9]+)`)
 
 // ViewerFromClientToken 解析客户端凭证，并按请求的 User-Agent 记录使用痕迹。
 func (m *Manager) ViewerFromClientToken(ctx context.Context, token, userAgent string) (Viewer, error) {

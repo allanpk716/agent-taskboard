@@ -445,7 +445,7 @@ export async function rotateAgentToken(id: number): Promise<IssuedToken> {
   return api(`/api/v1/me/agent-tokens/${id}/rotate`, { method: 'POST' })
 }
 
-/* ---------------- 桌面客户端（#80） ---------------- */
+/* ---------------- Orca 插件 / 旧桌面客户端凭证（#80） ---------------- */
 
 export interface ClientCredentialRow {
   id: number
