@@ -624,6 +624,8 @@ func Test停机取消后仍登记重试并在租约到期后同键重推(t *test
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(target.Close)
+	var releaseOnce sync.Once
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
 	pusher := newOutletTestPusher(t, s, clk, cipher, target, "08:00", "20:00", newOutletTestLogs())
 	if err := pusher.Dispatch(ctx); err != nil {
 		t.Fatal(err)
@@ -635,7 +637,7 @@ func Test停机取消后仍登记重试并在租约到期后同键重推(t *test
 	if err := pusher.Stop(context.Background()); err != nil {
 		t.Fatalf("停机等待在途请求失败：%v", err)
 	}
-	close(release)
+	releaseOnce.Do(func() { close(release) })
 	next := queryOutletNextAttempt(t, s.DB, 1)
 	if state, attempts := queryOutletRetryState(t, s.DB, 1); state != "retryable" || attempts != 1 {
 		t.Fatalf("停机取消后 outlet = %s/%d，想已登记一次可重试", state, attempts)
@@ -682,8 +684,9 @@ func Test孤立的在途行租约到期后同键重推(t *testing.T) {
 	}
 
 	clk.Advance(time.Minute)
-	blocked := newOutletTestPusher(t, s, clk, cipher, httptest.NewTLSServer(http.NotFoundHandler()),
-		"08:00", "20:00", newOutletTestLogs())
+	blockedTarget := httptest.NewTLSServer(http.NotFoundHandler())
+	t.Cleanup(blockedTarget.Close)
+	blocked := newOutletTestPusher(t, s, clk, cipher, blockedTarget, "08:00", "20:00", newOutletTestLogs())
 	t.Cleanup(func() { blocked.Stop(context.Background()) })
 	if err := blocked.Dispatch(ctx); err != nil {
 		t.Fatal(err)
@@ -716,6 +719,50 @@ func Test孤立的在途行租约到期后同键重推(t *testing.T) {
 	defer mu.Unlock()
 	if keys[0] != outletIdempotencyKey(t, s.DB, 1, 1) {
 		t.Fatalf("租约到期后的重推应复用同键：%v", keys)
+	}
+}
+
+func Test遗留的在途行缺失租约按到期重推(t *testing.T) {
+	s := openOutletTestStore(t)
+	ctx := context.Background()
+	insertOutletMember(t, s.DB, 1, "wang")
+	insertOutletTicket(t, s.DB)
+	clk := clock.NewFake(time.Date(2026, 11, 20, 9, 0, 0, 0, clock.Beijing))
+	cipher := newOutletTestCipher(t)
+	if _, err := outlet.NewManager(s.DB, clk, cipher).Save(ctx, 1, "bot01", "webhook-secret"); err != nil {
+		t.Fatal(err)
+	}
+	insertOutletNotification(t, s.DB, 1, "turn", "assigned", nil)
+	// 修复前的中断可能留下 retryable + NULL 租约：重启后必须当作已到期继续同键重推。
+	if _, err := s.DB.Exec(`
+		UPDATE outlet SET retry_state='retryable',pending_latest_id=1,attempt_count=1,
+			next_attempt_at=NULL
+		WHERE member_id=1`); err != nil {
+		t.Fatal(err)
+	}
+
+	var mu sync.Mutex
+	var keys []string
+	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		keys = append(keys, r.Header.Get("X-Idempotency-Key"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(target.Close)
+	pusher := newOutletTestPusher(t, s, clk, cipher, target, "08:00", "20:00", newOutletTestLogs())
+	if err := pusher.Dispatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitForOutletCondition(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(keys) == 1 && queryOutletCursor(t, s.DB, 1) == 1
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if keys[0] != outletIdempotencyKey(t, s.DB, 1, 1) {
+		t.Fatalf("缺失租约的在途行应同键重推：%v", keys)
 	}
 }
 
