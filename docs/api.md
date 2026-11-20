@@ -20,7 +20,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 - 凭证四种，统一解析成一个 Viewer（`kind` 为 `member` / `guest`，成员带 `member` 与 `agent` / `client`，访客带 `guest_link`，见 spec「身份与凭证」模块）：
   1. **成员本人**：网页会话 cookie `tb_session`（HttpOnly + Secure + SameSite=Lax）。本人操作的唯一来源。
   2. **成员 Agent**：`Authorization: Bearer <Agent token>`，token 由 `POST /api/v1/me/agent-tokens` 签发（前缀 `tbag_`）。ADR 0003：用 token 的操作一律署名为「某成员 的 Agent · 名字」，永远不算本人。
-  3. **桌面客户端**：`Authorization: Bearer <客户端凭证>`（前缀 `tbc_`）。权限边界是 `client_scope`：只能调用通知接口、`GET /session`，以及撤销自己的 `DELETE /me/clients/self`；它不署名、不代表成员操作工单。
+  3. **Orca 插件**：`Authorization: Bearer <客户端凭证>`（前缀 `tbc_`）。权限边界是 `client_scope`：只能调用通知接口、`GET /session`，以及撤销自己的 `DELETE /me/clients/self`；它不署名、不代表成员操作工单。
   4. **访客**：访客是部门级、长期存在的身份（#328），链接密钥（前缀 `tbg_`）只用于读取认领/输码页信息、执行认领和凭访问码进入；浏览器成功后使用同源设备凭证（Bearer 前缀 `tbgd_`，同时收到 HttpOnly cookie `tb_guest_device`）。访客 Agent 后续请求用组合凭证 `Authorization: Bearer tbg_<链接密钥>:<访问码>`。认领或输码作用于整个访客身份：这台设备对这位访客名下全部未撤销、未过期的链接可信，之后成员新加的链接也直接可信；换设备时在任一链接输一次访问码即可。
   `tbg_<链接密钥>:<访问码>` 只作用于这条链接所在的那一张工单；主页组合凭证
   `tbh_<主页密钥>:<访问码>` 才覆盖这位访客名下的全部有效工单。
@@ -85,7 +85,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
     "kind": "member",
     "member": {"id": 1, "username": "chen", "name": "陈工", "is_admin": false},
     "agent": null,
-    "client": {"id": 8, "hostname": "WORKSTATION-01"}
+    "client": {"id": 8, "hostname": "Orca · WORKSTATION-01"}
   },
   "inbox": "/api/v1/inbox",
   "drafts": {"count": 2, "url": "/api/v1/drafts"}
@@ -95,7 +95,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 网页会话没有 `viewer.client`；客户端凭证必带。成员 Agent 的 `viewer.agent` 另有
 `draft_mode: "required"|"direct"`（缺省 `direct`）。网页会话另有 `notices`
 （如 `drafts_direct_intro`：上线把名下 Agent 改为可直接发的一次性提示）。
-`min_client_version` 已随服务端代管客户端机制移除；0.1.4 客户端把缺失字段解析为空值，不会因此停止工作。
+`min_client_version` 已随服务端代管客户端机制移除；0.1.4 旧桌面客户端把缺失字段解析为空值，不会因此停止工作。
 
 ## 通知（#74）
 
@@ -119,18 +119,22 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
   `closed` / `reopened`。本人网页操作不通知自己；其名下成员 Agent 的操作照常通知本人。
 - 游标格式错误：400 `invalid_after` / `invalid_before`；SSE 重连头错误：400 `invalid_last_event_id`。
 
-## 桌面客户端凭证（#74）
+## 客户端凭证（Orca 插件，#74）
 
 | 方法与路径 | 说明 |
 |---|---|
 | `POST /api/v1/client/connect` | 网页会话确认「连接这台电脑」。请求体 `{port,state,code_challenge,hostname}`，返回 `{redirect_url}`；port 只允许本机回环监听。 |
 | `POST /api/v1/client/token` | 客户端用一次性 code 和 PKCE verifier 换客户端凭证。 |
-| `GET /api/v1/me/clients` | 列出本人已连接电脑。 |
-| `DELETE /api/v1/me/clients/{id}` | 网页会话撤销某台电脑。 |
-| `DELETE /api/v1/me/clients/self` | 客户端凭证撤销自己（退出登录/卸载用）。 |
+| `GET /api/v1/me/clients` | 列出本人已连接设备。 |
+| `DELETE /api/v1/me/clients/{id}` | 网页会话撤销某台设备。 |
+| `DELETE /api/v1/me/clients/self` | 客户端凭证撤销自己（插件退出登录/解除绑定用）。 |
 | `POST /api/v1/me/password` | 自助改密 `{old_password,new_password}`；成功 204，并在同一事务里保留当前网页会话、注销其他网页会话；客户端凭证与 Agent token 不受影响。原密码错误 422 `invalid_old_password`，少于 8 位 422 `password_too_short`，新密码与旧密码相同 422 `password_unchanged`（先校验旧密码，再判断是否相同）。 |
 
-桌面客户端安装包不在服务端代管；网页和客户端都从 GitHub Release 的 `channel-stable` 固定地址下载。
+客户端凭证供 Orca 插件使用（ADR 0020），签发流程不变：插件在本机回环监听并打开
+浏览器，成员在网页确认「连接这台电脑」后，插件用一次性 code 和 PKCE verifier 换取
+凭证。`hostname` 由插件传「Orca · <主机名>」，「已连接设备」照此显示；插件请求带
+`User-Agent: taskboard-orca-plugin/<语义化版本>`，服务端解析后在设备列表显示版本。
+旧 Windows 桌面客户端已下线，已签发的凭证不因此吊销，但旧 exe 不再收到更新。
 
 `GET /api/v1/session` 与登录成功响应的结构（成员）：
 

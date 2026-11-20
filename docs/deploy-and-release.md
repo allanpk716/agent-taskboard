@@ -1,6 +1,6 @@
 # 部署、发布与更新：实施参考
 
-开发和部署时使用的具体约定。决策的理由见 `docs/adr/`：[0009](adr/0009-cloud-docker-deployment.md)（迁到云服务器 Docker）、[0010](adr/0010-cloud-release-and-deploy.md)（发布与部署）、[0011](adr/0011-desktop-client-standalone-distribution.md)（桌面客户端独立分发）。本仓库是公开的，**这里不写服务器 IP、账号和密钥**。
+开发和部署时使用的具体约定。决策的理由见 `docs/adr/`：[0009](adr/0009-cloud-docker-deployment.md)（迁到云服务器 Docker）、[0010](adr/0010-cloud-release-and-deploy.md)（发布与部署）、[0020](adr/0020-orca-plugin-replaces-desktop-client.md)（Orca 插件接替桌面客户端）。本仓库是公开的，**这里不写服务器 IP、账号和密钥**。
 
 ## 组成
 
@@ -12,7 +12,7 @@
 | 前端 | React + TypeScript + Vite 构建的静态文件，和后端打进同一个镜像，由后端同源提供 |
 | 运行 | Docker 镜像 + host 网络，数据在宿主机数据卷，配置文件只读挂载，以 `taskboard` 用户（UID 65532）运行 |
 | HTTPS | 宿主机 Caddy 整站反代到后端 |
-| 桌面客户端 | 独立发布在 GitHub Release，成员自己下载，不经过服务端 |
+| Orca 插件 | 独立仓库发布，经 `orca plugin install` 安装，不经过本仓库发布流程 |
 
 生产只有云端容器这一种形态（ADR 0010）。原来的 Windows/NSSM 原地更新形态不再维护，它的部署步骤见本文件的 git 历史。
 
@@ -41,7 +41,7 @@
 ## API 约定（补充协议原型）
 
 - 前缀为 `/api/v1`，只做增量修改：可以加字段、加接口，不删除、不改名。破坏性变更开 `/api/v2`，两版并存一段时间。
-- 桌面客户端的版本不受管理员控制（ADR 0011），它用到的接口（会话、通知流、通知已读、客户端凭证）尤其要保持向后兼容：旧客户端必须照样能用。
+- Orca 插件独立发布、版本不受管理员控制（ADR 0020），它用到的接口（会话、通知流、通知已读、客户端凭证）尤其要保持向后兼容；已安装的旧桌面 exe 也继续调用同一组接口，客户端凭证不因下线被吊销。
 - 所有会产生新内容的请求（回复、建单、反馈提交、附件上传）都接受 `Idempotency-Key` 请求头。服务端按 key 去重，key 重复时返回首次请求的结果；入口附件上传是唯一例外：key 必填，用来把同一份草稿的多个附件归属到之后的一次提交，不做单响应快照。
 - `GET /api/v1/health` 返回 `server_version` 和 `web_version`。前后端合并发布后两者相同；CI 冒烟和部署脚本都用它核对版本。
 
@@ -142,9 +142,7 @@ OSS_ACCESS_KEY_SECRET=<为 taskboard 单独生成的 AK Secret>
 | 前端资源 | 服务器直出，Caddy zstd/gzip，hash 资源长缓存 | 是（发版后约 209KB/人） | #301 |
 | `/api.md`、SSE | 服务器直出 | 是（量小） | #295 |
 | 备份 | 写 NAS 与内网 OSS | 否 | #300 |
-| 客户端安装包与更新 | GitHub Releases | 否 | #301 |
-
-桌面客户端的 `TASKBOARD_CLIENT_UPDATE_BASE` 只能指向 GitHub Releases 或同样承担下载流量的镜像源，**不能配置成 taskboard 本站**。不设置时客户端默认使用 GitHub；如果企业内网必须镜像，镜像地址也必须直接提供 Release 文件，不能让本站代理 exe 下载。
+| Orca 插件安装与更新 | 插件独立仓库 | 否 | #301、ADR 0020 |
 
 ### 分两次上线、演练与维护窗口
 
@@ -233,7 +231,7 @@ docker compose run --rm --no-deps --entrypoint /bin/sh taskboard \
 
 下载的产物都按对应 Release 的 `manifest.json` 里的 SHA256 校验。
 
-CI 更新 `latest.json` 的方式是读改写：下载现有文件，用 `release latest` 只替换本组件的条目（另一组件原样保留），再 `--clobber` 上传。
+CI 更新 `latest.json` 的方式是读改写：下载现有文件，用 `release latest` 只替换本组件的条目（另一组件原样保留），再 `--clobber` 上传。client 条目已随桌面客户端下线移除（见「客户端产物与历史 Release」）。
 
 ### 演练（不碰 GitHub）
 
@@ -318,12 +316,18 @@ sudo /opt/taskboard/deploy.sh X.Y.Z
 
 发版 = 合并 → 打 `server/vX.Y.Z` tag → 等 CI 冒烟并推送镜像 → 执行部署脚本 → 用公网地址核对版本和首页。CI 失败或部署自动回滚时就停下排查，不要手动绕过。
 
-## 桌面客户端分发
+## 客户端产物与历史 Release
 
-- **下载**：成员在网页「我的」页面点下载，拿到 `channel-stable` 下的最新 `taskboard-client.exe`。exe 免安装，首次运行时把自己装到用户目录，不需要管理员权限。它没有签名，首次运行要点「仍要运行」。
-- **平台地址**：解析顺序为 `-server` 参数 > `TASKBOARD_SERVER_URL` 环境变量 > HKCU 里保存的地址 > 弹窗让成员填写。填写后先探测 `<地址>/api/v1/health`，确认是 taskboard 平台后才保存，然后走网页确认签发客户端凭证的流程。托盘菜单可以修改地址，改了以后原凭证作废，按新地址重新连接。
-- **更新**：客户端定期读 `channel-stable/latest.json` 的 client 条目。有新版本时托盘弹出提示，成员点了才下载对应 `client/vX.Y.Z` 的 exe，按 `manifest.json` 的 SHA256 和大小校验后替换自己并重启。下载失败只提示，不影响通知。
-- 0.1.4 及更早的客户端还会去服务端查更新，现在查不到，就停在原版本，通知照常可用。需要成员手动下载新版覆盖一次。
+桌面客户端已下线（ADR 0020）：本仓库不再构建、上传 `taskboard-client.exe`，也没有 `client/v*` tag 触发的发布。常驻提醒改由 Orca 插件承担，插件在独立仓库发布。
+
+- **`latest.json` 保持无 client 条目**：发布工具里的 client 结构体已删除，后续每次 `server/vX.Y.Z` release 读改写 `channel-stable/latest.json` 时，读到旧文件里的 client 条目也会被丢弃。发版后验证：
+
+  ```bash
+  gh release download channel-stable -p latest.json -O - | jq 'has("client")'
+  # 应输出 false
+  ```
+
+- **历史 Release 保留不动**：`client/v*` Release 及其资产保留作历史记录；已安装的旧 exe 不再收到更新，但已签发的客户端凭证不被吊销，通知照常可用，成员换装 Orca 插件即可。
 
 ## 备份与恢复
 
