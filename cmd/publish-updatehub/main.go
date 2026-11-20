@@ -40,7 +40,7 @@ func main() {
 func run(args []string) error {
 	fs := flag.NewFlagSet("publish-updatehub", flag.ContinueOnError)
 	repo := fs.String("repo", defaultRepo, "GitHub 仓库（OWNER/REPO）")
-	tag := fs.String("tag", "", "发布 tag，如 server/v1.2.3、client/v1.0.0")
+	tag := fs.String("tag", "", "发布 tag，如 server/v1.2.3")
 	channel := fs.String("channel", "stable", "UpdateHub 通道")
 	notes := fs.String("notes", "", "版本备注")
 	outDir := fs.String("out", "publish-out", "下载产物、nupkg 和 feed 的保存目录")
