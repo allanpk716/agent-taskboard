@@ -281,7 +281,7 @@ export function NotificationBell({ tier, onNavigate }: { tier: LayoutTier; onNav
           <i />
         </button>
       </div>
-      <p className="switchsub">桌面客户端在线时不会重复弹{permissionHint ? ` · ${permissionHint}` : ''}</p>
+      <p className="switchsub">Orca 插件在线时不会重复弹{permissionHint ? ` · ${permissionHint}` : ''}</p>
     </footer>
   )
   const bell = (

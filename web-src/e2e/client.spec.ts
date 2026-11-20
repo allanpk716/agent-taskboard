@@ -29,6 +29,8 @@ async function confirmAndExchange(page: Page, request: APIRequestContext, hostna
   const cb = await listenCallback()
   try {
     await page.goto(connectURL(cb.port, hostname))
+    await expect(page.getByText('Orca 插件请求连接这台电脑')).toBeVisible()
+    await expect(page.getByText(hostname)).toBeVisible()
     await page.getByRole('button', { name: '连接' }).click()
     await expect(page.getByText('已连接这台电脑')).toBeVisible()
     expect(cb.codes).toHaveLength(1)
@@ -42,7 +44,7 @@ async function confirmAndExchange(page: Page, request: APIRequestContext, hostna
   }
 }
 
-test('已登录成员在确认页连接本机客户端', async ({ page, request }) => {
+test('已登录成员在确认页连接本机 Orca 插件', async ({ page, request }) => {
   await login(page, await wang())
   const token = await confirmAndExchange(page, request, 'E2E-WORKSTATION')
   expect(token).toMatch(/^tbc_/)
@@ -87,15 +89,15 @@ test('未登录打开确认页，登录后回到确认页完成连接', async ({
 test('我的页面显示已连接电脑并支持撤销', async ({ page, request }) => {
   const who = await wang()
   await login(page, who)
-  const token = await confirmAndExchange(page, request, 'E2E-ME-LIST')
+  const token = await confirmAndExchange(page, request, 'Orca · E2E-ME-LIST')
   const used = await request.get('/api/v1/session', {
-    headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'taskboard-client/2.0.1' },
+    headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'taskboard-orca-plugin/3.2.0' },
   })
   expect(used.ok()).toBeTruthy()
 
   await page.goto('/me')
-  const row = page.locator('.mini-tbl tr', { hasText: 'E2E-ME-LIST' })
-  await expect(row).toContainText('taskboard-client 2.0.1')
+  const row = page.locator('.mini-tbl tr', { hasText: 'Orca · E2E-ME-LIST' })
+  await expect(row).toContainText('3.2.0')
   await row.getByRole('button', { name: '撤销' }).click()
   await page.locator('.modal').getByRole('button', { name: '撤销', exact: true }).click()
   await expect(page.getByText('已撤销这台电脑的凭证')).toBeVisible()
@@ -106,17 +108,13 @@ test('我的页面显示已连接电脑并支持撤销', async ({ page, request 
   expect(revoked.status()).toBe(401)
 })
 
-test('我的页面提供固定地址的桌面客户端下载', async ({ page }) => {
+test('我的页面不再提供桌面客户端下载和 Windows 安装说明', async ({ page }) => {
   await login(page, await wang())
   await page.goto('/me')
-  const card = page.getByTestId('client-card')
-  await expect(card).toBeVisible()
-  await expect(page.getByTestId('client-server-url')).toContainText(
-    `首次运行时填写平台地址：${new URL(page.url()).origin}`,
-  )
-  await expect(page.getByTestId('client-download')).toHaveAttribute(
-    'href',
-    'https://github.com/allanpk716/agent-taskboard/releases/download/channel-stable/taskboard-client.exe',
-  )
-  await expect(card).toContainText('首次运行如遇 SmartScreen')
+  await expect(
+    page.locator('#client, [data-testid="client-download"], [data-testid="client-server-url"]'),
+  ).toHaveCount(0)
+  await expect(
+    page.getByText(/SmartScreen|杀毒软件|taskboard-client\.exe|下载 Windows 客户端/),
+  ).toHaveCount(0)
 })

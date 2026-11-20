@@ -258,7 +258,7 @@ for (const viewport of viewports) {
       expect(streamRequests).toBe(1)
     })
 
-    test('客户端中途上线时浏览器提醒避让，断开后恢复', async ({ page }) => {
+    test('Orca 插件中途上线时浏览器提醒避让，断开后恢复', async ({ page }) => {
       await page.addInitScript(() => {
         Object.defineProperty(Document.prototype, 'hidden', {
           configurable: true,
@@ -283,8 +283,11 @@ for (const viewport of viewports) {
       await clearNotifications(page)
       await page.goto('/')
       await expect(page.locator('.bellbtn')).toBeVisible()
+      await page.getByRole('button', { name: '通知' }).click()
+      await expect(page.locator('.switchsub')).toHaveText(/^Orca 插件在线时不会重复弹/)
+      await page.keyboard.press('Escape')
 
-      const token = await issueClientCredential(page, `E2E-WEB-BELL-${viewport.width}`)
+      const token = await issueClientCredential(page, `Orca · E2E-WEB-BELL-${viewport.width}`)
       const clientStream = await fetch(`${baseURL}/api/v1/notifications/stream`, {
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -292,7 +295,7 @@ for (const viewport of viewports) {
       try {
         await waitClientOnline(page, true)
         const admin = await adminContext()
-        await createAssignedTicket(admin, '客户端在线不弹浏览器提醒')
+        await createAssignedTicket(admin, 'Orca 插件在线不弹浏览器提醒')
         await expect(page.locator('.bellbtn b')).toHaveText('1')
         expect(await page.evaluate(() => window.__webBellNotifications)).toEqual([])
 
