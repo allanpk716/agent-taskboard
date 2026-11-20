@@ -243,6 +243,13 @@ const (
 	CodePasswordTooShort         = "password_too_short"
 	CodeInvalidOldPassword       = "invalid_old_password"
 	CodeCannotResetSelf          = "cannot_reset_self"
+
+	// #372：「我的」页通知出口自助配置。
+	CodeInvalidOutletBotID      = "invalid_outlet_bot_id"
+	CodeOutletWebhookKeyMissing = "outlet_webhook_key_required"
+	CodeOutletNotFound          = "outlet_not_found"
+	CodeWebhookDisabled         = "webhook_disabled"
+	CodeOutletTestRateLimited   = "outlet_test_rate_limited"
 )
 
 // ErrorBody 是统一错误格式 {error:{code, message, hint?}} 的内层；

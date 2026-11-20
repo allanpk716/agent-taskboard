@@ -66,6 +66,7 @@ type options struct {
 	captchaSource              captcha.Source
 	guestLinkCipherUnavailable bool
 	attachmentStorage          attachments.Storage
+	outletClient               *outlet.Client
 }
 
 // WithCaptchaSource 指定登录验证码来源。
@@ -83,6 +84,12 @@ func WithGuestLinkCipherUnavailable() Option {
 // 内存假存储；生产装配不传。
 func WithAttachmentStorage(store attachments.Storage) Option {
 	return func(o *options) { o.attachmentStorage = store }
+}
+
+// WithOutletClient 只供测试注入受限出口 client 的 TLS 信任面；生产不传，
+// 总是使用 #371 的默认 10 秒、禁重定向 client。
+func WithOutletClient(client *outlet.Client) Option {
+	return func(o *options) { o.outletClient = client }
 }
 
 // New 打开数据库、装配 API 与静态站点。webDir 不存在会报错。
@@ -188,12 +195,30 @@ func New(cfg config.Config, st *store.Store, c clock.Clock, opts ...Option) (*Se
 	if err != nil {
 		return nil, err
 	}
+	var outletManager *outlet.Manager
+	var outletBuilder *outlet.URLBuilder
+	if cfg.Webhook.Enabled {
+		outletCipher, err := outlet.NewCipherFromEnv()
+		if err != nil {
+			return nil, fmt.Errorf("通知出口已启用但主密钥不可用：%w", err)
+		}
+		outletBuilder, err = outlet.NewURLBuilder(cfg.Webhook.AllowedBases)
+		if err != nil {
+			return nil, fmt.Errorf("通知出口白名单不可用：%w", err)
+		}
+		outletManager = outlet.NewManager(st.DB, c, outletCipher)
+	}
+	outletClient := o.outletClient
+	if outletClient == nil {
+		outletClient = outlet.NewClient()
+	}
 	api := httpapi.NewAPI(ident, ticketStore,
 		templateDict, idem, atts, backups, accessRecords, draftStore, storageStats, archives, slims, cfg, c)
 	api.SetCaptchaSource(captchaSrc)
 	api.SetLoginRateLimit(loginRateLimit())
 	api.SetNotifications(notificationStore)
 	api.SetAttachmentLinkSigner(attachmentLinks)
+	api.SetOutlet(outletManager, outletBuilder, outletClient)
 	web, err := webapp.New(cfg.WebDir)
 	if err != nil {
 		return nil, err

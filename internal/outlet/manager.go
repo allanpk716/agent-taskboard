@@ -26,6 +26,7 @@ var botIDPattern = regexp.MustCompile(`^[a-z0-9]{1,64}$`)
 type Configuration struct {
 	MemberID     int64
 	BotID        string
+	KeyLast4     string
 	LastPushedID int64
 	Generation   int64
 	Status       string
@@ -123,7 +124,8 @@ func (m *Manager) SaveTx(ctx context.Context, tx *sql.Tx, memberID int64, botID,
 		return Configuration{}, fmt.Errorf("保存通知出口失败：%w", err)
 	}
 	return Configuration{
-		MemberID: memberID, BotID: botID, LastPushedID: lastPushedID,
-		Generation: generation, Status: "active",
+		MemberID: memberID, BotID: botID, KeyLast4: keyLast4(webhookKey),
+		LastPushedID: lastPushedID,
+		Generation:   generation, Status: "active",
 	}, nil
 }
