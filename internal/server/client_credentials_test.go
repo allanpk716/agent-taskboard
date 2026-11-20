@@ -190,22 +190,7 @@ func Test客户端凭证读取收件箱与网页一致(t *testing.T) {
 	issued := w.s.IssueClientCredential(t, w.webLi, "WORKSTATION-01")
 	client := w.s.ClientCredentialClient(issued.Token)
 
-	webRes := w.s.Do(t, w.webLi, http.MethodGet, "/api/v1/inbox", nil, nil)
-	clientRes := w.s.Do(t, client, http.MethodGet, "/api/v1/inbox", nil, nil)
-	if clientRes.StatusCode != http.StatusOK {
-		t.Fatalf("客户端读收件箱状态码 = %d，想 200", clientRes.StatusCode)
-	}
-	webBody, err := io.ReadAll(webRes.Body)
-	if err != nil {
-		t.Fatalf("读网页收件箱响应失败：%v", err)
-	}
-	clientBody, err := io.ReadAll(clientRes.Body)
-	if err != nil {
-		t.Fatalf("读客户端收件箱响应失败：%v", err)
-	}
-	if string(webBody) != string(clientBody) {
-		t.Fatalf("网页与客户端收件箱不一致：\n网页：%s\n客户端：%s", webBody, clientBody)
-	}
+	clientBody := w.sameBodyForWebAndClient(t, w.webLi, client, "收件箱", "/api/v1/inbox")
 
 	var inbox inboxBody
 	if err := json.Unmarshal(clientBody, &inbox); err != nil {
@@ -227,22 +212,8 @@ func Test客户端凭证读取在等他与网页一致(t *testing.T) {
 	issued := w.s.IssueClientCredential(t, w.webLi, "WORKSTATION-01")
 	client := w.s.ClientCredentialClient(issued.Token)
 
-	webRes := w.s.Do(t, w.webLi, http.MethodGet, "/api/v1/inbox/waiting-on-counterparts", nil, nil)
-	clientRes := w.s.Do(t, client, http.MethodGet, "/api/v1/inbox/waiting-on-counterparts", nil, nil)
-	if clientRes.StatusCode != http.StatusOK {
-		t.Fatalf("客户端读在等他状态码 = %d，想 200", clientRes.StatusCode)
-	}
-	webBody, err := io.ReadAll(webRes.Body)
-	if err != nil {
-		t.Fatalf("读网页在等他响应失败：%v", err)
-	}
-	clientBody, err := io.ReadAll(clientRes.Body)
-	if err != nil {
-		t.Fatalf("读客户端在等他响应失败：%v", err)
-	}
-	if string(webBody) != string(clientBody) {
-		t.Fatalf("网页与客户端在等他不一致：\n网页：%s\n客户端：%s", webBody, clientBody)
-	}
+	clientBody := w.sameBodyForWebAndClient(
+		t, w.webLi, client, "在等他", "/api/v1/inbox/waiting-on-counterparts")
 
 	var waitingBody inboxBody
 	if err := json.Unmarshal(clientBody, &waitingBody); err != nil {
@@ -256,11 +227,177 @@ func Test客户端凭证读取在等他与网页一致(t *testing.T) {
 	}
 }
 
+// 管理员的客户端凭证也沿用网页口径：三份清单都与非空数据下的网页会话一致。
+func Test管理员客户端凭证读取三份清单与网页一致(t *testing.T) {
+	w := newHandoffWorld(t)
+	inboxTicket := w.createHandoffTicket(t, w.webLi, "李工派给王工", "王工").Number
+	waitingTicket := w.createHandoffTicket(t, w.webWang, "王工等李工处理", "李工").Number
+	collaboratingTicket := w.createTicketForCollaborator(t, w.webLi, "李工抄送王工", "王工")
+	issued := w.s.IssueClientCredential(t, w.webWang, "WORKSTATION-01")
+	client := w.s.ClientCredentialClient(issued.Token)
+
+	inboxJSON := w.sameBodyForWebAndClient(t, w.webWang, client, "管理员收件箱", "/api/v1/inbox")
+	waitingJSON := w.sameBodyForWebAndClient(
+		t, w.webWang, client, "管理员在等他", "/api/v1/inbox/waiting-on-counterparts")
+	collaboratingJSON := w.sameBodyForWebAndClient(
+		t, w.webWang, client, "管理员协作中清单", "/api/v1/tickets?collaborator=me&status=open")
+
+	var inbox inboxBody
+	if err := json.Unmarshal(inboxJSON, &inbox); err != nil {
+		t.Fatalf("解码管理员收件箱失败：%v", err)
+	}
+	if inbox.Count == 0 || inbox.itemByNumber(inboxTicket) == nil {
+		t.Fatalf("管理员收件箱 = %+v，想包含 %s", inbox, inboxTicket)
+	}
+
+	var waiting inboxBody
+	if err := json.Unmarshal(waitingJSON, &waiting); err != nil {
+		t.Fatalf("解码管理员在等他失败：%v", err)
+	}
+	if waiting.Count != 1 || waiting.itemByNumber(waitingTicket) == nil {
+		t.Fatalf("管理员在等他 = %+v，想包含 %s", waiting, waitingTicket)
+	}
+
+	var collaborating listBody
+	if err := json.Unmarshal(collaboratingJSON, &collaborating); err != nil {
+		t.Fatalf("解码管理员协作中清单失败：%v", err)
+	}
+	if collaborating.Total != 1 || !containsString(numbers(collaborating), collaboratingTicket) {
+		t.Fatalf("管理员协作中清单 = %+v，想包含 %s", collaborating, collaboratingTicket)
+	}
+}
+
+// 客户端凭证的清单跟随协作者移出结果；旁观者三份清单都看不到不可见工单。
+func Test客户端凭证清单跟随协作者移出且旁观者不可见(t *testing.T) {
+	w := newHandoffWorld(t)
+	target := w.createTicketForCollaborator(t, w.webWang, "王工抄送李工", "李工")
+	liClient := w.s.ClientCredentialClient(w.s.IssueClientCredential(t, w.webLi, "WORKSTATION-01").Token)
+	zhaoClient := w.s.ClientCredentialClient(w.s.IssueClientCredential(t, w.webZhao, "WORKSTATION-02").Token)
+
+	beforeJSON := w.sameBodyForWebAndClient(
+		t, w.webLi, liClient, "协作中清单", "/api/v1/tickets?collaborator=me&status=open")
+	var before listBody
+	if err := json.Unmarshal(beforeJSON, &before); err != nil {
+		t.Fatalf("解码移出前的协作中清单失败：%v", err)
+	}
+	if before.Total != 1 || !containsString(numbers(before), target) {
+		t.Fatalf("移出前的协作中清单 = %+v，想只有 %s", before, target)
+	}
+
+	// 给旁观者三份清单各放一张可见工单，避免空清单让“不泄漏”断言变弱。
+	zhaoInbox := w.createHandoffTicket(t, w.webWang, "王工派给赵工", "赵工").Number
+	zhaoWaiting := w.createHandoffTicket(t, w.webZhao, "赵工等王工处理", "王工").Number
+	zhaoCollaborating := w.createTicketForCollaborator(t, w.webWang, "王工抄送赵工", "赵工")
+
+	inboxJSON := w.sameBodyForWebAndClient(t, w.webZhao, zhaoClient, "旁观者收件箱", "/api/v1/inbox")
+	var inbox inboxBody
+	if err := json.Unmarshal(inboxJSON, &inbox); err != nil {
+		t.Fatalf("解码旁观者收件箱失败：%v", err)
+	}
+	if inbox.itemByNumber(zhaoInbox) == nil || inbox.itemByNumber(target) != nil {
+		t.Fatalf("旁观者收件箱 = %+v，想含 %s、不含 %s", inbox, zhaoInbox, target)
+	}
+
+	waitingJSON := w.sameBodyForWebAndClient(
+		t, w.webZhao, zhaoClient, "旁观者在等他", "/api/v1/inbox/waiting-on-counterparts")
+	var waiting inboxBody
+	if err := json.Unmarshal(waitingJSON, &waiting); err != nil {
+		t.Fatalf("解码旁观者在等他失败：%v", err)
+	}
+	if waiting.itemByNumber(zhaoWaiting) == nil || waiting.itemByNumber(target) != nil {
+		t.Fatalf("旁观者在等他 = %+v，想含 %s、不含 %s", waiting, zhaoWaiting, target)
+	}
+
+	collaboratingJSON := w.sameBodyForWebAndClient(
+		t, w.webZhao, zhaoClient, "旁观者协作中清单", "/api/v1/tickets?collaborator=me&status=open")
+	var collaborating listBody
+	if err := json.Unmarshal(collaboratingJSON, &collaborating); err != nil {
+		t.Fatalf("解码旁观者协作中清单失败：%v", err)
+	}
+	if !containsString(numbers(collaborating), zhaoCollaborating) ||
+		containsString(numbers(collaborating), target) {
+		t.Fatalf("旁观者协作中清单 = %v，想含 %s、不含 %s",
+			numbers(collaborating), zhaoCollaborating, target)
+	}
+
+	ids := memberIDsByName(t, w.s, w.webWang)
+	res := w.s.Do(t, w.webWang, http.MethodDelete,
+		"/api/v1/tickets/"+target+"/collaborators/"+itoa(ids["李工"]), nil, nil)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("移出协作者状态码 = %d，想 200", res.StatusCode)
+	}
+
+	afterJSON := w.sameBodyForWebAndClient(
+		t, w.webLi, liClient, "移出后的协作中清单", "/api/v1/tickets?collaborator=me&status=open")
+	var after listBody
+	if err := json.Unmarshal(afterJSON, &after); err != nil {
+		t.Fatalf("解码移出后的协作中清单失败：%v", err)
+	}
+	if after.Total != 0 || containsString(numbers(after), target) {
+		t.Fatalf("移出后的协作中清单 = %+v，想为空", after)
+	}
+}
+
+// 网页撤销设备后，三份清单和身份接口一样立即拒绝。
+func Test网页撤销客户端凭证后三份清单均拒绝(t *testing.T) {
+	w := newHandoffWorld(t)
+	w.createTicketForCollaborator(t, w.webWang, "王工抄送李工", "李工")
+	issued := w.s.IssueClientCredential(t, w.webLi, "WORKSTATION-01")
+	client := w.s.ClientCredentialClient(issued.Token)
+
+	res := w.s.Do(t, w.webLi, http.MethodDelete, "/api/v1/me/clients/"+itoa(issued.ID), nil, nil)
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("网页撤销客户端状态码 = %d，想 204", res.StatusCode)
+	}
+
+	for name, path := range map[string]string{
+		"收件箱": "/api/v1/inbox",
+		"在等他": "/api/v1/inbox/waiting-on-counterparts",
+		"协作中": "/api/v1/tickets?collaborator=me&status=open",
+	} {
+		var errBody errorBody
+		res := w.s.Do(t, client, http.MethodGet, path, nil, &errBody)
+		if res.StatusCode != http.StatusUnauthorized || errBody.Error.Code != "invalid_token" {
+			t.Fatalf("撤销后读%s状态码/错误码 = %d/%q，想 401/invalid_token",
+				name, res.StatusCode, errBody.Error.Code)
+		}
+	}
+}
+
+// sameBodyForWebAndClient 用网页会话与客户端凭证读同一路径，要求响应逐字节一致，
+// 并返回客户端响应体。
+func (w *handoffWorld) sameBodyForWebAndClient(
+	t testing.TB, web, client *http.Client, listName, path string,
+) []byte {
+	t.Helper()
+	webRes := w.s.Do(t, web, http.MethodGet, path, nil, nil)
+	clientRes := w.s.Do(t, client, http.MethodGet, path, nil, nil)
+	if webRes.StatusCode != http.StatusOK || clientRes.StatusCode != http.StatusOK {
+		t.Fatalf("网页/客户端读%s状态码 = %d/%d，想 200/200",
+			listName, webRes.StatusCode, clientRes.StatusCode)
+	}
+
+	webBody, err := io.ReadAll(webRes.Body)
+	if err != nil {
+		t.Fatalf("读网页%s响应失败：%v", listName, err)
+	}
+	clientBody, err := io.ReadAll(clientRes.Body)
+	if err != nil {
+		t.Fatalf("读客户端%s响应失败：%v", listName, err)
+	}
+	if string(webBody) != string(clientBody) {
+		t.Fatalf("网页与客户端%s不一致：\n网页：%s\n客户端：%s", listName, webBody, clientBody)
+	}
+	return clientBody
+}
+
 // createTicketForCollaborator 建一张把 collaborator 抄送进去的工单，返回编号。
-func createTicketForCollaborator(t testing.TB, s *tbtest.Server, c *http.Client, title, collaborator string) string {
+func (w *handoffWorld) createTicketForCollaborator(
+	t testing.TB, c *http.Client, title, collaborator string,
+) string {
 	t.Helper()
 	var created createTicketResponse
-	res := s.Do(t, c, http.MethodPost, "/api/v1/tickets", map[string]any{
+	res := w.s.Do(t, c, http.MethodPost, "/api/v1/tickets", map[string]any{
 		"title": title, "brief_md": "请知情。", "labels": []string{"机型:UD-2300"},
 		"collaborators": []any{collaborator},
 	}, &created)
@@ -274,31 +411,16 @@ func createTicketForCollaborator(t testing.TB, s *tbtest.Server, c *http.Client,
 // 照常可用；协作对象不是本人的工单不出现。
 func Test客户端凭证读取协作中清单与网页一致(t *testing.T) {
 	w := newHandoffWorld(t)
-	first := createTicketForCollaborator(t, w.s, w.webWang, "王工抄送李工的第一张", "李工")
+	first := w.createTicketForCollaborator(t, w.webWang, "王工抄送李工的第一张", "李工")
 	w.s.Clock().Advance(10 * time.Minute)
-	second := createTicketForCollaborator(t, w.s, w.webWang, "王工抄送李工的第二张", "李工")
-	foreign := createTicketForCollaborator(t, w.s, w.webWang, "王工抄送赵工", "赵工")
+	second := w.createTicketForCollaborator(t, w.webWang, "王工抄送李工的第二张", "李工")
+	foreign := w.createTicketForCollaborator(t, w.webWang, "王工抄送赵工", "赵工")
 	assigned := w.createHandoffTicket(t, w.webWang, "指派给李工不算协作中", "李工").Number
 	issued := w.s.IssueClientCredential(t, w.webLi, "WORKSTATION-01")
 	client := w.s.ClientCredentialClient(issued.Token)
 
-	const path = "/api/v1/tickets?collaborator=me&status=open"
-	webRes := w.s.Do(t, w.webLi, http.MethodGet, path, nil, nil)
-	clientRes := w.s.Do(t, client, http.MethodGet, path, nil, nil)
-	if clientRes.StatusCode != http.StatusOK {
-		t.Fatalf("客户端读协作中清单状态码 = %d，想 200", clientRes.StatusCode)
-	}
-	webBody, err := io.ReadAll(webRes.Body)
-	if err != nil {
-		t.Fatalf("读网页协作中响应失败：%v", err)
-	}
-	clientBody, err := io.ReadAll(clientRes.Body)
-	if err != nil {
-		t.Fatalf("读客户端协作中响应失败：%v", err)
-	}
-	if string(webBody) != string(clientBody) {
-		t.Fatalf("网页与客户端协作中清单不一致：\n网页：%s\n客户端：%s", webBody, clientBody)
-	}
+	clientBody := w.sameBodyForWebAndClient(
+		t, w.webLi, client, "协作中清单", "/api/v1/tickets?collaborator=me&status=open")
 
 	var body listBody
 	if err := json.Unmarshal(clientBody, &body); err != nil {
@@ -341,7 +463,7 @@ func (w *handoffWorld) collaboratingPage(t testing.TB, c *http.Client, query str
 // 都拒绝；counts、子路径与写操作照旧拒绝；网页会话与成员 Agent 不受影响。
 func Test客户端凭证工单列表只放行协作中组合(t *testing.T) {
 	w := newHandoffWorld(t)
-	number := createTicketForCollaborator(t, w.s, w.webWang, "王工抄送李工", "李工")
+	number := w.createTicketForCollaborator(t, w.webWang, "王工抄送李工", "李工")
 	issued := w.s.IssueClientCredential(t, w.webLi, "WORKSTATION-01")
 	client := w.s.ClientCredentialClient(issued.Token)
 
