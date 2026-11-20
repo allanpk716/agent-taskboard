@@ -68,22 +68,10 @@ func TestBuildManifest只对指定的产物生成清单(t *testing.T) {
 
 func TestBuildManifest拒绝未知组件(t *testing.T) {
 	dir := writeDistFiles(t, map[string]string{"a.zip": "a\n"})
-	if _, err := BuildManifest("cli", "1.0.0", "1.0.0", dir, nil); err == nil {
-		t.Fatal("component 只能是 server 或 web，cli 应被拒绝")
-	}
-}
-
-func TestBuildManifest支持客户端且minServer可为空(t *testing.T) {
-	dir := writeDistFiles(t, map[string]string{"taskboard-client.exe": "client-binary\n"})
-	m, err := BuildManifest("client", "1.0.0", "", dir, nil)
-	if err != nil {
-		t.Fatalf("BuildManifest client：%v", err)
-	}
-	if m.Component != "client" || m.Version != "1.0.0" || m.MinServer != "" {
-		t.Fatalf("client 清单头不对：%+v", m)
-	}
-	if len(m.Files) != 1 || m.Files[0].Name != "taskboard-client.exe" || m.Files[0].Sha256 == "" {
-		t.Fatalf("client 清单应记录 exe：%+v", m.Files)
+	for _, component := range []string{"cli", "client"} {
+		if _, err := BuildManifest(component, "1.0.0", "1.0.0", dir, nil); err == nil {
+			t.Fatalf("component 只能是 server 或 web，%s 应被拒绝", component)
+		}
 	}
 }
 

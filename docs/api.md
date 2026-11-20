@@ -1844,7 +1844,6 @@ ticket_numbers=20260601-001
   "source_used": "github",
   "server": {"current": "1.0.0", "latest": "1.2.3", "update_available": true},
   "web": {"current": "2.0.0", "latest": "2.1.0", "update_available": false, "min_server": "1.0.0"},
-  "client": {"current": "0.2.0", "latest": "0.3.0", "update_available": true},
   "web_needs_newer_server": false
 }
 ```
@@ -1861,11 +1860,10 @@ ticket_numbers=20260601-001
 ```json
 {
   "source_used": "github",
-  "steps": ["后端 1.0.0 → 1.2.3", "前端 2.0.0 → 2.1.0", "客户端 0.2.0 → 0.3.0"],
+  "steps": ["后端 1.0.0 → 1.2.3", "前端 2.0.0 → 2.1.0"],
   "message": "后端已更新：服务即将退出，由 NSSM 拉起新版本（新版本启动时会自动迁移并做健康检查）",
   "server_updated": true,
   "web_updated": true,
-  "client_updated": true,
   "restart_needed": true,
   "preupdate_backup": "taskboard-20261016-220105-preupdate.db",
   "preupdate_backup_local": true
@@ -1873,8 +1871,7 @@ ticket_numbers=20260601-001
 ```
 
 - 已经是最新时 `steps` 为空、`message` 为「已是最新，无需更新」。
-- 后端或前端更新失败（更新前备份失败等）返回 `500 update_failed`；客户端是独立组件，
-  失败时响应仍为 200，`client_updated=false` 且 `client_error` 说明原因（例如 SHA256 不符），后端/前端照常更新。
+- 后端或前端更新失败（更新前备份失败等）返回 `500 update_failed`。
 - 更新前备份目标不可达但本机兜底成功时更新继续，`preupdate_backup_local` 为 `true` 并在结果里标明「只在本机」。
 - 后端更新成功后服务写完响应即退出，由 NSSM 拉起新版本；命令行等价的入口是
   `taskboard update`（提示重启）、`taskboard rollback`（回滚）。

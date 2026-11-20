@@ -97,19 +97,13 @@ start_registry() {
 }
 
 build_images() {
-    local client_version build_root old_dockerfile
-    client_version=${CLIENT_VERSION:-$(curl -fsSL \
-        https://github.com/allanpk716/agent-taskboard/releases/download/channel-stable/latest.json \
-        | awk '/"client"[[:space:]]*:/ {in_client=1; next}
-            in_client && /"version"/ {gsub(/.*"version"[[:space:]]*:[[:space:]]*"|".*/, ""); print; exit}')}
-    [ -n "$client_version" ] || { echo "cannot determine CLIENT_VERSION" >&2; exit 1; }
-
+    local build_root old_dockerfile
     build_root=$(docker_path "$repo_root")
-    docker build --build-arg APP_VERSION=0.1.0 --build-arg CLIENT_VERSION="$client_version" \
+    docker build --build-arg APP_VERSION=0.1.0 \
         --build-arg BUILD_TAGS=e2e_fixed_captcha -t taskboard:deploy-test-a "$build_root" >/dev/null
-    docker build --build-arg APP_VERSION=0.2.0 --build-arg CLIENT_VERSION="$client_version" \
+    docker build --build-arg APP_VERSION=0.2.0 \
         --build-arg BUILD_TAGS=e2e_fixed_captcha -t taskboard:deploy-test-b "$build_root" >/dev/null
-    docker build --build-arg APP_VERSION=9.9.9 --build-arg CLIENT_VERSION="$client_version" \
+    docker build --build-arg APP_VERSION=9.9.9 \
         --build-arg BUILD_TAGS=e2e_fixed_captcha -t taskboard:deploy-test-bad "$build_root" >/dev/null
     old_dockerfile=$(mktemp -t taskboard-old-image-XXXXXX.Dockerfile)
     cat > "$old_dockerfile" <<'EOF'
@@ -176,7 +170,6 @@ web_dir = '/app/web'
 [server]
 public_url = 'http://127.0.0.1:$port'
 deploy = 'container'
-client_image_dir = '/app/client-package'
 
 [backup]
 target = '/app/data/backups'

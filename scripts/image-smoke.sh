@@ -17,7 +17,7 @@ cid=$(docker run -d --name "$container" --network host --entrypoint /bin/sh \
     "$image" -c "printf '%s\n' \
         'data_dir = \"/app/data\"' 'port = $port' 'web_dir = \"/app/web\"' \
         '' '[server]' 'public_url = \"http://127.0.0.1:$port\"' 'deploy = \"container\"' \
-        'client_image_dir = \"/app/client-package\"' '' '[backup]' \
+        '' '[backup]' \
         'target = \"/app/data/backups\"' '' '[update]' 'sources = []' \
         > /tmp/config.toml && exec /app/taskboard serve -config /tmp/config.toml")
 trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT

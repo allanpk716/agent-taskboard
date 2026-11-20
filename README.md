@@ -24,10 +24,9 @@
 
 ## 本地构建镜像
 
-镜像内的桌面客户端下载自已发布的客户端 Release，构建时必须同时提供后端版本和客户端版本：
+构建本地镜像时提供后端版本：
 
 ```bash
 docker build --build-arg APP_VERSION=0.0.0-local \
-  --build-arg CLIENT_VERSION=<已发布客户端版本，例如 0.1.4> \
   -t taskboard:local .
 ```
