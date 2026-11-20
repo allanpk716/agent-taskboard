@@ -44,7 +44,9 @@ func Test可见范围外成员与Agent写入工单得到一致的404无副作用
 
 	// 无副作用：被拒的回复不能写进时间线。
 	var ticket ticketResponseBody
-	s.Do(t, creator, http.MethodGet, "/api/v1/tickets/"+number, nil, &ticket)
+	if res := s.Do(t, creator, http.MethodGet, "/api/v1/tickets/"+number, nil, &ticket); res.StatusCode != http.StatusOK {
+		t.Fatalf("创建者读工单 = %d, 想 200", res.StatusCode)
+	}
 	for _, ev := range ticket.Timeline {
 		if ev.Type == "reply" {
 			t.Fatalf("被拒回复写进了时间线：%+v", ev)
@@ -59,7 +61,7 @@ func Test可见范围外成员与Agent写入工单得到一致的404无副作用
 		}
 		denied = append(denied, record)
 		if record.Count != 1 {
-			t.Fatalf("被拒记录次数 = %+v, 想 1", record)
+			t.Errorf("被拒记录次数 = %+v, 想 1", record)
 		}
 	}
 	if len(denied) != 2 {
