@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -169,7 +170,7 @@ func Test客户端凭证权限边界与自撤销(t *testing.T) {
 	if errBody.Error.Hint != "请用浏览器打开工单处理；如需其它操作，登录网页后操作" {
 		t.Fatalf("client_scope hint = %q", errBody.Error.Hint)
 	}
-	if errBody.Error.Message != "客户端凭证只能读取通知、身份、收件箱和在等他" {
+	if errBody.Error.Message != "客户端凭证只能读取通知、身份、收件箱、在等他与协作中清单" {
 		t.Fatalf("client_scope message = %q", errBody.Error.Message)
 	}
 
@@ -252,6 +253,145 @@ func Test客户端凭证读取在等他与网页一致(t *testing.T) {
 	}
 	if waitingBody.itemByNumber(foreign) != nil {
 		t.Fatalf("可见范围外的工单 %s 泄进客户端在等他：%+v", foreign, waitingBody.Items)
+	}
+}
+
+// createTicketForCollaborator 建一张把 collaborator 抄送进去的工单，返回编号。
+func createTicketForCollaborator(t testing.TB, s *tbtest.Server, c *http.Client, title, collaborator string) string {
+	t.Helper()
+	var created createTicketResponse
+	res := s.Do(t, c, http.MethodPost, "/api/v1/tickets", map[string]any{
+		"title": title, "brief_md": "请知情。", "labels": []string{"机型:UD-2300"},
+		"collaborators": []any{collaborator},
+	}, &created)
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("建单（抄送 %s）状态码 = %d，想 201", collaborator, res.StatusCode)
+	}
+	return created.Number
+}
+
+// 客户端凭证读到的「协作中」清单与网页会话逐字段一致；limit 与 next
+// 照常可用；协作对象不是本人的工单不出现。
+func Test客户端凭证读取协作中清单与网页一致(t *testing.T) {
+	w := newHandoffWorld(t)
+	first := createTicketForCollaborator(t, w.s, w.webWang, "王工抄送李工的第一张", "李工")
+	w.s.Clock().Advance(10 * time.Minute)
+	second := createTicketForCollaborator(t, w.s, w.webWang, "王工抄送李工的第二张", "李工")
+	foreign := createTicketForCollaborator(t, w.s, w.webWang, "王工抄送赵工", "赵工")
+	assigned := w.createHandoffTicket(t, w.webWang, "指派给李工不算协作中", "李工").Number
+	issued := w.s.IssueClientCredential(t, w.webLi, "WORKSTATION-01")
+	client := w.s.ClientCredentialClient(issued.Token)
+
+	const path = "/api/v1/tickets?collaborator=me&status=open"
+	webRes := w.s.Do(t, w.webLi, http.MethodGet, path, nil, nil)
+	clientRes := w.s.Do(t, client, http.MethodGet, path, nil, nil)
+	if clientRes.StatusCode != http.StatusOK {
+		t.Fatalf("客户端读协作中清单状态码 = %d，想 200", clientRes.StatusCode)
+	}
+	webBody, err := io.ReadAll(webRes.Body)
+	if err != nil {
+		t.Fatalf("读网页协作中响应失败：%v", err)
+	}
+	clientBody, err := io.ReadAll(clientRes.Body)
+	if err != nil {
+		t.Fatalf("读客户端协作中响应失败：%v", err)
+	}
+	if string(webBody) != string(clientBody) {
+		t.Fatalf("网页与客户端协作中清单不一致：\n网页：%s\n客户端：%s", webBody, clientBody)
+	}
+
+	var body listBody
+	if err := json.Unmarshal(clientBody, &body); err != nil {
+		t.Fatalf("解码协作中清单失败：%v", err)
+	}
+	if body.Total != 2 || !equalStrings(numbers(body), []string{second, first}) {
+		t.Fatalf("客户端协作中清单 = %+v，想只有 %s、%s", body, first, second)
+	}
+	for _, leaked := range []string{foreign, assigned} {
+		if containsString(numbers(body), leaked) {
+			t.Fatalf("非协作中工单 %s 泄进客户端清单：%v", leaked, numbers(body))
+		}
+	}
+
+	// 带排序与 limit 时照常放行，跟随 next 翻完整清单。
+	page1 := w.collaboratingPage(t, client, "?collaborator=me&status=open&sort=created&limit=1")
+	if page1.Count != 1 || !equalStrings(numbers(page1), []string{first}) {
+		t.Fatalf("协作中第 1 页 = %v，想只有 %s", numbers(page1), first)
+	}
+	if page1.Next == nil {
+		t.Fatal("协作中第 1 页缺少 next 地址")
+	}
+	page2 := w.collaboratingPage(t, client, strings.TrimPrefix(*page1.Next, "/api/v1/tickets"))
+	if page2.Count != 1 || !equalStrings(numbers(page2), []string{second}) || page2.Next != nil {
+		t.Fatalf("协作中第 2 页 = %v（next %v），想只有 %s 且 next 为空", numbers(page2), page2.Next, second)
+	}
+}
+
+func (w *handoffWorld) collaboratingPage(t testing.TB, c *http.Client, query string) listBody {
+	t.Helper()
+	var body listBody
+	res := w.s.Do(t, c, http.MethodGet, "/api/v1/tickets"+query, nil, &body)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/v1/tickets%s 状态码 = %d，想 200", query, res.StatusCode)
+	}
+	return body
+}
+
+// 工单列表只放行协作中这一个组合：参数重复、留空、叠加其他筛选或格式参数
+// 都拒绝；counts、子路径与写操作照旧拒绝；网页会话与成员 Agent 不受影响。
+func Test客户端凭证工单列表只放行协作中组合(t *testing.T) {
+	w := newHandoffWorld(t)
+	number := createTicketForCollaborator(t, w.s, w.webWang, "王工抄送李工", "李工")
+	issued := w.s.IssueClientCredential(t, w.webLi, "WORKSTATION-01")
+	client := w.s.ClientCredentialClient(issued.Token)
+
+	for name, query := range map[string]string{
+		"无参数":             "",
+		"缺 collaborator":  "?status=open",
+		"缺 status":        "?collaborator=me",
+		"status=closed":   "?collaborator=me&status=closed",
+		"status=all":      "?collaborator=me&status=all",
+		"status 重复":       "?collaborator=me&status=open&status=closed",
+		"status 同值重复":     "?collaborator=me&status=open&status=open",
+		"collaborator 重复": "?collaborator=me&collaborator=me&status=open",
+		"collaborator 空值": "?collaborator=&status=open",
+		"status 空值":       "?collaborator=me&status=",
+		"多 kind":          "?collaborator=me&status=open&kind=task",
+		"多 template":      "?collaborator=me&status=open&template=assign-task",
+		"多 label":         "?collaborator=me&status=open&label=机型:UD-2300",
+		"多 q":             "?collaborator=me&status=open&q=关键词",
+		"多 changed_after": "?collaborator=me&status=open&changed_after=0",
+		"include=brief":   "?collaborator=me&status=open&include=brief",
+		"format=markdown": "?collaborator=me&status=open&format=markdown",
+		"limit 空值":        "?collaborator=me&status=open&limit=",
+	} {
+		var errBody errorBody
+		res := w.s.Do(t, client, http.MethodGet, "/api/v1/tickets"+query, nil, &errBody)
+		if res.StatusCode != http.StatusForbidden || errBody.Error.Code != "client_scope" {
+			t.Fatalf("%s 状态码/错误码 = %d/%q，想 403/client_scope", name, res.StatusCode, errBody.Error.Code)
+		}
+	}
+
+	for name, target := range map[string][2]string{
+		"计数":  {http.MethodGet, "/api/v1/tickets/counts"},
+		"详情":  {http.MethodGet, "/api/v1/tickets/" + number},
+		"时间线": {http.MethodGet, "/api/v1/tickets/" + number + "/timeline"},
+		"建单":  {http.MethodPost, "/api/v1/tickets"},
+	} {
+		var errBody errorBody
+		res := w.s.Do(t, client, target[0], target[1], nil, &errBody)
+		if res.StatusCode != http.StatusForbidden || errBody.Error.Code != "client_scope" {
+			t.Fatalf("%s 状态码/错误码 = %d/%q，想 403/client_scope", name, res.StatusCode, errBody.Error.Code)
+		}
+	}
+
+	// 同一组合对网页会话与成员 Agent 的行为不变。
+	for name, c := range map[string]*http.Client{"网页会话": w.webLi, "成员 Agent": w.liA} {
+		var body listBody
+		res := w.s.Do(t, c, http.MethodGet, "/api/v1/tickets?collaborator=me&status=open", nil, &body)
+		if res.StatusCode != http.StatusOK || body.Total != 1 || len(body.Items) != 1 || body.Items[0].Number != number {
+			t.Fatalf("%s读协作中 = %d/%+v，想 200/%s", name, res.StatusCode, body, number)
+		}
 	}
 }
 
