@@ -377,7 +377,15 @@ export function MemberApp() {
               </section>
               <main className="pc-detail">
                 {route.page === 'detail' && (
-                  <TicketDetailPage ticketRef={route.ref} me={me} returnTo={detailReturnTo} />
+                  // 列表常驻、只换右侧工单：详情页必须随工单号重挂。它内部的回复编辑器、
+                  // 草稿卡片和各种弹窗都是「这一张工单的」状态，复用实例会把上一张的
+                  // 半截回复、旧版草稿和没关的弹窗带到下一张（浏览器后退同样只换 ref）。
+                  <TicketDetailPage
+                    key={route.ref}
+                    ticketRef={route.ref}
+                    me={me}
+                    returnTo={detailReturnTo}
+                  />
                 )}
               </main>
             </div>
