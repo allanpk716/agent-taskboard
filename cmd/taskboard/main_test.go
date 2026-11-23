@@ -115,8 +115,18 @@ func Test版本命令输出机器可读能力(t *testing.T) {
 	bin := buildBinary(t)
 	out := runTaskboard(t, bin, "version", "-features")
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 1 || lines[0] != "oss-attachments" {
-		t.Fatalf("version -features 输出 = %q，想每行一个能力名且包含 oss-attachments", out)
+	features := make(map[string]bool, len(lines))
+	for _, line := range lines {
+		if line == "" || strings.ContainsAny(line, " \t") {
+			t.Fatalf("version -features 输出 = %q，想每行一个能力名", out)
+		}
+		features[line] = true
+	}
+	// Features 只增不减：断言用包含式，登记新能力不必改这里。
+	for _, name := range []string{"oss-attachments", "notification-outlet"} {
+		if !features[name] {
+			t.Fatalf("version -features 输出 = %q，缺少能力 %s", out, name)
+		}
 	}
 }
 
