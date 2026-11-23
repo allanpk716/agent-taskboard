@@ -47,7 +47,7 @@ test('登录页显示验证码，答错后提示并自动换一张', async ({ pa
   await expect(page.getByRole('heading', { name: '收件箱' })).toBeVisible()
 })
 
-test('账号或密码错误时显示统一错误', async ({ page }) => {
+test('账号或密码错误时显示统一错误，并换一张验证码', async ({ page }) => {
   await page.goto('/login')
   await page.getByLabel('用户名').fill(ADMIN.username)
   await page.getByLabel('密码').fill('wrong-pass')
@@ -56,6 +56,15 @@ test('账号或密码错误时显示统一错误', async ({ page }) => {
   await expect(page.getByRole('alert')).toHaveText(/用户名或密码不正确/)
   // 仍停留在登录页
   await expect(page).toHaveURL(/\/login$/)
+
+  // 验证码在核对密码之前就被服务端消费掉了：密码错之后必须自动换一张（答案框
+  // 随之清空），否则改对密码再提交只会得到「验证码已使用」。
+  await expect(page.getByLabel('验证码')).toHaveValue('')
+  await expect(page.getByRole('img', { name: '验证码图片' })).toBeVisible()
+  await page.getByLabel('密码').fill(ADMIN.password)
+  await page.getByLabel('验证码').fill(CAPTCHA_ANSWER)
+  await page.getByRole('button', { name: '登录' }).click()
+  await expect(page.getByRole('heading', { name: '收件箱' })).toBeVisible()
 })
 
 test('登出后回到登录页，再访问首页被送回登录', async ({ page }) => {
