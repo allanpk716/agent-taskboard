@@ -28,11 +28,12 @@ func Test出口HTTP客户端具备十秒无重定向默认纪律(t *testing.T) {
 }
 
 func Test出口HTTP客户端POST请求并读取结果(t *testing.T) {
-	var gotPath, gotMethod, gotKey, gotID string
+	var gotPath, gotMethod, gotKey, gotAuth, gotID string
 	var gotBody []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotMethod = r.URL.Path, r.Method
 		gotKey, gotID = r.Header.Get("X-Webhook-Key"), r.Header.Get("X-Idempotency-Key")
+		gotAuth = r.Header.Get("Authorization")
 		gotBody, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -43,13 +44,14 @@ func Test出口HTTP客户端POST请求并读取结果(t *testing.T) {
 	client := outlet.NewClient()
 	result, err := client.Post(context.Background(), server.URL+"/api/v1/bots/bot01/webhook", http.Header{
 		"X-Webhook-Key":     []string{"secret-key"},
+		"Authorization":     []string{"Bearer secret-key"},
 		"X-Idempotency-Key": []string{"taskboard:1:g1:2"},
 	}, []byte(`{"event":"taskboard.test"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if gotMethod != http.MethodPost || gotPath != "/api/v1/bots/bot01/webhook" ||
-		gotKey != "secret-key" || gotID != "taskboard:1:g1:2" ||
+		gotKey != "secret-key" || gotAuth != "Bearer secret-key" || gotID != "taskboard:1:g1:2" ||
 		string(gotBody) != `{"event":"taskboard.test"}` {
 		t.Fatalf("请求方法/地址/鉴权/幂等键/body 不符合预期")
 	}

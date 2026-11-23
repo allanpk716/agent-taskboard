@@ -391,6 +391,7 @@ func (p *Pusher) work(row outletRow, endpoint, webhookKey string, payload []byte
 	idempotencyKey := fmt.Sprintf("taskboard:%d:g%d:%d", row.memberID, row.generation, counts.latestID)
 	response, err := p.client.Post(p.ctx, endpoint, http.Header{
 		"X-Webhook-Key":     []string{webhookKey},
+		"Authorization":     []string{"Bearer " + webhookKey},
 		"X-Idempotency-Key": []string{idempotencyKey},
 	}, payload)
 	duration := time.Since(started)

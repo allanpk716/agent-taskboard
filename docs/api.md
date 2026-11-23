@@ -158,7 +158,7 @@ spec 未定形状、由实现自拟的端点（orchestrator 决议第 8 条）�
 | `POST /api/v1/me/notification-outlet/pause` | 暂停；游标与代数不动。 |
 | `POST /api/v1/me/notification-outlet/resume` | 恢复；不重建基线，补推一响，且首响只数最近 24 小时内仍未读的通知。 |
 | `DELETE /api/v1/me/notification-outlet` | 删除配置；以后保存会重建基线，不补推历史通知。 |
-| `POST /api/v1/me/notification-outlet/test` | 发送 `{"event":"taskboard.test"}`。目标 POST 使用服务端白名单 URL、`X-Webhook-Key` 和唯一 `X-Idempotency-Key: taskboard-test:<member>:<epoch-ms>`，不重试。每成员限 1 次/分钟；结果用 200 `{result,http_status}` 表达 `ok/ignored/unauthorized/timeout`（其他非 2xx 为 `http_error`）。 |
+| `POST /api/v1/me/notification-outlet/test` | 发送 `{"event":"taskboard.test"}`。目标 POST 使用服务端白名单 URL、`X-Webhook-Key`（并同值带 `Authorization: Bearer`，兼容两种鉴权约定的 bot 平台）和唯一 `X-Idempotency-Key: taskboard-test:<member>:<epoch-ms>`，不重试。每成员限 1 次/分钟；结果用 200 `{result,http_status}` 表达 `ok/ignored/unauthorized/timeout`（其他非 2xx 为 `http_error`）。 |
 
 `GET /api/v1/session` 与登录成功响应的结构（成员）：
 

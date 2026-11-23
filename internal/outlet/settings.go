@@ -162,6 +162,7 @@ func (m *Manager) SendTest(ctx context.Context, memberID int64, builder *URLBuil
 	idempotencyKey := fmt.Sprintf("taskboard-test:%d:%d", memberID, now.UnixMilli())
 	response, err := client.Post(ctx, endpoint, http.Header{
 		"X-Webhook-Key":     []string{key},
+		"Authorization":     []string{"Bearer " + key},
 		"X-Idempotency-Key": []string{idempotencyKey},
 	}, []byte(`{"event":"taskboard.test"}`))
 	if err != nil {

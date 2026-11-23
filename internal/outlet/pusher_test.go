@@ -56,6 +56,7 @@ func Test门铃按未读四桶计数推送并推进持久游标(t *testing.T) {
 		requests = append(requests, capturedOutletRequest{
 			Path:        r.URL.Path,
 			WebhookKey:  r.Header.Get("X-Webhook-Key"),
+			Bearer:      r.Header.Get("Authorization"),
 			Idempotency: r.Header.Get("X-Idempotency-Key"),
 			Payload:     payload,
 			ContentType: r.Header.Get("Content-Type"),
@@ -117,6 +118,7 @@ func Test门铃按未读四桶计数推送并推进持久游标(t *testing.T) {
 	request := requests[0]
 	mu.Unlock()
 	if request.Path != "/api/v1/bots/bot01/webhook" || request.WebhookKey != "webhook-secret" ||
+		request.Bearer != "Bearer webhook-secret" ||
 		request.Idempotency != outletIdempotencyKey(t, s.DB, 1, 6) || request.ContentType != "application/json" {
 		t.Fatalf("请求地址/鉴权/幂等键不符：%+v", request)
 	}
@@ -1155,6 +1157,7 @@ func Test慢出口只占用本成员有界worker(t *testing.T) {
 type capturedOutletRequest struct {
 	Path        string
 	WebhookKey  string
+	Bearer      string
 	Idempotency string
 	Payload     map[string]any
 	ContentType string
