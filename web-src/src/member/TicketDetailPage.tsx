@@ -1398,7 +1398,11 @@ export function TicketDetailPage({
           ),
         )}
         {ticket.my_draft && (
+          // 卡片里的正文、字段、交付标记只在挂载时从草稿取初值：Agent 改出新一版
+          // （或换了另一份草稿）后必须重挂，否则成员点「直接修改」看到的还是旧版，
+          // 一保存就把 Agent 的新版盖掉。
           <DraftCard
+            key={`${ticket.my_draft.id}:${ticket.my_draft.version}`}
             draft={ticket.my_draft}
             ticket={ticket}
             onChanged={changed}
