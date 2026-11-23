@@ -19,6 +19,7 @@ var Server = "0.0.0"
 // 支持某项功能。
 var Features = []string{
 	"oss-attachments",
+	"notification-outlet",
 }
 
 // parse 把 X.Y.Z 解析成三元组；非法段按 0 处理。
