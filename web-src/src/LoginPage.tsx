@@ -15,14 +15,19 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const refreshCaptcha = useCallback(async () => {
+  const loadCaptcha = useCallback(async (): Promise<boolean> => {
     try {
       setCaptcha(await api('/api/v1/login-captcha'))
       setCaptchaAnswer('')
+      return true
     } catch {
-      setError('无法加载验证码，请稍后重试')
+      return false
     }
   }, [])
+
+  const refreshCaptcha = useCallback(async () => {
+    if (!(await loadCaptcha())) setError('无法加载验证码，请稍后重试')
+  }, [loadCaptcha])
 
   useEffect(() => {
     void refreshCaptcha()
@@ -50,9 +55,15 @@ export function LoginPage() {
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.hint ? `${err.message}（${err.hint}）` : err.message)
+        // 验证码是一次性的，而且服务端在核对密码之前就把它消费掉了：密码错、账号
+        // 锁定、账号停用之后这张图都已经作废，不换图的话改对密码再提交只会得到
+        // 「验证码已使用」。限流（429）在消费之前就返回，那张图还能用，不必换。
         if (err.code.startsWith('captcha_')) void refreshCaptcha()
+        else if (err.status !== 429) void loadCaptcha()
       } else {
         setError('无法连接服务，请稍后重试')
+        // 请求可能其实已经到过服务端（验证码已被消费）：悄悄换一张，换不到就保持原样。
+        void loadCaptcha()
       }
     } finally {
       setBusy(false)
